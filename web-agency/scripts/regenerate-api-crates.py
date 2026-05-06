@@ -44,6 +44,7 @@ CF_KEEP_PATHS = [
     "/zones/{zone_id}/dns_records/{dns_record_id}",
     "/zones/{zone_id}/dnssec",
     "/zones/{zone_id}/settings/ssl_automatic_mode",
+    "/zones/{zone_id}/bot_management",
     "/accounts/{account_id}/pages/projects",
     "/accounts/{account_id}/pages/projects/{project_name}",
     "/accounts/{account_id}/pages/projects/{project_name}/domains",

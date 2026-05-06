@@ -23,6 +23,7 @@ use super::components::token_list::TokenList;
 use super::components::user_list::UserList;
 use super::components::webspace_detail::WebspaceDetail;
 use super::components::webspace_form::WebspaceForm;
+use super::components::webspace_import::WebspaceImport;
 use super::components::webspace_list::WebspaceList;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -50,6 +51,8 @@ pub enum Route {
     WebspaceList {},
     #[route("/webspaces/new")]
     WebspaceForm {},
+    #[route("/webspaces/import")]
+    WebspaceImport {},
     #[route("/webspaces/:id")]
     WebspaceDetail { id: String },
     #[route("/contacts")]

@@ -75,36 +75,20 @@ async fn test_credential(credential_id: Uuid) -> Result<String, ServerFnError> {
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("credential not found"))?;
 
-    let (cred_type, encrypted_data) = row;
-
-    let decrypted = crate::crypto::decrypt(&encrypted_data)
-        .map_err(|e| ServerFnError::new(format!("decryption failed: {e}")))?;
-    let data_json: serde_json::Value = serde_json::from_slice(&decrypted)
-        .map_err(|e| ServerFnError::new(format!("invalid credential data: {e}")))?;
+    let (cred_type, _encrypted_data) = row;
 
     match cred_type.as_str() {
         "cloudflare" => {
-            let token = data_json["api_token"]
-                .as_str()
-                .ok_or_else(|| ServerFnError::new("missing api_token in credential"))?;
-            let client = cloudflare_api::compat::SimpleClient::new(token);
-            let zones = client
-                .list_zones(None)
-                .await
+            let client = crate::credentials::cf_client(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
+            let zones = client.list_zones(None).await
                 .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
             Ok(format!("OK - {} zone(s) accessible", zones.len()))
         }
         "spaceship" => {
-            let api_key = data_json["api_key"]
-                .as_str()
-                .ok_or_else(|| ServerFnError::new("missing api_key in credential"))?;
-            let api_secret = data_json["api_secret"]
-                .as_str()
-                .ok_or_else(|| ServerFnError::new("missing api_secret in credential"))?;
-            let client = spaceship_api::compat::SimpleClient::new(api_key, api_secret);
-            let domains = client
-                .list_domains(0, 1)  // take=1 is within allowed range (1-100)
-                .await
+            let client = crate::credentials::spaceship_client(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
+            let domains = client.list_domains(0, 1).await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API error: {e}")))?;
             Ok(format!(
                 "OK - {} domain(s) in account",

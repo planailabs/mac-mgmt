@@ -22,4 +22,5 @@ pub mod ui;
 pub mod user_list;
 pub mod webspace_detail;
 pub mod webspace_form;
+pub mod webspace_import;
 pub mod webspace_list;

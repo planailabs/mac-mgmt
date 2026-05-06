@@ -65,27 +65,8 @@ async fn add_domain(
 
     // If a Cloudflare credential is provided, try to add/find the zone
     if let Some(cred_id) = cf_credential_id {
-        let cred = sqlx::query_as::<_, (Vec<u8>,)>(
-            "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'cloudflare'",
-        )
-        .bind(cred_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .ok_or_else(|| ServerFnError::new("Cloudflare credential not found"))?;
-
-        let decrypted = crate::crypto::decrypt(&cred.0)
-            .map_err(|e| ServerFnError::new(format!("decryption failed: {e}")))?;
-        let data: serde_json::Value = serde_json::from_slice(&decrypted)
-            .map_err(|e| ServerFnError::new(format!("invalid credential data: {e}")))?;
-
-        let token = data["api_token"].as_str()
-            .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-        let configured_account_id = data["account_id"].as_str().unwrap_or("");
-
-        let client = cloudflare_api::compat::SimpleClient::new(token);
-        let account_id = client.resolve_account_id(configured_account_id).await
-            .map_err(|e| ServerFnError::new(format!("failed to resolve account ID: {e}")))?;
+        let (client, account_id) = crate::credentials::cf_client_with_account(&pool, cred_id).await
+            .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
         // Check if zone already exists
         let existing = client.list_zones(Some(&domain_name)).await

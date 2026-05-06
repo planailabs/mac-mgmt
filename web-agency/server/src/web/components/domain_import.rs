@@ -85,11 +85,7 @@ async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<Disco
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("credential not found"))?;
 
-    let (cred_type, encrypted_data) = cred;
-    let decrypted = crate::crypto::decrypt(&encrypted_data)
-        .map_err(|e| ServerFnError::new(format!("decryption failed: {e}")))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted)
-        .map_err(|e| ServerFnError::new(format!("invalid credential data: {e}")))?;
+    let (cred_type, _encrypted_data) = cred;
 
     // Load existing domains in this org for deduplication
     let existing: Vec<String> = sqlx::query_scalar(
@@ -104,9 +100,8 @@ async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<Disco
 
     match cred_type.as_str() {
         "cloudflare" => {
-            let token = data["api_token"].as_str()
-                .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-            let client = cloudflare_api::compat::SimpleClient::new(token);
+            let client = crate::credentials::cf_client(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
             let zones = client.list_zones(None).await
                 .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
@@ -122,11 +117,8 @@ async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<Disco
             }
         }
         "spaceship" => {
-            let api_key = data["api_key"].as_str()
-                .ok_or_else(|| ServerFnError::new("missing api_key"))?;
-            let api_secret = data["api_secret"].as_str()
-                .ok_or_else(|| ServerFnError::new("missing api_secret"))?;
-            let client = spaceship_api::compat::SimpleClient::new(api_key, api_secret);
+            let client = crate::credentials::spaceship_client(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
             let domains = client.list_all_domains().await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API error: {e}")))?;
@@ -170,20 +162,15 @@ async fn import_domains(
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("credential not found"))?;
 
-    let (cred_type, encrypted_data) = cred;
-    let decrypted = crate::crypto::decrypt(&encrypted_data)
-        .map_err(|e| ServerFnError::new(format!("decryption failed: {e}")))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted)
-        .map_err(|e| ServerFnError::new(format!("invalid credential data: {e}")))?;
+    let (cred_type, _encrypted_data) = cred;
 
     // Build a map of name -> zone_id for Cloudflare
     let mut zone_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let registrar_type = cred_type.as_str();
 
     if registrar_type == "cloudflare" {
-        let token = data["api_token"].as_str()
-            .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-        let client = cloudflare_api::compat::SimpleClient::new(token);
+        let client = crate::credentials::cf_client(&pool, credential_id).await
+            .map_err(|e| ServerFnError::new(format!("{e}")))?;
         let zones = client.list_zones(None).await
             .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
         for zone in zones {

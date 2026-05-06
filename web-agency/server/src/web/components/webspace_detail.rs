@@ -691,47 +691,14 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
 
 #[cfg(feature = "server")]
 async fn build_cf_pages_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<(cloudflare_api::compat::SimpleClient, String), ServerFnError> {
-    let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
-        "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'cloudflare'",
-    )
-    .bind(cred_id).fetch_optional(pool).await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Cloudflare credential not found"))?;
-
-    let decrypted = crate::crypto::decrypt(&encrypted)
-        .map_err(|e| ServerFnError::new(format!("decryption failed: {e}")))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted)
-        .map_err(|e| ServerFnError::new(format!("invalid credential: {e}")))?;
-
-    let token = data["api_token"].as_str()
-        .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-    let configured_account_id = data["account_id"].as_str().unwrap_or("");
-
-    let client = cloudflare_api::compat::SimpleClient::new(token);
-    let account_id = client.resolve_account_id(configured_account_id).await
-        .map_err(|e| ServerFnError::new(format!("failed to resolve account ID: {e}")))?;
-
-    Ok((client, account_id))
+    crate::credentials::cf_client_with_account(pool, cred_id).await
+        .map_err(|e| ServerFnError::new(format!("{e}")))
 }
 
-/// Build a CF client from a domain's credential (no account_id needed).
 #[cfg(feature = "server")]
 async fn build_domain_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflare_api::compat::SimpleClient, ServerFnError> {
-    let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
-        "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'cloudflare'",
-    )
-    .bind(cred_id).fetch_optional(pool).await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Cloudflare credential not found"))?;
-
-    let decrypted = crate::crypto::decrypt(&encrypted)
-        .map_err(|e| ServerFnError::new(format!("decryption: {e}")))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted)
-        .map_err(|e| ServerFnError::new(format!("invalid credential: {e}")))?;
-
-    let token = data["api_token"].as_str()
-        .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-    Ok(cloudflare_api::compat::SimpleClient::new(token))
+    crate::credentials::cf_client(pool, cred_id).await
+        .map_err(|e| ServerFnError::new(format!("{e}")))
 }
 
 // ── Component ─────────────────────────────────────────────────────────

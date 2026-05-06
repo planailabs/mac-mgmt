@@ -66,7 +66,12 @@ pub fn WebspaceList() -> Element {
     rsx! {
         PageHeader { "Webspaces" }
 
-        div { class: "mt-4 flex justify-end mb-4",
+        div { class: "mt-4 flex justify-end gap-3 mb-4",
+            Link {
+                to: crate::web::app::Route::WebspaceImport {},
+                class: "btn btn-secondary",
+                "Import from Credential"
+            }
             Link {
                 to: crate::web::app::Route::WebspaceForm {},
                 class: "btn btn-primary",

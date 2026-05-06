@@ -23,6 +23,7 @@ struct DomainData {
     organization_name: String,
     subdomains: Vec<SubdomainData>,
     can_set_nameservers: bool,
+    ai_bots_protection: Option<String>,
     dnssec_ds: Option<String>,
     dnssec_key_tag: Option<String>,
     dnssec_algorithm: Option<String>,
@@ -65,16 +66,16 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, String, bool, Option<String>, Option<Uuid>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, Uuid)>(
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, String, bool, Option<String>, Option<Uuid>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, Uuid, Option<String>)>(
         "SELECT d.id, d.name, d.registrar_type, d.registrar_credential_id, d.ssl_mode, d.dnssec_enabled, d.cloudflare_zone_id, \
-         d.cloudflare_credential_id, d.registered_at, d.expires_at, d.organization_id \
+         d.cloudflare_credential_id, d.registered_at, d.expires_at, d.organization_id, d.ai_bots_protection \
          FROM domains d WHERE d.id = $1",
     )
     .bind(domain_id).fetch_optional(&pool).await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("domain not found"))?;
 
-    let (id, name, registrar_type, registrar_credential_id, ssl_mode, dnssec_enabled, cloudflare_zone_id, cf_cred_id, registered_at, expires_at, org_id) = row;
+    let (id, name, registrar_type, registrar_credential_id, ssl_mode, dnssec_enabled, cloudflare_zone_id, cf_cred_id, registered_at, expires_at, org_id, ai_bots_protection) = row;
 
     if !user.is_admin && !user.org_ids().contains(&org_id) {
         return Err(ServerFnError::new("access denied"));
@@ -139,7 +140,7 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
         registered_at: registered_at.map(|d| d.format("%Y-%m-%d").to_string()),
         expires_at: expires_at.map(|d| d.format("%Y-%m-%d").to_string()),
         organization_name: org_name, subdomains, can_set_nameservers: can_set_ns,
-        dnssec_ds, dnssec_key_tag, dnssec_algorithm, dnssec_digest_type, dnssec_digest,
+        ai_bots_protection, dnssec_ds, dnssec_key_tag, dnssec_algorithm, dnssec_digest_type, dnssec_digest,
     })
 }
 
@@ -245,6 +246,31 @@ async fn toggle_dnssec(domain_id: Uuid, enable: bool) -> Result<(), ServerFnErro
 
     sqlx::query("UPDATE domains SET dnssec_enabled = $1, updated_at = now() WHERE id = $2")
         .bind(enable).bind(domain_id).execute(&pool).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
+#[server]
+async fn set_ai_bots_protection(domain_id: Uuid, value: String) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let (zone_id, cred_id, org_id) = sqlx::query_as::<_, (Option<String>, Option<Uuid>, Uuid)>(
+        "SELECT cloudflare_zone_id, cloudflare_credential_id, organization_id FROM domains WHERE id = $1",
+    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    if let (Some(zone_id), Some(cred_id)) = (&zone_id, cred_id) {
+        let client = build_cf_client(&pool, cred_id).await?;
+        client.set_bot_management(zone_id, &serde_json::json!({"ai_bots_protection": value})).await
+            .map_err(|e| ServerFnError::new(format!("CF bot management: {e}")))?;
+    }
+
+    sqlx::query("UPDATE domains SET ai_bots_protection = $1, updated_at = now() WHERE id = $2")
+        .bind(&value).bind(domain_id).execute(&pool).await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
@@ -502,27 +528,14 @@ async fn delete_domain(domain_id: Uuid) -> Result<(), ServerFnError> {
 
 #[cfg(feature = "server")]
 async fn build_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflare_api::compat::SimpleClient, ServerFnError> {
-    let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
-        "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'cloudflare'",
-    ).bind(cred_id).fetch_optional(pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("CF credential not found"))?;
-    let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
-    let token = data["api_token"].as_str().ok_or_else(|| ServerFnError::new("missing api_token"))?;
-    Ok(cloudflare_api::compat::SimpleClient::new(token))
+    crate::credentials::cf_client(pool, cred_id).await.map_err(|e| ServerFnError::new(format!("{e}")))
 }
 
 #[cfg(feature = "server")]
 async fn get_cf_account_id(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<String, ServerFnError> {
-    let encrypted = sqlx::query_scalar::<_, Vec<u8>>("SELECT encrypted_data FROM credentials WHERE id = $1")
-        .bind(cred_id).fetch_one(pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
-    let token = data["api_token"].as_str().ok_or_else(|| ServerFnError::new("missing api_token"))?;
-    let configured = data["account_id"].as_str().unwrap_or("");
-    let client = cloudflare_api::compat::SimpleClient::new(token);
-    client.resolve_account_id(configured).await
-        .map_err(|e| ServerFnError::new(format!("failed to resolve account ID: {e}")))
+    let (_, account_id) = crate::credentials::cf_client_with_account(pool, cred_id).await
+        .map_err(|e| ServerFnError::new(format!("{e}")))?;
+    Ok(account_id)
 }
 
 #[cfg(feature = "server")]
@@ -533,15 +546,8 @@ async fn try_set_registrar_nameservers(pool: &sqlx::PgPool, domain_id: Uuid, dom
 
     match row {
         Some((Some(ref rt), Some(cred_id))) if rt == "spaceship" => {
-            let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
-                "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'spaceship'",
-            ).bind(cred_id).fetch_optional(pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("Spaceship credential not found"))?;
-            let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let key = data["api_key"].as_str().ok_or_else(|| ServerFnError::new("missing api_key"))?;
-            let secret = data["api_secret"].as_str().ok_or_else(|| ServerFnError::new("missing api_secret"))?;
-            let client = spaceship_api::compat::SimpleClient::new(key, secret);
+            let client = crate::credentials::spaceship_client(pool, cred_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
             client.set_nameservers(domain_name, &spaceship_api::compat::NameserverConfig {
                 provider: "custom".into(), hosts: Some(nameservers.to_vec()),
             }).await.map_err(|e| ServerFnError::new(format!("Spaceship NS: {e}")))?;
@@ -588,6 +594,7 @@ pub fn DomainDetail(id: String) -> Element {
                 domain_id: data.id, zone_id: data.cloudflare_zone_id.clone().unwrap_or_default(),
                 zone_status: data.cloudflare_zone_status.clone(), nameservers: data.cloudflare_nameservers.clone(),
                 ssl_mode: data.ssl_mode.clone(), dnssec_enabled: data.dnssec_enabled, can_set_nameservers: data.can_set_nameservers,
+                ai_bots_protection: data.ai_bots_protection.clone(),
             }
         } else {
             CloudflareDeployForm { domain_id: data.id, domain_name: data.name.clone(), can_set_nameservers: data.can_set_nameservers }
@@ -863,11 +870,13 @@ fn CloudflareDeployForm(domain_id: Uuid, domain_name: String, can_set_nameserver
 }
 
 #[component]
-fn CloudflareDeployed(domain_id: Uuid, zone_id: String, zone_status: Option<String>, nameservers: Vec<String>, ssl_mode: String, dnssec_enabled: bool, can_set_nameservers: bool) -> Element {
+fn CloudflareDeployed(domain_id: Uuid, zone_id: String, zone_status: Option<String>, nameservers: Vec<String>, ssl_mode: String, dnssec_enabled: bool, can_set_nameservers: bool, ai_bots_protection: Option<String>) -> Element {
     let mut ssl = use_signal(move || ssl_mode.clone());
     let mut dnssec = use_signal(move || dnssec_enabled);
+    let mut ai_bots = use_signal(move || ai_bots_protection.unwrap_or_default());
     let mut saving_ssl = use_signal(|| false);
     let mut saving_dnssec = use_signal(|| false);
+    let mut saving_ai_bots = use_signal(|| false);
     let mut message = use_signal(|| None::<String>);
 
     rsx! {
@@ -904,6 +913,19 @@ fn CloudflareDeployed(domain_id: Uuid, zone_id: String, zone_status: Option<Stri
                     if *saving_dnssec.read() { "..." } else if *dnssec.read() { "Disable" } else { "Enable" }
                 }
                 if *dnssec.read() { Badge { variant: BadgeVariant::Success, "On" } }
+            }
+            div { class: "flex items-end gap-3",
+                FormField { label: "AI Bot Protection",
+                    select { class: "input w-48", value: "{ai_bots}", oninput: move |evt| ai_bots.set(evt.value()),
+                        option { value: "block", "Block" }
+                        option { value: "disabled", "Disabled" }
+                    }
+                }
+                Button { variant: ButtonVariant::Secondary, disabled: *saving_ai_bots.read(),
+                    onclick: { let did = domain_id; move |_| { let v = ai_bots.read().clone(); saving_ai_bots.set(true); message.set(None);
+                        spawn(async move { match set_ai_bots_protection(did, v).await { Ok(()) => message.set(Some("AI bot protection updated".into())), Err(e) => message.set(Some(format!("{e}"))) } saving_ai_bots.set(false); }); }},
+                    if *saving_ai_bots.read() { "..." } else { "Update" }
+                }
             }
             if let Some(msg) = &*message.read() { div { class: "text-sm text-fg-muted", "{msg}" } }
         }}

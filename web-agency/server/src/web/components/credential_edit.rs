@@ -88,28 +88,22 @@ async fn test_credential_conn(credential_id: Uuid) -> Result<String, ServerFnErr
     let _user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let (cred_type, encrypted) = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT credential_type, encrypted_data FROM credentials WHERE id = $1",
+    let cred_type = sqlx::query_scalar::<_, String>(
+        "SELECT credential_type FROM credentials WHERE id = $1",
     ).bind(credential_id).fetch_optional(&pool).await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("credential not found"))?;
 
-    let decrypted = crate::crypto::decrypt(&encrypted)
-        .map_err(|e| ServerFnError::new(format!("decryption: {e}")))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted)
-        .map_err(|e| ServerFnError::new(format!("invalid data: {e}")))?;
-
     match cred_type.as_str() {
         "cloudflare" => {
-            let token = data["api_token"].as_str().ok_or_else(|| ServerFnError::new("missing api_token"))?;
-            let client = cloudflare_api::compat::SimpleClient::new(token);
+            let client = crate::credentials::cf_client(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
             let zones = client.list_zones(None).await.map_err(|e| ServerFnError::new(format!("CF: {e}")))?;
             Ok(format!("OK — {} zone(s) accessible", zones.len()))
         }
         "spaceship" => {
-            let key = data["api_key"].as_str().ok_or_else(|| ServerFnError::new("missing api_key"))?;
-            let secret = data["api_secret"].as_str().ok_or_else(|| ServerFnError::new("missing api_secret"))?;
-            let client = spaceship_api::compat::SimpleClient::new(key, secret);
+            let client = crate::credentials::spaceship_client(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
             let resp = client.list_domains(0, 1).await.map_err(|e| ServerFnError::new(format!("SS: {e}")))?;
             Ok(format!("OK — {} domain(s)", resp.total_count.unwrap_or(0)))
         }

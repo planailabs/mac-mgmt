@@ -87,6 +87,16 @@ pub struct DomainCheck {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DomainRegistration {
+    pub domain_name: String,
+    pub created_at: Option<String>,
+    pub expires_at: Option<String>,
+    #[serde(default)] pub auto_renew: bool,
+    #[serde(default)] pub locked: bool,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DomainPricing { pub currency: String, pub registration_cost: Option<String>, pub renewal_cost: Option<String> }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -150,6 +160,11 @@ impl SimpleClient {
 
     async fn post<T: DeserializeOwned, B: serde::Serialize>(&self, path: &str, body: &B) -> Result<T, Error> {
         let resp = self.http.post(format!("{}{path}", self.base_url)).json(body).send().await?;
+        self.parse(resp).await
+    }
+
+    async fn put<T: DeserializeOwned, B: serde::Serialize>(&self, path: &str, body: &B) -> Result<T, Error> {
+        let resp = self.http.put(format!("{}{path}", self.base_url)).json(body).send().await?;
         self.parse(resp).await
     }
 
@@ -246,6 +261,18 @@ impl SimpleClient {
         self.patch(&format!("/zones/{zone_id}/settings/ssl_automatic_mode"), &serde_json::json!({"value": value})).await
     }
 
+    pub async fn get_bot_management(&self, zone_id: &str) -> Result<serde_json::Value, Error> {
+        self.get(&format!("/zones/{zone_id}/bot_management")).await
+    }
+
+    pub async fn set_bot_management(&self, zone_id: &str, config: &serde_json::Value) -> Result<serde_json::Value, Error> {
+        self.put(&format!("/zones/{zone_id}/bot_management"), config).await
+    }
+
+    pub async fn get_domain_registration(&self, account_id: &str, domain_name: &str) -> Result<DomainRegistration, Error> {
+        self.get(&format!("/accounts/{account_id}/registrar/registrations/{domain_name}")).await
+    }
+
     pub async fn check_domains(&self, account_id: &str, domains: &[String]) -> Result<Vec<DomainCheck>, Error> {
         #[derive(serde::Deserialize)] struct Res { domains: Option<Vec<DomainCheck>> }
         let r: Res = self.post(&format!("/accounts/{account_id}/registrar/domain-check"), &serde_json::json!({"domains": domains})).await?;
@@ -254,6 +281,10 @@ impl SimpleClient {
 
     pub async fn get_pages_project(&self, account_id: &str, project_name: &str) -> Result<PagesProject, Error> {
         self.get(&format!("/accounts/{account_id}/pages/projects/{project_name}")).await
+    }
+
+    pub async fn list_pages_projects(&self, account_id: &str) -> Result<Vec<PagesProject>, Error> {
+        self.get(&format!("/accounts/{account_id}/pages/projects")).await
     }
 
     pub async fn create_pages_project(&self, account_id: &str, name: &str, branch: &str) -> Result<PagesProject, Error> {

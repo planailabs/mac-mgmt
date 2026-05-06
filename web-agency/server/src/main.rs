@@ -3,6 +3,8 @@ mod api;
 #[cfg(feature = "server")]
 mod config;
 #[cfg(feature = "server")]
+pub mod credentials;
+#[cfg(feature = "server")]
 mod crypto;
 #[cfg(feature = "server")]
 mod db;
@@ -46,6 +48,9 @@ async fn init_server() -> sqlx::PgPool {
 
     // Mark any deployments left in-flight from a previous run as failed.
     api::deploy::recover_interrupted_deployments(&pool).await;
+
+    // Start periodic background sync (DNS records, domain expiry).
+    api::sync::spawn(pool.clone());
 
     #[cfg(feature = "webui")]
     server_state::set_pool(pool.clone());

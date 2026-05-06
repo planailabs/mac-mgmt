@@ -119,6 +119,2817 @@ pub mod types {
         }
     }
 
+    ///Enable rule to block AI Scrapers and Crawlers. Please note the value
+    /// `only_on_ad_pages` is currently not available for Enterprise customers.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Enable rule to block AI Scrapers and Crawlers. Please
+    /// note the value `only_on_ad_pages` is currently not available for
+    /// Enterprise customers.",
+    ///  "examples": [
+    ///    "block"
+    ///  ],
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "block",
+    ///    "disabled",
+    ///    "only_on_ad_pages"
+    ///  ],
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum BotManagementAiBotsProtection {
+        #[serde(rename = "block")]
+        Block,
+        #[serde(rename = "disabled")]
+        Disabled,
+        #[serde(rename = "only_on_ad_pages")]
+        OnlyOnAdPages,
+    }
+
+    impl ::std::fmt::Display for BotManagementAiBotsProtection {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Block => f.write_str("block"),
+                Self::Disabled => f.write_str("disabled"),
+                Self::OnlyOnAdPages => f.write_str("only_on_ad_pages"),
+            }
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementAiBotsProtection {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "block" => Ok(Self::Block),
+                "disabled" => Ok(Self::Disabled),
+                "only_on_ad_pages" => Ok(Self::OnlyOnAdPages),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementAiBotsProtection {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for BotManagementAiBotsProtection {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for BotManagementAiBotsProtection {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    ///`BotManagementApiResponseCommon`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "errors",
+    ///    "messages",
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "errors": {
+    ///      "$ref": "#/components/schemas/bot-management_messages"
+    ///    },
+    ///    "messages": {
+    ///      "$ref": "#/components/schemas/bot-management_messages"
+    ///    },
+    ///    "success": {
+    ///      "description": "Whether the API call was successful.",
+    ///      "examples": [
+    ///        true
+    ///      ],
+    ///      "type": "boolean",
+    ///      "enum": [
+    ///        true
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementApiResponseCommon {
+        pub errors: BotManagementMessages,
+        pub messages: BotManagementMessages,
+        ///Whether the API call was successful.
+        pub success: bool,
+    }
+
+    ///`BotManagementApiResponseCommonFailure`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "errors",
+    ///    "messages",
+    ///    "result",
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "errors": {
+    ///      "examples": [
+    ///        [
+    ///          {
+    ///            "code": 7003,
+    ///            "message": "No route for the URI"
+    ///          }
+    ///        ]
+    ///      ],
+    ///      "allOf": [
+    ///        {
+    ///          "$ref": "#/components/schemas/bot-management_messages"
+    ///        }
+    ///      ],
+    ///      "minLength": 1
+    ///    },
+    ///    "messages": {
+    ///      "examples": [
+    ///        []
+    ///      ],
+    ///      "allOf": [
+    ///        {
+    ///          "$ref": "#/components/schemas/bot-management_messages"
+    ///        }
+    ///      ]
+    ///    },
+    ///    "result": {
+    ///      "type": [
+    ///        "object",
+    ///        "null"
+    ///      ],
+    ///      "enum": [
+    ///        null
+    ///      ]
+    ///    },
+    ///    "success": {
+    ///      "description": "Whether the API call was successful.",
+    ///      "examples": [
+    ///        false
+    ///      ],
+    ///      "type": "boolean",
+    ///      "enum": [
+    ///        false
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementApiResponseCommonFailure {
+        pub errors: ::std::vec::Vec<BotManagementApiResponseCommonFailureErrorsItem>,
+        pub messages: BotManagementMessages,
+        pub result: (),
+        ///Whether the API call was successful.
+        pub success: bool,
+    }
+
+    ///`BotManagementApiResponseCommonFailureErrorsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "uniqueItems": true,
+    ///  "required": [
+    ///    "code",
+    ///    "message"
+    ///  ],
+    ///  "properties": {
+    ///    "code": {
+    ///      "type": "integer",
+    ///      "minimum": 1000.0
+    ///    },
+    ///    "documentation_url": {
+    ///      "type": "string"
+    ///    },
+    ///    "message": {
+    ///      "type": "string"
+    ///    },
+    ///    "source": {
+    ///      "type": "object",
+    ///      "properties": {
+    ///        "pointer": {
+    ///          "type": "string"
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementApiResponseCommonFailureErrorsItem {
+        pub code: i64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub documentation_url: ::std::option::Option<::std::string::String>,
+        pub message: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source: ::std::option::Option<BotManagementApiResponseCommonFailureErrorsItemSource>,
+    }
+
+    ///`BotManagementApiResponseCommonFailureErrorsItemSource`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "pointer": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementApiResponseCommonFailureErrorsItemSource {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub pointer: ::std::option::Option<::std::string::String>,
+    }
+
+    impl ::std::default::Default for BotManagementApiResponseCommonFailureErrorsItemSource {
+        fn default() -> Self {
+            Self {
+                pointer: Default::default(),
+            }
+        }
+    }
+
+    ///`BotManagementApiResponseSingle`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "allOf": [
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_api-response-common"
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementApiResponseSingle(pub BotManagementApiResponseCommon);
+    impl ::std::ops::Deref for BotManagementApiResponseSingle {
+        type Target = BotManagementApiResponseCommon;
+        fn deref(&self) -> &BotManagementApiResponseCommon {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementApiResponseSingle> for BotManagementApiResponseCommon {
+        fn from(value: BotManagementApiResponseSingle) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementApiResponseCommon> for BotManagementApiResponseSingle {
+        fn from(value: BotManagementApiResponseCommon) -> Self {
+            Self(value)
+        }
+    }
+
+    ///Automatically update to the newest bot detection models created by Cloudflare as they are released. [Learn more.](https://developers.cloudflare.com/bots/reference/machine-learning-models#model-versions-and-release-notes)
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Automatically update to the newest bot detection models created by Cloudflare as they are released. [Learn more.](https://developers.cloudflare.com/bots/reference/machine-learning-models#model-versions-and-release-notes)",
+    ///  "examples": [
+    ///    true
+    ///  ],
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementAutoUpdateModel(pub bool);
+    impl ::std::ops::Deref for BotManagementAutoUpdateModel {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementAutoUpdateModel> for bool {
+        fn from(value: BotManagementAutoUpdateModel) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementAutoUpdateModel {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementAutoUpdateModel {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementAutoUpdateModel {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementAutoUpdateModel {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementAutoUpdateModel {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///`BotManagementBaseConfig`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "properties": {
+    ///    "ai_bots_protection": {
+    ///      "$ref": "#/components/schemas/bot-management_ai_bots_protection"
+    ///    },
+    ///    "cf_robots_variant": {
+    ///      "$ref": "#/components/schemas/bot-management_cf_robots_variant"
+    ///    },
+    ///    "content_bots_protection": {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_content_bots_protection"
+    ///    },
+    ///    "crawler_protection": {
+    ///      "$ref": "#/components/schemas/bot-management_crawler_protection"
+    ///    },
+    ///    "enable_js": {
+    ///      "$ref": "#/components/schemas/bot-management_enable_js"
+    ///    },
+    ///    "is_robots_txt_managed": {
+    ///      "$ref": "#/components/schemas/bot-management_is_robots_txt_managed"
+    ///    },
+    ///    "using_latest_model": {
+    ///      "$ref": "#/components/schemas/bot-management_using_latest_model"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementBaseConfig {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub ai_bots_protection: ::std::option::Option<BotManagementAiBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub cf_robots_variant: ::std::option::Option<BotManagementCfRobotsVariant>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub content_bots_protection: ::std::option::Option<BotManagementContentBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub crawler_protection: ::std::option::Option<BotManagementCrawlerProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub enable_js: ::std::option::Option<BotManagementEnableJs>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_robots_txt_managed: ::std::option::Option<BotManagementIsRobotsTxtManaged>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub using_latest_model: ::std::option::Option<BotManagementUsingLatestModel>,
+    }
+
+    impl ::std::default::Default for BotManagementBaseConfig {
+        fn default() -> Self {
+            Self {
+                ai_bots_protection: Default::default(),
+                cf_robots_variant: Default::default(),
+                content_bots_protection: Default::default(),
+                crawler_protection: Default::default(),
+                enable_js: Default::default(),
+                is_robots_txt_managed: Default::default(),
+                using_latest_model: Default::default(),
+            }
+        }
+    }
+
+    ///Indicates that the bot management cookie can be placed on end user
+    /// devices accessing the site. Defaults to true
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Indicates that the bot management cookie can be placed
+    /// on end user devices accessing the site. Defaults to true",
+    ///  "examples": [
+    ///    true
+    ///  ],
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementBmCookieEnabled(pub bool);
+    impl ::std::ops::Deref for BotManagementBmCookieEnabled {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementBmCookieEnabled> for bool {
+        fn from(value: BotManagementBmCookieEnabled) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementBmCookieEnabled {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementBmCookieEnabled {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementBmCookieEnabled {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementBmCookieEnabled {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementBmCookieEnabled {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///`BotManagementBmSubscriptionConfig`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "BM Enterprise Subscription",
+    ///  "allOf": [
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_base_config"
+    ///    },
+    ///    {
+    ///      "properties": {
+    ///        "auto_update_model": {
+    ///          "$ref": "#/components/schemas/bot-management_auto_update_model"
+    ///        },
+    ///        "bm_cookie_enabled": {
+    ///          "$ref": "#/components/schemas/bot-management_bm_cookie_enabled"
+    ///        },
+    ///        "stale_zone_configuration": {
+    ///          "title": "stale_zone_configuration",
+    ///          "description": "A read-only field that shows which unauthorized
+    /// settings are currently active on the zone. These settings typically
+    /// result from upgrades or downgrades.",
+    ///          "readOnly": true,
+    ///          "type": "object",
+    ///          "properties": {
+    ///            "fight_mode": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_fight_mode_turned_on"
+    ///            },
+    ///            "optimize_wordpress": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_optimize_wordpress_turned_on"
+    ///            },
+    ///            "sbfm_definitely_automated": {
+    ///              "$ref":
+    /// "#/components/schemas/
+    /// bot-management_sbfm_definitely_automated_turned_on"
+    ///            },
+    ///            "sbfm_likely_automated": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_sbfm_likely_automated_turned_on"
+    ///            },
+    ///            "sbfm_static_resource_protection": {
+    ///              "$ref":
+    /// "#/components/schemas/
+    /// bot-management_sbfm_static_resource_protection_turned_on"
+    ///            },
+    ///            "sbfm_verified_bots": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_sbfm_verified_bots_turned_on"
+    ///            }
+    ///          }
+    ///        },
+    ///        "suppress_session_score": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_suppress_session_score"
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementBmSubscriptionConfig {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub ai_bots_protection: ::std::option::Option<BotManagementAiBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub auto_update_model: ::std::option::Option<BotManagementAutoUpdateModel>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub bm_cookie_enabled: ::std::option::Option<BotManagementBmCookieEnabled>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub cf_robots_variant: ::std::option::Option<BotManagementCfRobotsVariant>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub content_bots_protection: ::std::option::Option<BotManagementContentBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub crawler_protection: ::std::option::Option<BotManagementCrawlerProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub enable_js: ::std::option::Option<BotManagementEnableJs>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_robots_txt_managed: ::std::option::Option<BotManagementIsRobotsTxtManaged>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub stale_zone_configuration: ::std::option::Option<StaleZoneConfiguration>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub suppress_session_score: ::std::option::Option<BotManagementSuppressSessionScore>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub using_latest_model: ::std::option::Option<BotManagementUsingLatestModel>,
+    }
+
+    impl ::std::default::Default for BotManagementBmSubscriptionConfig {
+        fn default() -> Self {
+            Self {
+                ai_bots_protection: Default::default(),
+                auto_update_model: Default::default(),
+                bm_cookie_enabled: Default::default(),
+                cf_robots_variant: Default::default(),
+                content_bots_protection: Default::default(),
+                crawler_protection: Default::default(),
+                enable_js: Default::default(),
+                is_robots_txt_managed: Default::default(),
+                stale_zone_configuration: Default::default(),
+                suppress_session_score: Default::default(),
+                using_latest_model: Default::default(),
+            }
+        }
+    }
+
+    ///`BotManagementBotFightModeConfig`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "Bot Fight Mode",
+    ///  "allOf": [
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_base_config"
+    ///    },
+    ///    {
+    ///      "properties": {
+    ///        "fight_mode": {
+    ///          "$ref": "#/components/schemas/bot-management_fight_mode"
+    ///        },
+    ///        "stale_zone_configuration": {
+    ///          "title": "stale_zone_configuration",
+    ///          "description": "A read-only field that shows which unauthorized
+    /// settings are currently active on the zone. These settings typically
+    /// result from upgrades or downgrades.",
+    ///          "readOnly": true,
+    ///          "type": "object",
+    ///          "properties": {
+    ///            "optimize_wordpress": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_optimize_wordpress_turned_on"
+    ///            },
+    ///            "sbfm_definitely_automated": {
+    ///              "$ref":
+    /// "#/components/schemas/
+    /// bot-management_sbfm_definitely_automated_turned_on"
+    ///            },
+    ///            "sbfm_likely_automated": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_sbfm_likely_automated_turned_on"
+    ///            },
+    ///            "sbfm_static_resource_protection": {
+    ///              "$ref":
+    /// "#/components/schemas/
+    /// bot-management_sbfm_static_resource_protection_turned_on"
+    ///            },
+    ///            "sbfm_verified_bots": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_sbfm_verified_bots_turned_on"
+    ///            },
+    ///            "suppress_session_score": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_suppress_session_score_turned_off"
+    ///            }
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementBotFightModeConfig {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub ai_bots_protection: ::std::option::Option<BotManagementAiBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub cf_robots_variant: ::std::option::Option<BotManagementCfRobotsVariant>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub content_bots_protection: ::std::option::Option<BotManagementContentBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub crawler_protection: ::std::option::Option<BotManagementCrawlerProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub enable_js: ::std::option::Option<BotManagementEnableJs>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub fight_mode: ::std::option::Option<BotManagementFightMode>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_robots_txt_managed: ::std::option::Option<BotManagementIsRobotsTxtManaged>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub stale_zone_configuration: ::std::option::Option<StaleZoneConfiguration>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub using_latest_model: ::std::option::Option<BotManagementUsingLatestModel>,
+    }
+
+    impl ::std::default::Default for BotManagementBotFightModeConfig {
+        fn default() -> Self {
+            Self {
+                ai_bots_protection: Default::default(),
+                cf_robots_variant: Default::default(),
+                content_bots_protection: Default::default(),
+                crawler_protection: Default::default(),
+                enable_js: Default::default(),
+                fight_mode: Default::default(),
+                is_robots_txt_managed: Default::default(),
+                stale_zone_configuration: Default::default(),
+                using_latest_model: Default::default(),
+            }
+        }
+    }
+
+    ///`BotManagementBotManagementResponseBody`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "allOf": [
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_api-response-single"
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "properties": {
+    ///        "result": {
+    ///          "oneOf": [
+    ///            {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_bot_fight_mode_config"
+    ///            },
+    ///            {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_sbfm_definitely_config"
+    ///            },
+    ///            {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_sbfm_likely_config"
+    ///            },
+    ///            {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_bm_subscription_config"
+    ///            }
+    ///          ]
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementBotManagementResponseBody {
+        pub errors: BotManagementMessages,
+        pub messages: BotManagementMessages,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub result: ::std::option::Option<BotManagementBotManagementResponseBodyResult>,
+        ///Whether the API call was successful.
+        pub success: bool,
+    }
+
+    ///`BotManagementBotManagementResponseBodyResult`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "oneOf": [
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_bot_fight_mode_config"
+    ///    },
+    ///    {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_sbfm_definitely_config"
+    ///    },
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_sbfm_likely_config"
+    ///    },
+    ///    {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_bm_subscription_config"
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(untagged)]
+    pub enum BotManagementBotManagementResponseBodyResult {
+        BotFightModeConfig(BotManagementBotFightModeConfig),
+        SbfmDefinitelyConfig(BotManagementSbfmDefinitelyConfig),
+        SbfmLikelyConfig(BotManagementSbfmLikelyConfig),
+        BmSubscriptionConfig(BotManagementBmSubscriptionConfig),
+    }
+
+    impl ::std::convert::From<BotManagementBotFightModeConfig>
+        for BotManagementBotManagementResponseBodyResult
+    {
+        fn from(value: BotManagementBotFightModeConfig) -> Self {
+            Self::BotFightModeConfig(value)
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSbfmDefinitelyConfig>
+        for BotManagementBotManagementResponseBodyResult
+    {
+        fn from(value: BotManagementSbfmDefinitelyConfig) -> Self {
+            Self::SbfmDefinitelyConfig(value)
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSbfmLikelyConfig>
+        for BotManagementBotManagementResponseBodyResult
+    {
+        fn from(value: BotManagementSbfmLikelyConfig) -> Self {
+            Self::SbfmLikelyConfig(value)
+        }
+    }
+
+    impl ::std::convert::From<BotManagementBmSubscriptionConfig>
+        for BotManagementBotManagementResponseBodyResult
+    {
+        fn from(value: BotManagementBmSubscriptionConfig) -> Self {
+            Self::BmSubscriptionConfig(value)
+        }
+    }
+
+    ///Specifies the Robots Access Control License variant to use.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Specifies the Robots Access Control License variant to
+    /// use.",
+    ///  "examples": [
+    ///    "policy_only"
+    ///  ],
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "off",
+    ///    "policy_only"
+    ///  ],
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum BotManagementCfRobotsVariant {
+        #[serde(rename = "off")]
+        Off,
+        #[serde(rename = "policy_only")]
+        PolicyOnly,
+    }
+
+    impl ::std::fmt::Display for BotManagementCfRobotsVariant {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Off => f.write_str("off"),
+                Self::PolicyOnly => f.write_str("policy_only"),
+            }
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementCfRobotsVariant {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "off" => Ok(Self::Off),
+                "policy_only" => Ok(Self::PolicyOnly),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementCfRobotsVariant {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for BotManagementCfRobotsVariant {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for BotManagementCfRobotsVariant {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    ///`BotManagementConfigSingle`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "oneOf": [
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_bot_fight_mode_config"
+    ///    },
+    ///    {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_sbfm_definitely_config"
+    ///    },
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_sbfm_likely_config"
+    ///    },
+    ///    {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_bm_subscription_config"
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(untagged)]
+    pub enum BotManagementConfigSingle {
+        BotFightModeConfig(BotManagementBotFightModeConfig),
+        SbfmDefinitelyConfig(BotManagementSbfmDefinitelyConfig),
+        SbfmLikelyConfig(BotManagementSbfmLikelyConfig),
+        BmSubscriptionConfig(BotManagementBmSubscriptionConfig),
+    }
+
+    impl ::std::convert::From<BotManagementBotFightModeConfig> for BotManagementConfigSingle {
+        fn from(value: BotManagementBotFightModeConfig) -> Self {
+            Self::BotFightModeConfig(value)
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSbfmDefinitelyConfig> for BotManagementConfigSingle {
+        fn from(value: BotManagementSbfmDefinitelyConfig) -> Self {
+            Self::SbfmDefinitelyConfig(value)
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSbfmLikelyConfig> for BotManagementConfigSingle {
+        fn from(value: BotManagementSbfmLikelyConfig) -> Self {
+            Self::SbfmLikelyConfig(value)
+        }
+    }
+
+    impl ::std::convert::From<BotManagementBmSubscriptionConfig> for BotManagementConfigSingle {
+        fn from(value: BotManagementBmSubscriptionConfig) -> Self {
+            Self::BmSubscriptionConfig(value)
+        }
+    }
+
+    ///Enable rule to block content bots. When enabled, blocks automated
+    /// traffic with low bot scores, excluding safe verified bot categories.
+    /// Exceptions should be managed via skip rules.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Enable rule to block content bots. When enabled, blocks
+    /// automated traffic with low bot scores, excluding safe verified bot
+    /// categories. Exceptions should be managed via skip rules.",
+    ///  "examples": [
+    ///    "disabled"
+    ///  ],
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "block",
+    ///    "disabled"
+    ///  ],
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum BotManagementContentBotsProtection {
+        #[serde(rename = "block")]
+        Block,
+        #[serde(rename = "disabled")]
+        Disabled,
+    }
+
+    impl ::std::fmt::Display for BotManagementContentBotsProtection {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Block => f.write_str("block"),
+                Self::Disabled => f.write_str("disabled"),
+            }
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementContentBotsProtection {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "block" => Ok(Self::Block),
+                "disabled" => Ok(Self::Disabled),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementContentBotsProtection {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for BotManagementContentBotsProtection {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for BotManagementContentBotsProtection {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    ///Enable rule to punish AI Scrapers and Crawlers via a link maze.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Enable rule to punish AI Scrapers and Crawlers via a
+    /// link maze.",
+    ///  "examples": [
+    ///    "enabled"
+    ///  ],
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "enabled",
+    ///    "disabled"
+    ///  ],
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum BotManagementCrawlerProtection {
+        #[serde(rename = "enabled")]
+        Enabled,
+        #[serde(rename = "disabled")]
+        Disabled,
+    }
+
+    impl ::std::fmt::Display for BotManagementCrawlerProtection {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Enabled => f.write_str("enabled"),
+                Self::Disabled => f.write_str("disabled"),
+            }
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementCrawlerProtection {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "enabled" => Ok(Self::Enabled),
+                "disabled" => Ok(Self::Disabled),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementCrawlerProtection {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for BotManagementCrawlerProtection {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for BotManagementCrawlerProtection {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    ///Use lightweight, invisible JavaScript detections to improve Bot Management. [Learn more about JavaScript Detections](https://developers.cloudflare.com/bots/reference/javascript-detections/).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Use lightweight, invisible JavaScript detections to improve Bot Management. [Learn more about JavaScript Detections](https://developers.cloudflare.com/bots/reference/javascript-detections/).",
+    ///  "examples": [
+    ///    true
+    ///  ],
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementEnableJs(pub bool);
+    impl ::std::ops::Deref for BotManagementEnableJs {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementEnableJs> for bool {
+        fn from(value: BotManagementEnableJs) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementEnableJs {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementEnableJs {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementEnableJs {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementEnableJs {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementEnableJs {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///Whether to enable Bot Fight Mode.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Whether to enable Bot Fight Mode.",
+    ///  "examples": [
+    ///    true
+    ///  ],
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementFightMode(pub bool);
+    impl ::std::ops::Deref for BotManagementFightMode {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementFightMode> for bool {
+        fn from(value: BotManagementFightMode) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementFightMode {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementFightMode {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementFightMode {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementFightMode {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementFightMode {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///Indicates that the zone's Bot Fight Mode is turned on.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "fight_mode",
+    ///  "description": "Indicates that the zone's Bot Fight Mode is turned
+    /// on.",
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementFightModeTurnedOn(pub bool);
+    impl ::std::ops::Deref for BotManagementFightModeTurnedOn {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementFightModeTurnedOn> for bool {
+        fn from(value: BotManagementFightModeTurnedOn) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementFightModeTurnedOn {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementFightModeTurnedOn {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementFightModeTurnedOn {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementFightModeTurnedOn {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementFightModeTurnedOn {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///`BotManagementForAZoneGetConfigResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "allOf": [
+    ///    {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_bot_management_response_body"
+    ///    },
+    ///    {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_api-response-common-failure"
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    #[serde(deny_unknown_fields)]
+    pub enum BotManagementForAZoneGetConfigResponse {}
+    ///`BotManagementForAZoneUpdateConfigResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "allOf": [
+    ///    {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_bot_management_response_body"
+    ///    },
+    ///    {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_api-response-common-failure"
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    #[serde(deny_unknown_fields)]
+    pub enum BotManagementForAZoneUpdateConfigResponse {}
+    ///Identifier.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Identifier.",
+    ///  "examples": [
+    ///    "023e105f4ecef8ad9ca31a8372d0c353"
+    ///  ],
+    ///  "type": "string",
+    ///  "maxLength": 32,
+    ///  "x-auditable": true
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct BotManagementIdentifier(::std::string::String);
+    impl ::std::ops::Deref for BotManagementIdentifier {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementIdentifier> for ::std::string::String {
+        fn from(value: BotManagementIdentifier) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementIdentifier {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() > 32usize {
+                return Err("longer than 32 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementIdentifier {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for BotManagementIdentifier {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for BotManagementIdentifier {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl<'de> ::serde::Deserialize<'de> for BotManagementIdentifier {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+
+    ///Enable cloudflare managed robots.txt. If an existing robots.txt is
+    /// detected, then managed robots.txt will be prepended to the existing
+    /// robots.txt.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Enable cloudflare managed robots.txt. If an existing
+    /// robots.txt is detected, then managed robots.txt will be prepended to the
+    /// existing robots.txt.",
+    ///  "default": false,
+    ///  "examples": [
+    ///    false
+    ///  ],
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementIsRobotsTxtManaged(pub bool);
+    impl ::std::ops::Deref for BotManagementIsRobotsTxtManaged {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementIsRobotsTxtManaged> for bool {
+        fn from(value: BotManagementIsRobotsTxtManaged) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementIsRobotsTxtManaged {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementIsRobotsTxtManaged {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementIsRobotsTxtManaged {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementIsRobotsTxtManaged {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementIsRobotsTxtManaged {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///`BotManagementMessages`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "examples": [
+    ///    []
+    ///  ],
+    ///  "type": "array",
+    ///  "items": {
+    ///    "type": "object",
+    ///    "uniqueItems": true,
+    ///    "required": [
+    ///      "code",
+    ///      "message"
+    ///    ],
+    ///    "properties": {
+    ///      "code": {
+    ///        "type": "integer",
+    ///        "minimum": 1000.0
+    ///      },
+    ///      "documentation_url": {
+    ///        "type": "string"
+    ///      },
+    ///      "message": {
+    ///        "type": "string"
+    ///      },
+    ///      "source": {
+    ///        "type": "object",
+    ///        "properties": {
+    ///          "pointer": {
+    ///            "type": "string"
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementMessages(pub ::std::vec::Vec<BotManagementMessagesItem>);
+    impl ::std::ops::Deref for BotManagementMessages {
+        type Target = ::std::vec::Vec<BotManagementMessagesItem>;
+        fn deref(&self) -> &::std::vec::Vec<BotManagementMessagesItem> {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementMessages> for ::std::vec::Vec<BotManagementMessagesItem> {
+        fn from(value: BotManagementMessages) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<::std::vec::Vec<BotManagementMessagesItem>> for BotManagementMessages {
+        fn from(value: ::std::vec::Vec<BotManagementMessagesItem>) -> Self {
+            Self(value)
+        }
+    }
+
+    ///`BotManagementMessagesItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "uniqueItems": true,
+    ///  "required": [
+    ///    "code",
+    ///    "message"
+    ///  ],
+    ///  "properties": {
+    ///    "code": {
+    ///      "type": "integer",
+    ///      "minimum": 1000.0
+    ///    },
+    ///    "documentation_url": {
+    ///      "type": "string"
+    ///    },
+    ///    "message": {
+    ///      "type": "string"
+    ///    },
+    ///    "source": {
+    ///      "type": "object",
+    ///      "properties": {
+    ///        "pointer": {
+    ///          "type": "string"
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementMessagesItem {
+        pub code: i64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub documentation_url: ::std::option::Option<::std::string::String>,
+        pub message: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source: ::std::option::Option<BotManagementMessagesItemSource>,
+    }
+
+    ///`BotManagementMessagesItemSource`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "pointer": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementMessagesItemSource {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub pointer: ::std::option::Option<::std::string::String>,
+    }
+
+    impl ::std::default::Default for BotManagementMessagesItemSource {
+        fn default() -> Self {
+            Self {
+                pointer: Default::default(),
+            }
+        }
+    }
+
+    ///Whether to optimize Super Bot Fight Mode protections for Wordpress.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Whether to optimize Super Bot Fight Mode protections
+    /// for Wordpress.",
+    ///  "examples": [
+    ///    true
+    ///  ],
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementOptimizeWordpress(pub bool);
+    impl ::std::ops::Deref for BotManagementOptimizeWordpress {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementOptimizeWordpress> for bool {
+        fn from(value: BotManagementOptimizeWordpress) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementOptimizeWordpress {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementOptimizeWordpress {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementOptimizeWordpress {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementOptimizeWordpress {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementOptimizeWordpress {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///Indicates that the zone's wordpress optimization for SBFM is turned on.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "optimize_wordpress",
+    ///  "description": "Indicates that the zone's wordpress optimization for
+    /// SBFM is turned on.",
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementOptimizeWordpressTurnedOn(pub bool);
+    impl ::std::ops::Deref for BotManagementOptimizeWordpressTurnedOn {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementOptimizeWordpressTurnedOn> for bool {
+        fn from(value: BotManagementOptimizeWordpressTurnedOn) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementOptimizeWordpressTurnedOn {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementOptimizeWordpressTurnedOn {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementOptimizeWordpressTurnedOn {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementOptimizeWordpressTurnedOn {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementOptimizeWordpressTurnedOn {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///Super Bot Fight Mode (SBFM) action to take on definitely automated
+    /// requests.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Super Bot Fight Mode (SBFM) action to take on
+    /// definitely automated requests.",
+    ///  "examples": [
+    ///    "allow"
+    ///  ],
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "allow",
+    ///    "block",
+    ///    "managed_challenge"
+    ///  ],
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum BotManagementSbfmDefinitelyAutomated {
+        #[serde(rename = "allow")]
+        Allow,
+        #[serde(rename = "block")]
+        Block,
+        #[serde(rename = "managed_challenge")]
+        ManagedChallenge,
+    }
+
+    impl ::std::fmt::Display for BotManagementSbfmDefinitelyAutomated {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Allow => f.write_str("allow"),
+                Self::Block => f.write_str("block"),
+                Self::ManagedChallenge => f.write_str("managed_challenge"),
+            }
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSbfmDefinitelyAutomated {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "allow" => Ok(Self::Allow),
+                "block" => Ok(Self::Block),
+                "managed_challenge" => Ok(Self::ManagedChallenge),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementSbfmDefinitelyAutomated {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for BotManagementSbfmDefinitelyAutomated {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for BotManagementSbfmDefinitelyAutomated {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    ///Indicates that the zone's definitely automated requests are being
+    /// blocked or challenged.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "sbfm_definitely_automated",
+    ///  "description": "Indicates that the zone's definitely automated requests
+    /// are being blocked or challenged.",
+    ///  "type": "string",
+    ///  "x-auditable": true
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    #[serde(transparent)]
+    pub struct BotManagementSbfmDefinitelyAutomatedTurnedOn(pub ::std::string::String);
+    impl ::std::ops::Deref for BotManagementSbfmDefinitelyAutomatedTurnedOn {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSbfmDefinitelyAutomatedTurnedOn> for ::std::string::String {
+        fn from(value: BotManagementSbfmDefinitelyAutomatedTurnedOn) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<::std::string::String> for BotManagementSbfmDefinitelyAutomatedTurnedOn {
+        fn from(value: ::std::string::String) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSbfmDefinitelyAutomatedTurnedOn {
+        type Err = ::std::convert::Infallible;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.to_string()))
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementSbfmDefinitelyAutomatedTurnedOn {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///`BotManagementSbfmDefinitelyConfig`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "SBFM Pro Plan",
+    ///  "allOf": [
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_base_config"
+    ///    },
+    ///    {
+    ///      "properties": {
+    ///        "optimize_wordpress": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_optimize_wordpress"
+    ///        },
+    ///        "sbfm_definitely_automated": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_sbfm_definitely_automated"
+    ///        },
+    ///        "sbfm_static_resource_protection": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_sbfm_static_resource_protection"
+    ///        },
+    ///        "sbfm_verified_bots": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_sbfm_verified_bots"
+    ///        },
+    ///        "stale_zone_configuration": {
+    ///          "title": "stale_zone_configuration",
+    ///          "description": "A read-only field that shows which unauthorized
+    /// settings are currently active on the zone. These settings typically
+    /// result from upgrades or downgrades.",
+    ///          "readOnly": true,
+    ///          "type": "object",
+    ///          "properties": {
+    ///            "fight_mode": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_fight_mode_turned_on"
+    ///            },
+    ///            "sbfm_likely_automated": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_sbfm_likely_automated_turned_on"
+    ///            }
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementSbfmDefinitelyConfig {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub ai_bots_protection: ::std::option::Option<BotManagementAiBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub cf_robots_variant: ::std::option::Option<BotManagementCfRobotsVariant>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub content_bots_protection: ::std::option::Option<BotManagementContentBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub crawler_protection: ::std::option::Option<BotManagementCrawlerProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub enable_js: ::std::option::Option<BotManagementEnableJs>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_robots_txt_managed: ::std::option::Option<BotManagementIsRobotsTxtManaged>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub optimize_wordpress: ::std::option::Option<BotManagementOptimizeWordpress>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_definitely_automated: ::std::option::Option<BotManagementSbfmDefinitelyAutomated>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_static_resource_protection:
+            ::std::option::Option<BotManagementSbfmStaticResourceProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_verified_bots: ::std::option::Option<BotManagementSbfmVerifiedBots>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub stale_zone_configuration: ::std::option::Option<StaleZoneConfiguration>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub using_latest_model: ::std::option::Option<BotManagementUsingLatestModel>,
+    }
+
+    impl ::std::default::Default for BotManagementSbfmDefinitelyConfig {
+        fn default() -> Self {
+            Self {
+                ai_bots_protection: Default::default(),
+                cf_robots_variant: Default::default(),
+                content_bots_protection: Default::default(),
+                crawler_protection: Default::default(),
+                enable_js: Default::default(),
+                is_robots_txt_managed: Default::default(),
+                optimize_wordpress: Default::default(),
+                sbfm_definitely_automated: Default::default(),
+                sbfm_static_resource_protection: Default::default(),
+                sbfm_verified_bots: Default::default(),
+                stale_zone_configuration: Default::default(),
+                using_latest_model: Default::default(),
+            }
+        }
+    }
+
+    ///Super Bot Fight Mode (SBFM) action to take on likely automated requests.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Super Bot Fight Mode (SBFM) action to take on likely
+    /// automated requests.",
+    ///  "examples": [
+    ///    "allow"
+    ///  ],
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "allow",
+    ///    "block",
+    ///    "managed_challenge"
+    ///  ],
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum BotManagementSbfmLikelyAutomated {
+        #[serde(rename = "allow")]
+        Allow,
+        #[serde(rename = "block")]
+        Block,
+        #[serde(rename = "managed_challenge")]
+        ManagedChallenge,
+    }
+
+    impl ::std::fmt::Display for BotManagementSbfmLikelyAutomated {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Allow => f.write_str("allow"),
+                Self::Block => f.write_str("block"),
+                Self::ManagedChallenge => f.write_str("managed_challenge"),
+            }
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSbfmLikelyAutomated {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "allow" => Ok(Self::Allow),
+                "block" => Ok(Self::Block),
+                "managed_challenge" => Ok(Self::ManagedChallenge),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementSbfmLikelyAutomated {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for BotManagementSbfmLikelyAutomated {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for BotManagementSbfmLikelyAutomated {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    ///Indicates that the zone's likely automated requests are being blocked or
+    /// challenged.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "sbfm_likely_automated",
+    ///  "description": "Indicates that the zone's likely automated requests are
+    /// being blocked or challenged.",
+    ///  "type": "string",
+    ///  "x-auditable": true
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    #[serde(transparent)]
+    pub struct BotManagementSbfmLikelyAutomatedTurnedOn(pub ::std::string::String);
+    impl ::std::ops::Deref for BotManagementSbfmLikelyAutomatedTurnedOn {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSbfmLikelyAutomatedTurnedOn> for ::std::string::String {
+        fn from(value: BotManagementSbfmLikelyAutomatedTurnedOn) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<::std::string::String> for BotManagementSbfmLikelyAutomatedTurnedOn {
+        fn from(value: ::std::string::String) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSbfmLikelyAutomatedTurnedOn {
+        type Err = ::std::convert::Infallible;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.to_string()))
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementSbfmLikelyAutomatedTurnedOn {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///`BotManagementSbfmLikelyConfig`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "SBFM Biz Plan",
+    ///  "allOf": [
+    ///    {
+    ///      "$ref": "#/components/schemas/bot-management_base_config"
+    ///    },
+    ///    {
+    ///      "properties": {
+    ///        "optimize_wordpress": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_optimize_wordpress"
+    ///        },
+    ///        "sbfm_definitely_automated": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_sbfm_definitely_automated"
+    ///        },
+    ///        "sbfm_likely_automated": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_sbfm_likely_automated"
+    ///        },
+    ///        "sbfm_static_resource_protection": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_sbfm_static_resource_protection"
+    ///        },
+    ///        "sbfm_verified_bots": {
+    ///          "$ref":
+    /// "#/components/schemas/bot-management_sbfm_verified_bots"
+    ///        },
+    ///        "stale_zone_configuration": {
+    ///          "title": "stale_zone_configuration",
+    ///          "description": "A read-only field that shows which unauthorized
+    /// settings are currently active on the zone. These settings typically
+    /// result from upgrades or downgrades.",
+    ///          "readOnly": true,
+    ///          "type": "object",
+    ///          "properties": {
+    ///            "fight_mode": {
+    ///              "$ref":
+    /// "#/components/schemas/bot-management_fight_mode_turned_on"
+    ///            }
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct BotManagementSbfmLikelyConfig {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub ai_bots_protection: ::std::option::Option<BotManagementAiBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub cf_robots_variant: ::std::option::Option<BotManagementCfRobotsVariant>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub content_bots_protection: ::std::option::Option<BotManagementContentBotsProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub crawler_protection: ::std::option::Option<BotManagementCrawlerProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub enable_js: ::std::option::Option<BotManagementEnableJs>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_robots_txt_managed: ::std::option::Option<BotManagementIsRobotsTxtManaged>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub optimize_wordpress: ::std::option::Option<BotManagementOptimizeWordpress>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_definitely_automated: ::std::option::Option<BotManagementSbfmDefinitelyAutomated>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_likely_automated: ::std::option::Option<BotManagementSbfmLikelyAutomated>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_static_resource_protection:
+            ::std::option::Option<BotManagementSbfmStaticResourceProtection>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_verified_bots: ::std::option::Option<BotManagementSbfmVerifiedBots>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub stale_zone_configuration: ::std::option::Option<StaleZoneConfiguration>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub using_latest_model: ::std::option::Option<BotManagementUsingLatestModel>,
+    }
+
+    impl ::std::default::Default for BotManagementSbfmLikelyConfig {
+        fn default() -> Self {
+            Self {
+                ai_bots_protection: Default::default(),
+                cf_robots_variant: Default::default(),
+                content_bots_protection: Default::default(),
+                crawler_protection: Default::default(),
+                enable_js: Default::default(),
+                is_robots_txt_managed: Default::default(),
+                optimize_wordpress: Default::default(),
+                sbfm_definitely_automated: Default::default(),
+                sbfm_likely_automated: Default::default(),
+                sbfm_static_resource_protection: Default::default(),
+                sbfm_verified_bots: Default::default(),
+                stale_zone_configuration: Default::default(),
+                using_latest_model: Default::default(),
+            }
+        }
+    }
+
+    ///Super Bot Fight Mode (SBFM) to enable static resource protection.
+    ///Enable if static resources on your application need bot protection.
+    ///Note: Static resource protection can also result in legitimate traffic
+    /// being blocked.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Super Bot Fight Mode (SBFM) to enable static resource
+    /// protection.\nEnable if static resources on your application need bot
+    /// protection.\nNote: Static resource protection can also result in
+    /// legitimate traffic being blocked.\n",
+    ///  "examples": [
+    ///    true
+    ///  ],
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementSbfmStaticResourceProtection(pub bool);
+    impl ::std::ops::Deref for BotManagementSbfmStaticResourceProtection {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSbfmStaticResourceProtection> for bool {
+        fn from(value: BotManagementSbfmStaticResourceProtection) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementSbfmStaticResourceProtection {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSbfmStaticResourceProtection {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementSbfmStaticResourceProtection {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementSbfmStaticResourceProtection {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementSbfmStaticResourceProtection {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///Indicates that the zone's static resource protection is turned on.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "sbfm_static_resource_protection",
+    ///  "description": "Indicates that the zone's static resource protection is
+    /// turned on.",
+    ///  "type": "string",
+    ///  "x-auditable": true
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    #[serde(transparent)]
+    pub struct BotManagementSbfmStaticResourceProtectionTurnedOn(pub ::std::string::String);
+    impl ::std::ops::Deref for BotManagementSbfmStaticResourceProtectionTurnedOn {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSbfmStaticResourceProtectionTurnedOn>
+        for ::std::string::String
+    {
+        fn from(value: BotManagementSbfmStaticResourceProtectionTurnedOn) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<::std::string::String>
+        for BotManagementSbfmStaticResourceProtectionTurnedOn
+    {
+        fn from(value: ::std::string::String) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSbfmStaticResourceProtectionTurnedOn {
+        type Err = ::std::convert::Infallible;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.to_string()))
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementSbfmStaticResourceProtectionTurnedOn {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///Super Bot Fight Mode (SBFM) action to take on verified bots requests.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Super Bot Fight Mode (SBFM) action to take on verified
+    /// bots requests.",
+    ///  "examples": [
+    ///    "allow"
+    ///  ],
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "allow",
+    ///    "block"
+    ///  ],
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum BotManagementSbfmVerifiedBots {
+        #[serde(rename = "allow")]
+        Allow,
+        #[serde(rename = "block")]
+        Block,
+    }
+
+    impl ::std::fmt::Display for BotManagementSbfmVerifiedBots {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Allow => f.write_str("allow"),
+                Self::Block => f.write_str("block"),
+            }
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSbfmVerifiedBots {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "allow" => Ok(Self::Allow),
+                "block" => Ok(Self::Block),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementSbfmVerifiedBots {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for BotManagementSbfmVerifiedBots {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for BotManagementSbfmVerifiedBots {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    ///Indicates that the zone's verified bot requests are being blocked.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "sbfm_verified_bots",
+    ///  "description": "Indicates that the zone's verified bot requests are
+    /// being blocked.",
+    ///  "type": "string",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        Clone,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    #[serde(transparent)]
+    pub struct BotManagementSbfmVerifiedBotsTurnedOn(pub ::std::string::String);
+    impl ::std::ops::Deref for BotManagementSbfmVerifiedBotsTurnedOn {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSbfmVerifiedBotsTurnedOn> for ::std::string::String {
+        fn from(value: BotManagementSbfmVerifiedBotsTurnedOn) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<::std::string::String> for BotManagementSbfmVerifiedBotsTurnedOn {
+        fn from(value: ::std::string::String) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSbfmVerifiedBotsTurnedOn {
+        type Err = ::std::convert::Infallible;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.to_string()))
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementSbfmVerifiedBotsTurnedOn {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///Whether to disable tracking the highest bot score for a session in the
+    /// Bot Management cookie.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Whether to disable tracking the highest bot score for a
+    /// session in the Bot Management cookie.",
+    ///  "examples": [
+    ///    false
+    ///  ],
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementSuppressSessionScore(pub bool);
+    impl ::std::ops::Deref for BotManagementSuppressSessionScore {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSuppressSessionScore> for bool {
+        fn from(value: BotManagementSuppressSessionScore) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementSuppressSessionScore {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSuppressSessionScore {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementSuppressSessionScore {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementSuppressSessionScore {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementSuppressSessionScore {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///Indicates that the zone's session score tracking is disabled.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "suppress_session_score",
+    ///  "description": "Indicates that the zone's session score tracking is
+    /// disabled.",
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementSuppressSessionScoreTurnedOff(pub bool);
+    impl ::std::ops::Deref for BotManagementSuppressSessionScoreTurnedOff {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementSuppressSessionScoreTurnedOff> for bool {
+        fn from(value: BotManagementSuppressSessionScoreTurnedOff) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementSuppressSessionScoreTurnedOff {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementSuppressSessionScoreTurnedOff {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementSuppressSessionScoreTurnedOff {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementSuppressSessionScoreTurnedOff {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementSuppressSessionScoreTurnedOff {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
+    ///A read-only field that indicates whether the zone currently is running
+    /// the latest ML model.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "A read-only field that indicates whether the zone
+    /// currently is running the latest ML model.\n",
+    ///  "readOnly": true,
+    ///  "examples": [
+    ///    true
+    ///  ],
+    ///  "type": "boolean",
+    ///  "x-auditable": true,
+    ///  "x-stainless-terraform-configurability": "computed_optional"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct BotManagementUsingLatestModel(pub bool);
+    impl ::std::ops::Deref for BotManagementUsingLatestModel {
+        type Target = bool;
+        fn deref(&self) -> &bool {
+            &self.0
+        }
+    }
+
+    impl ::std::convert::From<BotManagementUsingLatestModel> for bool {
+        fn from(value: BotManagementUsingLatestModel) -> Self {
+            value.0
+        }
+    }
+
+    impl ::std::convert::From<bool> for BotManagementUsingLatestModel {
+        fn from(value: bool) -> Self {
+            Self(value)
+        }
+    }
+
+    impl ::std::str::FromStr for BotManagementUsingLatestModel {
+        type Err = <bool as ::std::str::FromStr>::Err;
+        fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+            Ok(Self(value.parse()?))
+        }
+    }
+
+    impl ::std::convert::TryFrom<&str> for BotManagementUsingLatestModel {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for BotManagementUsingLatestModel {
+        type Error = <bool as ::std::str::FromStr>::Err;
+        fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for BotManagementUsingLatestModel {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
     ///`CacheApiResponseCommonFailure`
     ///
     /// <details><summary>JSON schema</summary>
@@ -18536,6 +21347,81 @@ pub mod types {
         }
     }
 
+    ///A read-only field that shows which unauthorized settings are currently
+    /// active on the zone. These settings typically result from upgrades or
+    /// downgrades.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "title": "stale_zone_configuration",
+    ///  "description": "A read-only field that shows which unauthorized
+    /// settings are currently active on the zone. These settings typically
+    /// result from upgrades or downgrades.",
+    ///  "readOnly": true,
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "fight_mode": {
+    ///      "$ref": "#/components/schemas/bot-management_fight_mode_turned_on"
+    ///    },
+    ///    "optimize_wordpress": {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_optimize_wordpress_turned_on"
+    ///    },
+    ///    "sbfm_definitely_automated": {
+    ///      "$ref":
+    /// "#/components/schemas/
+    /// bot-management_sbfm_definitely_automated_turned_on"
+    ///    },
+    ///    "sbfm_likely_automated": {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_sbfm_likely_automated_turned_on"
+    ///    },
+    ///    "sbfm_static_resource_protection": {
+    ///      "$ref":
+    /// "#/components/schemas/
+    /// bot-management_sbfm_static_resource_protection_turned_on"
+    ///    },
+    ///    "sbfm_verified_bots": {
+    ///      "$ref":
+    /// "#/components/schemas/bot-management_sbfm_verified_bots_turned_on"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
+    pub struct StaleZoneConfiguration {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub fight_mode: ::std::option::Option<BotManagementFightModeTurnedOn>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub optimize_wordpress: ::std::option::Option<BotManagementOptimizeWordpressTurnedOn>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_definitely_automated:
+            ::std::option::Option<BotManagementSbfmDefinitelyAutomatedTurnedOn>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_likely_automated: ::std::option::Option<BotManagementSbfmLikelyAutomatedTurnedOn>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_static_resource_protection:
+            ::std::option::Option<BotManagementSbfmStaticResourceProtectionTurnedOn>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub sbfm_verified_bots: ::std::option::Option<BotManagementSbfmVerifiedBotsTurnedOn>,
+    }
+
+    impl ::std::default::Default for StaleZoneConfiguration {
+        fn default() -> Self {
+            Self {
+                fight_mode: Default::default(),
+                optimize_wordpress: Default::default(),
+                sbfm_definitely_automated: Default::default(),
+                sbfm_likely_automated: Default::default(),
+                sbfm_static_resource_protection: Default::default(),
+                sbfm_verified_bots: Default::default(),
+            }
+        }
+    }
+
     ///`Zones0GetResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -23016,6 +25902,151 @@ impl Client {
             .build()?;
         let info = OperationInfo {
             operation_id: "zones_0_patch",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            400u16..=499u16 => Err(Error::ErrorResponse(
+                ResponseValue::from_response(response).await?,
+            )),
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+
+    ///Get Zone Bot Management Config
+    ///
+    ///Retrieve a zone's Bot Management Config
+    ///
+    ///Sends a `GET` request to `/zones/{zone_id}/bot_management`
+    pub async fn bot_management_for_a_zone_get_config<'a>(
+        &'a self,
+        zone_id: &'a types::BotManagementIdentifier,
+    ) -> Result<
+        ResponseValue<types::BotManagementBotManagementResponseBody>,
+        Error<types::BotManagementForAZoneGetConfigResponse>,
+    > {
+        let url = format!(
+            "{}/zones/{}/bot_management",
+            self.baseurl,
+            encode_path(&zone_id.to_string()),
+        );
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map.append(
+            ::reqwest::header::HeaderName::from_static("api-version"),
+            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+        );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .get(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "bot_management_for_a_zone_get_config",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            400u16..=499u16 => Err(Error::ErrorResponse(
+                ResponseValue::from_response(response).await?,
+            )),
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+
+    ///Update Zone Bot Management Config
+    ///
+    ///Updates the Bot Management configuration for a zone.
+    ///
+    ///This API is used to update:
+    /// - **Bot Fight Mode**
+    /// - **Super Bot Fight Mode**
+    /// - **Bot Management for Enterprise**
+    ///
+    ///See [Bot Plans](https://developers.cloudflare.com/bots/plans/) for more information on the different plans
+    ///\
+    ///If you recently upgraded or downgraded your plan, refer to the following
+    /// examples to clean up old configurations. Copy and paste the example
+    /// body to remove old zone configurations based on your current plan. #### Clean up configuration for Bot Fight Mode plan
+    ///```json
+    /// {
+    ///  "sbfm_likely_automated": "allow",
+    ///  "sbfm_definitely_automated": "allow",
+    ///  "sbfm_verified_bots": "allow",
+    ///  "sbfm_static_resource_protection": false,
+    ///  "optimize_wordpress": false,
+    ///  "suppress_session_score": false
+    /// }
+    /// ```
+    ///#### Clean up configuration for SBFM Pro plan
+    ///```json
+    /// {
+    ///  "sbfm_likely_automated": "allow",
+    ///  "fight_mode": false
+    /// }
+    /// ```
+    ///#### Clean up configuration for SBFM Biz plan
+    ///```json
+    /// {
+    ///  "fight_mode": false
+    /// }
+    /// ```
+    ///#### Clean up configuration for BM Enterprise Subscription plan
+    ///It is strongly recommended that you ensure you have [custom rules](https://developers.cloudflare.com/waf/custom-rules/) in place to protect your zone before disabling the SBFM rules. Without these protections, your zone is vulnerable to attacks.
+    ///```json
+    /// {
+    ///  "sbfm_likely_automated": "allow",
+    ///  "sbfm_definitely_automated": "allow",
+    ///  "sbfm_verified_bots": "allow",
+    ///  "sbfm_static_resource_protection": false,
+    ///  "optimize_wordpress": false,
+    ///  "fight_mode": false
+    /// }
+    /// ```
+    ///
+    ///
+    ///Sends a `PUT` request to `/zones/{zone_id}/bot_management`
+    pub async fn bot_management_for_a_zone_update_config<'a>(
+        &'a self,
+        zone_id: &'a types::BotManagementIdentifier,
+        body: &'a types::BotManagementConfigSingle,
+    ) -> Result<
+        ResponseValue<types::BotManagementBotManagementResponseBody>,
+        Error<types::BotManagementForAZoneUpdateConfigResponse>,
+    > {
+        let url = format!(
+            "{}/zones/{}/bot_management",
+            self.baseurl,
+            encode_path(&zone_id.to_string()),
+        );
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map.append(
+            ::reqwest::header::HeaderName::from_static("api-version"),
+            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+        );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .put(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "bot_management_for_a_zone_update_config",
         };
         self.pre(&mut request, &info).await?;
         let result = self.exec(request, &info).await;

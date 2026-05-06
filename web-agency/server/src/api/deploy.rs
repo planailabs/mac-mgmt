@@ -292,29 +292,13 @@ async fn deploy_status(
 // ── Background deploy ─────────────────────────────────────────────────
 
 async fn get_cf_token(pool: &PgPool, cred_id: Uuid) -> Result<String, String> {
-    let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
-        "SELECT encrypted_data FROM credentials WHERE id = $1",
-    )
-    .bind(cred_id).fetch_one(pool).await.map_err(|e| e.to_string())?;
-
-    let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| format!("decryption: {e}"))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| format!("parse: {e}"))?;
+    let data = crate::credentials::credential_json(pool, cred_id, "cloudflare").await.map_err(|e| e.to_string())?;
     data["api_token"].as_str().map(String::from).ok_or_else(|| "missing api_token".into())
 }
 
 async fn get_cf_account_id(pool: &PgPool, cred_id: Uuid) -> Result<String, String> {
-    let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
-        "SELECT encrypted_data FROM credentials WHERE id = $1",
-    )
-    .bind(cred_id).fetch_one(pool).await.map_err(|e| e.to_string())?;
-
-    let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| format!("decryption: {e}"))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| format!("parse: {e}"))?;
-    let token = data["api_token"].as_str().ok_or("missing api_token")?;
-    let configured = data["account_id"].as_str().unwrap_or("");
-    let client = cloudflare_api::compat::SimpleClient::new(token);
-    client.resolve_account_id(configured).await
-        .map_err(|e| format!("failed to resolve account ID: {e}"))
+    let (_, account_id) = crate::credentials::cf_client_with_account(pool, cred_id).await.map_err(|e| e.to_string())?;
+    Ok(account_id)
 }
 
 async fn run_wrangler_deploy(

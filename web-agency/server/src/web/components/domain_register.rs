@@ -33,27 +33,17 @@ async fn check_domain_availability(credential_id: Uuid, domain: String) -> Resul
     let _user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let cred = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT credential_type, encrypted_data FROM credentials WHERE id = $1",
+    let cred_type = sqlx::query_scalar::<_, String>(
+        "SELECT credential_type FROM credentials WHERE id = $1",
     ).bind(credential_id).fetch_optional(&pool).await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("credential not found"))?;
 
-    let (cred_type, encrypted) = cred;
-    let decrypted = crate::crypto::decrypt(&encrypted)
-        .map_err(|e| ServerFnError::new(format!("decryption: {e}")))?;
-    let data: serde_json::Value = serde_json::from_slice(&decrypted)
-        .map_err(|e| ServerFnError::new(format!("invalid credential: {e}")))?;
-
     match cred_type.as_str() {
         "cloudflare" => {
-            let token = data["api_token"].as_str().ok_or_else(|| ServerFnError::new("missing api_token"))?;
-            let account_id = data["account_id"].as_str().unwrap_or("");
-            if account_id.is_empty() {
-                return Err(ServerFnError::new("account_id required"));
-            }
-            let client = cloudflare_api::compat::SimpleClient::new(token);
-            let results = client.check_domains(account_id, &[domain.clone()]).await
+            let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
+            let results = client.check_domains(&account_id, &[domain.clone()]).await
                 .map_err(|e| ServerFnError::new(format!("CF API: {e}")))?;
             let r = results.into_iter().next().ok_or_else(|| ServerFnError::new("no result"))?;
             Ok(AvailabilityResult {
@@ -65,9 +55,8 @@ async fn check_domain_availability(credential_id: Uuid, domain: String) -> Resul
             })
         }
         "spaceship" => {
-            let key = data["api_key"].as_str().ok_or_else(|| ServerFnError::new("missing api_key"))?;
-            let secret = data["api_secret"].as_str().ok_or_else(|| ServerFnError::new("missing api_secret"))?;
-            let client = spaceship_api::compat::SimpleClient::new(key, secret);
+            let client = crate::credentials::spaceship_client(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
             let r = client.check_availability(&domain).await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API: {e}")))?;
             let available = r.status.as_deref() == Some("available");

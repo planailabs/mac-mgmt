@@ -3515,6 +3515,243 @@
         }
       }
     },
+    "/zones/{zone_id}/bot_management": {
+      "get": {
+        "description": "Retrieve a zone's Bot Management Config",
+        "operationId": "bot-management-for-a-zone-get-config",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "zone_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/bot-management_identifier"
+            }
+          }
+        ],
+        "responses": {
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/bot-management_bot_management_response_body"
+                    },
+                    {
+                      "$ref": "#/components/schemas/bot-management_api-response-common-failure"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Bot Management config response failure"
+          },
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/bot-management_bot_management_response_body"
+                }
+              }
+            },
+            "description": "Bot Management config response"
+          }
+        },
+        "security": [
+          {
+            "api_token": []
+          },
+          {
+            "api_email": [],
+            "api_key": []
+          }
+        ],
+        "summary": "Get Zone Bot Management Config",
+        "tags": [
+          "Bot Settings"
+        ],
+        "x-api-token-group": [
+          "Bot Management Write",
+          "Bot Management Read"
+        ],
+        "x-cfPlanAvailability": {
+          "business": true,
+          "enterprise": true,
+          "free": true,
+          "pro": true
+        }
+      },
+      "put": {
+        "description": "Updates the Bot Management configuration for a zone.\n\nThis API is used to update:\n- **Bot Fight Mode**\n- **Super Bot Fight Mode**\n- **Bot Management for Enterprise**\n\nSee [Bot Plans](https://developers.cloudflare.com/bots/plans/) for more information on the different plans\n\\\nIf you recently upgraded or downgraded your plan, refer to the following examples to clean up old configurations.\nCopy and paste the example body to remove old zone configurations based on your current plan.\n#### Clean up configuration for Bot Fight Mode plan\n```json\n{\n  \"sbfm_likely_automated\": \"allow\",\n  \"sbfm_definitely_automated\": \"allow\",\n  \"sbfm_verified_bots\": \"allow\",\n  \"sbfm_static_resource_protection\": false,\n  \"optimize_wordpress\": false,\n  \"suppress_session_score\": false\n}\n```\n#### Clean up configuration for SBFM Pro plan\n```json\n{\n  \"sbfm_likely_automated\": \"allow\",\n  \"fight_mode\": false\n}\n```\n#### Clean up configuration for SBFM Biz plan\n```json\n{\n  \"fight_mode\": false\n}\n```\n#### Clean up configuration for BM Enterprise Subscription plan\nIt is strongly recommended that you ensure you have [custom rules](https://developers.cloudflare.com/waf/custom-rules/) in place to protect your zone before disabling the SBFM rules. Without these protections, your zone is vulnerable to attacks.\n```json\n{\n  \"sbfm_likely_automated\": \"allow\",\n  \"sbfm_definitely_automated\": \"allow\",\n  \"sbfm_verified_bots\": \"allow\",\n  \"sbfm_static_resource_protection\": false,\n  \"optimize_wordpress\": false,\n  \"fight_mode\": false\n}\n```\n",
+        "operationId": "bot-management-for-a-zone-update-config",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "zone_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/bot-management_identifier"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "example1": {
+                  "summary": "Bot Fight Mode default example",
+                  "value": {
+                    "ai_bots_protection": "disabled",
+                    "cf_robots_variant": "off",
+                    "crawler_protection": "disabled",
+                    "enable_js": true,
+                    "fight_mode": true,
+                    "is_robots_txt_managed": false
+                  }
+                },
+                "example2": {
+                  "summary": "SBFM Pro plan default example",
+                  "value": {
+                    "ai_bots_protection": "disabled",
+                    "cf_robots_variant": "off",
+                    "crawler_protection": "disabled",
+                    "enable_js": true,
+                    "is_robots_txt_managed": false,
+                    "sbfm_definitely_automated": "block",
+                    "sbfm_static_resource_protection": true,
+                    "sbfm_verified_bots": "block"
+                  }
+                },
+                "example3": {
+                  "summary": "SBFM Biz plan default example",
+                  "value": {
+                    "ai_bots_protection": "disabled",
+                    "cf_robots_variant": "off",
+                    "crawler_protection": "disabled",
+                    "enable_js": true,
+                    "is_robots_txt_managed": false,
+                    "sbfm_definitely_automated": "block",
+                    "sbfm_likely_automated": "managed_challenge",
+                    "sbfm_static_resource_protection": true,
+                    "sbfm_verified_bots": "block"
+                  }
+                },
+                "example4": {
+                  "summary": "BM Enterprise Subscription default example",
+                  "value": {
+                    "ai_bots_protection": "disabled",
+                    "auto_update_model": true,
+                    "bm_cookie_enabled": true,
+                    "cf_robots_variant": "off",
+                    "crawler_protection": "disabled",
+                    "enable_js": true,
+                    "is_robots_txt_managed": false
+                  }
+                },
+                "example5": {
+                  "summary": "Clean up configuration for Bot Fight Mode plan",
+                  "value": {
+                    "bm_cookie_enabled": true,
+                    "optimize_wordpress": false,
+                    "sbfm_definitely_automated": "allow",
+                    "sbfm_likely_automated": "allow",
+                    "sbfm_static_resource_protection": false,
+                    "sbfm_verified_bots": "allow",
+                    "suppress_session_score": false
+                  }
+                },
+                "example6": {
+                  "summary": "Clean up configuration for SBFM Pro plan",
+                  "value": {
+                    "fight_mode": false,
+                    "sbfm_likely_automated": "allow"
+                  }
+                },
+                "example7": {
+                  "summary": "Clean up configuration for SBFM Biz plan",
+                  "value": {
+                    "fight_mode": false
+                  }
+                },
+                "example8": {
+                  "summary": "Clean up configuration for BM Enterprise Subscription",
+                  "value": {
+                    "fight_mode": false,
+                    "optimize_wordpress": false,
+                    "sbfm_definitely_automated": "allow",
+                    "sbfm_likely_automated": "allow",
+                    "sbfm_static_resource_protection": false,
+                    "sbfm_verified_bots": "allow"
+                  }
+                },
+                "example9": {
+                  "summary": "Block AI Bots on Ad pages only",
+                  "value": {
+                    "ai_bots_protection": "only_on_ad_pages"
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/bot-management_config_single"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/bot-management_bot_management_response_body"
+                    },
+                    {
+                      "$ref": "#/components/schemas/bot-management_api-response-common-failure"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Update Bot Management response failure"
+          },
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/bot-management_bot_management_response_body"
+                }
+              }
+            },
+            "description": "Update Bot Management response"
+          }
+        },
+        "security": [
+          {
+            "api_token": []
+          },
+          {
+            "api_email": [],
+            "api_key": []
+          }
+        ],
+        "summary": "Update Zone Bot Management Config",
+        "tags": [
+          "Bot Settings"
+        ],
+        "x-api-token-group": [
+          "Bot Management Write"
+        ],
+        "x-cfPlanAvailability": {
+          "business": true,
+          "enterprise": true,
+          "free": true,
+          "pro": true
+        }
+      }
+    },
     "/zones/{zone_id}/dns_records": {
       "get": {
         "description": "List, search, sort, and filter a zones' DNS records.",
@@ -4736,29 +4973,6 @@
   },
   "components": {
     "schemas": {
-      "pages_domain_name": {
-        "description": "The domain name.",
-        "example": "this-is-my-domain-01.com",
-        "pattern": "^([a-zA-Z0-9][\\-a-zA-Z0-9]*\\.)+[\\-a-zA-Z0-9]{2,20}$",
-        "type": "string",
-        "x-auditable": true
-      },
-      "dns-records_identifier": {
-        "description": "Identifier.",
-        "example": "023e105f4ecef8ad9ca31a8372d0c353",
-        "maxLength": 32,
-        "type": "string",
-        "x-auditable": true
-      },
-      "iam_account_identifier": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/iam_common_components-schemas-identifier"
-          }
-        ],
-        "description": "Account identifier tag.",
-        "title": "Account Identifier"
-      },
       "dns-records_api-response-common-failure": {
         "properties": {
           "errors": {
@@ -4813,125 +5027,6 @@
         "maxLength": 32,
         "readOnly": true,
         "type": "string"
-      },
-      "dns-records_dns-record-patch": {
-        "type": "object",
-        "description": "DNS record (simplified). Original: dns-records_dns-record-patch",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "content": {
-            "type": "string"
-          },
-          "ttl": {
-            "type": "number"
-          },
-          "proxied": {
-            "type": "boolean"
-          },
-          "proxiable": {
-            "type": "boolean"
-          },
-          "comment": {
-            "type": "string"
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "data": {
-            "type": "object",
-            "additionalProperties": true
-          },
-          "priority": {
-            "type": "number"
-          },
-          "created_on": {
-            "type": "string"
-          },
-          "modified_on": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": true
-      },
-      "registrar-api_registration-response-collection": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/registrar-api_api-response-common"
-          },
-          {
-            "properties": {
-              "result": {
-                "items": {
-                  "$ref": "#/components/schemas/registrar-api_registration"
-                },
-                "type": "array"
-              },
-              "result_info": {
-                "$ref": "#/components/schemas/registrar-api_cursor_result_info"
-              }
-            },
-            "required": [
-              "result",
-              "result_info"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "iam_response_collection_accounts": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/iam_api-response-collection"
-          },
-          {
-            "properties": {
-              "result": {
-                "items": {
-                  "$ref": "#/components/schemas/iam_account"
-                },
-                "type": "array"
-              }
-            },
-            "type": "object"
-          }
-        ],
-        "title": "Response with a list of accounts"
-      },
-      "cache_api-response-single-id": {
-        "properties": {
-          "errors": {
-            "$ref": "#/components/schemas/cache_messages"
-          },
-          "messages": {
-            "$ref": "#/components/schemas/cache_messages"
-          },
-          "result": {
-            "$ref": "#/components/schemas/cache_result"
-          },
-          "success": {
-            "description": "Indicates the API call's success or failure.",
-            "example": true,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
-        ],
-        "type": "object"
       },
       "pages_project": {
         "properties": {
@@ -5512,37 +5607,6 @@
         },
         "type": "object"
       },
-      "registrar-api_domain_check_response": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/registrar-api_api-response-common"
-          },
-          {
-            "properties": {
-              "result": {
-                "description": "Contains the availability check results.",
-                "properties": {
-                  "domains": {
-                    "description": "Array of domain availability results. Domains on unsupported\nextensions are included with `registrable: false` and a `reason`\nfield. Malformed domain names may be omitted.\n",
-                    "items": {
-                      "$ref": "#/components/schemas/registrar-api_domain_check_result"
-                    },
-                    "type": "array"
-                  }
-                },
-                "required": [
-                  "domains"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "result"
-            ],
-            "type": "object"
-          }
-        ]
-      },
       "iam_create-account": {
         "properties": {
           "name": {
@@ -5630,54 +5694,6 @@
         },
         "additionalProperties": true
       },
-      "pages_api-response-common-failure": {
-        "properties": {
-          "errors": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/pages_messages"
-              }
-            ],
-            "example": [
-              {
-                "code": 7003,
-                "message": "No route for the URI"
-              }
-            ],
-            "minLength": 1
-          },
-          "messages": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/pages_messages"
-              }
-            ],
-            "example": []
-          },
-          "result": {
-            "enum": [
-              null
-            ],
-            "nullable": true,
-            "type": "object"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "enum": [
-              false
-            ],
-            "example": false,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
-        ],
-        "type": "object"
-      },
       "dns-records_page": {
         "default": 1,
         "description": "Page number of paginated results.",
@@ -5706,31 +5722,9 @@
         ],
         "type": "object"
       },
-      "registrar-api_workflow-status-response-single": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/registrar-api_api-response-common"
-          },
-          {
-            "properties": {
-              "result": {
-                "$ref": "#/components/schemas/registrar-api_workflow_status"
-              }
-            },
-            "type": "object"
-          }
-        ]
-      },
-      "zones_type": {
-        "default": "full",
-        "description": "A full zone implies that DNS is hosted with Cloudflare. A partial zone is\ntypically a partner-hosted zone or a CNAME setup.\n",
-        "enum": [
-          "full",
-          "partial",
-          "secondary",
-          "internal"
-        ],
-        "example": "full",
+      "dns-records_search": {
+        "description": "Allows searching in multiple properties of a DNS record simultaneously. This parameter is intended for human users, not automation. Its exact behavior is intentionally left unspecified and is subject to change in the future. This parameter works independently of the `match` setting. For automated searches, please use the other available parameters.\n",
+        "example": "www.cloudflare.com",
         "type": "string"
       },
       "pages_api-response-common": {
@@ -5764,23 +5758,12 @@
         "type": "string",
         "x-auditable": true
       },
-      "dns-records_search": {
-        "description": "Allows searching in multiple properties of a DNS record simultaneously. This parameter is intended for human users, not automation. Its exact behavior is intentionally left unspecified and is subject to change in the future. This parameter works independently of the `match` setting. For automated searches, please use the other available parameters.\n",
-        "example": "www.cloudflare.com",
-        "type": "string"
-      },
       "iam_components-schemas-account": {
         "allOf": [
           {
             "$ref": "#/components/schemas/iam_account"
           }
         ]
-      },
-      "zones_identifier": {
-        "description": "Identifier",
-        "example": "023e105f4ecef8ad9ca31a8372d0c353",
-        "maxLength": 32,
-        "type": "string"
       },
       "zones_paused": {
         "default": false,
@@ -5838,43 +5821,6 @@
           "errors",
           "messages",
           "result"
-        ],
-        "type": "object"
-      },
-      "registrar-api_registration_create_request": {
-        "properties": {
-          "auto_renew": {
-            "default": false,
-            "description": "Enable or disable automatic renewal. Defaults to `false` if omitted.\nSetting this field to `true` is an explicit opt-in authorizing\nCloudflare to charge the account's default payment method up to 30\ndays before domain expiry to renew the domain automatically.\nRenewal pricing may change over time based on registry pricing.\n",
-            "example": false,
-            "type": "boolean"
-          },
-          "contacts": {
-            "$ref": "#/components/schemas/registrar-api_registration_contacts"
-          },
-          "domain_name": {
-            "$ref": "#/components/schemas/registrar-api_domain_name"
-          },
-          "privacy_mode": {
-            "default": "redaction",
-            "description": "WHOIS privacy mode for the registration. Defaults to `redaction`.\n- `off`: Do not request WHOIS privacy.\n- `redaction`: Request WHOIS redaction where supported by the extension.\n  Some extensions do not support privacy/redaction.\n",
-            "enum": [
-              "false",
-              "redaction"
-            ],
-            "example": "redaction",
-            "type": "string"
-          },
-          "years": {
-            "description": "Number of years to register (1\u201310). If omitted, defaults to the\nminimum registration period required by the registry for this\nextension. For most extensions this is 1 year, but some extensions\nrequire longer minimum terms (e.g., `.ai` requires a minimum of\n2 years).\n\nThe registry for each extension may also enforce its own maximum\nregistration term. If the requested value exceeds the registry's\nmaximum, the registration will be rejected. When in doubt, use the\ndefault by omitting this field.\n",
-            "example": 1,
-            "maximum": 10,
-            "minimum": 1,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "domain_name"
         ],
         "type": "object"
       },
@@ -6084,66 +6030,6 @@
         "maxLength": 32,
         "type": "string",
         "x-auditable": true
-      },
-      "registrar-api_registration_update_request": {
-        "description": "Request to update an existing domain registration.\n\nThis endpoint currently supports updating `auto_renew` only.\n",
-        "minProperties": 1,
-        "properties": {
-          "auto_renew": {
-            "description": "Enable or disable automatic renewal.\nSetting this field to `true` authorizes Cloudflare to charge the\naccount's default payment method up to 30 days before domain expiry\nto renew the domain automatically. Renewal pricing may change over\ntime based on registry pricing.\n",
-            "example": true,
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
-      "dnssec_api-response-common-failure": {
-        "properties": {
-          "errors": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/dnssec_messages"
-              }
-            ],
-            "example": [
-              {
-                "code": 7003,
-                "message": "No route for the URI"
-              }
-            ],
-            "minLength": 1
-          },
-          "messages": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/dnssec_messages"
-              }
-            ],
-            "example": []
-          },
-          "result": {
-            "enum": [
-              null
-            ],
-            "nullable": true,
-            "type": "object"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "enum": [
-              false
-            ],
-            "example": false,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
-        ],
-        "type": "object"
       },
       "zones_zone": {
         "properties": {
@@ -6525,6 +6411,538 @@
         ],
         "type": "object"
       },
+      "dnssec_identifier": {
+        "description": "Identifier.",
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "type": "string",
+        "x-auditable": true
+      },
+      "cache_api-response-common-failure": {
+        "properties": {
+          "errors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/cache_messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minLength": 1
+          },
+          "messages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/cache_messages"
+              }
+            ],
+            "example": []
+          },
+          "result": {
+            "$ref": "#/components/schemas/cache_result"
+          },
+          "success": {
+            "description": "Indicates the API call's success or failure.",
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
+      "pages_api-response-collection": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/pages_api-response-common"
+          },
+          {
+            "properties": {
+              "result_info": {
+                "properties": {
+                  "count": {
+                    "description": "Total number of results for the requested service.",
+                    "example": 1,
+                    "type": "number"
+                  },
+                  "page": {
+                    "description": "Current page within paginated list of results.",
+                    "example": 1,
+                    "type": "number"
+                  },
+                  "per_page": {
+                    "description": "Number of results per page of results.",
+                    "example": 20,
+                    "type": "number"
+                  },
+                  "total_count": {
+                    "description": "Total results available without any search parameters.",
+                    "example": 2000,
+                    "type": "number"
+                  },
+                  "total_pages": {
+                    "description": "The number of total pages in the entire result set.",
+                    "example": 100,
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "type": "object"
+      },
+      "registrar-api_registration-response-single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/registrar-api_api-response-common"
+          },
+          {
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/registrar-api_registration"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "zones_vanity_name_servers": {
+        "default": [],
+        "description": "An array of domains used for custom name servers. This is only\navailable for Business and Enterprise plans.",
+        "example": [
+          "ns1.example.com",
+          "ns2.example.com"
+        ],
+        "items": {
+          "format": "hostname",
+          "maxLength": 253,
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "dns-records_proxied": {
+        "default": false,
+        "description": "Whether the record is receiving the performance and security benefits of Cloudflare.",
+        "example": true,
+        "type": "boolean",
+        "x-auditable": true
+      },
+      "dnssec_dnssec_multi_signer": {
+        "description": "If true, multi-signer DNSSEC is enabled on the zone, allowing multiple\nproviders to serve a DNSSEC-signed zone at the same time.\nThis is required for DNSKEY records (except those automatically\ngenerated by Cloudflare) to be added to the zone.\n\nSee [Multi-signer DNSSEC](https://developers.cloudflare.com/dns/dnssec/multi-signer-dnssec/) for details.",
+        "example": false,
+        "type": "boolean",
+        "x-auditable": true
+      },
+      "dns-records_per_page": {
+        "default": 100,
+        "description": "Number of DNS records per page.",
+        "example": 5,
+        "maximum": 5000000,
+        "minimum": 1,
+        "type": "number"
+      },
+      "dns-records_tag_match": {
+        "default": "all",
+        "description": "Whether to match all tag search requirements or at least one (any). If set to `all`, acts like a logical AND between tag filters. If set to `any`, acts like a logical OR instead. Note that the regular `match` parameter is still used to combine the resulting condition with other filters that aren't related to tags.\n",
+        "enum": [
+          "any",
+          "all"
+        ],
+        "example": "any",
+        "type": "string"
+      },
+      "zones_result_info": {
+        "properties": {
+          "count": {
+            "description": "Total number of results for the requested service.",
+            "example": 1,
+            "type": "number"
+          },
+          "page": {
+            "description": "Current page within paginated list of results.",
+            "example": 1,
+            "type": "number"
+          },
+          "per_page": {
+            "description": "Number of results per page of results.",
+            "example": 20,
+            "type": "number"
+          },
+          "total_count": {
+            "description": "Total results available without any search parameters.",
+            "example": 2000,
+            "type": "number"
+          },
+          "total_pages": {
+            "description": "Total number of pages",
+            "example": 100,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "pages_domain_name": {
+        "description": "The domain name.",
+        "example": "this-is-my-domain-01.com",
+        "pattern": "^([a-zA-Z0-9][\\-a-zA-Z0-9]*\\.)+[\\-a-zA-Z0-9]{2,20}$",
+        "type": "string",
+        "x-auditable": true
+      },
+      "dns-records_identifier": {
+        "description": "Identifier.",
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "type": "string",
+        "x-auditable": true
+      },
+      "iam_account_identifier": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/iam_common_components-schemas-identifier"
+          }
+        ],
+        "description": "Account identifier tag.",
+        "title": "Account Identifier"
+      },
+      "dns-records_dns-record-patch": {
+        "type": "object",
+        "description": "DNS record (simplified). Original: dns-records_dns-record-patch",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "ttl": {
+            "type": "number"
+          },
+          "proxied": {
+            "type": "boolean"
+          },
+          "proxiable": {
+            "type": "boolean"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "priority": {
+            "type": "number"
+          },
+          "created_on": {
+            "type": "string"
+          },
+          "modified_on": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "registrar-api_registration-response-collection": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/registrar-api_api-response-common"
+          },
+          {
+            "properties": {
+              "result": {
+                "items": {
+                  "$ref": "#/components/schemas/registrar-api_registration"
+                },
+                "type": "array"
+              },
+              "result_info": {
+                "$ref": "#/components/schemas/registrar-api_cursor_result_info"
+              }
+            },
+            "required": [
+              "result",
+              "result_info"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "iam_response_collection_accounts": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/iam_api-response-collection"
+          },
+          {
+            "properties": {
+              "result": {
+                "items": {
+                  "$ref": "#/components/schemas/iam_account"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "title": "Response with a list of accounts"
+      },
+      "cache_api-response-single-id": {
+        "properties": {
+          "errors": {
+            "$ref": "#/components/schemas/cache_messages"
+          },
+          "messages": {
+            "$ref": "#/components/schemas/cache_messages"
+          },
+          "result": {
+            "$ref": "#/components/schemas/cache_result"
+          },
+          "success": {
+            "description": "Indicates the API call's success or failure.",
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
+      "registrar-api_domain_check_response": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/registrar-api_api-response-common"
+          },
+          {
+            "properties": {
+              "result": {
+                "description": "Contains the availability check results.",
+                "properties": {
+                  "domains": {
+                    "description": "Array of domain availability results. Domains on unsupported\nextensions are included with `registrable: false` and a `reason`\nfield. Malformed domain names may be omitted.\n",
+                    "items": {
+                      "$ref": "#/components/schemas/registrar-api_domain_check_result"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "domains"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "pages_api-response-common-failure": {
+        "properties": {
+          "errors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/pages_messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minLength": 1
+          },
+          "messages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/pages_messages"
+              }
+            ],
+            "example": []
+          },
+          "result": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "enum": [
+              false
+            ],
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
+      "registrar-api_workflow-status-response-single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/registrar-api_api-response-common"
+          },
+          {
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/registrar-api_workflow_status"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "zones_type": {
+        "default": "full",
+        "description": "A full zone implies that DNS is hosted with Cloudflare. A partial zone is\ntypically a partner-hosted zone or a CNAME setup.\n",
+        "enum": [
+          "full",
+          "partial",
+          "secondary",
+          "internal"
+        ],
+        "example": "full",
+        "type": "string"
+      },
+      "zones_identifier": {
+        "description": "Identifier",
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "type": "string"
+      },
+      "registrar-api_registration_create_request": {
+        "properties": {
+          "auto_renew": {
+            "default": false,
+            "description": "Enable or disable automatic renewal. Defaults to `false` if omitted.\nSetting this field to `true` is an explicit opt-in authorizing\nCloudflare to charge the account's default payment method up to 30\ndays before domain expiry to renew the domain automatically.\nRenewal pricing may change over time based on registry pricing.\n",
+            "example": false,
+            "type": "boolean"
+          },
+          "contacts": {
+            "$ref": "#/components/schemas/registrar-api_registration_contacts"
+          },
+          "domain_name": {
+            "$ref": "#/components/schemas/registrar-api_domain_name"
+          },
+          "privacy_mode": {
+            "default": "redaction",
+            "description": "WHOIS privacy mode for the registration. Defaults to `redaction`.\n- `off`: Do not request WHOIS privacy.\n- `redaction`: Request WHOIS redaction where supported by the extension.\n  Some extensions do not support privacy/redaction.\n",
+            "enum": [
+              "false",
+              "redaction"
+            ],
+            "example": "redaction",
+            "type": "string"
+          },
+          "years": {
+            "description": "Number of years to register (1\u201310). If omitted, defaults to the\nminimum registration period required by the registry for this\nextension. For most extensions this is 1 year, but some extensions\nrequire longer minimum terms (e.g., `.ai` requires a minimum of\n2 years).\n\nThe registry for each extension may also enforce its own maximum\nregistration term. If the requested value exceeds the registry's\nmaximum, the registration will be rejected. When in doubt, use the\ndefault by omitting this field.\n",
+            "example": 1,
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "domain_name"
+        ],
+        "type": "object"
+      },
+      "registrar-api_registration_update_request": {
+        "description": "Request to update an existing domain registration.\n\nThis endpoint currently supports updating `auto_renew` only.\n",
+        "minProperties": 1,
+        "properties": {
+          "auto_renew": {
+            "description": "Enable or disable automatic renewal.\nSetting this field to `true` authorizes Cloudflare to charge the\naccount's default payment method up to 30 days before domain expiry\nto renew the domain automatically. Renewal pricing may change over\ntime based on registry pricing.\n",
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "dnssec_api-response-common-failure": {
+        "properties": {
+          "errors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/dnssec_messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minLength": 1
+          },
+          "messages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/dnssec_messages"
+              }
+            ],
+            "example": []
+          },
+          "result": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "enum": [
+              false
+            ],
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
       "zones_api-response-common-failure": {
         "properties": {
           "errors": {
@@ -6601,116 +7019,28 @@
         "type": "string",
         "x-auditable": true
       },
-      "dnssec_identifier": {
-        "description": "Identifier.",
-        "example": "023e105f4ecef8ad9ca31a8372d0c353",
-        "maxLength": 32,
-        "type": "string",
-        "x-auditable": true
-      },
-      "cache_api-response-common-failure": {
-        "properties": {
-          "errors": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/cache_messages"
-              }
-            ],
-            "example": [
-              {
-                "code": 7003,
-                "message": "No route for the URI"
-              }
-            ],
-            "minLength": 1
-          },
-          "messages": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/cache_messages"
-              }
-            ],
-            "example": []
-          },
-          "result": {
-            "$ref": "#/components/schemas/cache_result"
-          },
-          "success": {
-            "description": "Indicates the API call's success or failure.",
-            "example": false,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
-        ],
-        "type": "object"
-      },
-      "dns-records_tag_match": {
-        "default": "all",
-        "description": "Whether to match all tag search requirements or at least one (any). If set to `all`, acts like a logical AND between tag filters. If set to `any`, acts like a logical OR instead. Note that the regular `match` parameter is still used to combine the resulting condition with other filters that aren't related to tags.\n",
-        "enum": [
-          "any",
-          "all"
-        ],
-        "example": "any",
-        "type": "string"
-      },
-      "pages_api-response-collection": {
+      "bot-management_bot_management_response_body": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/pages_api-response-common"
-          },
-          {
-            "properties": {
-              "result_info": {
-                "properties": {
-                  "count": {
-                    "description": "Total number of results for the requested service.",
-                    "example": 1,
-                    "type": "number"
-                  },
-                  "page": {
-                    "description": "Current page within paginated list of results.",
-                    "example": 1,
-                    "type": "number"
-                  },
-                  "per_page": {
-                    "description": "Number of results per page of results.",
-                    "example": 20,
-                    "type": "number"
-                  },
-                  "total_count": {
-                    "description": "Total results available without any search parameters.",
-                    "example": 2000,
-                    "type": "number"
-                  },
-                  "total_pages": {
-                    "description": "The number of total pages in the entire result set.",
-                    "example": 100,
-                    "type": "number"
-                  }
-                },
-                "type": "object"
-              }
-            },
-            "type": "object"
-          }
-        ],
-        "type": "object"
-      },
-      "registrar-api_registration-response-single": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/registrar-api_api-response-common"
+            "$ref": "#/components/schemas/bot-management_api-response-single"
           },
           {
             "properties": {
               "result": {
-                "$ref": "#/components/schemas/registrar-api_registration"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/bot-management_bot_fight_mode_config"
+                  },
+                  {
+                    "$ref": "#/components/schemas/bot-management_sbfm_definitely_config"
+                  },
+                  {
+                    "$ref": "#/components/schemas/bot-management_sbfm_likely_config"
+                  },
+                  {
+                    "$ref": "#/components/schemas/bot-management_bm_subscription_config"
+                  }
+                ]
               }
             },
             "type": "object"
@@ -6747,33 +7077,6 @@
         ],
         "type": "string"
       },
-      "zones_vanity_name_servers": {
-        "default": [],
-        "description": "An array of domains used for custom name servers. This is only\navailable for Business and Enterprise plans.",
-        "example": [
-          "ns1.example.com",
-          "ns2.example.com"
-        ],
-        "items": {
-          "format": "hostname",
-          "maxLength": 253,
-          "type": "string"
-        },
-        "type": "array"
-      },
-      "dns-records_proxied": {
-        "default": false,
-        "description": "Whether the record is receiving the performance and security benefits of Cloudflare.",
-        "example": true,
-        "type": "boolean",
-        "x-auditable": true
-      },
-      "dnssec_dnssec_multi_signer": {
-        "description": "If true, multi-signer DNSSEC is enabled on the zone, allowing multiple\nproviders to serve a DNSSEC-signed zone at the same time.\nThis is required for DNSKEY records (except those automatically\ngenerated by Cloudflare) to be added to the zone.\n\nSee [Multi-signer DNSSEC](https://developers.cloudflare.com/dns/dnssec/multi-signer-dnssec/) for details.",
-        "example": false,
-        "type": "boolean",
-        "x-auditable": true
-      },
       "dns-records_dns_response_collection": {
         "allOf": [
           {
@@ -6809,14 +7112,6 @@
           }
         ]
       },
-      "dns-records_per_page": {
-        "default": 100,
-        "description": "Number of DNS records per page.",
-        "example": 5,
-        "maximum": 5000000,
-        "minimum": 1,
-        "type": "number"
-      },
       "dnssec_dnssec_response_single": {
         "allOf": [
           {
@@ -6832,6 +7127,30 @@
           }
         ]
       },
+      "bot-management_config_single": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/bot-management_bot_fight_mode_config"
+          },
+          {
+            "$ref": "#/components/schemas/bot-management_sbfm_definitely_config"
+          },
+          {
+            "$ref": "#/components/schemas/bot-management_sbfm_likely_config"
+          },
+          {
+            "$ref": "#/components/schemas/bot-management_bm_subscription_config"
+          }
+        ],
+        "type": "object"
+      },
+      "bot-management_identifier": {
+        "description": "Identifier.",
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "type": "string",
+        "x-auditable": true
+      },
       "dns-records_order": {
         "default": "type",
         "description": "Field to order DNS records by.",
@@ -6844,46 +7163,111 @@
         ],
         "type": "string"
       },
+      "bot-management_api-response-common-failure": {
+        "properties": {
+          "errors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/bot-management_messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minLength": 1
+          },
+          "messages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/bot-management_messages"
+              }
+            ],
+            "example": []
+          },
+          "result": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "enum": [
+              false
+            ],
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
       "dnssec_dnssec_use_nsec3": {
         "description": "If true, enables the use of NSEC3 together with DNSSEC on the zone.\nCombined with setting dnssec_presigned to true, this enables the use of\nNSEC3 records when transferring in from an external provider.\nIf dnssec_presigned is instead set to false (default), NSEC3 records will be\ngenerated and signed at request time.\n\nSee [DNSSEC with NSEC3](https://developers.cloudflare.com/dns/dnssec/enable-nsec3/) for details.",
         "example": false,
         "type": "boolean",
         "x-auditable": true
       },
-      "zones_result_info": {
-        "properties": {
-          "count": {
-            "description": "Total number of results for the requested service.",
-            "example": 1,
-            "type": "number"
-          },
-          "page": {
-            "description": "Current page within paginated list of results.",
-            "example": 1,
-            "type": "number"
-          },
-          "per_page": {
-            "description": "Number of results per page of results.",
-            "example": 20,
-            "type": "number"
-          },
-          "total_count": {
-            "description": "Total results available without any search parameters.",
-            "example": 2000,
-            "type": "number"
-          },
-          "total_pages": {
-            "description": "Total number of pages",
-            "example": 100,
-            "type": "number"
-          }
-        },
-        "type": "object"
-      },
       "cache_identifier": {
         "example": "023e105f4ecef8ad9ca31a8372d0c353",
         "maxLength": 32,
         "type": "string"
+      },
+      "bot-management_bm_subscription_config": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/bot-management_base_config"
+          },
+          {
+            "properties": {
+              "auto_update_model": {
+                "$ref": "#/components/schemas/bot-management_auto_update_model"
+              },
+              "bm_cookie_enabled": {
+                "$ref": "#/components/schemas/bot-management_bm_cookie_enabled"
+              },
+              "stale_zone_configuration": {
+                "description": "A read-only field that shows which unauthorized settings are currently active on the zone. These settings typically result from upgrades or downgrades.",
+                "properties": {
+                  "fight_mode": {
+                    "$ref": "#/components/schemas/bot-management_fight_mode_turned_on"
+                  },
+                  "optimize_wordpress": {
+                    "$ref": "#/components/schemas/bot-management_optimize_wordpress_turned_on"
+                  },
+                  "sbfm_definitely_automated": {
+                    "$ref": "#/components/schemas/bot-management_sbfm_definitely_automated_turned_on"
+                  },
+                  "sbfm_likely_automated": {
+                    "$ref": "#/components/schemas/bot-management_sbfm_likely_automated_turned_on"
+                  },
+                  "sbfm_static_resource_protection": {
+                    "$ref": "#/components/schemas/bot-management_sbfm_static_resource_protection_turned_on"
+                  },
+                  "sbfm_verified_bots": {
+                    "$ref": "#/components/schemas/bot-management_sbfm_verified_bots_turned_on"
+                  }
+                },
+                "readOnly": true,
+                "title": "stale_zone_configuration",
+                "type": "object"
+              },
+              "suppress_session_score": {
+                "$ref": "#/components/schemas/bot-management_suppress_session_score"
+              }
+            }
+          }
+        ],
+        "title": "BM Enterprise Subscription"
       },
       "iam_api-response-collection": {
         "allOf": [
@@ -6899,6 +7283,85 @@
           }
         ],
         "type": "object"
+      },
+      "bot-management_bot_fight_mode_config": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/bot-management_base_config"
+          },
+          {
+            "properties": {
+              "fight_mode": {
+                "$ref": "#/components/schemas/bot-management_fight_mode"
+              },
+              "stale_zone_configuration": {
+                "description": "A read-only field that shows which unauthorized settings are currently active on the zone. These settings typically result from upgrades or downgrades.",
+                "properties": {
+                  "optimize_wordpress": {
+                    "$ref": "#/components/schemas/bot-management_optimize_wordpress_turned_on"
+                  },
+                  "sbfm_definitely_automated": {
+                    "$ref": "#/components/schemas/bot-management_sbfm_definitely_automated_turned_on"
+                  },
+                  "sbfm_likely_automated": {
+                    "$ref": "#/components/schemas/bot-management_sbfm_likely_automated_turned_on"
+                  },
+                  "sbfm_static_resource_protection": {
+                    "$ref": "#/components/schemas/bot-management_sbfm_static_resource_protection_turned_on"
+                  },
+                  "sbfm_verified_bots": {
+                    "$ref": "#/components/schemas/bot-management_sbfm_verified_bots_turned_on"
+                  },
+                  "suppress_session_score": {
+                    "$ref": "#/components/schemas/bot-management_suppress_session_score_turned_off"
+                  }
+                },
+                "readOnly": true,
+                "title": "stale_zone_configuration",
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "title": "Bot Fight Mode"
+      },
+      "bot-management_sbfm_definitely_config": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/bot-management_base_config"
+          },
+          {
+            "properties": {
+              "optimize_wordpress": {
+                "$ref": "#/components/schemas/bot-management_optimize_wordpress"
+              },
+              "sbfm_definitely_automated": {
+                "$ref": "#/components/schemas/bot-management_sbfm_definitely_automated"
+              },
+              "sbfm_static_resource_protection": {
+                "$ref": "#/components/schemas/bot-management_sbfm_static_resource_protection"
+              },
+              "sbfm_verified_bots": {
+                "$ref": "#/components/schemas/bot-management_sbfm_verified_bots"
+              },
+              "stale_zone_configuration": {
+                "description": "A read-only field that shows which unauthorized settings are currently active on the zone. These settings typically result from upgrades or downgrades.",
+                "properties": {
+                  "fight_mode": {
+                    "$ref": "#/components/schemas/bot-management_fight_mode_turned_on"
+                  },
+                  "sbfm_likely_automated": {
+                    "$ref": "#/components/schemas/bot-management_sbfm_likely_automated_turned_on"
+                  }
+                },
+                "readOnly": true,
+                "title": "stale_zone_configuration",
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "title": "SBFM Pro Plan"
       },
       "registrar-api_messages": {
         "example": [],
@@ -6947,6 +7410,38 @@
           "value"
         ],
         "type": "object"
+      },
+      "bot-management_messages": {
+        "example": [],
+        "items": {
+          "properties": {
+            "code": {
+              "minimum": 1000,
+              "type": "integer"
+            },
+            "documentation_url": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "source": {
+              "properties": {
+                "pointer": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "type": "object",
+          "uniqueItems": true
+        },
+        "type": "array"
       },
       "registrar-api_registration": {
         "description": "A domain registration resource representing the current state of a registered domain.",
@@ -7187,6 +7682,44 @@
         ],
         "type": "object"
       },
+      "bot-management_sbfm_likely_config": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/bot-management_base_config"
+          },
+          {
+            "properties": {
+              "optimize_wordpress": {
+                "$ref": "#/components/schemas/bot-management_optimize_wordpress"
+              },
+              "sbfm_definitely_automated": {
+                "$ref": "#/components/schemas/bot-management_sbfm_definitely_automated"
+              },
+              "sbfm_likely_automated": {
+                "$ref": "#/components/schemas/bot-management_sbfm_likely_automated"
+              },
+              "sbfm_static_resource_protection": {
+                "$ref": "#/components/schemas/bot-management_sbfm_static_resource_protection"
+              },
+              "sbfm_verified_bots": {
+                "$ref": "#/components/schemas/bot-management_sbfm_verified_bots"
+              },
+              "stale_zone_configuration": {
+                "description": "A read-only field that shows which unauthorized settings are currently active on the zone. These settings typically result from upgrades or downgrades.",
+                "properties": {
+                  "fight_mode": {
+                    "$ref": "#/components/schemas/bot-management_fight_mode_turned_on"
+                  }
+                },
+                "readOnly": true,
+                "title": "stale_zone_configuration",
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "title": "SBFM Biz Plan"
+      },
       "dnssec_messages": {
         "example": [],
         "items": {
@@ -7247,6 +7780,14 @@
           "uniqueItems": true
         },
         "type": "array"
+      },
+      "bot-management_api-response-single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/bot-management_api-response-common"
+          }
+        ],
+        "type": "object"
       },
       "pages_deployment_config_values": {
         "properties": {
@@ -8626,6 +9167,13 @@
         ],
         "type": "object"
       },
+      "bot-management_bm_cookie_enabled": {
+        "description": "Indicates that the bot management cookie can be placed on end user devices accessing the site. Defaults to true",
+        "example": true,
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
       "registrar-api_registration_contact": {
         "description": "Registrant contact data for the domain registration. This information\nis submitted to the domain registry and, depending on extension and\nprivacy settings, may appear in public WHOIS records.\n",
         "properties": {
@@ -8656,15 +9204,22 @@
         ],
         "type": "object"
       },
-      "dns-records_ARecord": {
-        "type": "object",
-        "additionalProperties": true
+      "bot-management_optimize_wordpress_turned_on": {
+        "description": "Indicates that the zone's wordpress optimization for SBFM is turned on.",
+        "title": "optimize_wordpress",
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
       },
       "dns-records_TXTRecord": {
         "type": "object",
         "additionalProperties": true
       },
       "dns-records_LOCRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_ARecord": {
         "type": "object",
         "additionalProperties": true
       },
@@ -8691,6 +9246,30 @@
         "readOnly": true,
         "type": "string",
         "x-auditable": true
+      },
+      "bot-management_api-response-common": {
+        "properties": {
+          "errors": {
+            "$ref": "#/components/schemas/bot-management_messages"
+          },
+          "messages": {
+            "$ref": "#/components/schemas/bot-management_messages"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "enum": [
+              true
+            ],
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages"
+        ],
+        "type": "object"
       },
       "pages_env_vars": {
         "additionalProperties": {
@@ -8782,6 +9361,12 @@
         ],
         "type": "object"
       },
+      "bot-management_sbfm_likely_automated_turned_on": {
+        "description": "Indicates that the zone's likely automated requests are being blocked or challenged.",
+        "title": "sbfm_likely_automated",
+        "type": "string",
+        "x-auditable": true
+      },
       "dns-records_TLSARecord": {
         "type": "object",
         "additionalProperties": true
@@ -8793,6 +9378,36 @@
         "readOnly": true,
         "type": "string",
         "x-auditable": true
+      },
+      "bot-management_base_config": {
+        "allOf": [
+          {
+            "properties": {
+              "ai_bots_protection": {
+                "$ref": "#/components/schemas/bot-management_ai_bots_protection"
+              },
+              "cf_robots_variant": {
+                "$ref": "#/components/schemas/bot-management_cf_robots_variant"
+              },
+              "content_bots_protection": {
+                "$ref": "#/components/schemas/bot-management_content_bots_protection"
+              },
+              "crawler_protection": {
+                "$ref": "#/components/schemas/bot-management_crawler_protection"
+              },
+              "enable_js": {
+                "$ref": "#/components/schemas/bot-management_enable_js"
+              },
+              "is_robots_txt_managed": {
+                "$ref": "#/components/schemas/bot-management_is_robots_txt_managed"
+              },
+              "using_latest_model": {
+                "$ref": "#/components/schemas/bot-management_using_latest_model"
+              }
+            }
+          }
+        ],
+        "title": "Shared Config"
       },
       "dns-records_api-response-common": {
         "properties": {
@@ -8822,6 +9437,13 @@
         "type": "object",
         "additionalProperties": true
       },
+      "bot-management_auto_update_model": {
+        "description": "Automatically update to the newest bot detection models created by Cloudflare as they are released. [Learn more.](https://developers.cloudflare.com/bots/reference/machine-learning-models#model-versions-and-release-notes)",
+        "example": true,
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
       "dns-records_CAARecord": {
         "type": "object",
         "additionalProperties": true
@@ -8837,6 +9459,13 @@
       "dns-records_NAPTRRecord": {
         "type": "object",
         "additionalProperties": true
+      },
+      "bot-management_sbfm_verified_bots_turned_on": {
+        "description": "Indicates that the zone's verified bot requests are being blocked.",
+        "title": "sbfm_verified_bots",
+        "type": "string",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
       },
       "dnssec_key_tag": {
         "description": "Code for key tag.",
@@ -8866,6 +9495,13 @@
         "type": "string",
         "x-auditable": true
       },
+      "bot-management_optimize_wordpress": {
+        "description": "Whether to optimize Super Bot Fight Mode protections for Wordpress.",
+        "example": true,
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
       "dns-records_OPENPGPKEYRecord": {
         "type": "object",
         "additionalProperties": true
@@ -8873,6 +9509,20 @@
       "dns-records_NSRecord": {
         "type": "object",
         "additionalProperties": true
+      },
+      "bot-management_suppress_session_score": {
+        "description": "Whether to disable tracking the highest bot score for a session in the Bot Management cookie.",
+        "example": false,
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
+      "bot-management_fight_mode_turned_on": {
+        "description": "Indicates that the zone's Bot Fight Mode is turned on.",
+        "title": "fight_mode",
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
       },
       "dns-records_SRVRecord": {
         "type": "object",
@@ -8922,6 +9572,18 @@
         "type": "object",
         "additionalProperties": true
       },
+      "bot-management_sbfm_likely_automated": {
+        "description": "Super Bot Fight Mode (SBFM) action to take on likely automated requests.",
+        "enum": [
+          "allow",
+          "block",
+          "managed_challenge"
+        ],
+        "example": "allow",
+        "type": "string",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
       "dns-records_AAAARecord": {
         "type": "object",
         "additionalProperties": true
@@ -8966,6 +9628,20 @@
         ],
         "example": "active",
         "x-auditable": true
+      },
+      "bot-management_fight_mode": {
+        "description": "Whether to enable Bot Fight Mode.",
+        "example": true,
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
+      "bot-management_suppress_session_score_turned_off": {
+        "description": "Indicates that the zone's session score tracking is disabled.",
+        "title": "suppress_session_score",
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
       },
       "dnssec_flags": {
         "description": "Flag for DNSSEC record.",
@@ -9030,9 +9706,58 @@
         ],
         "type": "object"
       },
+      "bot-management_sbfm_definitely_automated_turned_on": {
+        "description": "Indicates that the zone's definitely automated requests are being blocked or challenged.",
+        "title": "sbfm_definitely_automated",
+        "type": "string",
+        "x-auditable": true
+      },
+      "bot-management_sbfm_static_resource_protection_turned_on": {
+        "description": "Indicates that the zone's static resource protection is turned on.",
+        "title": "sbfm_static_resource_protection",
+        "type": "string",
+        "x-auditable": true
+      },
+      "bot-management_sbfm_definitely_automated": {
+        "description": "Super Bot Fight Mode (SBFM) action to take on definitely automated requests.",
+        "enum": [
+          "allow",
+          "block",
+          "managed_challenge"
+        ],
+        "example": "allow",
+        "type": "string",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
       "dns-records_SMIMEARecord": {
         "type": "object",
         "additionalProperties": true
+      },
+      "bot-management_sbfm_verified_bots": {
+        "description": "Super Bot Fight Mode (SBFM) action to take on verified bots requests.",
+        "enum": [
+          "allow",
+          "block"
+        ],
+        "example": "allow",
+        "type": "string",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
+      "bot-management_sbfm_static_resource_protection": {
+        "description": "Super Bot Fight Mode (SBFM) to enable static resource protection.\nEnable if static resources on your application need bot protection.\nNote: Static resource protection can also result in legitimate traffic being blocked.\n",
+        "example": true,
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
+      "bot-management_enable_js": {
+        "description": "Use lightweight, invisible JavaScript detections to improve Bot Management. [Learn more about JavaScript Detections](https://developers.cloudflare.com/bots/reference/javascript-detections/).",
+        "example": true,
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
       },
       "registrar-api_registration_contact_postal_info": {
         "description": "Postal/mailing information for the registrant contact.",
@@ -9057,6 +9782,48 @@
         ],
         "type": "object"
       },
+      "bot-management_content_bots_protection": {
+        "description": "Enable rule to block content bots. When enabled, blocks automated traffic with low bot scores, excluding safe verified bot categories. Exceptions should be managed via skip rules.",
+        "enum": [
+          "block",
+          "disabled"
+        ],
+        "example": "disabled",
+        "type": "string",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
+      "bot-management_crawler_protection": {
+        "description": "Enable rule to punish AI Scrapers and Crawlers via a link maze.",
+        "enum": [
+          "enabled",
+          "disabled"
+        ],
+        "example": "enabled",
+        "type": "string",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
+      "bot-management_ai_bots_protection": {
+        "description": "Enable rule to block AI Scrapers and Crawlers. Please note the value `only_on_ad_pages` is currently not available for Enterprise customers.",
+        "enum": [
+          "block",
+          "disabled",
+          "only_on_ad_pages"
+        ],
+        "example": "block",
+        "type": "string",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
+      "bot-management_is_robots_txt_managed": {
+        "default": false,
+        "description": "Enable cloudflare managed robots.txt. If an existing robots.txt is detected, then managed robots.txt will be prepended to the existing robots.txt.",
+        "example": false,
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
+      },
       "dns-records_priority": {
         "description": "Required for MX and URI records; ignored for other record types (but may still be returned by the API). Records with lower priorities are preferred. This field is to be deprecated in favor of the priority field within the data map.",
         "example": 10,
@@ -9064,6 +9831,14 @@
         "minimum": 0,
         "type": "number",
         "x-auditable": true
+      },
+      "bot-management_using_latest_model": {
+        "description": "A read-only field that indicates whether the zone currently is running the latest ML model.\n",
+        "example": true,
+        "readOnly": true,
+        "type": "boolean",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
       },
       "dns-records_dns-record-shared-fields": {
         "type": "object",
@@ -9114,6 +9889,17 @@
           }
         },
         "additionalProperties": true
+      },
+      "bot-management_cf_robots_variant": {
+        "description": "Specifies the Robots Access Control License variant to use.",
+        "enum": [
+          "off",
+          "policy_only"
+        ],
+        "example": "policy_only",
+        "type": "string",
+        "x-auditable": true,
+        "x-stainless-terraform-configurability": "computed_optional"
       },
       "dns-records_settings": {
         "description": "Settings for the DNS record.",

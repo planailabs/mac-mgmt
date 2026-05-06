@@ -67,6 +67,7 @@ pub struct DomainInfo {
     #[serde(rename = "registrationDate")] pub registration_date: Option<String>,
     #[serde(rename = "expirationDate")] pub expiration_date: Option<String>,
     #[serde(rename = "lifecycleStatus")] pub lifecycle_status: Option<String>,
+    #[serde(default)] pub nameservers: Option<NameserverConfig>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
