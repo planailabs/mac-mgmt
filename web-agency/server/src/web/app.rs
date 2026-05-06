@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::{prelude::*, unic_langid::langid};
 
 use super::components::billing_log::BillingLog;
+use super::components::certificate_list::CertificateList;
 use super::components::contact_form::ContactForm;
 use super::components::contact_list::ContactList;
 use super::components::credential_edit::CredentialEdit;
@@ -79,6 +80,8 @@ pub enum Route {
     TokenList {},
     #[route("/tokens/new")]
     TokenForm {},
+    #[route("/certificates")]
+    CertificateList {},
     #[route("/docs")]
     DocList {},
     #[route("/docs/:slug")]

@@ -12,6 +12,40 @@ pub struct ServerConfig {
     pub web: WebConfig,
     pub auth: Option<AuthConfig>,
     pub secrets: Option<SecretsConfig>,
+    pub proxy: Option<ProxyConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProxyConfig {
+    pub agency_domain: String,
+    #[serde(default = "default_agency_upstream")]
+    pub agency_upstream: String,
+    #[serde(default = "default_http_addr")]
+    pub http_addr: String,
+    #[serde(default = "default_https_addr")]
+    pub https_addr: String,
+    pub acme_email: Option<String>,
+    #[serde(default = "default_internal_token_path")]
+    pub internal_token_path: String,
+    /// Only used by the proxy binary to reach the server.
+    #[serde(default = "default_server_url")]
+    pub server_url: String,
+}
+
+fn default_agency_upstream() -> String {
+    "127.0.0.1:7380".to_string()
+}
+fn default_http_addr() -> String {
+    "0.0.0.0:80".to_string()
+}
+fn default_https_addr() -> String {
+    "0.0.0.0:443".to_string()
+}
+fn default_internal_token_path() -> String {
+    "/var/lib/web-agency/internal.token".to_string()
+}
+fn default_server_url() -> String {
+    "http://127.0.0.1:7380".to_string()
 }
 
 #[derive(Debug, Deserialize)]

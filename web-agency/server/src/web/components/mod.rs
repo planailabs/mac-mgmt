@@ -1,4 +1,5 @@
 pub mod billing_log;
+pub mod certificate_list;
 pub mod contact_form;
 pub mod contact_list;
 pub mod credential_edit;

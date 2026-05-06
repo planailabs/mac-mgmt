@@ -52,6 +52,21 @@ async fn init_server() -> sqlx::PgPool {
     // Start periodic background sync (DNS records, domain expiry).
     api::sync::spawn(pool.clone());
 
+    // Start periodic cert renewal (hourly: renew expiring, issue missing).
+    {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            // Wait a bit before first check to let the server fully start.
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            loop {
+                if let Err(e) = cert_renewal_tick(&pool).await {
+                    tracing::error!("cert renewal tick failed: {e}");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+    }
+
     #[cfg(feature = "webui")]
     server_state::set_pool(pool.clone());
 
@@ -65,6 +80,60 @@ async fn init_server() -> sqlx::PgPool {
     plan_ai_auth::set_user_resolver(resolver);
 
     pool
+}
+
+#[cfg(feature = "server")]
+async fn cert_renewal_tick(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    // Renew certs expiring within 30 days
+    let expiring: Vec<String> = sqlx::query_scalar(
+        "SELECT domain FROM certificates \
+         WHERE not_after < now() + interval '30 days' \
+           AND issuer != 'self-signed' \
+           AND acme_status != 'pending'",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for domain in &expiring {
+        tracing::info!(domain, "renewing expiring cert");
+        if let Err(e) = api::acme::issue_cert(pool, domain).await {
+            tracing::error!(domain, "renewal failed: {e}");
+        }
+    }
+
+    // Issue certs for domains with webspace bindings but no cert row
+    let missing: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT CASE \
+             WHEN s.name IS NOT NULL AND s.name != '@' THEN s.name || '.' || d.name \
+             ELSE d.name \
+         END AS hostname \
+         FROM webspace_domains wd \
+         JOIN webspaces w ON w.id = wd.webspace_id \
+         JOIN domains d ON d.id = wd.domain_id \
+         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+         WHERE w.hosting_type = 'local' AND w.local_port IS NOT NULL \
+           AND NOT EXISTS (SELECT 1 FROM certificates c WHERE c.domain = \
+               CASE WHEN s.name IS NOT NULL AND s.name != '@' THEN s.name || '.' || d.name ELSE d.name END)",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for domain in &missing {
+        tracing::info!(domain, "issuing cert for new domain");
+        if let Err(e) = api::acme::issue_cert(pool, domain).await {
+            tracing::error!(domain, "issuance failed: {e}");
+        }
+    }
+
+    if !expiring.is_empty() || !missing.is_empty() {
+        tracing::info!(
+            renewed = expiring.len(),
+            issued = missing.len(),
+            "cert renewal tick complete"
+        );
+    }
+
+    Ok(())
 }
 
 fn main() {
@@ -165,6 +234,17 @@ fn main() {
                 active_deploys,
             });
             router = router.merge(deploy_router);
+
+            // Mount internal API (used by the reverse proxy)
+            {
+                let (reload_tx, _) = tokio::sync::broadcast::channel::<()>(16);
+                let internal_router =
+                    crate::api::internal::router(crate::api::internal::InternalState {
+                        pool: crate::server_pool().expect("pool for internal API"),
+                        reload_tx: Arc::new(reload_tx),
+                    });
+                router = router.merge(internal_router);
+            }
 
             if let Some(auth_layers) = auth_layers {
                 router = router
