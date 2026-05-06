@@ -77,9 +77,8 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
 
     let (id, name, registrar_type, registrar_credential_id, ssl_mode, dnssec_enabled, cloudflare_zone_id, cf_cred_id, registered_at, expires_at, org_id, ai_bots_protection) = row;
 
-    if !user.is_admin && !user.org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("access denied"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_read(&org_id)?;
 
     let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
         .bind(org_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -165,9 +164,8 @@ async fn deploy_to_cloudflare(domain_id: Uuid, credential_id: Uuid) -> Result<De
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("domain not found"))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let client = build_cf_client(&pool, credential_id).await?;
     let account_id = get_cf_account_id(&pool, credential_id).await?;
@@ -209,9 +207,8 @@ async fn update_ssl_mode(domain_id: Uuid, ssl_mode: String) -> Result<(), Server
         "SELECT cloudflare_zone_id, cloudflare_credential_id, organization_id FROM domains WHERE id = $1",
     ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     if let (Some(zone_id), Some(cred_id)) = (&zone_id, cred_id) {
         let client = build_cf_client(&pool, cred_id).await?;
@@ -234,9 +231,8 @@ async fn toggle_dnssec(domain_id: Uuid, enable: bool) -> Result<(), ServerFnErro
         "SELECT cloudflare_zone_id, cloudflare_credential_id, organization_id FROM domains WHERE id = $1",
     ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     if let (Some(zone_id), Some(cred_id)) = (&zone_id, cred_id) {
         let client = build_cf_client(&pool, cred_id).await?;
@@ -259,9 +255,8 @@ async fn set_ai_bots_protection(domain_id: Uuid, value: String) -> Result<(), Se
         "SELECT cloudflare_zone_id, cloudflare_credential_id, organization_id FROM domains WHERE id = $1",
     ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     if let (Some(zone_id), Some(cred_id)) = (&zone_id, cred_id) {
         let client = build_cf_client(&pool, cred_id).await?;
@@ -284,9 +279,8 @@ async fn set_nameservers_at_registrar(domain_id: Uuid, nameservers: Vec<String>)
         "SELECT name, registrar_credential_id, organization_id FROM domains WHERE id = $1",
     ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let domain_name = sqlx::query_scalar::<_, String>("SELECT name FROM domains WHERE id = $1")
         .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -306,9 +300,8 @@ async fn create_subdomain(domain_id: Uuid, name: String) -> Result<Uuid, ServerF
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
         .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO subdomains (domain_id, name) VALUES ($1, $2) \
@@ -327,9 +320,8 @@ async fn delete_subdomain(domain_id: Uuid, subdomain_id: Uuid) -> Result<(), Ser
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
         .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     // Delete CF records first
     let records = sqlx::query_as::<_, (Option<String>,)>(
@@ -370,9 +362,8 @@ async fn add_dns_record(
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
         .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let sub_name = sqlx::query_scalar::<_, String>("SELECT name FROM subdomains WHERE id = $1")
         .bind(subdomain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -417,9 +408,8 @@ async fn delete_dns_record(domain_id: Uuid, record_id: Uuid) -> Result<(), Serve
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
         .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let cf_id = sqlx::query_scalar::<_, Option<String>>(
         "SELECT cloudflare_record_id FROM dns_records WHERE id = $1",
@@ -453,9 +443,8 @@ async fn sync_records_from_cloudflare(domain_id: Uuid) -> Result<String, ServerF
         "SELECT name, organization_id FROM domains WHERE id = $1",
     ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let (zone_id, cred_id) = match sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
@@ -515,9 +504,8 @@ async fn delete_domain(domain_id: Uuid) -> Result<(), ServerFnError> {
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
         .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     sqlx::query("DELETE FROM domains WHERE id = $1").bind(domain_id)
         .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;

@@ -5,29 +5,17 @@ use uuid::Uuid;
 use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgOption {
-    id: Uuid,
-    name: String,
+struct CredFormData {
+    orgs: Vec<crate::web::user::OrgOption>,
+    is_admin: bool,
 }
 
 #[server]
-async fn list_orgs_for_cred() -> Result<Vec<OrgOption>, ServerFnError> {
+async fn list_orgs_for_cred() -> Result<CredFormData, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
-
-    let orgs = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations ORDER BY name")
-            .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT o.id, o.name FROM organizations o \
-             JOIN organization_members om ON om.organization_id = o.id \
-             WHERE om.user_id = $1 ORDER BY o.name",
-        )
-        .bind(user.id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-
-    Ok(orgs.into_iter().map(|(id, name)| OrgOption { id, name }).collect())
+    let orgs = crate::web::user::list_user_write_orgs(&user, &pool).await?;
+    Ok(CredFormData { orgs, is_admin: user.is_admin })
 }
 
 #[server]
@@ -37,8 +25,14 @@ async fn create_credential(
     credential_type: String,
     data_json: String,
 ) -> Result<Uuid, ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+    use crate::web::user::WebUserExt;
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
+
+    match org_id {
+        None => user.require_admin()?,
+        Some(oid) => user.require_org_write(&oid)?,
+    }
 
     let _: serde_json::Value = serde_json::from_str(&data_json)
         .map_err(|e| ServerFnError::new(format!("invalid JSON: {e}")))?;
@@ -63,19 +57,17 @@ async fn create_credential(
 
 #[server]
 async fn test_credential(credential_id: Uuid) -> Result<String, ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
+    crate::web::user::require_credential_read(&user, &pool, credential_id).await?;
 
-    let row = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT credential_type, encrypted_data FROM credentials WHERE id = $1",
+    let cred_type = sqlx::query_scalar::<_, String>(
+        "SELECT credential_type FROM credentials WHERE id = $1",
     )
     .bind(credential_id)
-    .fetch_optional(&pool)
+    .fetch_one(&pool)
     .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("credential not found"))?;
-
-    let (cred_type, _encrypted_data) = row;
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     match cred_type.as_str() {
         "cloudflare" => {
@@ -102,9 +94,9 @@ async fn test_credential(credential_id: Uuid) -> Result<String, ServerFnError> {
 #[component]
 pub fn CredentialForm() -> Element {
     let orgs = use_server_future(list_orgs_for_cred)?;
-    let org_list = match &*orgs.read() {
-        Some(Ok(o)) => o.clone(),
-        _ => vec![],
+    let (org_list, is_admin) = match &*orgs.read() {
+        Some(Ok(d)) => (d.orgs.clone(), d.is_admin),
+        _ => (vec![], false),
     };
 
     let mut name = use_signal(String::new);
@@ -150,13 +142,15 @@ pub fn CredentialForm() -> Element {
                 }
             }
 
-            FormField { label: "Organization (optional)",
-                help: "Leave as Global to make this credential available to all organizations.",
+            FormField { label: if is_admin { "Organization (optional)" } else { "Organization" },
+                help: if is_admin { "Leave as Global to make this credential available to all organizations." } else { "" },
                 select {
                     class: "input",
                     value: "{org_id}",
                     oninput: move |evt| org_id.set(evt.value()),
-                    option { value: "", "Global (no organization)" }
+                    if is_admin {
+                        option { value: "", "Global (no organization)" }
+                    }
                     for org in &org_list {
                         option { value: "{org.id}", "{org.name}" }
                     }

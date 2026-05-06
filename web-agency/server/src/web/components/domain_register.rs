@@ -18,20 +18,33 @@ struct AvailabilityResult {
 
 #[server]
 async fn list_registrar_creds() -> Result<Vec<CredOption>, ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
-    let rows = sqlx::query_as::<_, (Uuid, String, String)>(
-        "SELECT id, name, credential_type FROM credentials \
-         WHERE credential_type IN ('cloudflare', 'spaceship') ORDER BY name",
-    )
-    .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let rows = if user.is_admin {
+        sqlx::query_as::<_, (Uuid, String, String)>(
+            "SELECT id, name, credential_type FROM credentials \
+             WHERE credential_type IN ('cloudflare', 'spaceship') ORDER BY name",
+        )
+        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+    } else {
+        let org_ids = user.org_ids();
+        sqlx::query_as::<_, (Uuid, String, String)>(
+            "SELECT id, name, credential_type FROM credentials \
+             WHERE credential_type IN ('cloudflare', 'spaceship') \
+             AND (organization_id = ANY($1) OR organization_id IS NULL) ORDER BY name",
+        )
+        .bind(&org_ids)
+        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+    };
     Ok(rows.into_iter().map(|(id, name, credential_type)| CredOption { id, name, credential_type }).collect())
 }
 
 #[server]
 async fn check_domain_availability(credential_id: Uuid, domain: String) -> Result<AvailabilityResult, ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
+
+    crate::web::user::require_credential_read(&user, &pool, credential_id).await?;
 
     let cred_type = sqlx::query_scalar::<_, String>(
         "SELECT credential_type FROM credentials WHERE id = $1",

@@ -19,6 +19,8 @@ pub mod organization_list;
 pub mod token_form;
 pub mod token_list;
 pub mod ui;
+pub mod user_detail;
+pub mod user_form;
 pub mod user_list;
 pub mod webspace_detail;
 pub mod webspace_form;

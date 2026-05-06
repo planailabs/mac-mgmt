@@ -4,8 +4,7 @@ use uuid::Uuid;
 
 use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgOption { id: Uuid, name: String }
+use crate::web::user::OrgOption;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CredOption { id: Uuid, name: String }
@@ -27,14 +26,7 @@ struct ImportResult { imported: u32, skipped: u32, errors: Vec<String> }
 async fn list_orgs() -> Result<Vec<OrgOption>, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
-    let rows = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations ORDER BY name")
-            .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations WHERE id = ANY($1) ORDER BY name")
-            .bind(&user.org_ids()).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-    Ok(rows.into_iter().map(|(id, name)| OrgOption { id, name }).collect())
+    crate::web::user::list_user_orgs(&user, &pool).await
 }
 
 #[server]
@@ -50,9 +42,8 @@ async fn list_cf_creds() -> Result<Vec<CredOption>, ServerFnError> {
 #[server]
 async fn discover_pages_projects(credential_id: Uuid, org_id: Uuid) -> Result<Vec<DiscoveredProject>, ServerFnError> {
     let user = crate::web::user::current_user().await?;
-    if !user.is_admin && !user.org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("access denied"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_read(&org_id)?;
     let pool = crate::server_pool()?;
 
     let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id).await
@@ -85,9 +76,8 @@ async fn discover_pages_projects(credential_id: Uuid, org_id: Uuid) -> Result<Ve
 #[server]
 async fn import_pages_projects(credential_id: Uuid, org_id: Uuid, project_names: Vec<String>) -> Result<ImportResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
     let pool = crate::server_pool()?;
 
     let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id).await

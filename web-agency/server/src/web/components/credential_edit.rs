@@ -5,9 +5,6 @@ use uuid::Uuid;
 use super::ui::{Badge, BadgeVariant, Button, ButtonKind, ButtonVariant, Card, FormField, PageHeader};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgOption { id: Uuid, name: String }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CredentialData {
     id: Uuid,
     name: String,
@@ -17,8 +14,8 @@ struct CredentialData {
 }
 
 #[server]
-async fn get_credential(credential_id: Uuid) -> Result<(CredentialData, Vec<OrgOption>), ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+async fn get_credential(credential_id: Uuid) -> Result<(CredentialData, Vec<crate::web::user::OrgOption>, bool), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
     let row = sqlx::query_as::<_, (Uuid, String, String, Option<Uuid>, chrono::DateTime<chrono::Utc>)>(
@@ -30,15 +27,17 @@ async fn get_credential(credential_id: Uuid) -> Result<(CredentialData, Vec<OrgO
 
     let (id, name, credential_type, organization_id, created_at) = row;
 
-    let orgs = sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations ORDER BY name")
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::web::user::require_credential_read(&user, &pool, credential_id).await?;
+
+    let orgs = crate::web::user::list_user_orgs(&user, &pool).await?;
 
     Ok((
         CredentialData {
             id, name, credential_type, organization_id,
             created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
         },
-        orgs.into_iter().map(|(id, name)| OrgOption { id, name }).collect(),
+        orgs,
+        user.is_admin,
     ))
 }
 
@@ -49,14 +48,22 @@ async fn update_credential(
     org_id: Option<Uuid>,
     new_data_json: Option<String>,
 ) -> Result<(), ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+    use crate::web::user::WebUserExt;
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
+
+    crate::web::user::require_credential_write(&user, &pool, credential_id).await?;
+
+    // Validate target org assignment.
+    match org_id {
+        None => user.require_admin()?,
+        Some(oid) => user.require_org_write(&oid)?,
+    }
 
     sqlx::query("UPDATE credentials SET name = $1, organization_id = $2, updated_at = now() WHERE id = $3")
         .bind(&name).bind(org_id).bind(credential_id)
         .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Only update secret data if provided
     if let Some(json) = new_data_json {
         if !json.trim().is_empty() {
             let _: serde_json::Value = serde_json::from_str(&json)
@@ -74,8 +81,9 @@ async fn update_credential(
 
 #[server]
 async fn delete_credential(credential_id: Uuid) -> Result<(), ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
+    crate::web::user::require_credential_write(&user, &pool, credential_id).await?;
 
     sqlx::query("DELETE FROM credentials WHERE id = $1")
         .bind(credential_id).execute(&pool).await
@@ -85,8 +93,9 @@ async fn delete_credential(credential_id: Uuid) -> Result<(), ServerFnError> {
 
 #[server]
 async fn test_credential_conn(credential_id: Uuid) -> Result<String, ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
+    crate::web::user::require_credential_read(&user, &pool, credential_id).await?;
 
     let cred_type = sqlx::query_scalar::<_, String>(
         "SELECT credential_type FROM credentials WHERE id = $1",
@@ -119,8 +128,8 @@ pub fn CredentialEdit(id: String) -> Element {
         async move { match cid { Some(id) => get_credential(id).await, None => Err(ServerFnError::new("invalid ID")) } }
     })?;
 
-    let (cred, org_list) = match &*data.read() {
-        Some(Ok((c, o))) => (c.clone(), o.clone()),
+    let (cred, org_list, is_admin) = match &*data.read() {
+        Some(Ok((c, o, a))) => (c.clone(), o.clone(), *a),
         Some(Err(e)) => return rsx! { div { class: "text-danger", "Error: {e}" } },
         None => return rsx! { div { class: "text-fg-muted", "Loading..." } },
     };
@@ -171,9 +180,11 @@ pub fn CredentialEdit(id: String) -> Element {
                         oninput: move |evt| name.set(evt.value()) }
                 }
 
-                FormField { label: "Organization (optional)",
+                FormField { label: if is_admin { "Organization (optional)" } else { "Organization" },
                     select { class: "input", value: "{org_id}", oninput: move |evt| org_id.set(evt.value()),
-                        option { value: "", "Global (no organization)" }
+                        if is_admin {
+                            option { value: "", "Global (no organization)" }
+                        }
                         for org in &org_list {
                             option { value: "{org.id}", "{org.name}" }
                         }

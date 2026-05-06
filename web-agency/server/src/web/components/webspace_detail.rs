@@ -96,9 +96,8 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
 
     let (id, name, hosting_type, cf_project, cf_cred_id, runtime, local_status, org_id) = row;
 
-    if !user.is_admin && !user.org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("access denied"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_read(&org_id)?;
 
     let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
         .bind(org_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -242,9 +241,8 @@ async fn deploy_pages_project(webspace_id: Uuid, credential_id: Uuid) -> Result<
     .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
     let (ws_name, org_id) = row;
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let (client, account_id) = build_cf_pages_client(&pool, credential_id).await?;
 
@@ -302,9 +300,8 @@ async fn connect_git_repo(
     .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
     let (project_name, cred_id, org_id) = row;
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let project_name = project_name.ok_or_else(|| ServerFnError::new("Pages project not deployed yet"))?;
     let cred_id = cred_id.ok_or_else(|| ServerFnError::new("no Cloudflare credential"))?;
@@ -358,9 +355,8 @@ async fn update_production_branch(webspace_id: Uuid, branch: String) -> Result<(
     .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
     let (project_name, cred_id, org_id) = row;
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let project_name = project_name.ok_or_else(|| ServerFnError::new("no Pages project"))?;
     let cred_id = cred_id.ok_or_else(|| ServerFnError::new("no CF credential"))?;
@@ -392,9 +388,8 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
     )
     .bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     sqlx::query(
         "INSERT INTO webspace_domains (webspace_id, domain_id, subdomain_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
@@ -498,9 +493,8 @@ async fn recheck_custom_domain(webspace_id: Uuid, hostname: String) -> Result<St
         "SELECT organization_id FROM webspaces WHERE id = $1",
     ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
@@ -541,9 +535,8 @@ async fn fix_cname(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid
         "SELECT organization_id FROM webspaces WHERE id = $1",
     ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
@@ -630,9 +623,8 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
     )
     .bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     // Get binding details before deleting
     let binding = sqlx::query_as::<_, (Uuid, Option<Uuid>)>(

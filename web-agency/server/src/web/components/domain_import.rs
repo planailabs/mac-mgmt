@@ -6,11 +6,7 @@ use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, Pag
 
 // ── Types ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgOption {
-    id: Uuid,
-    name: String,
-}
+use crate::web::user::OrgOption;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CredOption {
@@ -43,17 +39,7 @@ async fn list_orgs_and_creds() -> Result<(Vec<OrgOption>, Vec<CredOption>), Serv
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let orgs = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations ORDER BY name")
-            .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT o.id, o.name FROM organizations o \
-             JOIN organization_members om ON om.organization_id = o.id \
-             WHERE om.user_id = $1 ORDER BY o.name",
-        )
-        .bind(user.id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    };
+    let orgs = crate::web::user::list_user_orgs(&user, &pool).await?;
 
     let creds = sqlx::query_as::<_, (Uuid, String, String)>(
         "SELECT id, name, credential_type FROM credentials ORDER BY name",
@@ -61,7 +47,7 @@ async fn list_orgs_and_creds() -> Result<(Vec<OrgOption>, Vec<CredOption>), Serv
     .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok((
-        orgs.into_iter().map(|(id, name)| OrgOption { id, name }).collect(),
+        orgs,
         creds.into_iter().map(|(id, name, credential_type)| CredOption { id, name, credential_type }).collect(),
     ))
 }
@@ -72,9 +58,8 @@ async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<Disco
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    if !user.is_admin && !user.org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("access denied"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_read(&org_id)?;
 
     let cred = sqlx::query_as::<_, (String, Vec<u8>)>(
         "SELECT credential_type, encrypted_data FROM credentials WHERE id = $1",
@@ -147,11 +132,10 @@ async fn import_domains(
     domain_names: Vec<String>,
 ) -> Result<ImportResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
+    use crate::web::user::WebUserExt;
     let pool = crate::server_pool()?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    user.require_org_write(&org_id)?;
 
     let cred = sqlx::query_as::<_, (String, Vec<u8>)>(
         "SELECT credential_type, encrypted_data FROM credentials WHERE id = $1",

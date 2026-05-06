@@ -4,11 +4,7 @@ use uuid::Uuid;
 
 use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgOption {
-    id: Uuid,
-    name: String,
-}
+use crate::web::user::OrgOption;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CredentialOption {
@@ -22,17 +18,7 @@ async fn list_orgs_and_cf_creds() -> Result<(Vec<OrgOption>, Vec<CredentialOptio
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let orgs = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations ORDER BY name")
-            .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT o.id, o.name FROM organizations o \
-             JOIN organization_members om ON om.organization_id = o.id \
-             WHERE om.user_id = $1 ORDER BY o.name",
-        )
-        .bind(user.id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    };
+    let orgs = crate::web::user::list_user_orgs(&user, &pool).await?;
 
     let creds = sqlx::query_as::<_, (Uuid, String, String)>(
         "SELECT id, name, credential_type FROM credentials \
@@ -41,7 +27,7 @@ async fn list_orgs_and_cf_creds() -> Result<(Vec<OrgOption>, Vec<CredentialOptio
     .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok((
-        orgs.into_iter().map(|(id, name)| OrgOption { id, name }).collect(),
+        orgs,
         creds.into_iter().map(|(id, name, credential_type)| CredentialOption { id, name, credential_type }).collect(),
     ))
 }
@@ -57,9 +43,8 @@ async fn add_domain(
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
-        return Err(ServerFnError::new("write access required"));
-    }
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
 
     let mut zone_id: Option<String> = None;
 

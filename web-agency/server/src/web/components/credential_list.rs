@@ -15,17 +15,31 @@ struct CredentialRow {
 
 #[server]
 async fn list_credentials() -> Result<Vec<CredentialRow>, ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>, chrono::DateTime<chrono::Utc>)>(
-        "SELECT c.id, c.name, c.credential_type, o.name, c.created_at \
-         FROM credentials c LEFT JOIN organizations o ON o.id = c.organization_id \
-         ORDER BY c.created_at DESC",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let rows = if user.is_admin {
+        sqlx::query_as::<_, (Uuid, String, String, Option<String>, chrono::DateTime<chrono::Utc>)>(
+            "SELECT c.id, c.name, c.credential_type, o.name, c.created_at \
+             FROM credentials c LEFT JOIN organizations o ON o.id = c.organization_id \
+             ORDER BY c.created_at DESC",
+        )
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    } else {
+        let org_ids = user.org_ids();
+        sqlx::query_as::<_, (Uuid, String, String, Option<String>, chrono::DateTime<chrono::Utc>)>(
+            "SELECT c.id, c.name, c.credential_type, o.name, c.created_at \
+             FROM credentials c LEFT JOIN organizations o ON o.id = c.organization_id \
+             WHERE c.organization_id = ANY($1) OR c.organization_id IS NULL \
+             ORDER BY c.created_at DESC",
+        )
+        .bind(&org_ids)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    };
 
     Ok(rows
         .into_iter()

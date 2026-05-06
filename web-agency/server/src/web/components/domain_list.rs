@@ -77,11 +77,19 @@ async fn list_domains() -> Result<Vec<DomainRow>, ServerFnError> {
 
 #[server]
 async fn list_cf_credentials_for_bulk() -> Result<Vec<CfCredOption>, ServerFnError> {
-    let _user = crate::web::user::current_user().await?;
+    let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
-    let rows = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT id, name FROM credentials WHERE credential_type = 'cloudflare' ORDER BY name",
-    ).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let rows = if user.is_admin {
+        sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT id, name FROM credentials WHERE credential_type = 'cloudflare' ORDER BY name",
+        ).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+    } else {
+        let org_ids = user.org_ids();
+        sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT id, name FROM credentials WHERE credential_type = 'cloudflare' \
+             AND (organization_id = ANY($1) OR organization_id IS NULL) ORDER BY name",
+        ).bind(&org_ids).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+    };
     Ok(rows.into_iter().map(|(id, name)| CfCredOption { id, name }).collect())
 }
 

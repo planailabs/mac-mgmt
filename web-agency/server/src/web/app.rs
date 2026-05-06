@@ -20,6 +20,8 @@ use super::components::organization_form::OrganizationForm;
 use super::components::organization_list::OrganizationList;
 use super::components::token_form::TokenForm;
 use super::components::token_list::TokenList;
+use super::components::user_detail::UserDetail;
+use super::components::user_form::UserForm;
 use super::components::user_list::UserList;
 use super::components::webspace_detail::WebspaceDetail;
 use super::components::webspace_form::WebspaceForm;
@@ -69,6 +71,10 @@ pub enum Route {
     OrganizationDetail { id: String },
     #[route("/users")]
     UserList {},
+    #[route("/users/new")]
+    UserForm {},
+    #[route("/users/:id")]
+    UserDetail { id: String },
     #[route("/tokens")]
     TokenList {},
     #[route("/tokens/new")]
@@ -81,7 +87,7 @@ pub enum Route {
 
 #[component]
 pub fn App() -> Element {
-    use_init_i18n(|| {
+    let mut i18n = use_init_i18n(|| {
         I18nConfig::new(langid!("en-US"))
             .with_locale(Locale::new_static(
                 langid!("en-US"),
@@ -92,8 +98,24 @@ pub fn App() -> Element {
                 plan_ai_design::i18n::DE_DE,
             ))
     });
-
     let css_href = format!("/tailwind.css?v={}", env!("BUILD_TIMESTAMP"));
+
+    // Restore language preference from localStorage on first load.
+    use_effect(move || {
+        spawn(async move {
+            let result = document::eval(
+                "try { return localStorage.getItem('lang') || ''; } catch(e) { return ''; }",
+            )
+            .await;
+            if let Ok(val) = result {
+                if let Some(lang) = val.as_str() {
+                    if lang == "de-DE" {
+                        let _ = i18n.set_language(langid!("de-DE"));
+                    }
+                }
+            }
+        });
+    });
 
     use_effect(|| {
         document::eval("document.getElementById('wasm-loading')?.remove();");
