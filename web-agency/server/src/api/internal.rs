@@ -240,6 +240,39 @@ async fn get_routes(
         });
     }
 
+    // Tunnel webspace routes: domain → upstream URL (no auth token)
+    let tunnel_rows = sqlx::query_as::<_, (String, Option<String>, String)>(
+        "SELECT d.name, s.name, w.relay_url \
+         FROM webspace_domains wd \
+         JOIN webspaces w ON w.id = wd.webspace_id \
+         JOIN domains d ON d.id = wd.domain_id \
+         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+         WHERE w.hosting_type = 'tunnel' AND w.relay_url IS NOT NULL",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    for (domain, subdomain, tunnel_url) in tunnel_rows {
+        let host = match subdomain.as_deref() {
+            Some(sub) if sub != "@" => format!("{sub}.{domain}"),
+            _ => domain,
+        };
+
+        let upstream = parse_relay_upstream(&tunnel_url).ok_or_else(|| {
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("bad tunnel URL: {tunnel_url}"))
+        })?;
+
+        routes.push(RouteEntry {
+            host,
+            upstream,
+            relay: Some(RelayInfo {
+                url: tunnel_url,
+                proxy_token: String::new(), // no auth for tunnel type
+            }),
+        });
+    }
+
     Ok(Json(routes))
 }
 

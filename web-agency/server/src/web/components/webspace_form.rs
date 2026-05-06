@@ -122,7 +122,7 @@ pub fn WebspaceForm() -> Element {
                     let oid = uuid::Uuid::parse_str(&oid_str).ok();
                     if let Some(oid) = oid {
                         let rt_opt = if ht == "local" { Some(rt) } else { None };
-                        let relay_url_opt = if ht == "relay" && !r_url.is_empty() { Some(r_url) } else { None };
+                        let relay_url_opt = if (ht == "relay" || ht == "tunnel") && !r_url.is_empty() { Some(r_url) } else { None };
                         let relay_cred_opt = if ht == "relay" { uuid::Uuid::parse_str(&r_cred).ok() } else { None };
                         match create_webspace(oid, n, ht, rt_opt, relay_url_opt, relay_cred_opt).await {
                             Ok(_) => { nav.push(crate::web::app::Route::WebspaceList {}); }
@@ -164,7 +164,8 @@ pub fn WebspaceForm() -> Element {
                     oninput: move |evt| hosting_type.set(evt.value()),
                     option { value: "local", "Local (Pingora + ACME)" }
                     option { value: "cloudflare_pages", "Cloudflare Pages" }
-                    option { value: "relay", "Relay Tunnel" }
+                    option { value: "relay", "Relay Tunnel (mac-mgmt)" }
+                    option { value: "tunnel", "Tunnel (plain reverse proxy)" }
                 }
             }
 
@@ -177,6 +178,20 @@ pub fn WebspaceForm() -> Element {
                         option { value: "static", "Static Files" }
                         option { value: "nodejs", "Node.js (stub)" }
                         option { value: "docker", "Docker (stub)" }
+                    }
+                }
+            }
+
+            if *hosting_type.read() == "tunnel" {
+                FormField { label: "Upstream URL",
+                    help: "URL to reverse-proxy to (e.g. https://backend.example.com)",
+                    input {
+                        class: "input font-mono",
+                        r#type: "url",
+                        required: true,
+                        placeholder: "https://backend.example.com",
+                        value: "{relay_url}",
+                        oninput: move |evt| relay_url.set(evt.value()),
                     }
                 }
             }

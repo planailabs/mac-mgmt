@@ -127,16 +127,18 @@ impl ProxyHttp for WebAgencyProxy {
                     )
                 })?;
 
-            // Inject proxy token
-            upstream_request
-                .insert_header("x-proxy-token", &relay.proxy_token)
-                .map_err(|e| {
-                    pingora::Error::because(
-                        pingora::ErrorType::InternalError,
-                        "failed to set proxy token header",
-                        e,
-                    )
-                })?;
+            // Inject proxy token (if present — relay type has one, tunnel type doesn't)
+            if !relay.proxy_token.is_empty() {
+                upstream_request
+                    .insert_header("x-proxy-token", &relay.proxy_token)
+                    .map_err(|e| {
+                        pingora::Error::because(
+                            pingora::ErrorType::InternalError,
+                            "failed to set proxy token header",
+                            e,
+                        )
+                    })?;
+            }
 
             // Prepend path prefix if the relay URL had a path
             if !relay.path_prefix.is_empty() {
