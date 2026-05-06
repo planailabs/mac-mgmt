@@ -15,13 +15,30 @@ struct WebspaceData {
     cloudflare_credential_id: Option<Uuid>,
     runtime: Option<String>,
     local_status: Option<String>,
+    organization_id: Uuid,
     organization_name: String,
+    /// Whether the current user can manage tokens for this webspace's org.
+    is_org_admin: bool,
     bindings: Vec<DomainBinding>,
     // Live CF Pages info
     pages_subdomain: Option<String>,
     production_branch: Option<String>,
     git_source: Option<GitRepoInfo>,
     build_config: Option<BuildConfigInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeploymentRow {
+    id: Uuid,
+    status: String,
+    error_message: Option<String>,
+    tarball_size: Option<i64>,
+    created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TokenCreateResult {
+    token: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -180,7 +197,9 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     Ok(WebspaceData {
         id, name, hosting_type, cloudflare_pages_project: cf_project,
         cloudflare_credential_id: cf_cred_id, runtime, local_status,
-        organization_name: org_name, bindings,
+        organization_id: org_id, organization_name: org_name,
+        is_org_admin: user.is_org_admin(&org_id),
+        bindings,
         pages_subdomain, production_branch, git_source, build_config: build_config_info,
     })
 }
@@ -693,6 +712,96 @@ async fn build_domain_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cl
         .map_err(|e| ServerFnError::new(format!("{e}")))
 }
 
+// ── Deployments & tokens ─────────────────────────────────────────────
+
+#[server]
+async fn list_deployments(webspace_id: Uuid) -> Result<Vec<DeploymentRow>, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    )
+    .bind(webspace_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
+
+    use crate::web::user::WebUserExt;
+    user.require_org_read(&org_id)?;
+
+    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<i64>, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, status, error_message, tarball_size, created_at \
+         FROM deployments WHERE webspace_id = $1 ORDER BY created_at DESC LIMIT 20",
+    )
+    .bind(webspace_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, status, error_message, tarball_size, created_at)| DeploymentRow {
+            id,
+            status,
+            error_message,
+            tarball_size,
+            created_at: created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        })
+        .collect())
+}
+
+#[server]
+async fn create_deploy_token(
+    webspace_id: Uuid,
+    org_id: Uuid,
+    label: String,
+) -> Result<TokenCreateResult, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    // Require org admin (not just write) for token creation.
+    use crate::web::user::WebUserExt;
+    user.require_org_admin(&org_id)?;
+
+    // Verify the webspace belongs to this org.
+    let ws_org = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    )
+    .bind(webspace_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
+
+    if ws_org != org_id {
+        return Err(ServerFnError::new("webspace does not belong to this organization"));
+    }
+
+    use rand::Rng;
+    let token_bytes: [u8; 32] = rand::rng().random();
+    let token = hex::encode(token_bytes);
+
+    use sha2::{Digest, Sha256};
+    let hash = hex::encode(Sha256::digest(token.as_bytes()));
+
+    let scopes = serde_json::json!({ "webspace_id": webspace_id.to_string() });
+
+    sqlx::query(
+        "INSERT INTO tokens (organization_id, token_hash, label, kind, scopes) VALUES ($1, $2, $3, 'deploy', $4)",
+    )
+    .bind(org_id)
+    .bind(&hash)
+    .bind(&label)
+    .bind(&scopes)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(TokenCreateResult { token })
+}
+
 // ── Component ─────────────────────────────────────────────────────────
 
 #[component]
@@ -787,6 +896,18 @@ pub fn WebspaceDetail(id: String) -> Element {
                     pages_subdomain: data.pages_subdomain.clone(),
                 }
             }
+        }
+
+        // Deployments (for direct-upload Pages projects)
+        if is_pages && has_project && data.git_source.is_none() {
+            SectionHeading { class: "mt-6", "Deployments" }
+            DeploymentsSection { webspace_id: data.id }
+        }
+
+        // Deploy token (org admins can create inline)
+        if is_pages && has_project && data.git_source.is_none() && data.is_org_admin {
+            SectionHeading { class: "mt-6", "Deploy Token" }
+            DeployTokenSection { webspace_id: data.id, organization_id: data.organization_id }
         }
 
         // Domain bindings
@@ -1299,6 +1420,123 @@ fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, production_branc
                     span { class: "text-sm text-fg-muted", "Preview: " }
                     a { href: "https://{sub}", target: "_blank", class: "font-mono text-sm text-brand underline", "https://{sub}" }
                 }
+            }
+        }}
+    }
+}
+
+/// Recent deployments table.
+#[component]
+fn DeploymentsSection(webspace_id: Uuid) -> Element {
+    let deploys = use_server_future(move || {
+        let wid = webspace_id;
+        async move { list_deployments(wid).await }
+    })?;
+
+    let rows = match &*deploys.read() {
+        Some(Ok(r)) => r.clone(),
+        Some(Err(e)) => return rsx! { Card { div { class: "p-4 text-danger text-sm", "Error: {e}" } } },
+        None => return rsx! { Card { div { class: "p-4 text-fg-muted text-sm", "Loading..." } } },
+    };
+
+    rsx! {
+        Card {
+            div { class: "overflow-x-auto",
+                table { class: "table w-full",
+                    thead { tr { Th { "Status" } Th { "Size" } Th { "Created" } Th { "Error" } } }
+                    tbody {
+                        if rows.is_empty() {
+                            tr { td { class: "td text-fg-muted text-center", colspan: "4", "No deployments yet" } }
+                        }
+                        for row in &rows {
+                            tr {
+                                Td {
+                                    match row.status.as_str() {
+                                        "success" => rsx! { Badge { variant: BadgeVariant::Success, "Success" } },
+                                        "failed" => rsx! { Badge { variant: BadgeVariant::Danger, "Failed" } },
+                                        "deploying" | "uploading" => rsx! { Badge { variant: BadgeVariant::Warn, "{row.status}" } },
+                                        "pending" => rsx! { Badge { "Pending" } },
+                                        _ => rsx! { Badge { "{row.status}" } },
+                                    }
+                                }
+                                TdMuted {
+                                    {row.tarball_size.map(|s| {
+                                        if s > 1_048_576 { format!("{:.1} MB", s as f64 / 1_048_576.0) }
+                                        else if s > 1024 { format!("{:.0} KB", s as f64 / 1024.0) }
+                                        else { format!("{s} B") }
+                                    }).unwrap_or_else(|| "-".into())}
+                                }
+                                TdMuted { "{row.created_at}" }
+                                Td {
+                                    if let Some(err) = &row.error_message {
+                                        span { class: "text-sm text-danger", "{err}" }
+                                    } else {
+                                        span { class: "text-fg-muted", "-" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Inline deploy-token creation (org admin only).
+#[component]
+fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
+    let mut label = use_signal(String::new);
+    let mut creating = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let mut result = use_signal(|| None::<TokenCreateResult>);
+
+    if let Some(res) = &*result.read() {
+        return rsx! {
+            Card { div { class: "p-6",
+                div { class: "text-sm text-fg-muted mb-2", "Copy this token now — it won't be shown again." }
+                div { class: "font-mono text-sm bg-surface-2 p-3 rounded break-all select-all", "{res.token}" }
+            }}
+        };
+    }
+
+    rsx! {
+        Card { div { class: "p-4",
+            div { class: "flex items-end gap-3",
+                FormField { label: "Label",
+                    input {
+                        class: "input w-64",
+                        r#type: "text",
+                        placeholder: "e.g. CI deploy",
+                        required: true,
+                        value: "{label}",
+                        oninput: move |evt| label.set(evt.value()),
+                    }
+                }
+                Button {
+                    variant: ButtonVariant::Primary,
+                    disabled: label.read().is_empty() || *creating.read(),
+                    onclick: {
+                        let wid = webspace_id;
+                        let oid = organization_id;
+                        move |_| {
+                            let l = label.read().clone();
+                            creating.set(true);
+                            error.set(None);
+                            spawn(async move {
+                                match create_deploy_token(wid, oid, l).await {
+                                    Ok(r) => result.set(Some(r)),
+                                    Err(e) => error.set(Some(format!("{e}"))),
+                                }
+                                creating.set(false);
+                            });
+                        }
+                    },
+                    if *creating.read() { "Creating..." } else { "Create Deploy Token" }
+                }
+            }
+            if let Some(err) = &*error.read() {
+                div { class: "mt-2 text-danger text-sm", "{err}" }
             }
         }}
     }
