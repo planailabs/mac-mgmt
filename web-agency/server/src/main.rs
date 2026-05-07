@@ -128,7 +128,7 @@ async fn cert_renewal_tick(pool: &sqlx::PgPool) -> anyhow::Result<()> {
          JOIN webspaces w ON w.id = wd.webspace_id \
          JOIN domains d ON d.id = wd.domain_id \
          LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
-         WHERE w.hosting_type = 'local' AND w.local_port IS NOT NULL \
+         WHERE w.hosting_type IN ('local', 'relay', 'tunnel') \
            AND NOT EXISTS (SELECT 1 FROM certificates c WHERE c.domain = \
                CASE WHEN s.name IS NOT NULL AND s.name != '@' THEN s.name || '.' || d.name ELSE d.name END)",
     )
