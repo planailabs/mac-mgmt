@@ -159,7 +159,7 @@ impl WebAgencyProxy {
         let return_url = format!("https://{host}{request_uri}");
         let encoded = urlencoding::encode(&return_url);
         let redirect_url = format!(
-            "https://{}/auth/proxy-gate?return_url={encoded}",
+            "https://{}/proxy-gate?return_url={encoded}",
             self.agency_domain
         );
         let mut resp = pingora::http::ResponseHeader::build(302, None)

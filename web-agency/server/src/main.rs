@@ -251,14 +251,14 @@ fn main() {
                 web_router = web_router
                     .route("/auth/login", axum::routing::get(plan_ai_auth::login_page))
                     .route("/auth/logout", axum::routing::get(plan_ai_auth::logout_handler))
-                    .route("/auth/proxy-gate", axum::routing::get(crate::api::internal::proxy_gate))
+                    .route("/proxy-gate", axum::routing::get(crate::api::internal::proxy_gate))
                     .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
                 for layer in auth_layers {
                     web_router = web_router.layer(layer);
                 }
             } else if dev_no_auth {
                 web_router = web_router
-                    .route("/auth/proxy-gate", axum::routing::get(crate::api::internal::proxy_gate))
+                    .route("/proxy-gate", axum::routing::get(crate::api::internal::proxy_gate))
                     .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
             }
 
