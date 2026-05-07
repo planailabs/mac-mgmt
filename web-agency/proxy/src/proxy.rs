@@ -155,8 +155,12 @@ impl WebAgencyProxy {
         }
 
         // 3. Redirect to agency OIDC login
-        let request_uri = session.req_header().uri.to_string();
-        let return_url = format!("https://{host}{request_uri}");
+        let uri = &session.req_header().uri;
+        let path_and_query = uri
+            .path_and_query()
+            .map(|pq| pq.as_str())
+            .unwrap_or("/");
+        let return_url = format!("https://{host}{path_and_query}");
         let encoded = urlencoding::encode(&return_url);
         let redirect_url = format!(
             "https://{}/proxy-gate?return_url={encoded}",
