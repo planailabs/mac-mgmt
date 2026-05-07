@@ -20,6 +20,7 @@ struct DomainRow {
     ns_ok: Option<bool>,
     has_webspace: bool,
     ai_bots_protection: Option<String>,
+    expires_soon: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,11 +42,12 @@ async fn list_domains() -> Result<Vec<DomainRow>, ServerFnError> {
         return Ok(vec![]);
     }
 
-    type Row = (Uuid, String, Option<String>, String, bool, Option<String>, Option<chrono::DateTime<chrono::Utc>>, String, Option<String>, Option<Uuid>, Option<bool>, bool, Option<String>);
+    type Row = (Uuid, String, Option<String>, String, bool, Option<String>, Option<chrono::DateTime<chrono::Utc>>, String, Option<String>, Option<Uuid>, Option<bool>, bool, Option<String>, bool);
     let query = "SELECT d.id, d.name, d.registrar_type, d.ssl_mode, d.dnssec_enabled, d.cloudflare_zone_id, d.expires_at, o.name, \
          d.registrar_type, d.registrar_credential_id, d.ns_ok, \
          EXISTS(SELECT 1 FROM webspace_domains wd WHERE wd.domain_id = d.id) AS has_webspace, \
-         d.ai_bots_protection \
+         d.ai_bots_protection, \
+         (d.expires_at IS NOT NULL AND d.expires_at < now() + interval '30 days') AS expires_soon \
          FROM domains d JOIN organizations o ON o.id = d.organization_id";
 
     let rows = if user.is_admin {
@@ -58,7 +60,7 @@ async fn list_domains() -> Result<Vec<DomainRow>, ServerFnError> {
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, registrar_type, ssl_mode, dnssec_enabled, cloudflare_zone_id, expires_at, organization_name, reg_type, reg_cred_id, ns_ok, has_webspace, ai_bots_protection)| DomainRow {
+        .map(|(id, name, registrar_type, ssl_mode, dnssec_enabled, cloudflare_zone_id, expires_at, organization_name, reg_type, reg_cred_id, ns_ok, has_webspace, ai_bots_protection, expires_soon)| DomainRow {
             id,
             name,
             registrar_type,
@@ -71,6 +73,7 @@ async fn list_domains() -> Result<Vec<DomainRow>, ServerFnError> {
             ns_ok,
             has_webspace,
             ai_bots_protection,
+            expires_soon,
         })
         .collect())
 }
@@ -345,6 +348,7 @@ pub fn DomainList() -> Element {
         "ai_crawl_off" => all_rows.iter().filter(|r| r.ai_bots_protection.as_deref() != Some("block")).collect(),
         "ai_crawl_on" => all_rows.iter().filter(|r| r.ai_bots_protection.as_deref() == Some("block")).collect(),
         "ssl_not_full" => all_rows.iter().filter(|r| r.cloudflare_zone_id.is_some() && r.ssl_mode != "full" && r.ssl_mode != "strict").collect(),
+        "expires_soon" => all_rows.iter().filter(|r| r.expires_soon).collect(),
         _ => all_rows.iter().collect(),
     };
 
@@ -405,6 +409,7 @@ pub fn DomainList() -> Element {
                     ("ai_crawl_off", "AI Crawl Off", all_rows.iter().filter(|r| r.ai_bots_protection.as_deref() != Some("block")).count()),
                     ("ai_crawl_on", "AI Crawl On", all_rows.iter().filter(|r| r.ai_bots_protection.as_deref() == Some("block")).count()),
                     ("ssl_not_full", "SSL Not Full", all_rows.iter().filter(|r| r.cloudflare_zone_id.is_some() && r.ssl_mode != "full" && r.ssl_mode != "strict").count()),
+                    ("expires_soon", "Expires Soon", all_rows.iter().filter(|r| r.expires_soon).count()),
                 ];
                 rsx! {
                     for (key, label, count) in filters {
@@ -691,7 +696,13 @@ pub fn DomainList() -> Element {
                                                 span { class: "text-fg-muted", "-" }
                                             }
                                         }
-                                        TdMuted { {row.expires_at.as_deref().unwrap_or("-")} }
+                                        Td {
+                                            if row.expires_soon {
+                                                span { class: "text-danger", {row.expires_at.as_deref().unwrap_or("-")} }
+                                            } else {
+                                                span { class: "text-fg-muted", {row.expires_at.as_deref().unwrap_or("-")} }
+                                            }
+                                        }
                                         TdMuted { "{row.organization_name}" }
                                     }
                                 }
