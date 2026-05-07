@@ -1133,6 +1133,10 @@ pub fn WebspaceDetail(id: String) -> Element {
             is_pages,
             hosting_type: data.hosting_type.clone(),
         }
+
+        // Danger zone
+        SectionHeading { class: "mt-6", "Danger Zone" }
+        DeleteWebspaceSection { webspace_id: data.id }
     }
 }
 
@@ -1755,6 +1759,76 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
                 div { class: "mt-2 text-danger text-sm", "{err}" }
             }
         }}
+    }
+}
+
+// ── Delete webspace ─────────────────────────────────────────────────
+
+#[server]
+async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+
+    // Remove domain bindings
+    sqlx::query("DELETE FROM webspace_domains WHERE webspace_id = $1")
+        .bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Remove deployments
+    sqlx::query("DELETE FROM deployments WHERE webspace_id = $1")
+        .bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Delete the webspace
+    sqlx::query("DELETE FROM webspaces WHERE id = $1")
+        .bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+#[component]
+fn DeleteWebspaceSection(webspace_id: Uuid) -> Element {
+    let mut deleting = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    rsx! {
+        Card {
+            div { class: "p-4 flex items-center justify-between",
+                div {
+                    div { class: "text-sm font-medium", "Delete this webspace" }
+                    div { class: "text-sm text-fg-muted", "All domain bindings and deployments will be removed." }
+                }
+                Button {
+                    variant: ButtonVariant::Danger,
+                    disabled: *deleting.read(),
+                    onclick: {
+                        let wid = webspace_id;
+                        move |_| {
+                            deleting.set(true);
+                            error.set(None);
+                            spawn(async move {
+                                match delete_webspace(wid).await {
+                                    Ok(()) => { navigator().push(crate::web::app::Route::WebspaceList {}); }
+                                    Err(e) => {
+                                        error.set(Some(format!("{e}")));
+                                        deleting.set(false);
+                                    }
+                                }
+                            });
+                        }
+                    },
+                    if *deleting.read() { "Deleting..." } else { "Delete Webspace" }
+                }
+            }
+            if let Some(err) = &*error.read() {
+                div { class: "px-4 pb-4 text-danger text-sm", "{err}" }
+            }
+        }
     }
 }
 
