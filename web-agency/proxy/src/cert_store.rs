@@ -12,16 +12,25 @@ use pingora::listeners::TlsAccept;
 #[derive(Clone)]
 pub struct CertKey {
     pub cert: X509,
+    pub chain: Vec<X509>,
     pub key: PKey<Private>,
 }
 
 impl CertKey {
     pub fn from_pem(chain_pem: &str, key_pem: &str) -> anyhow::Result<Self> {
-        let cert = X509::from_pem(chain_pem.as_bytes())
+        let mut certs = X509::stack_from_pem(chain_pem.as_bytes())
             .map_err(|e| anyhow::anyhow!("invalid cert PEM: {e}"))?;
+        if certs.is_empty() {
+            anyhow::bail!("cert PEM contained no certificates");
+        }
+        let cert = certs.remove(0);
         let key = PKey::private_key_from_pem(key_pem.as_bytes())
             .map_err(|e| anyhow::anyhow!("invalid key PEM: {e}"))?;
-        Ok(Self { cert, key })
+        Ok(Self {
+            cert,
+            chain: certs,
+            key,
+        })
     }
 }
 
@@ -75,6 +84,12 @@ impl TlsAccept for CertStoreCallback {
         if let Err(e) = ssl.set_certificate(&ck.cert) {
             tracing::error!(sni = %sni, "failed to set certificate: {e}");
             return;
+        }
+        for intermediate in &ck.chain {
+            if let Err(e) = ssl.add_chain_cert(intermediate) {
+                tracing::error!(sni = %sni, "failed to add chain cert: {e}");
+                return;
+            }
         }
         if let Err(e) = ssl.set_private_key(&ck.key) {
             tracing::error!(sni = %sni, "failed to set private key: {e}");
