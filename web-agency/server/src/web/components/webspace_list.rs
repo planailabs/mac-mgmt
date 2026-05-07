@@ -12,6 +12,7 @@ struct WebspaceRow {
     runtime: Option<String>,
     local_status: Option<String>,
     cloudflare_pages_project: Option<String>,
+    relay_url: Option<String>,
     domain_count: i64,
     organization_name: String,
 }
@@ -26,17 +27,18 @@ async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
         return Ok(vec![]);
     }
 
+    type Row = (Uuid, String, String, Option<String>, Option<String>, Option<String>, Option<String>, i64, String);
     let rows = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<String>, Option<String>, i64, String)>(
-            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, \
+        sqlx::query_as::<_, Row>(
+            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, \
              (SELECT count(*) FROM webspace_domains wd WHERE wd.webspace_id = w.id), o.name \
              FROM webspaces w JOIN organizations o ON o.id = w.organization_id \
              ORDER BY w.name",
         )
         .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
-        sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<String>, Option<String>, i64, String)>(
-            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, \
+        sqlx::query_as::<_, Row>(
+            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, \
              (SELECT count(*) FROM webspace_domains wd WHERE wd.webspace_id = w.id), o.name \
              FROM webspaces w JOIN organizations o ON o.id = w.organization_id \
              WHERE w.organization_id = ANY($1) \
@@ -48,8 +50,8 @@ async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, hosting_type, runtime, local_status, cloudflare_pages_project, domain_count, organization_name)| {
-            WebspaceRow { id, name, hosting_type, runtime, local_status, cloudflare_pages_project, domain_count, organization_name }
+        .map(|(id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, domain_count, organization_name)| {
+            WebspaceRow { id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, domain_count, organization_name }
         })
         .collect())
 }
@@ -86,7 +88,7 @@ pub fn WebspaceList() -> Element {
                         tr {
                             Th { "Name" }
                             Th { "Type" }
-                            Th { "Runtime / Pages" }
+                            Th { "Target" }
                             Th { "Status" }
                             Th { "Domains" }
                             Th { "Org" }
@@ -111,12 +113,16 @@ pub fn WebspaceList() -> Element {
                                     match row.hosting_type.as_str() {
                                         "cloudflare_pages" => rsx! { Badge { variant: BadgeVariant::Info, "CF Pages" } },
                                         "local" => rsx! { Badge { "Local" } },
+                                        "relay" => rsx! { Badge { variant: BadgeVariant::Accent, "Relay" } },
+                                        "tunnel" => rsx! { Badge { variant: BadgeVariant::Accent, "Tunnel" } },
                                         _ => rsx! { span { "-" } },
                                     }
                                 }
                                 Td {
                                     if let Some(ref proj) = row.cloudflare_pages_project {
                                         span { class: "font-mono text-sm", "{proj}" }
+                                    } else if let Some(ref url) = row.relay_url {
+                                        span { class: "font-mono text-sm truncate max-w-xs", title: "{url}", "{url}" }
                                     } else if let Some(ref rt) = row.runtime {
                                         Badge { "{rt}" }
                                     } else {
