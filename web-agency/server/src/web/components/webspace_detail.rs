@@ -129,20 +129,36 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     )
     .bind(webspace_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // For relay/tunnel webspaces the CNAME target is the agency domain
+    let agency_domain = if hosting_type == "relay" || hosting_type == "tunnel" {
+        crate::config::config().proxy.as_ref().map(|p| p.agency_domain.clone())
+    } else {
+        None
+    };
+
     let mut bindings = Vec::new();
     for (binding_id, domain_id, subdomain_id, domain_name, subdomain_name) in binding_rows {
         let hostname = match &subdomain_name {
             Some(sub) if sub != "@" => format!("{sub}.{domain_name}"),
             _ => domain_name.clone(),
         };
-        // Check if a CNAME record pointing to *.pages.dev exists for this hostname
         let sub_name = subdomain_name.as_deref().unwrap_or("@");
-        let cname_ok = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM dns_records WHERE domain_id = $1 AND name = $2 \
-             AND record_type = 'CNAME' AND record_value LIKE '%.pages.dev')",
-        )
-        .bind(domain_id).bind(sub_name)
-        .fetch_one(&pool).await.unwrap_or(false);
+        // Check CNAME: *.pages.dev for pages, agency_domain for relay/tunnel
+        let cname_ok = if let Some(ref ad) = agency_domain {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM dns_records WHERE domain_id = $1 AND name = $2 \
+                 AND record_type = 'CNAME' AND record_value = $3)",
+            )
+            .bind(domain_id).bind(sub_name).bind(ad)
+            .fetch_one(&pool).await.unwrap_or(false)
+        } else {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM dns_records WHERE domain_id = $1 AND name = $2 \
+                 AND record_type = 'CNAME' AND record_value LIKE '%.pages.dev')",
+            )
+            .bind(domain_id).bind(sub_name)
+            .fetch_one(&pool).await.unwrap_or(false)
+        };
 
         bindings.push(DomainBinding { binding_id, domain_id, subdomain_id, domain_name, subdomain_name, hostname, cname_ok, cf_domain_status: None });
     }
@@ -417,13 +433,23 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
     .bind(webspace_id).bind(domain_id).bind(subdomain_id)
     .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // For CF Pages webspaces: add custom domain + create CNAME record
-    let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
-        "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
+    // Determine webspace type and create appropriate CNAME
+    let ws = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
+        "SELECT hosting_type, cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
     )
     .bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if let (Some(project_name), Some(cred_id)) = ws {
+    let (ws_hosting_type, ws_project, ws_cred_id) = ws;
+
+    // For relay/tunnel: create CNAME pointing to agency_domain
+    if ws_hosting_type == "relay" || ws_hosting_type == "tunnel" {
+        if let Some(agency_domain) = crate::config::config().proxy.as_ref().map(|p| &p.agency_domain) {
+            create_tunnel_cname(&pool, domain_id, subdomain_id, &hostname, agency_domain).await?;
+        }
+    }
+
+    // For CF Pages webspaces: add custom domain + create CNAME record
+    if let (Some(project_name), Some(cred_id)) = (ws_project, ws_cred_id) {
         let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
 
         // 1. Add custom domain to Pages project
@@ -651,13 +677,24 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
         "SELECT domain_id, subdomain_id FROM webspace_domains WHERE id = $1",
     ).bind(binding_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Remove CF Pages custom domain + CNAME record
-    let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
-        "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
+    // Remove CNAME record (relay/tunnel or Pages)
+    let ws = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
+        "SELECT hosting_type, cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
     )
     .bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if let (Some(project_name), Some(cred_id)) = &ws {
+    let (ws_hosting_type, ws_project, ws_cred_id) = ws;
+
+    // For relay/tunnel: remove the agency-domain CNAME
+    if (ws_hosting_type == "relay" || ws_hosting_type == "tunnel") && binding.is_some() {
+        if let Some(agency_domain) = crate::config::config().proxy.as_ref().map(|p| &p.agency_domain) {
+            if let Some((domain_id, _)) = binding {
+                remove_tunnel_cname(&pool, domain_id, &hostname, agency_domain).await;
+            }
+        }
+    }
+
+    if let (Some(project_name), Some(cred_id)) = (&ws_project, &ws_cred_id) {
         if let Ok((client, account_id)) = build_cf_pages_client(&pool, *cred_id).await {
             // Remove custom domain from Pages
             let _ = client.remove_pages_custom_domain(&account_id, project_name, &hostname).await;
@@ -699,6 +736,124 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
         .bind(binding_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
+}
+
+/// Create a CNAME record pointing to the agency domain (for relay/tunnel webspaces).
+#[cfg(feature = "server")]
+async fn create_tunnel_cname(
+    pool: &sqlx::PgPool,
+    domain_id: Uuid,
+    subdomain_id: Option<Uuid>,
+    hostname: &str,
+    cname_target: &str,
+) -> Result<(), ServerFnError> {
+    let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+        "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
+    ).bind(domain_id).fetch_one(pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let (zone_id, domain_cred_id) = match domain_cf {
+        (Some(z), Some(c)) => (z, c),
+        _ => return Err(ServerFnError::new("domain not deployed to Cloudflare")),
+    };
+
+    let client = build_domain_cf_client(pool, domain_cred_id).await?;
+    let record = cloudflare_api::compat::CreateDnsRecord {
+        record_type: "CNAME".into(),
+        name: hostname.to_string(),
+        content: Some(cname_target.to_string()),
+        data: None,
+        ttl: Some(1),
+        proxied: Some(true),
+        comment: Some("Tunnel proxy".into()),
+        priority: None,
+    };
+
+    match client.create_dns_record(&zone_id, &record).await {
+        Ok(created) => {
+            tracing::info!("created CNAME {hostname} → {cname_target} (CF record {})", created.id);
+            // Ensure subdomain entity exists
+            let sub_id = if let Some(sid) = subdomain_id {
+                sid
+            } else {
+                sqlx::query_scalar::<_, Uuid>(
+                    "INSERT INTO subdomains (domain_id, name) VALUES ($1, '@') \
+                     ON CONFLICT (domain_id, name) DO UPDATE SET updated_at = now() RETURNING id",
+                ).bind(domain_id).fetch_one(pool).await
+                .map_err(|e| ServerFnError::new(e.to_string()))?
+            };
+
+            let sub_name = if let Some(sid) = subdomain_id {
+                sqlx::query_scalar::<_, String>("SELECT name FROM subdomains WHERE id = $1")
+                    .bind(sid).fetch_optional(pool).await.ok().flatten().unwrap_or_else(|| "@".into())
+            } else {
+                "@".into()
+            };
+
+            let _ = sqlx::query(
+                "INSERT INTO dns_records (subdomain_id, domain_id, name, record_type, record_value, proxied, cloudflare_record_id) \
+                 VALUES ($1, $2, $3, 'CNAME', $4, true, $5) ON CONFLICT DO NOTHING",
+            )
+            .bind(sub_id).bind(domain_id).bind(&sub_name).bind(cname_target).bind(&created.id)
+            .execute(pool).await;
+        }
+        Err(e) => {
+            tracing::warn!("failed to create CNAME for {hostname}: {e}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove a tunnel CNAME record pointing to the agency domain.
+#[cfg(feature = "server")]
+async fn remove_tunnel_cname(
+    pool: &sqlx::PgPool,
+    domain_id: Uuid,
+    hostname: &str,
+    agency_domain: &str,
+) {
+    let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+        "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
+    ).bind(domain_id).fetch_optional(pool).await.ok().flatten();
+
+    if let Some((Some(zone_id), Some(domain_cred_id))) = domain_cf {
+        if let Ok(client) = build_domain_cf_client(pool, domain_cred_id).await {
+            if let Ok(records) = client.list_dns_records(&zone_id).await {
+                for rec in records {
+                    if rec.record_type == "CNAME"
+                        && rec.content.as_deref() == Some(agency_domain)
+                        && (rec.name == hostname || rec.name.ends_with(&format!(".{hostname}")))
+                    {
+                        let _ = client.delete_dns_record(&zone_id, &rec.id).await;
+                        tracing::info!("removed CNAME {} → {agency_domain}", rec.name);
+                        let _ = sqlx::query("DELETE FROM dns_records WHERE cloudflare_record_id = $1")
+                            .bind(&rec.id).execute(pool).await;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Re-create the CNAME record for a relay/tunnel domain binding.
+#[server]
+async fn fix_cname_tunnel(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid>, hostname: String) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+
+    let agency_domain = crate::config::config().proxy.as_ref()
+        .map(|p| p.agency_domain.clone())
+        .ok_or_else(|| ServerFnError::new("no proxy config with agency_domain"))?;
+
+    create_tunnel_cname(&pool, domain_id, subdomain_id, &hostname, &agency_domain).await
 }
 
 #[cfg(feature = "server")]
@@ -928,6 +1083,7 @@ pub fn WebspaceDetail(id: String) -> Element {
             webspace_id: data.id,
             bindings: data.bindings.clone(),
             is_pages,
+            hosting_type: data.hosting_type.clone(),
         }
     }
 }
@@ -1556,7 +1712,9 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
 
 /// Domain bindings list + add form.
 #[component]
-fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pages: bool) -> Element {
+fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pages: bool, #[props(default = String::new())] hosting_type: String) -> Element {
+    let is_tunnel = hosting_type == "relay" || hosting_type == "tunnel";
+    let show_cname = is_pages || is_tunnel;
     let domains = use_server_future(move || {
         let wid = webspace_id;
         async move { list_domains_for_binding(wid).await }
@@ -1582,8 +1740,10 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                         tr {
                             Th { "Hostname" }
                             Th { "Domain" }
-                            if is_pages {
+                            if show_cname {
                                 Th { "CNAME" }
+                            }
+                            if is_pages {
                                 Th { "Verification" }
                             }
                             Th { "" }
@@ -1594,7 +1754,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                             tr {
                                 td {
                                     class: "td text-fg-muted text-center",
-                                    colspan: if is_pages { "5" } else { "3" },
+                                    colspan: if is_pages { "5" } else if is_tunnel { "4" } else { "3" },
                                     "No domains bound"
                                 }
                             }
@@ -1613,7 +1773,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                     tr {
                                         Td { class: "font-mono", "{b.hostname}" }
                                         TdMuted { "{b.domain_name}" }
-                                        if is_pages {
+                                        if show_cname {
                                             Td {
                                                 if cname_ok {
                                                     Badge { variant: BadgeVariant::Success, "OK" }
@@ -1631,7 +1791,11 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                                                     let hostname = hostname.clone();
                                                                     fixing.set(Some(bid));
                                                                     spawn(async move {
-                                                                        let _ = fix_cname(wid, did, sub_id, hostname).await;
+                                                                        if is_tunnel {
+                                                                            let _ = fix_cname_tunnel(wid, did, sub_id, hostname).await;
+                                                                        } else {
+                                                                            let _ = fix_cname(wid, did, sub_id, hostname).await;
+                                                                        }
                                                                         fixing.set(None);
                                                                         navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
                                                                     });
@@ -1642,6 +1806,8 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                                     }
                                                 }
                                             }
+                                        }
+                                        if is_pages {
                                             // Verification status column
                                             Td {
                                                 match cf_status.as_deref() {
