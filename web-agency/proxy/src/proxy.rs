@@ -121,14 +121,14 @@ impl WebAgencyProxy {
         }
 
         // 2. Check for ?__pg_token= callback from proxy-gate
-        let uri_str = session.req_header().uri.to_string();
-        if let Some((sig, oid, exp_ts)) = parse_gate_params(&uri_str) {
+        let path_query = safe_path_and_query(&session.req_header().uri);
+        if let Some((sig, oid, exp_ts)) = parse_gate_params(&path_query) {
             if let Ok(expected_org) = uuid::Uuid::parse_str(&oid) {
                 if &expected_org == org_id && self.verify_hmac(&expected_org, exp_ts, &sig) {
                     let now = chrono::Utc::now().timestamp();
                     if exp_ts > now {
                         // Valid gate token — set cookie and redirect to clean URL
-                        let clean_url = strip_gate_params(&uri_str);
+                        let clean_url = strip_gate_params(&path_query);
                         let cookie_value = self.make_gate_cookie(org_id);
                         let location = format!("https://{host}{clean_url}");
                         let mut resp = pingora::http::ResponseHeader::build(302, None)
@@ -155,12 +155,7 @@ impl WebAgencyProxy {
         }
 
         // 3. Redirect to agency OIDC login
-        let uri = &session.req_header().uri;
-        let path_and_query = uri
-            .path_and_query()
-            .map(|pq| pq.as_str())
-            .unwrap_or("/");
-        let return_url = format!("https://{host}{path_and_query}");
+        let return_url = format!("https://{host}{path_query}");
         let encoded = urlencoding::encode(&return_url);
         let redirect_url = format!(
             "https://{}/proxy-gate?return_url={encoded}",
@@ -353,6 +348,20 @@ impl ProxyHttp for WebAgencyProxy {
             }
         }
         Ok(())
+    }
+}
+
+/// Extract path+query from a URI, handling both origin-form (`/path?q=1`)
+/// and absolute-form (`https://host/path?q=1`) that Pingora may produce.
+fn safe_path_and_query(uri: &http::Uri) -> String {
+    if let Some(pq) = uri.path_and_query() {
+        return pq.to_string();
+    }
+    // Absolute-form URI — path_and_query() returns None, reconstruct manually
+    let path = uri.path();
+    match uri.query() {
+        Some(q) => format!("{path}?{q}"),
+        None => path.to_string(),
     }
 }
 
