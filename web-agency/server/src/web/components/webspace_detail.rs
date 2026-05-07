@@ -1066,6 +1066,15 @@ pub fn WebspaceDetail(id: String) -> Element {
             }
         }
 
+        // Settings (editable name + upstream URL)
+        SectionHeading { class: "mt-6", "Settings" }
+        WebspaceSettingsSection {
+            webspace_id: data.id,
+            current_name: data.name.clone(),
+            hosting_type: data.hosting_type.clone(),
+            current_relay_url: data.relay_url.clone(),
+        }
+
         // CF Pages deployment
         if is_pages && !has_project {
             SectionHeading { class: "mt-6", "Deploy Pages Project" }
@@ -1746,6 +1755,128 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
                 div { class: "mt-2 text-danger text-sm", "{err}" }
             }
         }}
+    }
+}
+
+// ── Webspace settings (name, upstream URL) ──────────────────────────
+
+#[server]
+async fn update_webspace_settings(webspace_id: Uuid, name: String, relay_url: Option<String>) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>)>(
+        "SELECT organization_id, hosting_type, cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let (org_id, hosting_type, cf_project, cf_cred_id) = row;
+
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+
+    // For CF Pages: rename the Pages project if the name changed
+    if hosting_type == "cloudflare_pages" {
+        if let (Some(old_project), Some(cred_id)) = (&cf_project, cf_cred_id) {
+            if old_project != &name {
+                let (client, account_id) = crate::credentials::cf_client_with_account(&pool, cred_id).await
+                    .map_err(|e| ServerFnError::new(format!("{e}")))?;
+
+                // CF Pages doesn't support rename — create new project, but that's disruptive.
+                // Instead just update local name; the Pages project name stays the same.
+                // The name field in our DB is for display purposes.
+                tracing::info!(
+                    old = old_project, new = &name,
+                    "renaming webspace (Pages project name unchanged: {old_project})"
+                );
+                let _ = (client, account_id); // suppress unused warning
+            }
+        }
+    }
+
+    sqlx::query(
+        "UPDATE webspaces SET name = $1, relay_url = $2, updated_at = now() WHERE id = $3",
+    )
+    .bind(&name).bind(&relay_url).bind(webspace_id)
+    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+#[component]
+fn WebspaceSettingsSection(
+    webspace_id: Uuid,
+    current_name: String,
+    hosting_type: String,
+    current_relay_url: Option<String>,
+) -> Element {
+    let mut name = use_signal(move || current_name.clone());
+    let mut relay_url = use_signal(move || current_relay_url.clone().unwrap_or_default());
+    let mut saving = use_signal(|| false);
+    let mut message = use_signal(|| None::<String>);
+
+    let is_relay_or_tunnel = hosting_type == "relay" || hosting_type == "tunnel";
+
+    rsx! {
+        Card {
+            div { class: "p-4",
+                div { class: "flex items-end gap-3 flex-wrap",
+                    FormField { label: "Name",
+                        input {
+                            class: "input w-64",
+                            r#type: "text",
+                            value: "{name}",
+                            oninput: move |evt| name.set(evt.value()),
+                        }
+                    }
+
+                    if is_relay_or_tunnel {
+                        FormField { label: "Upstream URL",
+                            input {
+                                class: "input w-80 font-mono",
+                                r#type: "url",
+                                placeholder: "https://backend.example.com",
+                                value: "{relay_url}",
+                                oninput: move |evt| relay_url.set(evt.value()),
+                            }
+                        }
+                    }
+
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        disabled: *saving.read(),
+                        onclick: {
+                            let wid = webspace_id;
+                            move |_| {
+                                let n = name.read().clone();
+                                let url = if is_relay_or_tunnel {
+                                    let u = relay_url.read().clone();
+                                    if u.is_empty() { None } else { Some(u) }
+                                } else {
+                                    None
+                                };
+                                saving.set(true);
+                                message.set(None);
+                                spawn(async move {
+                                    match update_webspace_settings(wid, n, url).await {
+                                        Ok(()) => {
+                                            message.set(Some("Saved".into()));
+                                            navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                        }
+                                        Err(e) => message.set(Some(format!("Error: {e}"))),
+                                    }
+                                    saving.set(false);
+                                });
+                            }
+                        },
+                        if *saving.read() { "Saving..." } else { "Save" }
+                    }
+
+                    if let Some(msg) = &*message.read() {
+                        span { class: "text-sm text-fg-muted", "{msg}" }
+                    }
+                }
+            }
+        }
     }
 }
 
