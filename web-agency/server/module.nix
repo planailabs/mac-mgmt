@@ -87,7 +87,8 @@ in
         # Hardening
         CapabilityBoundingSet = "";
         LockPersonality = true;
-        MemoryDenyWriteExecute = true;
+        # V8 (Node.js / wrangler) needs JIT — cannot deny W^X.
+        MemoryDenyWriteExecute = false;
         NoNewPrivileges = true;
         PrivateDevices = true;
         PrivateTmp = true;
