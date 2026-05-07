@@ -44,12 +44,21 @@ On a domain's detail page, use the **Cloudflare** section to:
 
 Go to **Webspaces** → **Create Webspace** and choose:
 
-- **Cloudflare Pages**: Deploy via git repo or direct upload (tarballs)
-- **Local**: Host on the server with nginx + ACME SSL
+- **[Cloudflare Pages](/docs/cloudflare-pages)**: Deploy via git repo or direct upload (tarballs)
+- **Local**: Host on the server with Pingora + ACME SSL
+- **[Relay Tunnel](/docs/relay-tunnel-webspaces)**: Proxy through a mac-mgmt relay server
+- **[Tunnel](/docs/relay-tunnel-webspaces)**: Plain reverse proxy to any upstream URL
 
 ### 5. Bind Domains to Webspaces
 
-On the webspace detail page, bind domains or subdomains. For Cloudflare Pages, custom domains are automatically configured.
+On the webspace detail page, bind domains or subdomains. For Cloudflare Pages, custom domains are automatically configured. For Relay/Tunnel webspaces, a CNAME record is created pointing to the agency domain.
+
+### 6. (Optional) Protect with Auth
+
+On the webspace detail page, set an [auth mode](/docs/webspace-auth):
+
+- **OIDC**: Require login via the agency's OIDC provider (org members only)
+- **HTTP Basic**: Require credentials from a [Basic Auth List](/docs/basic-auth-lists)
 
 ## Concepts
 
