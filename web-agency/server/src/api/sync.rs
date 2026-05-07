@@ -70,6 +70,16 @@ async fn sync_dns_for_domain(
     let mut seen_cf_ids = Vec::with_capacity(cf_records.len());
 
     for rec in &cf_records {
+        // Delete leftover ACME challenge records and skip them
+        if rec.name.starts_with("_acme-challenge") {
+            if let Err(e) = client.delete_dns_record(zone_id, &rec.id).await {
+                tracing::debug!("failed to delete _acme-challenge record {}: {e}", rec.id);
+            } else {
+                tracing::info!(domain = domain_name, "removed stale _acme-challenge record");
+            }
+            continue;
+        }
+
         let sub_name = if rec.name == domain_name {
             "@".to_string()
         } else if let Some(stripped) = rec.name.strip_suffix(&format!(".{domain_name}")) {
@@ -142,6 +152,20 @@ async fn sync_dns_for_domain(
         .bind(&seen_cf_ids)
         .execute(pool)
         .await?;
+    }
+
+    // Clean up any local _acme-challenge subdomain and dns_record entries
+    let acme_sub_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM subdomains WHERE domain_id = $1 AND name LIKE '_acme-challenge%'",
+    )
+    .bind(domain_id)
+    .fetch_all(pool)
+    .await?;
+    if !acme_sub_ids.is_empty() {
+        sqlx::query("DELETE FROM dns_records WHERE subdomain_id = ANY($1)")
+            .bind(&acme_sub_ids).execute(pool).await?;
+        sqlx::query("DELETE FROM subdomains WHERE id = ANY($1)")
+            .bind(&acme_sub_ids).execute(pool).await?;
     }
 
     Ok(())
