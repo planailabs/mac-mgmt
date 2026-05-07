@@ -328,13 +328,6 @@ async fn run_wrangler_deploy(
     };
     tracing::debug!(deployment_id = %deployment_id, dir = %tmp_dir.path().display(), "created temp dir");
 
-    let tarball_path = tmp_dir.path().join("upload.tar.gz");
-    if let Err(e) = tokio::fs::write(&tarball_path, &tarball).await {
-        set_failed(&pool, deployment_id, &format!("write tarball: {e}")).await;
-        return;
-    }
-    tracing::debug!(deployment_id = %deployment_id, bytes = tarball_len, "wrote tarball to disk");
-
     let extract_dir = tmp_dir.path().join("site");
     if let Err(e) = tokio::fs::create_dir_all(&extract_dir).await {
         set_failed(&pool, deployment_id, &format!("mkdir: {e}")).await;
@@ -343,30 +336,32 @@ async fn run_wrangler_deploy(
 
     tracing::info!(deployment_id = %deployment_id, "extracting tarball");
     let tar_start = std::time::Instant::now();
-    let tar_status = tokio::process::Command::new("tar")
-        .args(["xzf", tarball_path.to_str().unwrap_or("upload.tar.gz"), "-C"])
-        .arg(&extract_dir)
-        .output()
-        .await;
+    let extract_dst = extract_dir.clone();
+    let tarball_data = tarball.clone();
+    let tar_result = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let gz = flate2::read::GzDecoder::new(std::io::Cursor::new(&tarball_data));
+        let mut archive = tar::Archive::new(gz);
+        archive.set_overwrite(true);
+        archive.unpack(&extract_dst).map_err(|e| e.to_string())
+    }).await;
 
-    match tar_status {
-        Ok(out) if !out.status.success() => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            tracing::error!(deployment_id = %deployment_id, stderr = %stderr, "tar extraction failed");
-            set_failed(&pool, deployment_id, &format!("tar: {stderr}")).await;
-            return;
-        }
-        Err(e) => {
-            tracing::error!(deployment_id = %deployment_id, error = %e, "tar command failed to execute");
-            set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
-            return;
-        }
-        _ => {
+    match tar_result {
+        Ok(Ok(())) => {
             tracing::info!(
                 deployment_id = %deployment_id,
                 elapsed_ms = tar_start.elapsed().as_millis(),
                 "tarball extracted"
             );
+        }
+        Ok(Err(e)) => {
+            tracing::error!(deployment_id = %deployment_id, error = %e, "tar extraction failed");
+            set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
+            return;
+        }
+        Err(e) => {
+            tracing::error!(deployment_id = %deployment_id, error = %e, "tar task panicked");
+            set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
+            return;
         }
     }
 
