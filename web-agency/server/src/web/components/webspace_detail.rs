@@ -1105,6 +1105,17 @@ pub fn WebspaceDetail(id: String) -> Element {
             DeployTokenSection { webspace_id: data.id, organization_id: data.organization_id }
         }
 
+        // Auth settings (not for Pages)
+        if !is_pages {
+            SectionHeading { class: "mt-6", "Auth" }
+            AuthSettingsSection {
+                webspace_id: data.id,
+                organization_id: data.organization_id,
+                current_mode: data.auth_mode.clone(),
+                current_list_name: data.auth_basic_list_name.clone(),
+            }
+        }
+
         // Domain bindings
         SectionHeading { class: "mt-6", "Domain Bindings" }
         DomainBindingsSection {
@@ -1735,6 +1746,137 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
                 div { class: "mt-2 text-danger text-sm", "{err}" }
             }
         }}
+    }
+}
+
+// ── Auth settings ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BasicAuthListOption {
+    id: Uuid,
+    name: String,
+}
+
+#[server]
+async fn load_basic_auth_lists(org_id: Uuid) -> Result<Vec<BasicAuthListOption>, ServerFnError> {
+    let _user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+    let rows = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT id, name FROM basic_auth_lists WHERE organization_id = $1 ORDER BY name",
+    )
+    .bind(org_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows.into_iter().map(|(id, name)| BasicAuthListOption { id, name }).collect())
+}
+
+#[server]
+async fn update_webspace_auth(webspace_id: Uuid, auth_mode: String, auth_basic_list_id: Option<Uuid>) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+
+    sqlx::query(
+        "UPDATE webspaces SET auth_mode = $1, auth_basic_list_id = $2, updated_at = now() WHERE id = $3",
+    )
+    .bind(&auth_mode).bind(auth_basic_list_id).bind(webspace_id)
+    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+#[component]
+fn AuthSettingsSection(webspace_id: Uuid, organization_id: Uuid, current_mode: String, current_list_name: Option<String>) -> Element {
+    let lists = use_server_future(move || {
+        let oid = organization_id;
+        async move { load_basic_auth_lists(oid).await }
+    })?;
+    let basic_auth_lists = match &*lists.read() {
+        Some(Ok(l)) => l.clone(),
+        _ => vec![],
+    };
+
+    let mut auth_mode = use_signal(move || current_mode.clone());
+    let mut basic_list_id = use_signal(|| basic_auth_lists.first().map(|b| b.id.to_string()).unwrap_or_default());
+    let mut saving = use_signal(|| false);
+    let mut message = use_signal(|| None::<String>);
+
+    rsx! {
+        Card {
+            div { class: "p-4 space-y-4",
+                div { class: "flex items-end gap-3 flex-wrap",
+                    FormField { label: "Auth Mode",
+                        select {
+                            class: "input w-48",
+                            value: "{auth_mode}",
+                            oninput: move |evt| auth_mode.set(evt.value()),
+                            option { value: "none", "None" }
+                            option { value: "oidc", "OIDC (org members)" }
+                            option { value: "basic", "HTTP Basic" }
+                        }
+                    }
+
+                    if *auth_mode.read() == "basic" {
+                        FormField { label: "Basic Auth List",
+                            select {
+                                class: "input w-48",
+                                value: "{basic_list_id}",
+                                oninput: move |evt| basic_list_id.set(evt.value()),
+                                if basic_auth_lists.is_empty() {
+                                    option { value: "", "No lists — create one first" }
+                                }
+                                for b in &basic_auth_lists {
+                                    option { value: "{b.id}", "{b.name}" }
+                                }
+                            }
+                        }
+                    }
+
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        disabled: *saving.read(),
+                        onclick: {
+                            let wid = webspace_id;
+                            move |_| {
+                                let mode = auth_mode.read().clone();
+                                let list_id = if mode == "basic" {
+                                    uuid::Uuid::parse_str(&basic_list_id.read()).ok()
+                                } else {
+                                    None
+                                };
+                                saving.set(true);
+                                message.set(None);
+                                spawn(async move {
+                                    match update_webspace_auth(wid, mode, list_id).await {
+                                        Ok(()) => {
+                                            message.set(Some("Saved".into()));
+                                            navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                        }
+                                        Err(e) => message.set(Some(format!("Error: {e}"))),
+                                    }
+                                    saving.set(false);
+                                });
+                            }
+                        },
+                        if *saving.read() { "Saving..." } else { "Save" }
+                    }
+
+                    if let Some(msg) = &*message.read() {
+                        span { class: "text-sm text-fg-muted", "{msg}" }
+                    }
+                }
+
+                if *auth_mode.read() == "oidc" {
+                    div { class: "text-sm text-fg-muted",
+                        "Members of this webspace's organization will have access after logging in via the agency."
+                    }
+                }
+            }
+        }
     }
 }
 
