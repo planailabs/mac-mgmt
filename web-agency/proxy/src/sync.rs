@@ -248,7 +248,13 @@ impl pingora::services::background::BackgroundService for SyncTask {
             }
 
             tracing::info!("SSE disconnected, reconnecting in 5s");
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+                _ = shutdown.changed() => {
+                    tracing::info!("shutting down sync task");
+                    return;
+                }
+            }
             reload_routes(&client, server_url, &self.routes).await;
             reload_certs(&client, server_url, &self.cert_store).await;
         }
