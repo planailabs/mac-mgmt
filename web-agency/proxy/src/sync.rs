@@ -35,19 +35,29 @@ struct BasicCredentialEntry {
     password_hash: String,
 }
 
+fn auth_headers(token: &str) -> reqwest::header::HeaderMap {
+    let mut h = reqwest::header::HeaderMap::new();
+    h.insert(
+        reqwest::header::AUTHORIZATION,
+        format!("Bearer {token}").parse().unwrap(),
+    );
+    h
+}
+
 fn build_client(token: &str) -> reqwest::Client {
     reqwest::Client::builder()
-        .default_headers({
-            let mut h = reqwest::header::HeaderMap::new();
-            h.insert(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {token}").parse().unwrap(),
-            );
-            h
-        })
+        .default_headers(auth_headers(token))
         .timeout(Duration::from_secs(30))
         .build()
         .expect("failed to build HTTP client")
+}
+
+/// Separate client for SSE — no response timeout (the connection is long-lived).
+fn build_sse_client(token: &str) -> reqwest::Client {
+    reqwest::Client::builder()
+        .default_headers(auth_headers(token))
+        .build()
+        .expect("failed to build SSE client")
 }
 
 /// Fetch routes from the server API and update the shared route table.
@@ -102,6 +112,21 @@ async fn reload_routes(
                     };
 
                     map.insert(entry.host, (route, auth));
+                }
+                for (host, (route, auth)) in &map {
+                    let route_desc = match route {
+                        Route::Direct(upstream) => format!("direct → {upstream}"),
+                        Route::Relay { upstream, tls, .. } => {
+                            let scheme = if *tls { "tls" } else { "plain" };
+                            format!("relay → {upstream} ({scheme})")
+                        }
+                    };
+                    let auth_desc = match auth {
+                        AuthMode::None => "none",
+                        AuthMode::Oidc { .. } => "oidc",
+                        AuthMode::Basic { .. } => "basic",
+                    };
+                    tracing::info!(host, route = %route_desc, auth = auth_desc, "route");
                 }
                 tracing::info!(count = map.len(), "loaded routes");
                 routes.store(Arc::new(map));
@@ -205,11 +230,12 @@ impl pingora::services::background::BackgroundService for SyncTask {
     async fn start(&self, mut shutdown: pingora::server::ShutdownWatch) {
         let token = self.cfg.internal_token();
         let client = build_client(&token);
+        let sse_client = build_sse_client(&token);
         let server_url = &self.cfg.server_url;
 
         loop {
             tracing::info!("connecting to SSE event stream");
-            match client
+            match sse_client
                 .get(format!("{server_url}/api/internal/events"))
                 .send()
                 .await
@@ -236,6 +262,11 @@ impl pingora::services::background::BackgroundService for SyncTask {
                                     }
                                     None => break,
                                 }
+                            }
+                            // No SSE event (including keepalive) for 60s → assume dead
+                            _ = tokio::time::sleep(Duration::from_secs(60)) => {
+                                tracing::warn!("SSE inactivity timeout, reconnecting");
+                                break;
                             }
                             _ = shutdown.changed() => {
                                 tracing::info!("shutting down sync task");

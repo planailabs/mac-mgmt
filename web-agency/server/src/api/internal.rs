@@ -14,7 +14,7 @@ use dioxus::fullstack::axum::{
     http::{HeaderMap, StatusCode},
     response::{
         Json,
-        sse::{Event, KeepAlive, Sse},
+        sse::{Event, Sse},
     },
     routing::{get, post},
 };
@@ -548,19 +548,28 @@ async fn sse_events(
     let mut rx = state.reload_tx.subscribe();
 
     let stream = async_stream::stream! {
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            match rx.recv().await {
-                Ok(()) => {
-                    yield Ok(Event::default().event("reload").data("{}"));
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(()) => {
+                            yield Ok(Event::default().event("reload").data("{}"));
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::debug!("SSE subscriber lagged by {n} messages");
+                            yield Ok(Event::default().event("reload").data("{}"));
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
                 }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::debug!("SSE subscriber lagged by {n} messages");
-                    yield Ok(Event::default().event("reload").data("{}"));
+                _ = ping_interval.tick() => {
+                    yield Ok(Event::default().event("ping").data("{}"));
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     };
 
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    Ok(Sse::new(stream))
 }
