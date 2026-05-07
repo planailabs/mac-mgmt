@@ -13,6 +13,7 @@ struct WebspaceRow {
     local_status: Option<String>,
     cloudflare_pages_project: Option<String>,
     relay_url: Option<String>,
+    auth_mode: String,
     domain_count: i64,
     organization_name: String,
 }
@@ -27,10 +28,10 @@ async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
         return Ok(vec![]);
     }
 
-    type Row = (Uuid, String, String, Option<String>, Option<String>, Option<String>, Option<String>, i64, String);
+    type Row = (Uuid, String, String, Option<String>, Option<String>, Option<String>, Option<String>, String, i64, String);
     let rows = if user.is_admin {
         sqlx::query_as::<_, Row>(
-            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, \
+            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, w.auth_mode, \
              (SELECT count(*) FROM webspace_domains wd WHERE wd.webspace_id = w.id), o.name \
              FROM webspaces w JOIN organizations o ON o.id = w.organization_id \
              ORDER BY w.name",
@@ -38,7 +39,7 @@ async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
         .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, Row>(
-            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, \
+            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, w.auth_mode, \
              (SELECT count(*) FROM webspace_domains wd WHERE wd.webspace_id = w.id), o.name \
              FROM webspaces w JOIN organizations o ON o.id = w.organization_id \
              WHERE w.organization_id = ANY($1) \
@@ -50,8 +51,8 @@ async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, domain_count, organization_name)| {
-            WebspaceRow { id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, domain_count, organization_name }
+        .map(|(id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, auth_mode, domain_count, organization_name)| {
+            WebspaceRow { id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, auth_mode, domain_count, organization_name }
         })
         .collect())
 }
@@ -90,6 +91,7 @@ pub fn WebspaceList() -> Element {
                             Th { "Type" }
                             Th { "Target" }
                             Th { "Status" }
+                            Th { "Auth" }
                             Th { "Domains" }
                             Th { "Org" }
                         }
@@ -97,7 +99,7 @@ pub fn WebspaceList() -> Element {
                     tbody {
                         if rows.is_empty() {
                             tr {
-                                td { class: "td text-fg-muted text-center", colspan: "6", "No webspaces yet" }
+                                td { class: "td text-fg-muted text-center", colspan: "7", "No webspaces yet" }
                             }
                         }
                         for row in rows {
@@ -135,6 +137,13 @@ pub fn WebspaceList() -> Element {
                                         Some("error") => rsx! { Badge { variant: BadgeVariant::Danger, "Error" } },
                                         Some("starting") => rsx! { Badge { variant: BadgeVariant::Warn, "Starting" } },
                                         Some("stopped") => rsx! { span { class: "text-fg-muted", "Stopped" } },
+                                        _ => rsx! { span { class: "text-fg-muted", "-" } },
+                                    }
+                                }
+                                Td {
+                                    match row.auth_mode.as_str() {
+                                        "oidc" => rsx! { Badge { variant: BadgeVariant::Info, "OIDC" } },
+                                        "basic" => rsx! { Badge { variant: BadgeVariant::Accent, "Basic" } },
                                         _ => rsx! { span { class: "text-fg-muted", "-" } },
                                     }
                                 }

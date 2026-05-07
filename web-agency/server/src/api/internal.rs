@@ -85,6 +85,8 @@ struct RouteEntry {
     upstream: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     relay: Option<RelayInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth: Option<AuthInfo>,
 }
 
 #[derive(Serialize)]
@@ -93,6 +95,21 @@ struct RelayInfo {
     url: String,
     /// Minted proxy token for authenticating with the relay
     proxy_token: String,
+}
+
+#[derive(Serialize, serde::Deserialize, Clone)]
+struct AuthInfo {
+    mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    org_id: Option<uuid::Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    basic_credentials: Option<Vec<BasicCredential>>,
+}
+
+#[derive(Serialize, serde::Deserialize, Clone)]
+struct BasicCredential {
+    username: String,
+    password_hash: String,
 }
 
 /// In-memory cache for minted proxy tokens, keyed by credential ID.
@@ -156,6 +173,40 @@ async fn get_or_mint_proxy_token(
     Ok(token)
 }
 
+/// Build an AuthInfo from webspace fields. Returns None for auth_mode = "none".
+async fn build_auth_info(
+    pool: &PgPool,
+    auth_mode: &str,
+    org_id: uuid::Uuid,
+    basic_list_id: Option<uuid::Uuid>,
+) -> Option<AuthInfo> {
+    match auth_mode {
+        "oidc" => Some(AuthInfo {
+            mode: "oidc".into(),
+            org_id: Some(org_id),
+            basic_credentials: None,
+        }),
+        "basic" => {
+            let list_id = basic_list_id?;
+            let creds = sqlx::query_as::<_, (String, String)>(
+                "SELECT username, password_hash FROM basic_auth_credentials WHERE list_id = $1",
+            )
+            .bind(list_id)
+            .fetch_all(pool)
+            .await
+            .ok()?;
+            Some(AuthInfo {
+                mode: "basic".into(),
+                org_id: None,
+                basic_credentials: Some(
+                    creds.into_iter().map(|(username, password_hash)| BasicCredential { username, password_hash }).collect(),
+                ),
+            })
+        }
+        _ => None,
+    }
+}
+
 async fn get_routes(
     State(state): State<InternalState>,
     headers: HeaderMap,
@@ -169,11 +220,12 @@ async fn get_routes(
         host: proxy_cfg.agency_domain.clone(),
         upstream: proxy_cfg.agency_upstream.clone(),
         relay: None,
+        auth: None,
     }];
 
     // Local webspace routes: domain → 127.0.0.1:local_port
-    let rows = sqlx::query_as::<_, (String, Option<String>, i32)>(
-        "SELECT d.name, s.name, w.local_port \
+    let rows = sqlx::query_as::<_, (String, Option<String>, i32, uuid::Uuid, String, Option<uuid::Uuid>)>(
+        "SELECT d.name, s.name, w.local_port, w.organization_id, w.auth_mode, w.auth_basic_list_id \
          FROM webspace_domains wd \
          JOIN webspaces w ON w.id = wd.webspace_id \
          JOIN domains d ON d.id = wd.domain_id \
@@ -184,21 +236,23 @@ async fn get_routes(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, port) in rows {
+    for (domain, subdomain, port, org_id, auth_mode, basic_list_id) in rows {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
         };
+        let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
         routes.push(RouteEntry {
             host,
             upstream: format!("127.0.0.1:{port}"),
             relay: None,
+            auth,
         });
     }
 
     // Relay webspace routes: domain → relay URL with proxy token
-    let relay_rows = sqlx::query_as::<_, (String, Option<String>, String, uuid::Uuid)>(
-        "SELECT d.name, s.name, w.relay_url, w.relay_credential_id \
+    let relay_rows = sqlx::query_as::<_, (String, Option<String>, String, uuid::Uuid, uuid::Uuid, String, Option<uuid::Uuid>)>(
+        "SELECT d.name, s.name, w.relay_url, w.relay_credential_id, w.organization_id, w.auth_mode, w.auth_basic_list_id \
          FROM webspace_domains wd \
          JOIN webspaces w ON w.id = wd.webspace_id \
          JOIN domains d ON d.id = wd.domain_id \
@@ -209,14 +263,12 @@ async fn get_routes(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, relay_url, cred_id) in relay_rows {
+    for (domain, subdomain, relay_url, cred_id, org_id, auth_mode, basic_list_id) in relay_rows {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
         };
 
-        // Parse relay URL to get the upstream host:port.
-        // URL is like https://instance-tunnel.relay.example.com
         let upstream = parse_relay_upstream(&relay_url).ok_or_else(|| {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("bad relay URL: {relay_url}"))
         })?;
@@ -229,6 +281,7 @@ async fn get_routes(
             }
         };
 
+        let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
         routes.push(RouteEntry {
             host,
             upstream,
@@ -236,12 +289,13 @@ async fn get_routes(
                 url: relay_url,
                 proxy_token,
             }),
+            auth,
         });
     }
 
     // Tunnel webspace routes: domain → upstream URL (no auth token)
-    let tunnel_rows = sqlx::query_as::<_, (String, Option<String>, String)>(
-        "SELECT d.name, s.name, w.relay_url \
+    let tunnel_rows = sqlx::query_as::<_, (String, Option<String>, String, uuid::Uuid, String, Option<uuid::Uuid>)>(
+        "SELECT d.name, s.name, w.relay_url, w.organization_id, w.auth_mode, w.auth_basic_list_id \
          FROM webspace_domains wd \
          JOIN webspaces w ON w.id = wd.webspace_id \
          JOIN domains d ON d.id = wd.domain_id \
@@ -252,7 +306,7 @@ async fn get_routes(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, tunnel_url) in tunnel_rows {
+    for (domain, subdomain, tunnel_url, org_id, auth_mode, basic_list_id) in tunnel_rows {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
@@ -262,13 +316,15 @@ async fn get_routes(
             (StatusCode::INTERNAL_SERVER_ERROR, format!("bad tunnel URL: {tunnel_url}"))
         })?;
 
+        let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
         routes.push(RouteEntry {
             host,
             upstream,
             relay: Some(RelayInfo {
                 url: tunnel_url,
-                proxy_token: String::new(), // no auth for tunnel type
+                proxy_token: String::new(),
             }),
+            auth,
         });
     }
 
@@ -400,6 +456,84 @@ async fn issue_cert(
         status: "pending".into(),
         message: Some("issuance started".into()),
     }))
+}
+
+// ── Proxy gate (OIDC auth for webspaces) ─────────────────────────────
+
+fn sign_proxy_gate(internal_token: &str, org_id: uuid::Uuid, expiry_ts: i64) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let msg = format!("proxy-gate:{org_id}:{expiry_ts}");
+    let mut mac = Hmac::<Sha256>::new_from_slice(internal_token.as_bytes()).unwrap();
+    mac.update(msg.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
+#[derive(serde::Deserialize)]
+pub struct ProxyGateParams {
+    return_url: String,
+}
+
+/// OIDC proxy gate — mounted on the web router (behind OIDC auth middleware).
+/// The proxy redirects unauthenticated users here. After the user logs in on the
+/// agency domain, this endpoint validates org membership and redirects back to
+/// the webspace with a signed token.
+pub async fn proxy_gate(
+    axum::extract::Query(params): axum::extract::Query<ProxyGateParams>,
+    axum::extract::Extension(user): axum::extract::Extension<plan_ai_auth::WebUser>,
+) -> Result<axum::response::Redirect, (StatusCode, String)> {
+    let pool = crate::server_pool()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Parse hostname from return_url
+    let return_url = &params.return_url;
+    let hostname = return_url
+        .strip_prefix("https://")
+        .or_else(|| return_url.strip_prefix("http://"))
+        .and_then(|s| s.split('/').next())
+        .and_then(|s| s.split(':').next())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "bad return_url".into()))?;
+
+    // Find which org owns the webspace bound to this hostname
+    let org_id = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT w.organization_id FROM webspace_domains wd \
+         JOIN webspaces w ON w.id = wd.webspace_id \
+         JOIN domains d ON d.id = wd.domain_id \
+         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+         WHERE (CASE WHEN s.name IS NOT NULL AND s.name != '@' \
+                THEN s.name || '.' || d.name ELSE d.name END) = $1 \
+         AND w.auth_mode = 'oidc' \
+         LIMIT 1",
+    )
+    .bind(hostname)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or_else(|| (StatusCode::NOT_FOUND, "no OIDC-protected webspace for this host".into()))?;
+
+    // Check user has org membership (any role) or is admin
+    if !user.is_admin && !user.org_ids().contains(&org_id) {
+        return Err((StatusCode::FORBIDDEN, "not a member of this organization".into()));
+    }
+
+    // Sign a gate token (valid for 5 minutes — the proxy will exchange it for a 24h cookie)
+    let cfg = config::config();
+    let proxy_cfg = cfg.proxy.as_ref()
+        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "proxy not configured".into()))?;
+    let internal_token = std::fs::read_to_string(&proxy_cfg.internal_token_path)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "internal token not available".into()))?;
+    let internal_token = internal_token.trim();
+
+    let expiry_ts = chrono::Utc::now().timestamp() + 300; // 5 minutes
+    let sig = sign_proxy_gate(internal_token, org_id, expiry_ts);
+
+    // Append gate params to return_url
+    let separator = if return_url.contains('?') { "&" } else { "?" };
+    let redirect = format!(
+        "{return_url}{separator}__pg_token={sig}&__pg_oid={org_id}&__pg_exp={expiry_ts}"
+    );
+
+    Ok(axum::response::Redirect::temporary(&redirect))
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────

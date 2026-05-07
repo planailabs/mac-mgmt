@@ -6,19 +6,33 @@ use std::time::Duration;
 
 use crate::cert_store::{CertEntry, CertKey, CertStore};
 use crate::config::ProxyConfig;
-use crate::proxy::Route;
+use crate::proxy::{AuthMode, Route};
 
 #[derive(Debug, Deserialize)]
 struct RouteEntry {
     host: String,
     upstream: String,
     relay: Option<RelayInfoEntry>,
+    auth: Option<AuthInfoEntry>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RelayInfoEntry {
     url: String,
     proxy_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthInfoEntry {
+    mode: String,
+    org_id: Option<uuid::Uuid>,
+    basic_credentials: Option<Vec<BasicCredentialEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BasicCredentialEntry {
+    username: String,
+    password_hash: String,
 }
 
 fn build_client(token: &str) -> reqwest::Client {
@@ -40,7 +54,7 @@ fn build_client(token: &str) -> reqwest::Client {
 async fn reload_routes(
     client: &reqwest::Client,
     server_url: &str,
-    routes: &ArcSwap<HashMap<String, Route>>,
+    routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
 ) {
     match client
         .get(format!("{server_url}/api/internal/routes"))
@@ -72,7 +86,22 @@ async fn reload_routes(
                     } else {
                         Route::Direct(entry.upstream)
                     };
-                    map.insert(entry.host, route);
+
+                    let auth = match entry.auth {
+                        Some(a) if a.mode == "oidc" => {
+                            AuthMode::Oidc { org_id: a.org_id.unwrap_or_default() }
+                        }
+                        Some(a) if a.mode == "basic" => {
+                            let creds = a.basic_credentials.unwrap_or_default()
+                                .into_iter()
+                                .map(|c| (c.username, c.password_hash))
+                                .collect();
+                            AuthMode::Basic { credentials: creds }
+                        }
+                        _ => AuthMode::None,
+                    };
+
+                    map.insert(entry.host, (route, auth));
                 }
                 tracing::info!(count = map.len(), "loaded routes");
                 routes.store(Arc::new(map));
@@ -118,7 +147,7 @@ async fn reload_certs(
 async fn trigger_missing_certs(
     client: &reqwest::Client,
     server_url: &str,
-    routes: &ArcSwap<HashMap<String, Route>>,
+    routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
     cert_store: &CertStore,
 ) {
     let route_hosts: Vec<String> = routes.load().keys().cloned().collect();
@@ -139,7 +168,7 @@ async fn trigger_missing_certs(
 /// Do the initial load (blocking before Pingora starts accepting).
 pub async fn initial_load(
     cfg: &ProxyConfig,
-    routes: &ArcSwap<HashMap<String, Route>>,
+    routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
     cert_store: &CertStore,
 ) {
     let token = cfg.internal_token();
@@ -152,7 +181,7 @@ pub async fn initial_load(
 /// Build a Pingora background service that listens to SSE events and reloads.
 pub fn build_service(
     cfg: ProxyConfig,
-    routes: Arc<ArcSwap<HashMap<String, Route>>>,
+    routes: Arc<ArcSwap<HashMap<String, (Route, AuthMode)>>>,
     cert_store: Arc<CertStore>,
 ) -> pingora::services::background::GenBackgroundService<SyncTask> {
     pingora::services::background::background_service(
@@ -167,7 +196,7 @@ pub fn build_service(
 
 pub struct SyncTask {
     cfg: ProxyConfig,
-    routes: Arc<ArcSwap<HashMap<String, Route>>>,
+    routes: Arc<ArcSwap<HashMap<String, (Route, AuthMode)>>>,
     cert_store: Arc<CertStore>,
 }
 

@@ -20,6 +20,8 @@ struct WebspaceData {
     organization_name: String,
     /// Whether the current user can manage tokens for this webspace's org.
     is_org_admin: bool,
+    auth_mode: String,
+    auth_basic_list_name: Option<String>,
     bindings: Vec<DomainBinding>,
     // Live CF Pages info
     pages_subdomain: Option<String>,
@@ -103,16 +105,24 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Uuid, Option<String>)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Uuid, Option<String>, String, Option<Uuid>)>(
         "SELECT w.id, w.name, w.hosting_type, w.cloudflare_pages_project, w.cloudflare_credential_id, \
-         w.runtime, w.local_status, w.organization_id, w.relay_url \
+         w.runtime, w.local_status, w.organization_id, w.relay_url, w.auth_mode, w.auth_basic_list_id \
          FROM webspaces w WHERE w.id = $1",
     )
     .bind(webspace_id).fetch_optional(&pool).await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
-    let (id, name, hosting_type, cf_project, cf_cred_id, runtime, local_status, org_id, relay_url) = row;
+    let (id, name, hosting_type, cf_project, cf_cred_id, runtime, local_status, org_id, relay_url, auth_mode, auth_basic_list_id) = row;
+
+    // Fetch basic auth list name if set
+    let auth_basic_list_name = if let Some(list_id) = auth_basic_list_id {
+        sqlx::query_scalar::<_, String>("SELECT name FROM basic_auth_lists WHERE id = $1")
+            .bind(list_id).fetch_optional(&pool).await.ok().flatten()
+    } else {
+        None
+    };
 
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
@@ -216,6 +226,7 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
         cloudflare_credential_id: cf_cred_id, runtime, local_status, relay_url,
         organization_id: org_id, organization_name: org_name,
         is_org_admin: user.is_org_admin(&org_id),
+        auth_mode, auth_basic_list_name,
         bindings,
         pages_subdomain, production_branch, git_source, build_config: build_config_info,
     })
@@ -1034,6 +1045,23 @@ pub fn WebspaceDetail(id: String) -> Element {
                 div {
                     div { class: "text-sm text-fg-muted", "Organization" }
                     div { "{data.organization_name}" }
+                }
+                if !is_pages {
+                    div {
+                        div { class: "text-sm text-fg-muted", "Auth" }
+                        match data.auth_mode.as_str() {
+                            "oidc" => rsx! { Badge { variant: BadgeVariant::Info, "OIDC" } },
+                            "basic" => rsx! {
+                                div { class: "flex items-center gap-1",
+                                    Badge { variant: BadgeVariant::Accent, "Basic" }
+                                    if let Some(ref list_name) = data.auth_basic_list_name {
+                                        span { class: "text-sm text-fg-muted", "({list_name})" }
+                                    }
+                                }
+                            },
+                            _ => rsx! { span { class: "text-fg-muted", "None" } },
+                        }
+                    }
                 }
             }
         }

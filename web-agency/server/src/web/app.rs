@@ -1,6 +1,9 @@
 use dioxus::prelude::*;
 use dioxus_i18n::{prelude::*, unic_langid::langid};
 
+use super::components::basic_auth_detail::BasicAuthDetail;
+use super::components::basic_auth_form::BasicAuthForm;
+use super::components::basic_auth_list::BasicAuthList;
 use super::components::billing_log::BillingLog;
 use super::components::certificate_list::CertificateList;
 use super::components::contact_form::ContactForm;
@@ -80,6 +83,12 @@ pub enum Route {
     TokenList {},
     #[route("/tokens/new")]
     TokenForm {},
+    #[route("/basic-auth")]
+    BasicAuthList {},
+    #[route("/basic-auth/new")]
+    BasicAuthForm {},
+    #[route("/basic-auth/:id")]
+    BasicAuthDetail { id: String },
     #[route("/certificates")]
     CertificateList {},
     #[route("/docs")]

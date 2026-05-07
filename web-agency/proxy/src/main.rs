@@ -33,7 +33,7 @@ fn main() {
     // Build shared state
     let cert_store = std::sync::Arc::new(cert_store::CertStore::new(fallback));
     let routes = std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
-        std::collections::HashMap::<String, proxy::Route>::new(),
+        std::collections::HashMap::<String, (proxy::Route, proxy::AuthMode)>::new(),
     ));
 
     // Initial load from server API

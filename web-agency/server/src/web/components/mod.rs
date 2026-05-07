@@ -1,3 +1,6 @@
+pub mod basic_auth_detail;
+pub mod basic_auth_form;
+pub mod basic_auth_list;
 pub mod billing_log;
 pub mod certificate_list;
 pub mod contact_form;
