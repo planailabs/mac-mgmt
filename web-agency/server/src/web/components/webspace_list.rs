@@ -132,11 +132,11 @@ pub fn WebspaceList() -> Element {
                                     }
                                 }
                                 Td {
-                                    match row.local_status.as_deref() {
-                                        Some("running") => rsx! { Badge { variant: BadgeVariant::Success, "Running" } },
-                                        Some("error") => rsx! { Badge { variant: BadgeVariant::Danger, "Error" } },
-                                        Some("starting") => rsx! { Badge { variant: BadgeVariant::Warn, "Starting" } },
-                                        Some("stopped") => rsx! { span { class: "text-fg-muted", "Stopped" } },
+                                    match (row.hosting_type.as_str(), row.local_status.as_deref()) {
+                                        ("local", Some("running")) => rsx! { Badge { variant: BadgeVariant::Success, "Running" } },
+                                        ("local", Some("error")) => rsx! { Badge { variant: BadgeVariant::Danger, "Error" } },
+                                        ("local", Some("starting")) => rsx! { Badge { variant: BadgeVariant::Warn, "Starting" } },
+                                        ("local", Some("stopped")) => rsx! { span { class: "text-fg-muted", "Stopped" } },
                                         _ => rsx! { span { class: "text-fg-muted", "-" } },
                                     }
                                 }
