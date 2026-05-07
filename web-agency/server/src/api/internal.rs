@@ -125,7 +125,6 @@ async fn get_or_mint_proxy_token(
         .post(format!("{}/api/proxy-token", server_url.trim_end_matches('/')))
         .bearer_auth(&admin_token)
         .json(&serde_json::json!({
-            "label": "web-agency-relay",
             "scopes": ["tcp:*"],
         }))
         .send()
@@ -142,9 +141,9 @@ async fn get_or_mint_proxy_token(
         .json()
         .await
         .map_err(|e| format!("parse mint response: {e}"))?;
-    let token = body["token"]
+    let token = body["proxy_token"]
         .as_str()
-        .ok_or("no token in mint response")?
+        .ok_or("no proxy_token in mint response")?
         .to_string();
 
     // Cache for 6 hours (the default proxy token lifetime)
