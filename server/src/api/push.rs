@@ -270,16 +270,16 @@ pub async fn notify_mcp_bundle_global(bundle_id: Uuid) {
 }
 
 /// SSE endpoint for daemon push notifications.
-/// Auth via query param since SSE can't carry custom headers from all clients.
-#[get("/events?<token>")]
+/// Token comes from `Authorization: Bearer ...`; `?token=` is accepted for
+/// backward compatibility with daemons that predate the header-based call.
+#[get("/events")]
 pub async fn sse_events(
-    token: &str,
+    auth: crate::api::auth::SseTokenAuth,
     pool: &State<PgPool>,
     channels: &State<PushChannels>,
     mut shutdown: Shutdown,
 ) -> Option<EventStream![]> {
-    // Authenticate the token
-    let hash = hex::encode(Sha256::digest(token.as_bytes()));
+    let hash = hex::encode(Sha256::digest(auth.0.as_bytes()));
 
     let result = sqlx::query_as::<_, (Option<Uuid>, String)>(
         "SELECT cluster_id, kind FROM tokens WHERE token_hash = $1 AND NOT revoked",

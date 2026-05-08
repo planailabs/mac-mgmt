@@ -295,6 +295,32 @@ impl<'r> FromRequest<'r> for FederationOrPublic {
     }
 }
 
+/// SSE token guard. Reads the bearer token from `Authorization: Bearer ...`,
+/// or falls back to `?token=` for backward compatibility with older daemons.
+///
+/// The query-param fallback leaks the token into request logs (Rocket's tracing,
+/// any reverse proxy access log). New callers should use the header.
+// compat: added 2026-05-08, removable after 2026-08-08 once all daemons in the
+// wild ship the header-based call site.
+pub struct SseTokenAuth(pub String);
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for SseTokenAuth {
+    type Error = &'static str;
+
+    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        if let Some(h) = req.headers().get_one("Authorization") {
+            if let Some(t) = h.strip_prefix("Bearer ") {
+                return Outcome::Success(SseTokenAuth(t.to_string()));
+            }
+        }
+        if let Some(Ok(t)) = req.query_value::<&str>("token") {
+            return Outcome::Success(SseTokenAuth(t.to_string()));
+        }
+        Outcome::Error((Status::Unauthorized, "missing token"))
+    }
+}
+
 /// Guard that only allows admin tokens.
 pub struct AdminAuth;
 

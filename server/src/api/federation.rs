@@ -342,15 +342,14 @@ pub async fn federation_resolve_mcp_servers(
 
 // ── Federation SSE endpoint ─────────────────────────────────────────
 
-#[get("/federation/events?<token>")]
+#[get("/federation/events")]
 pub async fn federation_events(
-    token: &str,
+    auth: crate::api::auth::SseTokenAuth,
     pool: &State<PgPool>,
     federation_push: &State<FederationPushChannel>,
     mut shutdown: Shutdown,
 ) -> Option<EventStream![]> {
-    // Authenticate the token
-    let hash = hex::encode(Sha256::digest(token.as_bytes()));
+    let hash = hex::encode(Sha256::digest(auth.0.as_bytes()));
 
     let result = sqlx::query_as::<_, (String,)>(
         "SELECT kind FROM tokens WHERE token_hash = $1 AND NOT revoked \

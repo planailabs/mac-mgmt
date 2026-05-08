@@ -15,14 +15,15 @@ pub fn start(
     server_token: &str,
 ) -> (JoinHandle<()>, mpsc::Receiver<PushCommand>) {
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
-    let url = format!("{server_url}/api/events?token={server_token}");
+    let url = format!("{server_url}/api/events");
+    let token = server_token.to_string();
 
     let handle = tokio::spawn(async move {
         let mut backoff = MIN_BACKOFF;
 
         loop {
             tracing::info!("connecting to server SSE");
-            match connect_sse(&url, &cmd_tx).await {
+            match connect_sse(&url, &token, &cmd_tx).await {
                 Ok(()) => {
                     tracing::info!("SSE connection closed, reconnecting");
                     backoff = MIN_BACKOFF;
@@ -39,12 +40,16 @@ pub fn start(
     (handle, cmd_rx)
 }
 
-async fn connect_sse(url: &str, cmd_tx: &mpsc::Sender<PushCommand>) -> anyhow::Result<()> {
+async fn connect_sse(
+    url: &str,
+    token: &str,
+    cmd_tx: &mpsc::Sender<PushCommand>,
+) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .build()?;
 
-    let mut resp = client.get(url).send().await?;
+    let mut resp = client.get(url).bearer_auth(token).send().await?;
 
     if !resp.status().is_success() {
         anyhow::bail!("SSE endpoint returned {}", resp.status());

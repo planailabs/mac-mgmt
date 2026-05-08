@@ -124,10 +124,8 @@ impl SkillCenterClient {
             .map_err(|e| format!("failed to build SSE client: {e}"))?;
 
         let resp = sse_client
-            .get(format!(
-                "{}/api/federation/events?token={}",
-                self.base_url, self.token
-            ))
+            .get(format!("{}/api/federation/events", self.base_url))
+            .bearer_auth(&self.token)
             .send()
             .await
             .map_err(|e| format!("SSE connection failed: {e}"))?;
