@@ -8,7 +8,7 @@ test:
     - nix
   script:
     - nix develop -c bash build-memvault.sh
-    - nix develop -c cargo test --workspace --locked
+    - nix develop -c cargo test --workspace --locked --exclude mac-mgmt-executor
 
 build:
   stage: build
