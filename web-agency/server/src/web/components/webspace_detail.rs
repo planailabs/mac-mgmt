@@ -1136,6 +1136,7 @@ pub fn WebspaceDetail(id: String) -> Element {
 
         // Danger zone
         SectionHeading { class: "mt-6", "Danger Zone" }
+        MoveWebspaceSection { webspace_id: data.id, current_org_id: data.organization_id }
         DeleteWebspaceSection { webspace_id: data.id }
     }
 }
@@ -1762,6 +1763,46 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
     }
 }
 
+// ── Move webspace ──────────────────────────────────────────────────
+
+#[server]
+async fn list_move_target_orgs() -> Result<Vec<crate::web::user::OrgOption>, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+    crate::web::user::list_user_write_orgs(&user, &pool).await
+}
+
+#[server]
+async fn move_webspace(webspace_id: Uuid, target_org_id: Uuid) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+    user.require_org_write(&target_org_id)?;
+
+    if org_id == target_org_id {
+        return Err(ServerFnError::new("webspace is already in that organization"));
+    }
+
+    // Check for name conflicts in target org
+    let conflict = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM webspaces WHERE organization_id = $1 AND name = (SELECT name FROM webspaces WHERE id = $2))",
+    ).bind(target_org_id).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    if conflict {
+        return Err(ServerFnError::new("a webspace with the same name already exists in the target organization"));
+    }
+
+    sqlx::query("UPDATE webspaces SET organization_id = $1 WHERE id = $2")
+        .bind(target_org_id).bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
 // ── Delete webspace ─────────────────────────────────────────────────
 
 #[server]
@@ -1789,6 +1830,75 @@ async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
         .bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
+}
+
+#[component]
+fn MoveWebspaceSection(webspace_id: Uuid, current_org_id: Uuid) -> Element {
+    let orgs = use_server_future(list_move_target_orgs)?;
+    let mut selected_org = use_signal(String::new);
+    let mut moving = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    let org_list = match &*orgs.read() {
+        Some(Ok(list)) => list.clone(),
+        _ => vec![],
+    };
+
+    let targets: Vec<_> = org_list.into_iter().filter(|o| o.id != current_org_id).collect();
+    if targets.is_empty() {
+        return rsx! {};
+    }
+
+    rsx! {
+        Card {
+            div { class: "p-4 flex items-center justify-between gap-4",
+                div {
+                    div { class: "font-medium text-danger", "Move to another organization" }
+                    div { class: "text-sm text-fg-muted", "Transfers this webspace to a different organization." }
+                }
+                div { class: "flex items-center gap-2",
+                    select {
+                        class: "input w-48",
+                        value: "{selected_org}",
+                        onchange: move |evt| selected_org.set(evt.value()),
+                        option { value: "", "Select org..." }
+                        for org in &targets {
+                            option { value: "{org.id}", "{org.name}" }
+                        }
+                    }
+                    Button {
+                        variant: ButtonVariant::Danger,
+                        disabled: selected_org.read().is_empty() || *moving.read(),
+                        onclick: {
+                            let wid = webspace_id;
+                            move |_| {
+                                let target = selected_org.read().clone();
+                                if let Ok(tid) = Uuid::parse_str(&target) {
+                                    moving.set(true);
+                                    error.set(None);
+                                    spawn(async move {
+                                        match move_webspace(wid, tid).await {
+                                            Ok(()) => {
+                                                navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                            }
+                                            Err(e) => {
+                                                error.set(Some(format!("{e}")));
+                                                moving.set(false);
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        },
+                        if *moving.read() { "Moving..." } else { "Move Webspace" }
+                    }
+                }
+            }
+            if let Some(err) = &*error.read() {
+                div { class: "px-4 pb-4 text-danger text-sm", "{err}" }
+            }
+        }
+    }
 }
 
 #[component]

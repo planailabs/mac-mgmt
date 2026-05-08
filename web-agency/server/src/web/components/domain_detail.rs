@@ -20,6 +20,7 @@ struct DomainData {
     cloudflare_nameservers: Vec<String>,
     registered_at: Option<String>,
     expires_at: Option<String>,
+    organization_id: Uuid,
     organization_name: String,
     subdomains: Vec<SubdomainData>,
     can_set_nameservers: bool,
@@ -138,7 +139,7 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
         cloudflare_zone_status: cf_status, cloudflare_nameservers: cf_nameservers,
         registered_at: registered_at.map(|d| d.format("%Y-%m-%d").to_string()),
         expires_at: expires_at.map(|d| d.format("%Y-%m-%d").to_string()),
-        organization_name: org_name, subdomains, can_set_nameservers: can_set_ns,
+        organization_id: org_id, organization_name: org_name, subdomains, can_set_nameservers: can_set_ns,
         ai_bots_protection, dnssec_ds, dnssec_key_tag, dnssec_algorithm, dnssec_digest_type, dnssec_digest,
     })
 }
@@ -498,6 +499,35 @@ async fn sync_records_from_cloudflare(domain_id: Uuid) -> Result<String, ServerF
 }
 
 #[server]
+async fn move_domain(domain_id: Uuid, target_org_id: Uuid) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
+        .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+    user.require_org_write(&target_org_id)?;
+
+    if org_id == target_org_id {
+        return Err(ServerFnError::new("domain is already in that organization"));
+    }
+
+    // Check for name conflicts in target org
+    let conflict = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM domains WHERE organization_id = $1 AND name = (SELECT name FROM domains WHERE id = $2))",
+    ).bind(target_org_id).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    if conflict {
+        return Err(ServerFnError::new("a domain with the same name already exists in the target organization"));
+    }
+
+    sqlx::query("UPDATE domains SET organization_id = $1 WHERE id = $2")
+        .bind(target_org_id).bind(domain_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+#[server]
 async fn delete_domain(domain_id: Uuid) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
@@ -621,6 +651,7 @@ pub fn DomainDetail(id: String) -> Element {
         SubdomainsSection { domain_id: data.id, subdomains: data.subdomains.clone() }
 
         SectionHeading { class: "mt-6", "Danger Zone" }
+        MoveDomainSection { domain_id: data.id, current_org_id: data.organization_id }
         Card {
             div { class: "p-6 flex items-center justify-between",
                 div {
@@ -968,6 +999,83 @@ fn SyncFromCloudflareButton(domain_id: Uuid) -> Element {
             }
             if let Some(msg) = &*message.read() {
                 span { class: "text-sm text-fg-muted", "{msg}" }
+            }
+        }
+    }
+}
+
+#[server]
+async fn list_move_target_orgs() -> Result<Vec<crate::web::user::OrgOption>, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+    crate::web::user::list_user_write_orgs(&user, &pool).await
+}
+
+#[component]
+fn MoveDomainSection(domain_id: Uuid, current_org_id: Uuid) -> Element {
+    let orgs = use_server_future(list_move_target_orgs)?;
+    let mut selected_org = use_signal(String::new);
+    let mut moving = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    let org_list = match &*orgs.read() {
+        Some(Ok(list)) => list.clone(),
+        _ => vec![],
+    };
+
+    // Filter out the current org
+    let targets: Vec<_> = org_list.into_iter().filter(|o| o.id != current_org_id).collect();
+    if targets.is_empty() {
+        return rsx! {};
+    }
+
+    rsx! {
+        Card {
+            div { class: "p-4 flex items-center justify-between gap-4",
+                div {
+                    div { class: "font-medium text-danger", "Move to another organization" }
+                    div { class: "text-sm text-fg-muted", "Transfers this domain to a different organization." }
+                }
+                div { class: "flex items-center gap-2",
+                    select {
+                        class: "input w-48",
+                        value: "{selected_org}",
+                        onchange: move |evt| selected_org.set(evt.value()),
+                        option { value: "", "Select org..." }
+                        for org in &targets {
+                            option { value: "{org.id}", "{org.name}" }
+                        }
+                    }
+                    Button {
+                        variant: ButtonVariant::Danger,
+                        disabled: selected_org.read().is_empty() || *moving.read(),
+                        onclick: {
+                            let did = domain_id;
+                            move |_| {
+                                let target = selected_org.read().clone();
+                                if let Ok(tid) = Uuid::parse_str(&target) {
+                                    moving.set(true);
+                                    error.set(None);
+                                    spawn(async move {
+                                        match move_domain(did, tid).await {
+                                            Ok(()) => {
+                                                navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() });
+                                            }
+                                            Err(e) => {
+                                                error.set(Some(format!("{e}")));
+                                                moving.set(false);
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        },
+                        if *moving.read() { "Moving..." } else { "Move Domain" }
+                    }
+                }
+            }
+            if let Some(err) = &*error.read() {
+                div { class: "px-4 pb-4 text-danger text-sm", "{err}" }
             }
         }
     }
