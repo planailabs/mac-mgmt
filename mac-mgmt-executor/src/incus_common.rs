@@ -128,23 +128,37 @@ pub async fn exec_via_cli(
 }
 
 /// Fetch image list via the `incus image list` CLI.
+///
+/// Retries on the transient "mkdir … file exists" race that incus exhibits
+/// when two clients populate the simplestreams cache directory concurrently.
 pub async fn image_list_via_cli() -> Result<Vec<OsImage>> {
-    let output = Command::new("incus")
-        .args(["image", "list", "images:", "--format", "json"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .await?;
+    let mut last_err = String::new();
+    for attempt in 0..3 {
+        let output = Command::new("incus")
+            .args(["image", "list", "images:", "--format", "json"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let entries: Vec<Value> = serde_json::from_str(&stdout)?;
+            return Ok(parse_image_list(&entries));
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        // Concurrent invocations race on creating the simplestreams cache dir;
+        // any of them sees `mkdir … file exists` and exits non-zero. Retry.
+        if stderr.contains("mkdir") && stderr.contains("file exists") {
+            last_err = stderr;
+            tokio::time::sleep(Duration::from_millis(100 * (attempt + 1))).await;
+            continue;
+        }
         bail!("incus image list failed: {stderr}");
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let entries: Vec<Value> = serde_json::from_str(&stdout)?;
-    Ok(parse_image_list(&entries))
+    bail!("incus image list failed after retries: {last_err}");
 }
 
 /// Parse the JSON array returned by `incus image list images: --format json`.

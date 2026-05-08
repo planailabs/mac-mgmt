@@ -133,7 +133,12 @@ async fn test_system_destroy_nonexistent() {
 
 /// Full lifecycle test: create -> execute -> file_write -> file_read -> list -> destroy.
 /// This test is slow (~15-30s) as it launches a real container.
+///
+/// Ignored by default because it requires a fully-configured incus host
+/// (storage pool, network, kernel namespaces) that not every CI runner has.
+/// Run explicitly with `cargo test -p mac-mgmt-executor -- --ignored test_full_lifecycle`.
 #[tokio::test]
+#[ignore = "requires a working incus container runtime; run with --ignored"]
 async fn test_full_lifecycle() {
     let client = connect().await;
 
