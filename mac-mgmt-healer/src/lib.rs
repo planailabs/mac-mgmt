@@ -435,10 +435,7 @@ impl HealerState {
             label: sess.label.clone(),
             token_budget: None, // resume uses the budget from the running session state
             proxy_expires: access.proxy_expires,
-            // After approval, remediation tools are unlocked. For regular
-            // resumes (from Paused), keep the original behavior (auto_approve
-            // was true for auto-triggered sessions, determined by current state).
-            auto_approve: sess.state == SessionState::Remediating || sess.state == SessionState::Verifying,
+            auto_approve: sess.state_data.get("auto_approve").and_then(|v| v.as_bool()).unwrap_or(false),
             fix_provider: None,
             fix_model: None,
         };
