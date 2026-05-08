@@ -1,5 +1,14 @@
 stages:
+  - test
   - build
+
+test:
+  stage: test
+  tags:
+    - nix
+  script:
+    - nix develop -c bash build-memvault.sh
+    - nix develop -c cargo test --workspace --locked
 
 build:
   stage: build
