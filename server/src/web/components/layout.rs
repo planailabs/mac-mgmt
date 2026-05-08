@@ -188,7 +188,7 @@ pub fn Layout() -> Element {
                                 class: "btn btn-xs btn-warn",
                                 onclick: move |_| {
                                     document::eval(
-                                        "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
+                                        "fetch('/auth/impersonate/stop', {method:'POST',credentials:'same-origin'}).then(()=>window.location.reload());"
                                     );
                                 },
                                 {t!("impersonate-stop")}

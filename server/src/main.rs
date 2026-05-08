@@ -532,6 +532,14 @@ fn main() {
                     .route("/auth/login", axum::routing::get(web::auth::login_page))
                     .route("/auth/logout", axum::routing::get(web::auth::logout_handler))
                     .route(
+                        "/auth/impersonate/start/{user_id}",
+                        axum::routing::post(web::auth::start_impersonation),
+                    )
+                    .route(
+                        "/auth/impersonate/stop",
+                        axum::routing::post(web::auth::stop_impersonation),
+                    )
+                    .route(
                         "/easy-access/direct/{machine}/{tunnel}",
                         axum::routing::get(web::components::easy_access::easy_access_direct),
                     )

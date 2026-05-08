@@ -592,3 +592,56 @@ pub async fn logout_handler(request: Request<Body>) -> Response {
 
     login_redirect(None).into_response()
 }
+
+/// Start admin impersonation. Sets the `impersonate_user_id` cookie HttpOnly,
+/// Secure, and SameSite=Strict so it can only be set/cleared via this server
+/// endpoint and isn't readable from JS.
+pub async fn start_impersonation(
+    axum::extract::Path(target_id): axum::extract::Path<Uuid>,
+    request: Request<Body>,
+) -> Response {
+    let user = match request.extensions().get::<WebUser>().cloned() {
+        Some(u) => u,
+        None => return (axum::http::StatusCode::UNAUTHORIZED, "no session").into_response(),
+    };
+    // Allow either a real admin or an admin who is currently impersonating
+    // someone else (in which case the underlying user must be an admin since
+    // try_impersonate is only called for admins).
+    if !(user.is_admin || user.impersonating_from.is_some()) {
+        return (axum::http::StatusCode::FORBIDDEN, "admin required").into_response();
+    }
+    let real_admin = user.impersonating_from.unwrap_or(user.id);
+    tracing::info!(real_admin = %real_admin, target = %target_id, "impersonation started");
+
+    let cookie = format!(
+        "{IMPERSONATE_COOKIE}={target_id}; Path=/; HttpOnly; Secure; SameSite=Strict"
+    );
+    let mut response = (axum::http::StatusCode::NO_CONTENT, ()).into_response();
+    if let Ok(value) = axum::http::HeaderValue::from_str(&cookie) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::SET_COOKIE, value);
+    }
+    response
+}
+
+/// Stop admin impersonation by clearing the cookie.
+pub async fn stop_impersonation(request: Request<Body>) -> Response {
+    let user = match request.extensions().get::<WebUser>().cloned() {
+        Some(u) => u,
+        None => return (axum::http::StatusCode::UNAUTHORIZED, "no session").into_response(),
+    };
+    let real_admin = user.impersonating_from.unwrap_or(user.id);
+    tracing::info!(real_admin = %real_admin, "impersonation stopped");
+
+    let cookie = format!(
+        "{IMPERSONATE_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0"
+    );
+    let mut response = (axum::http::StatusCode::NO_CONTENT, ()).into_response();
+    if let Ok(value) = axum::http::HeaderValue::from_str(&cookie) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::SET_COOKIE, value);
+    }
+    response
+}

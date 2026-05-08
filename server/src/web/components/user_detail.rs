@@ -324,8 +324,12 @@ pub fn UserDetail(id: String) -> Element {
                             onclick: {
                                 let uid = user_id.clone();
                                 move |_| {
+                                    // The cookie is HttpOnly+Secure+SameSite=Strict and can
+                                    // only be set by the server-side endpoint. uid here is
+                                    // bound from the page's :id route param (a UUID), so it
+                                    // is safe to interpolate into the URL path.
                                     let js = format!(
-                                        "document.cookie = 'impersonate_user_id={uid}; Path=/; SameSite=Lax'; window.location.href = '/';"
+                                        "fetch('/auth/impersonate/start/{uid}', {{method:'POST',credentials:'same-origin'}}).then(r=>{{ if(r.ok){{ window.location.href='/'; }} }});"
                                     );
                                     document::eval(&js);
                                 }
