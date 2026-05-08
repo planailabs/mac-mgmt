@@ -493,8 +493,8 @@ fn validate_with_file_schema(path: &str, value: &serde_json::Value) -> Result<()
 
 /// HACK: Sanitize exec-sourced schemas (e.g. `openclaw config schema`) so they
 /// work with our partial-patch validation approach:
-/// - Replace `{"$ref": "#/$defs/..."}` nodes with `{}` (accept any value),
-///   because openclaw emits dangling `$ref` pointers.
+/// - Replace `{"$ref": "#/..."}` nodes with `{}` (accept any value),
+///   because openclaw emits dangling internal `$ref` pointers.
 /// - Strip all `"required"` arrays, because we validate the full merged config
 ///   but only patch a subset of keys — missing required fields in parts we
 ///   didn't touch would fail validation.
@@ -503,9 +503,9 @@ fn validate_with_file_schema(path: &str, value: &serde_json::Value) -> Result<()
 fn strip_defs_refs(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
-            // If this object is a `$ref` pointing into `$defs`, replace with `{}`
+            // If this object is an internal `$ref`, replace with `{}` (accept anything)
             if let Some(r) = map.get("$ref").and_then(|v| v.as_str()) {
-                if r.starts_with("#/$defs/") {
+                if r.starts_with("#/") {
                     map.clear();
                     return;
                 }
