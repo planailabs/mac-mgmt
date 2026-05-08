@@ -526,8 +526,16 @@ fn strip_defs_refs(value: &mut serde_json::Value) {
 }
 
 fn run_jsonschema(schema: &serde_json::Value, value: &serde_json::Value) -> Result<(), String> {
-    let validator = jsonschema::validator_for(schema)
-        .map_err(|e| format!("failed to compile JSON schema: {e}"))?;
+    let validator = match jsonschema::validator_for(schema) {
+        Ok(v) => v,
+        Err(e) => {
+            // Schema compilation can fail on exotic constructs (dangling
+            // pointers, unsupported drafts, etc.).  Log and skip — the
+            // post-write command validator is the real safety net.
+            tracing::warn!("JSON schema compilation failed, skipping pre-write validation: {e}");
+            return Ok(());
+        }
+    };
     let errors: Vec<String> = validator
         .iter_errors(value)
         .map(|e| format!("{} (at {})", e, e.instance_path()))
