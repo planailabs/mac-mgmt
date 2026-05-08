@@ -98,7 +98,6 @@ async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
 #[server]
 async fn get_doc(slug: String) -> Result<(String, String, String), ServerFnError> {
     use embedded::DocsAssets;
-    use pulldown_cmark::{Options, Parser, html};
 
     let filename = format!("{slug}.md");
     let file = DocsAssets::get(&filename)
@@ -119,11 +118,7 @@ async fn get_doc(slug: String) -> Result<(String, String, String), ServerFnError
         .map(|l| l.trim_start_matches("# ").to_string())
         .unwrap_or_else(|| slug.replace('-', " "));
 
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
-    let parser = Parser::new_ext(body, options);
-    let mut html_output = String::new();
-    html::push_html(&mut html_output, parser);
+    let html_output = crate::web::components::healer_page::simple_md_to_html(body);
 
     Ok((title, html_output, audience))
 }

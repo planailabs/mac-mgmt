@@ -1727,12 +1727,68 @@ fn render_staff_pings_inline(pings: &[StaffPingSummary]) -> Element {
 }
 
 /// Render markdown to HTML using pulldown_cmark.
+///
+/// The result is rendered via `dangerous_inner_html`, so we strip raw HTML
+/// events from the parser stream (otherwise `<script>` and friends embedded
+/// in the markdown would survive) and rewrite link/image URLs whose scheme
+/// isn't on the allowlist (`http`, `https`, `mailto`) to `#`, blocking
+/// `javascript:` / `data:` / `vbscript:` payloads.
 pub fn simple_md_to_html(md: &str) -> String {
-    use pulldown_cmark::{Options, Parser, html};
+    use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, html};
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
-    let parser = Parser::new_ext(md, options);
+    let events = Parser::new_ext(md, options).filter_map(|event| match event {
+        Event::Html(_) | Event::InlineHtml(_) => None,
+        Event::Start(Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Some(Event::Start(Tag::Link {
+            link_type,
+            dest_url: if is_safe_uri(&dest_url) {
+                dest_url
+            } else {
+                CowStr::Borrowed("#")
+            },
+            title,
+            id,
+        })),
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Some(Event::Start(Tag::Image {
+            link_type,
+            dest_url: if is_safe_uri(&dest_url) {
+                dest_url
+            } else {
+                CowStr::Borrowed("#")
+            },
+            title,
+            id,
+        })),
+        e => Some(e),
+    });
     let mut output = String::with_capacity(md.len() * 2);
-    html::push_html(&mut output, parser);
+    html::push_html(&mut output, events);
     output
+}
+
+fn is_safe_uri(uri: &str) -> bool {
+    let trimmed = uri.trim_start();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if trimmed.starts_with('/') || trimmed.starts_with('#') || trimmed.starts_with('?') {
+        return true;
+    }
+    match trimmed.find(':') {
+        Some(end) => {
+            let scheme = trimmed[..end].to_ascii_lowercase();
+            matches!(scheme.as_str(), "http" | "https" | "mailto")
+        }
+        None => true,
+    }
 }
