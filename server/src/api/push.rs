@@ -215,16 +215,37 @@ pub async fn notify_all_rollout_global(rollout_id: Uuid, msg: PushMessage) {
     }
 }
 
-/// Notify all clusters that have a given bundle assigned via `assignment_table`
-/// (which must have `cluster_id` and `bundle_id` columns).
+/// Bundle assignment join table; mapped to a literal SQL identifier rather
+/// than letting callers pass a raw &str so a future caller can't accidentally
+/// flow user input into a `format!` SQL query.
+#[derive(Copy, Clone)]
+pub enum BundleAssignmentTable {
+    Cluster,
+    Mcp,
+}
+
+impl BundleAssignmentTable {
+    fn as_sql(self) -> &'static str {
+        match self {
+            BundleAssignmentTable::Cluster => "cluster_bundles",
+            BundleAssignmentTable::Mcp => "cluster_mcp_bundles",
+        }
+    }
+}
+
+/// Notify all clusters that have a given bundle assigned via the named
+/// assignment table (which must have `cluster_id` and `bundle_id` columns).
 pub async fn notify_bundle_clusters(
     channels: &PushChannels,
     pool: &PgPool,
-    assignment_table: &str,
+    assignment_table: BundleAssignmentTable,
     bundle_id: Uuid,
     msg: PushMessage,
 ) {
-    let query = format!("SELECT DISTINCT cluster_id FROM {assignment_table} WHERE bundle_id = $1");
+    let query = format!(
+        "SELECT DISTINCT cluster_id FROM {} WHERE bundle_id = $1",
+        assignment_table.as_sql()
+    );
     let cluster_ids: Vec<Uuid> = sqlx::query_scalar(&query)
         .bind(bundle_id)
         .fetch_all(pool)
@@ -246,7 +267,7 @@ pub async fn notify_skill_bundle_global(bundle_id: Uuid) {
         notify_bundle_clusters(
             &channels,
             &pool,
-            "cluster_bundles",
+            BundleAssignmentTable::Cluster,
             bundle_id,
             PushMessage::SyncSkills,
         )
@@ -261,7 +282,7 @@ pub async fn notify_mcp_bundle_global(bundle_id: Uuid) {
         notify_bundle_clusters(
             &channels,
             &pool,
-            "cluster_mcp_bundles",
+            BundleAssignmentTable::Mcp,
             bundle_id,
             PushMessage::SyncMcpServers,
         )
