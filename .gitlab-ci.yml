@@ -21,5 +21,6 @@ build:
     - bash xzar-install.sh
     - nix develop -c bash xzar.sh
     - ./docker-push.sh
+  timeout: 3h
   environment: production
   resource_group: production
