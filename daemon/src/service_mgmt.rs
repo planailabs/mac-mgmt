@@ -1054,7 +1054,6 @@ impl ServiceManager {
     pub fn collect_tunnels(&self) -> Vec<TunnelDef> {
         self.services
             .iter()
-            .filter(|s| s.phase.is_healthy())
             .flat_map(|s| s.service.expose_tunnels())
             .collect()
     }
