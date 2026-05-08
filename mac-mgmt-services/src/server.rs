@@ -158,9 +158,10 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
     if reexec {
         // On reexec, leave children running — they keep the same parent PID
         // after exec(). State was saved by save_state_for_reexec().
+        // Abort all supervisor tasks so they release Child handles without
+        // triggering stop_child (the stop_tx channel is not used here).
         tracing::info!("supervisor: leaving children running for reexec");
-        // Drop the service map without sending stop signals.
-        // The tokio runtime will be dropped when exec replaces the process.
+        state.abort_all_tasks().await;
     } else {
         tracing::info!("supervisor tearing down children");
         state.shutdown_all().await;
@@ -455,6 +456,18 @@ impl SupervisorState {
         }
     }
 
+    /// Abort all supervisor tasks without stopping children. Used before
+    /// reexec so the tokio runtime can shut down without triggering the
+    /// stop channel or dropping Child handles while children are alive.
+    async fn abort_all_tasks(&self) {
+        let mut map = self.services.lock().await;
+        // Abort tasks first so they can't react to the stop_tx being dropped.
+        for entry in map.values() {
+            entry.supervisor.abort();
+        }
+        map.clear();
+    }
+
     async fn shutdown_all(&self) {
         let drained: Vec<(String, Entry)> = self.services.lock().await.drain().collect();
         for (name, entry) in drained {
@@ -601,7 +614,7 @@ fn spawn_child(name: &str, spec: &SpawnSpec, socket_path: &Path) -> Result<Child
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_file2))
-        .kill_on_drop(true);
+        .kill_on_drop(false);
     let child = cmd
         .spawn()
         .with_context(|| format!("spawn {} for {name}", spec.program))?;
