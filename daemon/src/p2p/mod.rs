@@ -1348,6 +1348,15 @@ pub async fn fetch_cluster_id(server_url: &str, token: &str) -> Option<uuid::Uui
 }
 
 /// Verify the PSK auth token in a peer's agent version string.
+///
+/// Note: this scheme broadcasts a deterministic SHA-256(psk || peer_id)
+/// digest in libp2p's Identify agent_version, which is observable to anyone
+/// on the same network. A high-entropy cluster_psk is therefore required —
+/// a passphrase-strength PSK can be brute-forced offline. A future protocol
+/// revision should bind the PSK to the Noise handshake (e.g. via prologue
+/// or post-handshake MAC over the session key) so possession proofs aren't
+/// reusable. The comparison below uses constant-time equality so the
+/// verifier itself doesn't add a second timing-side-channel on top.
 fn verify_psk_auth(agent_version: &str, peer_id: PeerId, psk: &[u8]) -> bool {
     let parts: Vec<&str> = agent_version.splitn(4, '/').collect();
     let auth_token = match parts.as_slice() {
@@ -1360,7 +1369,18 @@ fn verify_psk_auth(agent_version: &str, peer_id: PeerId, psk: &[u8]) -> bool {
     hasher.update(peer_id.to_bytes());
     let hash = hasher.finalize();
     let expected = hex::encode(&hash[..8]);
-    auth_token == expected
+    constant_time_eq(auth_token.as_bytes(), expected.as_bytes())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 async fn publish_advertisement(
