@@ -184,6 +184,7 @@ async fn run_gateway(base_url: &str, auth_token: Option<&str>, canary_model: &st
     let started = Instant::now();
     let mut req = client
         .post(format!("{base_url}/v1/chat/completions"))
+        .header("X-OpenClaw-Session-Key", "mac-mgmt-probe")
         .json(&body);
     if let Some(token) = auth_token {
         req = req.bearer_auth(token);
