@@ -153,6 +153,19 @@ fn main() -> Result<()> {
                     warn!(container = %key, error = %e, "failed to add disk device");
                     continue;
                 }
+            } else if devices.contains("path: /run/opengl-driver") {
+                // Migrate old mount path to /var/lib/opengl-driver
+                info!(container = %key, "migrating opengl-driver device path to /var/lib");
+                let _ = run(Command::new("incus").args([
+                    "config",
+                    "device",
+                    "set",
+                    &ct.name,
+                    "opengl-driver",
+                    "path=/var/lib/opengl-driver",
+                    "--project",
+                    project,
+                ]));
             }
 
             // Ensure /run/opengl-driver symlink exists (tmpfs loses it on reboot)
