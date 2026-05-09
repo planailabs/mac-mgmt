@@ -146,7 +146,7 @@ fn main() -> Result<()> {
                     "opengl-driver",
                     "disk",
                     "source=/run/opengl-driver",
-                    "path=/run/opengl-driver",
+                    "path=/var/lib/opengl-driver",
                     "--project",
                     project,
                 ])) {
@@ -154,6 +154,19 @@ fn main() -> Result<()> {
                     continue;
                 }
             }
+
+            // Ensure /run/opengl-driver symlink exists (tmpfs loses it on reboot)
+            let _ = run(Command::new("incus").args([
+                "exec",
+                &ct.name,
+                "--project",
+                project,
+                "--",
+                "ln",
+                "-sfn",
+                "/var/lib/opengl-driver",
+                "/run/opengl-driver",
+            ]));
 
             // 5a2. Add GPU PCI passthrough device (idempotent)
             if let Some(pci) = &cli.gpu_pci {
