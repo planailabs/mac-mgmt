@@ -17,6 +17,7 @@
       nixosModules.daemon = import ./daemon/module.nix;
       nixosModules.relay = import ./relay/module.nix;
       nixosModules.runner = import ./runner/module.nix;
+      nixosModules.nix-driver-sync = import ./nix-driver-sync/module.nix;
     } //
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -40,7 +41,7 @@
           pkgs.libiconv
         ];
 
-        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-server-mgmt mac-mgmt-server-skill-center mac-mgmt-server-skill-importer mac-mgmt-relay mac-mgmt-runner mac-mgmt-relay-ssh web-agency-server web-agency-proxy;
+        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-server-mgmt mac-mgmt-server-skill-center mac-mgmt-server-skill-importer mac-mgmt-relay mac-mgmt-runner mac-mgmt-relay-ssh web-agency-server web-agency-proxy nix-driver-sync;
         relay-ssh = mac-mgmt-relay-ssh;
 
         # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy
@@ -108,6 +109,7 @@
           web-agency = web-agency-server;
           web-agency-proxy = web-agency-proxy;
           macosx-sdk = macosx-sdk;
+          nix-driver-sync = nix-driver-sync;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux (
           let images = import ./docker.nix {
             inherit pkgs mac-mgmt-server mac-mgmt-relay mac-mgmt-runner;

@@ -55,4 +55,5 @@ in
   mac-mgmt-relay = prev.callPackage ./relay/package.nix { };
   mac-mgmt-runner = prev.callPackage ./runner/package.nix { inherit gitSha; };
   mac-mgmt-relay-ssh = prev.callPackage ./relay-ssh/package.nix { };
+  nix-driver-sync = prev.callPackage ./nix-driver-sync/package.nix { };
 }
