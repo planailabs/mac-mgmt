@@ -209,6 +209,8 @@ impl Daemon {
                 // are restarted / hot-reloaded.
                 #[cfg(feature = "services")]
                 self.svc_mgr.reload_connectors(&new_cfg);
+                #[cfg(feature = "services")]
+                self.svc_mgr.retry_failed_installs();
 
                 if needs_restart {
                     tracing::info!("service config changed, scheduling restart");
@@ -773,6 +775,8 @@ impl Daemon {
                 }
                 #[cfg(feature = "services")]
                 self.svc_mgr.check_upgrades();
+                #[cfg(feature = "services")]
+                self.svc_mgr.retry_failed_installs();
                 false
             }
             PushCommand::RequestAssessment => {
@@ -1113,10 +1117,8 @@ pub async fn run(
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("failed to register SIGINT handler")?;
 
-    // Now that signal handlers are registered, connect to the supervisor
-    // and register every service.
-    #[cfg(feature = "services")]
-    svc_mgr.connect_all().await;
+    // Services are registered incrementally by health_tick as they
+    // transition from Installing → Stopped (background install).
 
     // Set up config file watcher.
     let (config_tx, mut config_rx) = tokio::sync::mpsc::channel(4);
@@ -1412,6 +1414,35 @@ pub async fn run(
             _ = heartbeat_tick.tick() => {
                 daemon.refresh_assessment_sample().await;
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
+            }
+
+            _install_update = async {
+                #[cfg(feature = "services")]
+                {
+                    match &mut daemon.svc_mgr.install_rx {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                }
+                #[cfg(not(feature = "services"))]
+                {
+                    std::future::pending::<Option<()>>().await
+                }
+            } => {
+                #[cfg(feature = "services")]
+                {
+                    match _install_update {
+                        Some(u) => daemon.svc_mgr.handle_install_update(u),
+                        None => daemon.svc_mgr.finish_installs(),
+                    }
+                    #[cfg(feature = "relay")]
+                    daemon.update_relay_tunnel_defs(&relay_mgr);
+                    #[cfg(feature = "relay")]
+                    daemon.update_relay_file_tunnel_defs(&relay_mgr);
+                    #[cfg(feature = "relay")]
+                    daemon.update_relay_shell_tunnel_defs(&relay_mgr);
+                    daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
+                }
             }
 
             _ = assessment_inventory_tick.tick() => {
@@ -2002,7 +2033,7 @@ pub async fn run_sim_with_services(
     cfg: config::Config,
     host_key: Arc<russh::keys::PrivateKey>,
     mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
-    mock_services: Vec<Box<dyn crate::managed_service::ManagedService>>,
+    mock_services: Vec<Arc<dyn crate::managed_service::ManagedService>>,
 ) -> Result<()> {
     let current_cfg = cfg.clone();
 

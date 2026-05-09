@@ -37,7 +37,7 @@ async fn supervisor_mock_service_heartbeat() {
             cfg,
             host_key,
             shutdown_rx,
-            vec![Box::new(mock_svc)],
+            vec![std::sync::Arc::new(mock_svc)],
         )
         .await
         {

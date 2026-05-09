@@ -29,6 +29,11 @@ use crate::sentry_ext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ServicePhase {
+    /// Background install (`ensure_installed` + `ensure_setup`) in progress.
+    Installing,
+    /// Background install failed — kept around for retry and in case the
+    /// service is still running from a previous daemon instance.
+    InstallFailed,
     /// Not running / not registered with supervisor.
     Stopped,
     /// Just (re)registered, grace period before first real health check.
@@ -48,6 +53,8 @@ impl ServicePhase {
 
     fn as_str(self) -> &'static str {
         match self {
+            Self::Installing => "installing",
+            Self::InstallFailed => "install_failed",
             Self::Stopped => "stopped",
             Self::Starting => "starting",
             Self::Healthy => "healthy",
@@ -59,7 +66,7 @@ impl ServicePhase {
 
 struct ServiceState {
     name: String,
-    service: Box<dyn ManagedService>,
+    service: Arc<dyn ManagedService>,
     phase: ServicePhase,
     upgrade_pending: bool,
     restart_pending: bool,
@@ -77,6 +84,14 @@ struct ServiceState {
     /// Environment variables collected from connectors (secrets, etc.).
     /// Merged into SpawnSpec at registration time.
     connector_env: std::collections::HashMap<String, String>,
+    /// Whether connector env has been collected for this service since
+    /// it left Installing/InstallFailed phase.
+    connector_env_collected: bool,
+}
+
+pub(crate) struct InstallUpdate {
+    name: String,
+    result: anyhow::Result<()>,
 }
 
 struct ConnectorState {
@@ -87,7 +102,7 @@ struct ConnectorState {
 
 pub struct ServiceManager {
     services: Vec<ServiceState>,
-    install_only: Vec<Box<dyn ManagedService>>,
+    install_only: Vec<Arc<dyn ManagedService>>,
     connectors: Vec<ConnectorState>,
     client: Option<SupervisorClient>,
     dispatcher: Arc<Dispatcher>,
@@ -97,6 +112,8 @@ pub struct ServiceManager {
     /// process. Skips OS-unit install and disables UpdateSelf RPC (a daemon
     /// self-update will recreate the supervisor anyway).
     inprocess: bool,
+    /// Receives per-service install completions from the background task.
+    pub install_rx: Option<tokio::sync::mpsc::Receiver<InstallUpdate>>,
 }
 
 impl ServiceManager {
@@ -113,6 +130,7 @@ impl ServiceManager {
             log_buf,
             config_store: ConfigStore::new(None),
             inprocess: false,
+            install_rx: None,
         }
     }
 
@@ -123,7 +141,7 @@ impl ServiceManager {
     pub fn sim_init_with_supervisor(
         dispatcher: Arc<Dispatcher>,
         log_buf: LogBuffer,
-        mock_services: Vec<Box<dyn ManagedService>>,
+        mock_services: Vec<Arc<dyn ManagedService>>,
     ) -> Self {
         spawn_inprocess_supervisor();
 
@@ -142,7 +160,8 @@ impl ServiceManager {
                     running_store_path: None,
                     registered: false,
                     restart_at: None,
-                connector_env: std::collections::HashMap::new(),
+                    connector_env: std::collections::HashMap::new(),
+                    connector_env_collected: true,
                 }
             })
             .collect();
@@ -156,6 +175,7 @@ impl ServiceManager {
             log_buf,
             config_store: ConfigStore::new(None),
             inprocess: true,
+            install_rx: None,
         }
     }
 
@@ -208,63 +228,32 @@ impl ServiceManager {
 
         let all_services = connectors::build_services(cfg);
 
-        let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
+        let mut install_only: Vec<Arc<dyn ManagedService>> = Vec::new();
         let mut services: Vec<ServiceState> = Vec::new();
 
         for svc in all_services {
             let name = svc.name().to_string();
-            svc.ensure_installed()?;
-            svc.ensure_setup()?;
-
             if svc.service_mode() == ServiceMode::InstallOnly {
-                sentry_ext::breadcrumb(
-                    "service",
-                    &format!("{name} installed (install-only)"),
-                    &[("service", &name)],
-                );
                 install_only.push(svc);
-                continue;
+            } else {
+                services.push(ServiceState {
+                    name,
+                    service: svc,
+                    phase: ServicePhase::Installing,
+                    upgrade_pending: false,
+                    restart_pending: false,
+                    post_start_done: false,
+                    consecutive_crashes: 0,
+                    running_store_path: None,
+                    registered: false,
+                    restart_at: None,
+                    connector_env: std::collections::HashMap::new(),
+                    connector_env_collected: false,
+                });
             }
-
-            let integrated = svc.service_mode() == ServiceMode::Integrated;
-
-            // Integrated services have no external process to clean up.
-            if !integrated {
-                if let Err(e) = svc.preflight() {
-                    tracing::warn!("{name} preflight failed: {e}");
-                }
-            }
-            sentry_ext::breadcrumb(
-                "service",
-                &format!("{name} installed and ready"),
-                &[("service", &name)],
-            );
-            services.push(ServiceState {
-                name,
-                service: svc,
-                // Integrated services are already running inside the daemon.
-                phase: if integrated {
-                    ServicePhase::Starting
-                } else {
-                    ServicePhase::Stopped
-                },
-                upgrade_pending: false,
-                restart_pending: false,
-                post_start_done: false,
-                consecutive_crashes: 0,
-                running_store_path: None,
-                // Integrated services don't need supervisor registration.
-                registered: integrated,
-                restart_at: None,
-                connector_env: std::collections::HashMap::new(),
-            });
         }
 
-        // Collect backup-worthy paths from all services and store in config
-        // store so the BackupConnector can write restic-includes.txt.
-        Self::update_backup_paths(&mut config_store, &services, &install_only);
-
-        let mut connectors: Vec<ConnectorState> = connectors
+        let connectors: Vec<ConnectorState> = connectors
             .into_iter()
             .map(|c| ConnectorState {
                 connector: c,
@@ -273,12 +262,15 @@ impl ServiceManager {
             })
             .collect();
 
-        // Run pre-start connectors before services are spawned so they
-        // boot with the correct config (cloud keys, ollama provider, etc.).
-        Self::run_prestart_connectors(&mut connectors, &config_store);
-
-        // Collect env vars from connectors (secrets passed via environment).
-        Self::collect_connector_env(&mut services, &connectors, &config_store);
+        // Spawn background task for serial installation. Connectors,
+        // connector env, and backup paths are deferred — they run
+        // progressively via run_connectors_tick as services finish
+        // installing.
+        let to_install = services
+            .iter()
+            .map(|s| Arc::clone(&s.service))
+            .chain(install_only.iter().map(Arc::clone));
+        let install_rx = Some(Self::spawn_install_task(to_install));
 
         Ok(Self {
             services,
@@ -289,6 +281,128 @@ impl ServiceManager {
             log_buf,
             config_store,
             inprocess,
+            install_rx,
+        })
+    }
+
+    // ── Background install machinery ────────────────────────────────
+
+    /// Spawn a background task to serially install the given services.
+    /// Returns a receiver that yields one `InstallUpdate` per service.
+    fn spawn_install_task(
+        services: impl Iterator<Item = Arc<dyn ManagedService>>,
+    ) -> tokio::sync::mpsc::Receiver<InstallUpdate> {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let to_install: Vec<_> = services.collect();
+        if !to_install.is_empty() {
+            tokio::task::spawn_blocking(move || {
+                for svc in to_install {
+                    let name = svc.name().to_string();
+                    tracing::info!("{name} starting install");
+                    let result = svc.ensure_installed().and_then(|_| svc.ensure_setup());
+                    if let Err(ref e) = result {
+                        tracing::error!("{name} install failed: {e}");
+                    }
+                    let _ = tx.blocking_send(InstallUpdate { name, result });
+                }
+            });
+        }
+        rx
+    }
+
+    /// Future that resolves when the next install update arrives.
+    /// Returns `None` when the install task is done (channel closed).
+    pub async fn recv_install_update(&mut self) -> Option<InstallUpdate> {
+        match &mut self.install_rx {
+            Some(rx) => rx.recv().await,
+            None => std::future::pending().await,
+        }
+    }
+
+    /// Process a single install completion.
+    pub fn handle_install_update(&mut self, update: InstallUpdate) {
+        if let Err(ref e) = update.result {
+            tracing::error!("{} background install failed: {e}", update.name);
+            if let Some(s) = self.services.iter_mut().find(|s| s.name == update.name) {
+                s.phase = ServicePhase::InstallFailed;
+            }
+            return;
+        }
+
+        // Managed services: preflight + transition.
+        if let Some(s) = self.services.iter_mut().find(|s| s.name == update.name) {
+            if s.service.service_mode() != ServiceMode::Integrated {
+                if let Err(e) = s.service.preflight() {
+                    tracing::warn!("{} preflight failed: {e}", update.name);
+                }
+            }
+            let integrated = s.service.service_mode() == ServiceMode::Integrated;
+            s.phase = if integrated {
+                ServicePhase::Starting
+            } else {
+                ServicePhase::Stopped
+            };
+            s.registered = integrated;
+            sentry_ext::breadcrumb(
+                "service",
+                &format!("{} installed and ready", update.name),
+                &[("service", &update.name)],
+            );
+            tracing::info!("{} installed and ready", update.name);
+            return;
+        }
+
+        // install_only: just log.
+        sentry_ext::breadcrumb(
+            "service",
+            &format!("{} installed (install-only)", update.name),
+            &[("service", &update.name)],
+        );
+        tracing::info!("{} installed (install-only)", update.name);
+    }
+
+    /// Called when `recv_install_update` returns `None` (channel closed / task done).
+    pub fn finish_installs(&mut self) {
+        self.install_rx = None;
+    }
+
+    /// Re-queue `InstallFailed` services for installation.
+    /// Called when nixpkgs pin changes or config reloads.
+    pub fn retry_failed_installs(&mut self) {
+        // Don't start a new task if one is already running.
+        if self.install_rx.is_some() {
+            return;
+        }
+        let has_failed = self
+            .services
+            .iter()
+            .any(|s| s.phase == ServicePhase::InstallFailed);
+        if !has_failed {
+            return;
+        }
+        for s in &mut self.services {
+            if s.phase == ServicePhase::InstallFailed {
+                tracing::info!("{} queued for install retry", s.name);
+                s.phase = ServicePhase::Installing;
+            }
+        }
+        let to_retry = self
+            .services
+            .iter()
+            .filter(|s| s.phase == ServicePhase::Installing)
+            .map(|s| Arc::clone(&s.service));
+        self.install_rx = Some(Self::spawn_install_task(to_retry));
+    }
+
+    /// Returns `true` if a dependency key maps to a service that is still
+    /// installing or failed to install.
+    fn dep_blocked_by_install(&self, dep: &str) -> bool {
+        self.services.iter().any(|s| {
+            s.name == dep
+                && matches!(
+                    s.phase,
+                    ServicePhase::Installing | ServicePhase::InstallFailed
+                )
         })
     }
 
@@ -298,7 +412,7 @@ impl ServiceManager {
     fn update_backup_paths(
         config_store: &mut ConfigStore,
         services: &[ServiceState],
-        install_only: &[Box<dyn ManagedService>],
+        install_only: &[Arc<dyn ManagedService>],
     ) {
         let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/root"));
         let mut paths: Vec<serde_json::Value> = Vec::new();
@@ -631,9 +745,14 @@ impl ServiceManager {
         }
 
         // Ensure every managed service has been registered at least once.
+        // Skip services still installing or failed to install.
         for i in 0..self.services.len() {
             if !self.services[i].registered
                 && self.services[i].service.service_mode() == ServiceMode::Managed
+                && !matches!(
+                    self.services[i].phase,
+                    ServicePhase::Installing | ServicePhase::InstallFailed
+                )
             {
                 self.register_service(i).await;
             }
@@ -822,51 +941,61 @@ impl ServiceManager {
     }
 
     pub fn run_connectors_tick(&mut self) {
+        self.run_prestart_connectors();
+        self.collect_connector_env_for_new();
         self.run_connectors();
+        Self::update_backup_paths(&mut self.config_store, &self.services, &self.install_only);
     }
 
-    /// Run pre-start connectors (config-patching). Called during init before
-    /// services are spawned, and again on config reload before services restart.
-    fn run_prestart_connectors(
-        connectors: &mut [ConnectorState],
-        config_store: &ConfigStore,
-    ) {
-        for cs in connectors.iter_mut() {
-            if cs.connector.phase() != ConnectorPhase::PreStart {
+    /// Run pre-start connectors (config-patching). Skips connectors whose
+    /// dependencies map to services still in `Installing` or `InstallFailed`.
+    fn run_prestart_connectors(&mut self) {
+        for i in 0..self.connectors.len() {
+            if self.connectors[i].connector.phase() != ConnectorPhase::PreStart {
                 continue;
             }
-            let deps = cs.connector.depends_on();
-            let deps_ready = deps.iter().all(|dep| config_store.get(dep).is_some());
+            let deps: Vec<&str> = self.connectors[i].connector.depends_on().to_vec();
+            let deps_ready = deps.iter().all(|dep| {
+                self.config_store.get(dep).is_some() && !self.dep_blocked_by_install(dep)
+            });
             if !deps_ready {
                 continue;
             }
-            let should_run = !cs.ran || config_store.any_changed(deps, &cs.last_snapshot);
+            let should_run = !self.connectors[i].ran
+                || self
+                    .config_store
+                    .any_changed(&deps, &self.connectors[i].last_snapshot);
             if !should_run {
                 continue;
             }
-            let name = cs.connector.name();
-            let configs = config_store.values_for(deps);
+            let name = self.connectors[i].connector.name();
+            let configs = self.config_store.values_for(&deps);
             tracing::info!("running pre-start connector: {name}");
-            if let Err(e) = cs.connector.connect(&configs) {
+            if let Err(e) = self.connectors[i].connector.connect(&configs) {
                 tracing::error!("pre-start connector {name} failed: {e}");
             }
-            cs.last_snapshot = config_store.snapshot(deps);
-            cs.ran = true;
+            self.connectors[i].last_snapshot = self.config_store.snapshot(&deps);
+            self.connectors[i].ran = true;
         }
     }
 
-    /// Collect env vars from connectors for each service.
-    /// Connectors contribute secrets (API keys, etc.) as env vars via `service_env()`.
-    fn collect_connector_env(
-        services: &mut [ServiceState],
-        connectors: &[ConnectorState],
-        config_store: &ConfigStore,
-    ) {
-        for state in services.iter_mut() {
+    /// Collect connector env vars for services that have left
+    /// `Installing`/`InstallFailed` and haven't been collected yet.
+    fn collect_connector_env_for_new(&mut self) {
+        for state in &mut self.services {
+            if state.connector_env_collected {
+                continue;
+            }
+            if matches!(
+                state.phase,
+                ServicePhase::Installing | ServicePhase::InstallFailed
+            ) {
+                continue;
+            }
             let mut env = std::collections::HashMap::new();
-            for cs in connectors {
+            for cs in &self.connectors {
                 let deps = cs.connector.depends_on();
-                let configs = config_store.values_for(deps);
+                let configs = self.config_store.values_for(deps);
                 let vars = cs.connector.service_env(&state.name, &configs);
                 env.extend(vars);
             }
@@ -878,18 +1007,23 @@ impl ServiceManager {
                 );
             }
             state.connector_env = env;
+            state.connector_env_collected = true;
         }
     }
 
-    /// Run post-start connectors (need running services).
+    /// Run post-start connectors (need running services). Skips connectors
+    /// whose dependencies map to services still installing.
     fn run_connectors(&mut self) {
-        for cs in &mut self.connectors {
-            if cs.connector.phase() != ConnectorPhase::PostStart {
+        for i in 0..self.connectors.len() {
+            if self.connectors[i].connector.phase() != ConnectorPhase::PostStart {
                 continue;
             }
-            let deps = cs.connector.depends_on();
+            let deps: Vec<&str> = self.connectors[i].connector.depends_on().to_vec();
 
             let deps_ready = deps.iter().all(|dep| {
+                if self.dep_blocked_by_install(dep) {
+                    return false;
+                }
                 if self.config_store.get(dep).is_some() {
                     return true;
                 }
@@ -902,19 +1036,22 @@ impl ServiceManager {
                 continue;
             }
 
-            let should_run = !cs.ran || self.config_store.any_changed(deps, &cs.last_snapshot);
+            let should_run = !self.connectors[i].ran
+                || self
+                    .config_store
+                    .any_changed(&deps, &self.connectors[i].last_snapshot);
             if !should_run {
                 continue;
             }
 
-            let name = cs.connector.name();
-            let configs = self.config_store.values_for(deps);
+            let name = self.connectors[i].connector.name();
+            let configs = self.config_store.values_for(&deps);
             tracing::info!("running connector: {name}");
-            if let Err(e) = cs.connector.connect(&configs) {
+            if let Err(e) = self.connectors[i].connector.connect(&configs) {
                 tracing::error!("connector {name} failed: {e}");
             }
-            cs.last_snapshot = self.config_store.snapshot(deps);
-            cs.ran = true;
+            self.connectors[i].last_snapshot = self.config_store.snapshot(&deps);
+            self.connectors[i].ran = true;
         }
     }
 
@@ -942,6 +1079,8 @@ impl ServiceManager {
             .service_phase
             .with_label_values(&[name])
             .set(match phase {
+                ServicePhase::Installing => 5,
+                ServicePhase::InstallFailed => 6,
                 ServicePhase::Stopped => 0,
                 ServicePhase::Starting => 1,
                 ServicePhase::Healthy => 2,
@@ -1027,11 +1166,9 @@ impl ServiceManager {
         );
 
         // Run pre-start connectors so config patches are applied before
-        // schedule_restart() restarts services.
-        Self::run_prestart_connectors(&mut self.connectors, &self.config_store);
-
-        // Re-collect connector env vars (secrets may have changed).
-        Self::collect_connector_env(&mut self.services, &self.connectors, &self.config_store);
+        // schedule_restart() restarts services, and re-collect connector env.
+        self.run_prestart_connectors();
+        self.collect_connector_env_for_new();
     }
 
     // ── Status collection ────────────────────────────────────────────

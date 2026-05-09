@@ -3,6 +3,7 @@ pub mod manifest;
 pub mod unit_generator;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::managed_service::ManagedService;
 
@@ -34,7 +35,7 @@ pub struct ServicePath {
 /// the same lifecycle operations (install, setup, post_start) so the
 /// unmanaged installer can drive them without duplicating logic.
 pub struct UnmanagedService {
-    pub svc: Box<dyn ManagedService>,
+    pub svc: Arc<dyn ManagedService>,
     pub strategy: ServiceStrategy,
     pub paths: Vec<ServicePath>,
 }

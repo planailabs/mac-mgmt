@@ -16,6 +16,8 @@ pub mod relay_unsloth;
 pub mod unsloth_openclaw;
 pub mod unsloth_opencode;
 
+use std::sync::Arc;
+
 use anyhow::Result;
 
 use crate::managed_service::ManagedService;
@@ -69,7 +71,7 @@ pub trait Connector: Send + Sync {
 
 /// Build the list of managed services based on per-provider `enabled` flags.
 /// Takes ownership of config fields via `std::mem::take`.
-pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Box<dyn ManagedService>> {
+pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Arc<dyn ManagedService>> {
     let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
     let opencode_cfg = std::mem::take(&mut cfg.opencode);
     let ollama_cfg = std::mem::take(&mut cfg.ollama);
@@ -81,67 +83,67 @@ pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Box<dyn ManagedService>> {
     let ai_proxy_cfg = &cfg.ai_proxy;
     let memvault_cfg = &cfg.memvault;
     let custom_services = std::mem::take(&mut cfg.custom_services);
-    let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
+    let mut services: Vec<Arc<dyn ManagedService>> = Vec::new();
 
     if openclaw_cfg.enabled {
         tracing::info!("openclaw enabled");
-        services.push(Box::new(OpenClaw::new(openclaw_cfg)));
+        services.push(Arc::new(OpenClaw::new(openclaw_cfg)));
     } else {
         tracing::info!("openclaw disabled");
     }
 
     if opencode_cfg.enabled {
         tracing::info!("opencode enabled");
-        services.push(Box::new(Opencode::new(opencode_cfg)));
+        services.push(Arc::new(Opencode::new(opencode_cfg)));
     } else {
         tracing::info!("opencode disabled");
     }
 
     if ollama_cfg.enabled {
         tracing::info!("ollama enabled");
-        services.push(Box::new(Ollama::new(ollama_cfg)));
+        services.push(Arc::new(Ollama::new(ollama_cfg)));
     } else {
         tracing::info!("ollama disabled");
     }
 
     if lms_cfg.enabled {
         tracing::info!("lms enabled");
-        services.push(Box::new(Lms::new(lms_cfg)));
+        services.push(Arc::new(Lms::new(lms_cfg)));
     } else {
         tracing::info!("lms disabled");
     }
 
     if unsloth_cfg.enabled {
         tracing::info!("unsloth enabled");
-        services.push(Box::new(Unsloth::new(unsloth_cfg)));
+        services.push(Arc::new(Unsloth::new(unsloth_cfg)));
     } else {
         tracing::info!("unsloth disabled");
     }
 
     if litellm_cfg.enabled {
         tracing::info!("litellm enabled");
-        services.push(Box::new(Litellm::new(litellm_cfg, cloud_cfgs)));
+        services.push(Arc::new(Litellm::new(litellm_cfg, cloud_cfgs)));
     } else {
         tracing::info!("litellm disabled");
     }
 
-    services.push(Box::new(McPorter));
-    services.push(Box::new(Apprise));
+    services.push(Arc::new(McPorter));
+    services.push(Arc::new(Apprise));
     // GPU-tool installers. Both are install-only; each internally gates on
     // its vendor's PCI ID so GPU-less hosts don't pull the nix package.
-    services.push(Box::new(NvidiaSmi));
-    services.push(Box::new(RocmSmi));
+    services.push(Arc::new(NvidiaSmi));
+    services.push(Arc::new(RocmSmi));
 
     if backup_cfg.enabled {
         tracing::info!("backup enabled (restic)");
-        services.push(Box::new(Restic::new(backup_cfg)));
+        services.push(Arc::new(Restic::new(backup_cfg)));
     } else {
         tracing::info!("backup disabled");
     }
 
     if ai_proxy_cfg.enabled {
         tracing::info!("ai-proxy enabled (integrated)");
-        services.push(Box::new(AiProxyService::new(ai_proxy_cfg)));
+        services.push(Arc::new(AiProxyService::new(ai_proxy_cfg)));
     } else {
         tracing::info!("ai-proxy disabled");
     }
@@ -149,7 +151,7 @@ pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Box<dyn ManagedService>> {
     #[cfg(feature = "memvault")]
     if memvault_cfg.enabled {
         tracing::info!("memvault enabled (integrated)");
-        services.push(Box::new(MemvaultService::new(memvault_cfg)));
+        services.push(Arc::new(MemvaultService::new(memvault_cfg)));
     } else {
         tracing::info!("memvault disabled");
     }
@@ -162,7 +164,7 @@ pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Box<dyn ManagedService>> {
                 "integrated"
             };
             tracing::info!("custom-service '{}' enabled ({mode})", cs.name);
-            services.push(Box::new(CustomService::new(cs)));
+            services.push(Arc::new(CustomService::new(cs)));
         } else {
             tracing::info!("custom-service '{}' disabled", cs.name);
         }
