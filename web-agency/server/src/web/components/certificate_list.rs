@@ -56,7 +56,7 @@ async fn reissue_cert(domain: String) -> Result<String, ServerFnError> {
 
 #[component]
 pub fn CertificateList() -> Element {
-    let certs = use_server_future(list_certificates)?;
+    let mut certs = use_server_future(list_certificates)?;
     let rows = match &*certs.read() {
         Some(Ok(r)) => r.clone(),
         _ => vec![],
@@ -137,6 +137,7 @@ pub fn CertificateList() -> Element {
                                                                 Err(e) => reissue_result.set(Some(format!("{d}: {e}"))),
                                                             }
                                                             reissuing.set(None);
+                                                            certs.restart();
                                                         });
                                                     }
                                                 },

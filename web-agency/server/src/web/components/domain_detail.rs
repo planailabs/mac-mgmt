@@ -580,8 +580,10 @@ async fn try_set_registrar_nameservers(pool: &sqlx::PgPool, domain_id: Uuid, dom
 #[component]
 pub fn DomainDetail(id: String) -> Element {
     let domain_id = Uuid::parse_str(&id).ok();
+    let refresh = use_context_provider(|| Signal::new(0u32));
     let domain = use_server_future(move || {
         let did = domain_id;
+        let _ = *refresh.read(); // reactive dependency — bumping refresh re-runs this future
         async move { match did { Some(id) => get_domain(id).await, None => Err(ServerFnError::new("invalid ID")) } }
     })?;
 
@@ -668,6 +670,7 @@ pub fn DomainDetail(id: String) -> Element {
 
 #[component]
 fn SubdomainsSection(domain_id: Uuid, subdomains: Vec<SubdomainData>) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let mut new_sub_name = use_signal(String::new);
     let mut adding_sub = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
@@ -698,7 +701,7 @@ fn SubdomainsSection(domain_id: Uuid, subdomains: Vec<SubdomainData>) -> Element
                                     match create_subdomain(did, n).await {
                                         Ok(_) => {
                                             new_sub_name.set(String::new());
-                                            navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() });
+                                            refresh += 1;
                                         }
                                         Err(e) => error.set(Some(format!("{e}"))),
                                     }
@@ -719,6 +722,7 @@ fn SubdomainsSection(domain_id: Uuid, subdomains: Vec<SubdomainData>) -> Element
 
 #[component]
 fn SubdomainCard(domain_id: Uuid, subdomain: SubdomainData) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let mut new_type = use_signal(|| "A".to_string());
     let mut new_value = use_signal(String::new);
     let mut new_proxied = use_signal(|| true);
@@ -744,7 +748,7 @@ fn SubdomainCard(domain_id: Uuid, subdomain: SubdomainData) -> Element {
                         deleting_sub.set(true);
                         spawn(async move {
                             let _ = delete_subdomain(did, sub_id).await;
-                            navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() });
+                            refresh += 1;
                         });
                     },
                     if *deleting_sub.read() { "..." } else { "Delete Subdomain" }
@@ -773,7 +777,7 @@ fn SubdomainCard(domain_id: Uuid, subdomain: SubdomainData) -> Element {
                                                         spawn(async move {
                                                             let _ = delete_dns_record(did, rid).await;
                                                             deleting_rec.set(None);
-                                                            navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() });
+                                                            refresh += 1;
                                                         });
                                                     },
                                                     if is_del { "..." } else { "Del" }
@@ -814,7 +818,7 @@ fn SubdomainCard(domain_id: Uuid, subdomain: SubdomainData) -> Element {
                             adding.set(true); error.set(None);
                             spawn(async move {
                                 match add_dns_record(did, sub_id, t, v, p).await {
-                                    Ok(()) => { new_value.set(String::new()); navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() }); }
+                                    Ok(()) => { new_value.set(String::new()); refresh += 1; }
                                     Err(e) => error.set(Some(format!("{e}"))),
                                 }
                                 adding.set(false);
@@ -835,31 +839,12 @@ fn SubdomainCard(domain_id: Uuid, subdomain: SubdomainData) -> Element {
 
 #[component]
 fn CloudflareDeployForm(domain_id: Uuid, domain_name: String, can_set_nameservers: bool) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let creds = use_server_future(list_cf_credentials)?;
     let cred_list = match &*creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
     let mut cred_id = use_signal(|| cred_list.first().map(|c| c.id.to_string()).unwrap_or_default());
     let mut deploying = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
-    let mut result = use_signal(|| None::<DeployResult>);
-
-    if let Some(res) = &*result.read() {
-        let ns_set = res.nameservers_set_at_registrar;
-        let ns_list = res.nameservers.clone();
-        return rsx! {
-            Card { div { class: "p-6",
-                div { class: "flex items-center gap-2 mb-3", Badge { variant: BadgeVariant::Success, "Deployed" } span { class: "font-mono text-sm", "Zone: {res.zone_id}" } }
-                if !ns_list.is_empty() {
-                    div { class: "mt-3", div { class: "text-sm text-fg-muted mb-1", "Nameservers:" }
-                        for ns in &ns_list { div { class: "font-mono text-sm bg-surface-2 px-3 py-1 rounded mb-1", "{ns}" } }
-                    }
-                    if ns_set { div { class: "mt-2", Badge { variant: BadgeVariant::Success, "NS set at registrar" } } }
-                    else if can_set_nameservers { SetNsButton { domain_id, nameservers: ns_list.clone() } }
-                    else { div { class: "mt-2 text-sm text-fg-muted", "Update nameservers at your registrar." } }
-                }
-                div { class: "mt-3 text-sm text-fg-muted", "Reload to see updated status." }
-            }}
-        };
-    }
 
     rsx! {
         Card { div { class: "p-6",
@@ -875,7 +860,7 @@ fn CloudflareDeployForm(domain_id: Uuid, domain_name: String, can_set_nameserver
                         onclick: { let did = domain_id; let cid_str = cred_id.read().clone();
                             move |_| { let cid_str = cid_str.clone(); deploying.set(true); error.set(None);
                                 spawn(async move { if let Ok(cid) = uuid::Uuid::parse_str(&cid_str) {
-                                    match deploy_to_cloudflare(did, cid).await { Ok(r) => result.set(Some(r)), Err(e) => error.set(Some(format!("{e}"))) }
+                                    match deploy_to_cloudflare(did, cid).await { Ok(_) => refresh += 1, Err(e) => error.set(Some(format!("{e}"))) }
                                 } deploying.set(false); });
                             }
                         },
@@ -890,8 +875,9 @@ fn CloudflareDeployForm(domain_id: Uuid, domain_name: String, can_set_nameserver
 
 #[component]
 fn CloudflareDeployed(domain_id: Uuid, zone_id: String, zone_status: Option<String>, nameservers: Vec<String>, ssl_mode: String, dnssec_enabled: bool, can_set_nameservers: bool, ai_bots_protection: Option<String>) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let mut ssl = use_signal(move || ssl_mode.clone());
-    let mut dnssec = use_signal(move || dnssec_enabled);
+    let dnssec = use_signal(move || dnssec_enabled);
     let mut ai_bots = use_signal(move || ai_bots_protection.unwrap_or_default());
     let mut saving_ssl = use_signal(|| false);
     let mut saving_dnssec = use_signal(|| false);
@@ -920,7 +906,7 @@ fn CloudflareDeployed(domain_id: Uuid, zone_id: String, zone_status: Option<Stri
                 }}
                 Button { variant: ButtonVariant::Secondary, disabled: *saving_ssl.read(),
                     onclick: { let did = domain_id; move |_| { let m = ssl.read().clone(); saving_ssl.set(true); message.set(None);
-                        spawn(async move { match update_ssl_mode(did, m).await { Ok(()) => message.set(Some("SSL updated".into())), Err(e) => message.set(Some(format!("{e}"))) } saving_ssl.set(false); }); }},
+                        spawn(async move { match update_ssl_mode(did, m).await { Ok(()) => refresh += 1, Err(e) => message.set(Some(format!("{e}"))) } saving_ssl.set(false); }); }},
                     if *saving_ssl.read() { "..." } else { "Update SSL" }
                 }
             }
@@ -928,7 +914,7 @@ fn CloudflareDeployed(domain_id: Uuid, zone_id: String, zone_status: Option<Stri
                 span { class: "text-sm", "DNSSEC:" }
                 Button { variant: if *dnssec.read() { ButtonVariant::Danger } else { ButtonVariant::Primary }, disabled: *saving_dnssec.read(),
                     onclick: { let did = domain_id; move |_| { let ns = !*dnssec.read(); saving_dnssec.set(true); message.set(None);
-                        spawn(async move { match toggle_dnssec(did, ns).await { Ok(()) => { dnssec.set(ns); message.set(Some(if ns { "DNSSEC enabled" } else { "DNSSEC disabled" }.into())); } Err(e) => message.set(Some(format!("{e}"))) } saving_dnssec.set(false); }); }},
+                        spawn(async move { match toggle_dnssec(did, ns).await { Ok(()) => refresh += 1, Err(e) => message.set(Some(format!("{e}"))) } saving_dnssec.set(false); }); }},
                     if *saving_dnssec.read() { "..." } else if *dnssec.read() { "Disable" } else { "Enable" }
                 }
                 if *dnssec.read() { Badge { variant: BadgeVariant::Success, "On" } }
@@ -942,7 +928,7 @@ fn CloudflareDeployed(domain_id: Uuid, zone_id: String, zone_status: Option<Stri
                 }
                 Button { variant: ButtonVariant::Secondary, disabled: *saving_ai_bots.read(),
                     onclick: { let did = domain_id; move |_| { let v = ai_bots.read().clone(); saving_ai_bots.set(true); message.set(None);
-                        spawn(async move { match set_ai_bots_protection(did, v).await { Ok(()) => message.set(Some("AI bot protection updated".into())), Err(e) => message.set(Some(format!("{e}"))) } saving_ai_bots.set(false); }); }},
+                        spawn(async move { match set_ai_bots_protection(did, v).await { Ok(()) => refresh += 1, Err(e) => message.set(Some(format!("{e}"))) } saving_ai_bots.set(false); }); }},
                     if *saving_ai_bots.read() { "..." } else { "Update" }
                 }
             }
@@ -953,6 +939,7 @@ fn CloudflareDeployed(domain_id: Uuid, zone_id: String, zone_status: Option<Stri
 
 #[component]
 fn SetNsButton(domain_id: Uuid, nameservers: Vec<String>) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let mut setting = use_signal(|| false);
     let mut msg = use_signal(|| None::<String>);
     rsx! {
@@ -960,7 +947,7 @@ fn SetNsButton(domain_id: Uuid, nameservers: Vec<String>) -> Element {
             Button { variant: ButtonVariant::Secondary, disabled: *setting.read(),
                 onclick: { let did = domain_id; let ns = nameservers.clone();
                     move |_| { let ns = ns.clone(); setting.set(true); msg.set(None);
-                        spawn(async move { match set_nameservers_at_registrar(did, ns).await { Ok(m) => msg.set(Some(m)), Err(e) => msg.set(Some(format!("{e}"))) } setting.set(false); }); }},
+                        spawn(async move { match set_nameservers_at_registrar(did, ns).await { Ok(_) => refresh += 1, Err(e) => msg.set(Some(format!("{e}"))) } setting.set(false); }); }},
                 if *setting.read() { "Setting..." } else { "Set NS at Registrar" }
             }
             if let Some(m) = &*msg.read() { span { class: "text-sm text-fg-muted", "{m}" } }
@@ -970,6 +957,7 @@ fn SetNsButton(domain_id: Uuid, nameservers: Vec<String>) -> Element {
 
 #[component]
 fn SyncFromCloudflareButton(domain_id: Uuid) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let mut syncing = use_signal(|| false);
     let mut message = use_signal(|| None::<String>);
 
@@ -985,10 +973,7 @@ fn SyncFromCloudflareButton(domain_id: Uuid) -> Element {
                         message.set(None);
                         spawn(async move {
                             match sync_records_from_cloudflare(did).await {
-                                Ok(msg) => {
-                                    message.set(Some(msg));
-                                    navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() });
-                                }
+                                Ok(_) => refresh += 1,
                                 Err(e) => message.set(Some(format!("{e}"))),
                             }
                             syncing.set(false);
@@ -1013,6 +998,7 @@ async fn list_move_target_orgs() -> Result<Vec<crate::web::user::OrgOption>, Ser
 
 #[component]
 fn MoveDomainSection(domain_id: Uuid, current_org_id: Uuid) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let orgs = use_server_future(list_move_target_orgs)?;
     let mut selected_org = use_signal(String::new);
     let mut moving = use_signal(|| false);
@@ -1059,7 +1045,7 @@ fn MoveDomainSection(domain_id: Uuid, current_org_id: Uuid) -> Element {
                                     spawn(async move {
                                         match move_domain(did, tid).await {
                                             Ok(()) => {
-                                                navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() });
+                                                refresh += 1;
                                             }
                                             Err(e) => {
                                                 error.set(Some(format!("{e}")));

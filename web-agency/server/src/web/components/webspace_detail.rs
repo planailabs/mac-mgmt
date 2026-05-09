@@ -974,8 +974,10 @@ async fn create_deploy_token(
 #[component]
 pub fn WebspaceDetail(id: String) -> Element {
     let webspace_id = Uuid::parse_str(&id).ok();
+    let refresh = use_context_provider(|| Signal::new(0u32));
     let webspace = use_server_future(move || {
         let wid = webspace_id;
+        let _ = *refresh.read(); // reactive dependency — bumping refresh re-runs this future
         async move {
             match wid {
                 Some(id) => get_webspace(id).await,
@@ -1218,6 +1220,7 @@ fn GitRepoSection(
     }
 
     // Not connected — show form
+    let mut refresh: Signal<u32> = use_context();
     let mut provider = use_signal(|| "github".to_string());
     let mut owner = use_signal(String::new);
     let mut repo_name = use_signal(String::new);
@@ -1227,19 +1230,6 @@ fn GitRepoSection(
     let mut root_dir = use_signal(String::new);
     let mut connecting = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
-    let mut success = use_signal(|| false);
-
-    if *success.read() {
-        return rsx! {
-            Card {
-                div { class: "p-6",
-                    Badge { variant: BadgeVariant::Success, "Git repository connected" }
-                    div { class: "mt-2 text-sm text-fg-muted", "Reload the page to see deployment details." }
-                }
-            }
-        };
-    }
-
     rsx! {
         Card {
             div { class: "p-6 space-y-4",
@@ -1320,10 +1310,14 @@ fn GitRepoSection(
                             error.set(None);
                             spawn(async move {
                                 match connect_git_repo(wid, p, o, r, b, bc, dd, rd).await {
-                                    Ok(()) => success.set(true),
-                                    Err(e) => error.set(Some(format!("{e}"))),
+                                    Ok(()) => {
+                                        refresh += 1;
+                                    }
+                                    Err(e) => {
+                                        error.set(Some(format!("{e}")));
+                                        connecting.set(false);
+                                    }
                                 }
-                                connecting.set(false);
                             });
                         }
                     },
@@ -1337,6 +1331,7 @@ fn GitRepoSection(
 /// Deploy a CF Pages project — user chooses Git or Direct Upload (cannot be changed later).
 #[component]
 fn PagesDeploySection(webspace_id: Uuid) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let creds = use_server_future(list_cf_creds_for_pages)?;
     let cred_list = match &*creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
 
@@ -1353,22 +1348,6 @@ fn PagesDeploySection(webspace_id: Uuid) -> Element {
 
     let mut deploying = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
-    let mut result = use_signal(|| None::<PagesDeployResult>);
-
-    if let Some(res) = &*result.read() {
-        return rsx! {
-            Card { div { class: "p-6",
-                div { class: "flex items-center gap-2 mb-2",
-                    Badge { variant: BadgeVariant::Success, "Deployed" }
-                    span { class: "font-mono text-sm", "{res.project_name}" }
-                }
-                if let Some(ref sub) = res.subdomain {
-                    div { class: "text-sm text-fg-muted", "Preview: " span { class: "font-mono", "https://{sub}" } }
-                }
-                div { class: "mt-2 text-sm text-fg-muted", "Reload the page to see full project details." }
-            }}
-        };
-    }
 
     if cred_list.is_empty() {
         return rsx! {
@@ -1472,17 +1451,17 @@ fn PagesDeploySection(webspace_id: Uuid) -> Element {
                             if let Ok(cid) = uuid::Uuid::parse_str(&cid_str) {
                                 // Step 1: create project
                                 match deploy_pages_project(wid, cid).await {
-                                    Ok(r) => {
+                                    Ok(_) => {
                                         // Step 2: if git, connect repo
                                         if is_git {
                                             if let Err(e) = connect_git_repo(wid, gp, go, gr, gb, bc, dd, rd).await {
                                                 error.set(Some(format!("Project created but git connection failed: {e}")));
-                                                result.set(Some(r));
                                                 deploying.set(false);
+                                                refresh += 1;
                                                 return;
                                             }
                                         }
-                                        result.set(Some(r));
+                                        refresh += 1;
                                     }
                                     Err(e) => error.set(Some(format!("{e}"))),
                                 }
@@ -1547,6 +1526,7 @@ fn GitSourceDisplay(git_source: GitRepoInfo, build_config: Option<BuildConfigInf
 /// Display for a direct-upload Pages project with deploy API instructions.
 #[component]
 fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, production_branch: String, pages_subdomain: Option<String>) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let ws_id = webspace_id.to_string();
 
     let mut branch_input = use_signal(move || production_branch.clone());
@@ -1584,10 +1564,14 @@ fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, production_branc
                                 branch_msg.set(None);
                                 spawn(async move {
                                     match update_production_branch(wid, b).await {
-                                        Ok(()) => branch_msg.set(Some("Production branch updated".into())),
-                                        Err(e) => branch_msg.set(Some(format!("Error: {e}"))),
+                                        Ok(()) => {
+                                            refresh += 1;
+                                        }
+                                        Err(e) => {
+                                            branch_msg.set(Some(format!("Error: {e}")));
+                                            saving_branch.set(false);
+                                        }
                                     }
-                                    saving_branch.set(false);
                                 });
                             }
                         },
@@ -1834,6 +1818,7 @@ async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
 
 #[component]
 fn MoveWebspaceSection(webspace_id: Uuid, current_org_id: Uuid) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let orgs = use_server_future(list_move_target_orgs)?;
     let mut selected_org = use_signal(String::new);
     let mut moving = use_signal(|| false);
@@ -1879,7 +1864,7 @@ fn MoveWebspaceSection(webspace_id: Uuid, current_org_id: Uuid) -> Element {
                                     spawn(async move {
                                         match move_webspace(wid, tid).await {
                                             Ok(()) => {
-                                                navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                                refresh += 1;
                                             }
                                             Err(e) => {
                                                 error.set(Some(format!("{e}")));
@@ -1993,6 +1978,7 @@ fn WebspaceSettingsSection(
     hosting_type: String,
     current_relay_url: Option<String>,
 ) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let mut name = use_signal(move || current_name.clone());
     let mut relay_url = use_signal(move || current_relay_url.clone().unwrap_or_default());
     let mut saving = use_signal(|| false);
@@ -2044,7 +2030,7 @@ fn WebspaceSettingsSection(
                                     match update_webspace_settings(wid, n, url).await {
                                         Ok(()) => {
                                             message.set(Some("Saved".into()));
-                                            navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                            refresh += 1;
                                         }
                                         Err(e) => message.set(Some(format!("Error: {e}"))),
                                     }
@@ -2106,6 +2092,7 @@ async fn update_webspace_auth(webspace_id: Uuid, auth_mode: String, auth_basic_l
 
 #[component]
 fn AuthSettingsSection(webspace_id: Uuid, organization_id: Uuid, current_mode: String, current_list_name: Option<String>) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let lists = use_server_future(move || {
         let oid = organization_id;
         async move { load_basic_auth_lists(oid).await }
@@ -2169,7 +2156,7 @@ fn AuthSettingsSection(webspace_id: Uuid, organization_id: Uuid, current_mode: S
                                     match update_webspace_auth(wid, mode, list_id).await {
                                         Ok(()) => {
                                             message.set(Some("Saved".into()));
-                                            navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                            refresh += 1;
                                         }
                                         Err(e) => message.set(Some(format!("Error: {e}"))),
                                     }
@@ -2198,6 +2185,7 @@ fn AuthSettingsSection(webspace_id: Uuid, organization_id: Uuid, current_mode: S
 /// Domain bindings list + add form.
 #[component]
 fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pages: bool, #[props(default = String::new())] hosting_type: String) -> Element {
+    let mut refresh: Signal<u32> = use_context();
     let is_tunnel = hosting_type == "relay" || hosting_type == "tunnel";
     let show_cname = is_pages || is_tunnel;
     let domains = use_server_future(move || {
@@ -2282,7 +2270,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                                                             let _ = fix_cname(wid, did, sub_id, hostname).await;
                                                                         }
                                                                         fixing.set(None);
-                                                                        navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                                                        refresh += 1;
                                                                     });
                                                                 }
                                                             },
@@ -2312,10 +2300,15 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                                                         recheck_msg.set(None);
                                                                         spawn(async move {
                                                                             match recheck_custom_domain(wid, hostname).await {
-                                                                                Ok(msg) => recheck_msg.set(Some(msg)),
-                                                                                Err(e) => recheck_msg.set(Some(format!("Error: {e}"))),
+                                                                                Ok(_) => {
+                                                                                    rechecking.set(None);
+                                                                                    refresh += 1;
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    recheck_msg.set(Some(format!("Error: {e}")));
+                                                                                    rechecking.set(None);
+                                                                                }
                                                                             }
-                                                                            rechecking.set(None);
                                                                         });
                                                                     }
                                                                 },
@@ -2342,7 +2335,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                                                         spawn(async move {
                                                                             let _ = recheck_custom_domain(wid, hostname).await;
                                                                             rechecking.set(None);
-                                                                            navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                                                            refresh += 1;
                                                                         });
                                                                     }
                                                                 },
@@ -2366,7 +2359,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                                         spawn(async move {
                                                             let _ = unbind_domain(wid, bid, hostname).await;
                                                             removing.set(None);
-                                                            navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                                            refresh += 1;
                                                         });
                                                     }
                                                 },
@@ -2428,7 +2421,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                         let hostname = parts[2].to_string();
                                         if let Some(did) = did {
                                             match bind_domain(wid, did, sid, hostname).await {
-                                                Ok(()) => { navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() }); }
+                                                Ok(()) => { refresh += 1; }
                                                 Err(e) => error.set(Some(format!("{e}"))),
                                             }
                                         }

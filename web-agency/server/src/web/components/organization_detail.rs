@@ -81,7 +81,7 @@ async fn remove_member(org_id: Uuid, user_id: Uuid) -> Result<(), ServerFnError>
 #[component]
 pub fn OrganizationDetail(id: String) -> Element {
     let org_id = Uuid::parse_str(&id).ok();
-    let org = use_server_future(move || {
+    let mut org = use_server_future(move || {
         let oid = org_id;
         async move {
             match oid {
@@ -140,7 +140,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                     spawn(async move {
                                                         let _ = remove_member(oid, uid).await;
                                                         removing.set(None);
-                                                        navigator().replace(crate::web::app::Route::OrganizationDetail { id: oid.to_string() });
+                                                        org.restart();
                                                     });
                                                 },
                                                 if is_removing { "..." } else { "Remove" }
@@ -181,7 +181,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                     match add_member(oid, e, r).await {
                                         Ok(()) => {
                                             new_email.set(String::new());
-                                            navigator().replace(crate::web::app::Route::OrganizationDetail { id: oid.to_string() });
+                                            org.restart();
                                         }
                                         Err(e) => error.set(Some(format!("{e}"))),
                                     }
