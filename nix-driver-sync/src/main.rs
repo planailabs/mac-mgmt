@@ -202,27 +202,14 @@ fn main() -> Result<()> {
                 "--project",
                 project,
                 "--",
-                "nix-store",
-                "--import",
-                "/tmp/opengl-driver.nar",
+                "sh",
+                "-lc",
+                "nix-store --import /tmp/opengl-driver.nar && rm -f /tmp/opengl-driver.nar",
             ])) {
                 warn!(container = %key, error = %e, "failed to import NAR");
-                // still try cleanup
             } else {
                 state.insert(key.clone(), store_path.clone());
             }
-
-            // cleanup
-            let _ = run(Command::new("incus").args([
-                "exec",
-                &ct.name,
-                "--project",
-                project,
-                "--",
-                "rm",
-                "-f",
-                "/tmp/opengl-driver.nar",
-            ]));
         }
     }
 
