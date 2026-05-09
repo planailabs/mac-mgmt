@@ -99,7 +99,7 @@ async fn supervisor_multiple_services() {
             cfg,
             host_key,
             shutdown_rx,
-            vec![Box::new(svc_a), Box::new(svc_b)],
+            vec![std::sync::Arc::new(svc_a), std::sync::Arc::new(svc_b)],
         )
         .await
         {
