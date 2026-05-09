@@ -899,6 +899,21 @@ pub async fn run(
         }
     }
 
+    // Ensure /run/opengl-driver symlink exists if the driver is mounted at
+    // /var/lib/opengl-driver (Incus disk device). The /run tmpfs loses the
+    // symlink on reboot, so recreate it every daemon start.
+    let opengl_var = std::path::Path::new("/var/lib/opengl-driver");
+    if opengl_var.exists() {
+        let link = std::path::Path::new("/run/opengl-driver");
+        if !link.exists() {
+            if let Err(e) = std::os::unix::fs::symlink(opengl_var, link) {
+                tracing::warn!("failed to create /run/opengl-driver symlink: {e}");
+            } else {
+                tracing::info!("created /run/opengl-driver -> /var/lib/opengl-driver symlink");
+            }
+        }
+    }
+
     let mut cfg = config::load().await?;
     let mut current_cfg = cfg.clone();
 
