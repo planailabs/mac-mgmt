@@ -77,7 +77,7 @@ pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
                         }
                     }
                     "ollama" => {
-                        cells.push(build_ollama_cell(agent, &matrix.ollama_model, *size));
+                        cells.push(build_ollama_cell(agent, &matrix.ollama_model, &matrix.ollama_flavour, *size));
                     }
                     "lms" => {
                         cells.push(build_lms_cell(agent, &matrix.lms_model, *size));
@@ -209,7 +209,7 @@ fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> Ma
     }
 }
 
-fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
+fn build_ollama_cell(agent: &str, model: &str, flavour: &str, size: u32) -> MatrixCell {
     let key = with_size(format!("{agent}-ollama"), size);
     let mut config = json!({
         "global": global(agent, "ollama"),
@@ -217,6 +217,7 @@ fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
             "enabled": true,
             "models": [model],
             "default_model": model,
+            "flavour": flavour,
         },
         "relay": relay(),
         "ai_proxy": ai_proxy(),

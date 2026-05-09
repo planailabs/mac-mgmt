@@ -1317,6 +1317,7 @@ impl Orchestrator {
                     .unwrap_or_else(|| vec!["ollama".into(), "lms".into(), "cloud".into()]),
                 cloud_providers_configured: self.config.matrix.cloud_api_keys.len(),
                 ollama_model: self.config.matrix.ollama_model.clone(),
+                ollama_flavour: self.config.matrix.ollama_flavour.clone(),
                 lms_model: self.config.matrix.lms_model.clone(),
             },
             runner_version: crate::VERSION.into(),
@@ -1466,6 +1467,7 @@ pub struct MatrixAxes {
     pub llms: Vec<String>,
     pub cloud_providers_configured: usize,
     pub ollama_model: String,
+    pub ollama_flavour: String,
     pub lms_model: String,
 }
 

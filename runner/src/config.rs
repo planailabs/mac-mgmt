@@ -160,6 +160,9 @@ pub struct MatrixConfig {
     /// Ollama model to configure on every ollama-llm cell.
     #[serde(default = "default_ollama_model")]
     pub ollama_model: String,
+    /// Ollama package flavour: cpu, rocm, cuda, or vulkan.
+    #[serde(default = "default_ollama_flavour")]
+    pub ollama_flavour: String,
     /// Whether LM Studio cells are included in the matrix.
     #[serde(default)]
     pub lms_enabled: bool,
@@ -187,6 +190,7 @@ impl Default for MatrixConfig {
             llms: None,
             cloud_providers: None,
             ollama_model: default_ollama_model(),
+            ollama_flavour: default_ollama_flavour(),
             lms_enabled: false,
             lms_model: default_lms_model(),
             cluster_sizes: default_cluster_sizes(),
@@ -247,6 +251,9 @@ fn default_chaos_interval() -> String {
 }
 fn default_ollama_model() -> String {
     "qwen2.5:0.5b".into()
+}
+fn default_ollama_flavour() -> String {
+    "cpu".into()
 }
 fn default_lms_model() -> String {
     "qwen2.5-0.5b-instruct".into()

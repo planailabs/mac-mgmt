@@ -65,6 +65,8 @@ chaos_interval = "5m"
 [matrix]
 # Model pulled on every ollama-LLM matrix cell. Must support tools.
 ollama_model = "qwen2.5:0.5b"
+# Ollama package flavour: cpu, rocm, cuda, or vulkan.
+# ollama_flavour = "cpu"
 # Whether LM Studio cells are included in the matrix (default: false).
 # lms_enabled = false
 # Model loaded on every lms-LLM matrix cell (LM Studio identifier).
