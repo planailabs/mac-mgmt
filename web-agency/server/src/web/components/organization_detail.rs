@@ -8,6 +8,7 @@ use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, Pag
 struct OrgData {
     id: Uuid,
     name: String,
+    show_billing: bool,
     members: Vec<MemberRow>,
 }
 
@@ -26,9 +27,11 @@ async fn get_org(org_id: Uuid) -> Result<OrgData, ServerFnError> {
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
-        .bind(org_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-        .ok_or_else(|| ServerFnError::new("organization not found"))?;
+    let (org_name, show_billing) = sqlx::query_as::<_, (String, bool)>(
+        "SELECT name, show_billing FROM organizations WHERE id = $1",
+    )
+    .bind(org_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("organization not found"))?;
 
     let members = sqlx::query_as::<_, (Uuid, String, String, String)>(
         "SELECT u.id, u.email, u.name, om.role \
@@ -40,7 +43,7 @@ async fn get_org(org_id: Uuid) -> Result<OrgData, ServerFnError> {
     .map(|(user_id, email, name, role)| MemberRow { user_id, email, name, role })
     .collect();
 
-    Ok(OrgData { id: org_id, name: org_name, members })
+    Ok(OrgData { id: org_id, name: org_name, show_billing, members })
 }
 
 #[server]
@@ -78,6 +81,23 @@ async fn remove_member(org_id: Uuid, user_id: Uuid) -> Result<(), ServerFnError>
     Ok(())
 }
 
+#[server]
+async fn set_show_billing(org_id: Uuid, value: bool) -> Result<(), ServerFnError> {
+    use crate::web::user::WebUserExt;
+    let user = crate::web::user::current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+
+    sqlx::query("UPDATE organizations SET show_billing = $2 WHERE id = $1")
+        .bind(org_id)
+        .bind(value)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
 #[component]
 pub fn OrganizationDetail(id: String) -> Element {
     let org_id = Uuid::parse_str(&id).ok();
@@ -105,6 +125,34 @@ pub fn OrganizationDetail(id: String) -> Element {
 
     rsx! {
         PageHeader { "{data.name}" }
+
+        Card { class: "mt-4 p-4",
+            div { class: "flex items-center justify-between",
+                div {
+                    span { class: "text-sm font-medium", "Show billing to members" }
+                    p { class: "text-xs text-fg-muted", "When enabled, organization members can view billing entries." }
+                }
+                label { class: "relative inline-flex items-center cursor-pointer",
+                    input {
+                        r#type: "checkbox",
+                        class: "sr-only peer",
+                        checked: data.show_billing,
+                        onchange: {
+                            let oid = data.id;
+                            let current = data.show_billing;
+                            move |_| {
+                                let new_val = !current;
+                                spawn(async move {
+                                    let _ = set_show_billing(oid, new_val).await;
+                                    org.restart();
+                                });
+                            }
+                        },
+                    }
+                    div { class: "w-9 h-5 bg-surface-3 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-fg-muted after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand peer-checked:after:bg-white" }
+                }
+            }
+        }
 
         SectionHeading { class: "mt-4", "Members" }
         Card {

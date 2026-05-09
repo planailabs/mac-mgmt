@@ -13,27 +13,50 @@ struct UserInfo {
     /// True if the real user (before impersonation) is admin.
     real_is_admin: bool,
     display_name: String,
+    /// True if the user belongs to at least one org with show_billing enabled.
+    show_billing: bool,
 }
 
 #[server]
 async fn get_current_user_info() -> Result<UserInfo, ServerFnError> {
     use crate::web::user::current_user;
     match current_user().await {
-        Ok(user) => Ok(UserInfo {
-            is_admin: user.is_admin,
-            impersonating_email: if user.impersonating_from.is_some() {
-                Some(user.email.clone())
+        Ok(user) => {
+            let show_billing = if user.is_admin {
+                true
             } else {
-                None
-            },
-            real_is_admin: user.impersonating_from.is_some() || user.is_admin,
-            display_name: user.name,
-        }),
+                let org_ids = user.org_ids();
+                if org_ids.is_empty() {
+                    false
+                } else {
+                    let pool = crate::server_pool()?;
+                    sqlx::query_scalar::<_, bool>(
+                        "SELECT EXISTS(SELECT 1 FROM organizations WHERE id = ANY($1) AND show_billing = true)",
+                    )
+                    .bind(&org_ids)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap_or(false)
+                }
+            };
+            Ok(UserInfo {
+                is_admin: user.is_admin,
+                impersonating_email: if user.impersonating_from.is_some() {
+                    Some(user.email.clone())
+                } else {
+                    None
+                },
+                real_is_admin: user.impersonating_from.is_some() || user.is_admin,
+                display_name: user.name,
+                show_billing,
+            })
+        }
         Err(_) => Ok(UserInfo {
             is_admin: true,
             impersonating_email: None,
             real_is_admin: true,
             display_name: String::new(),
+            show_billing: true,
         }),
     }
 }
@@ -70,18 +93,19 @@ fn LoadingSpinner() -> Element {
 #[component]
 pub fn Layout() -> Element {
     let user_info = use_server_future(get_current_user_info)?;
-    let (is_admin, display_name, impersonating_email) = match &*user_info.read() {
+    let (is_admin, display_name, impersonating_email, show_billing) = match &*user_info.read() {
         Some(Ok(info)) => (
             info.real_is_admin,
             info.display_name.clone(),
             info.impersonating_email.clone(),
+            info.show_billing,
         ),
-        _ => (false, String::new(), None),
+        _ => (false, String::new(), None, false),
     };
 
     rsx! {
         div { class: "h-screen h-dvh w-full flex overflow-hidden",
-            Sidebar { is_admin }
+            Sidebar { is_admin, show_billing }
 
             div { class: "flex-1 flex flex-col min-w-0 overflow-hidden",
                 // Topbar

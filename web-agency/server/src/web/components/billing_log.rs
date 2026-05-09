@@ -35,8 +35,11 @@ async fn list_billing() -> Result<Vec<BillingRow>, ServerFnError> {
         .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, (Uuid, String, String, i32, String, Option<String>, Option<chrono::NaiveDate>, Option<chrono::NaiveDate>, chrono::DateTime<chrono::Utc>)>(
-            "SELECT id, entry_type, description, amount_cents, currency, provider, period_start, period_end, created_at \
-             FROM billing_entries WHERE organization_id = ANY($1) ORDER BY created_at DESC LIMIT 100",
+            "SELECT b.id, b.entry_type, b.description, b.amount_cents, b.currency, b.provider, b.period_start, b.period_end, b.created_at \
+             FROM billing_entries b \
+             JOIN organizations o ON o.id = b.organization_id \
+             WHERE b.organization_id = ANY($1) AND o.show_billing = true \
+             ORDER BY b.created_at DESC LIMIT 100",
         )
         .bind(&org_ids)
         .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
