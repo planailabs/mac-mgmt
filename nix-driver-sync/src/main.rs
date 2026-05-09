@@ -71,9 +71,12 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // 1. Add /run/opengl-driver to the nix store
-    let store_path = run(Command::new("nix-store").args(["--add", "/run/opengl-driver"]))
-        .context("nix-store --add failed")?;
+    // 1. Resolve /run/opengl-driver symlink to its nix store path
+    let store_path = std::fs::read_link("/run/opengl-driver")
+        .context("failed to readlink /run/opengl-driver")?
+        .to_str()
+        .context("store path is not valid UTF-8")?
+        .to_string();
     info!(store_path, "current opengl-driver store path");
 
     // 2. Load per-container state
