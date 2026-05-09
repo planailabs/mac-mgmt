@@ -11,7 +11,7 @@ use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, HelpText, SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 /// An MCP server for display in the bundle items list.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

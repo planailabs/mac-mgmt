@@ -6,7 +6,7 @@ use crate::web::components::ui::{
     Alert, AlertVariant, Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[server]
 async fn list_federation_tokens() -> Result<Vec<Token>, ServerFnError> {

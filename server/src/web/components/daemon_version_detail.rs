@@ -10,7 +10,7 @@ use crate::web::components::ui::{
     TdMuted, Th,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 /// Return the configured external API base URL.
 #[server]

@@ -1,4 +1,6 @@
 use dioxus::prelude::*;
+#[cfg(feature = "server")]
+use crate::web::user::WebUserExt;
 use dioxus_i18n::t;
 use dioxus_tabular::*;
 

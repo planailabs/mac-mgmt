@@ -7,7 +7,7 @@ use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageH
 
 #[server]
 async fn create_organization(name: String) -> Result<String, ServerFnError> {
-    use crate::web::user::current_user;
+    use crate::web::user::{current_user, WebUserExt};
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;

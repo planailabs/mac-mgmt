@@ -15,7 +15,7 @@ async fn create_skill_center(
     priority: i32,
     enabled: bool,
 ) -> Result<String, ServerFnError> {
-    use crate::web::user::current_user;
+    use crate::web::user::{current_user, WebUserExt};
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;

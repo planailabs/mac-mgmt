@@ -10,7 +10,7 @@ use crate::web::components::ui::{
 };
 use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 const ALL_CLUSTERS_SENTINEL: &str = "__all__";
 

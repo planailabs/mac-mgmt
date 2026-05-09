@@ -4,7 +4,7 @@ use dioxus_i18n::t;
 use super::mcp_bundle_detail::McpServerOption;
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 /// Direct MCP server assignment display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -6,7 +6,7 @@ use crate::web::components::ui::{
     Button, ButtonSize, ErrorText, HelpText, PageHeader, SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[cfg(feature = "server")]
 fn encrypt_secret_value(plaintext: &[u8]) -> Result<Vec<u8>, String> {

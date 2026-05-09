@@ -18,7 +18,7 @@ use crate::web::components::ui::{
     Pill, PillVariant,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 /// Snapshot delivered to the page in a single round-trip.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

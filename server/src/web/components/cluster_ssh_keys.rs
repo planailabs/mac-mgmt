@@ -3,7 +3,7 @@ use dioxus_i18n::t;
 
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]

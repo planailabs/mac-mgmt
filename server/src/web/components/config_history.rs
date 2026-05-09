@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::web::components::ui::{Button, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ConfigVersion {

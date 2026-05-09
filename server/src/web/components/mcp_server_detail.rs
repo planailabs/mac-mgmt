@@ -12,7 +12,7 @@ use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, FormField, HelpText, PageHeader, SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 // ── Server functions ─────────────────────────────────────────────────
 

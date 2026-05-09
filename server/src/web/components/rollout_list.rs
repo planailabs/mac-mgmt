@@ -12,7 +12,7 @@ use crate::web::components::ui::{
     TdMuted, Th,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RolloutEntry {

@@ -13,7 +13,7 @@ use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, HelpText, SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[server]
 async fn get_skill(id: String) -> Result<Skill, ServerFnError> {

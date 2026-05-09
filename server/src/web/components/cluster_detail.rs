@@ -9,7 +9,7 @@ use crate::web::components::ui::{
     Kicker, SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 use super::cluster_healer_settings::ClusterHealerSettings;
 use super::cluster_mcp_servers::ClusterMcpServers;

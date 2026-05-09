@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::components::ui::{Button, ButtonSize, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Settings {

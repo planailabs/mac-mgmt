@@ -10,7 +10,7 @@ use crate::web::components::ui::{
     Dash, DataTable, ErrorText, PageHeader, SortState, SortableTh, Td, TdMuted,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[server]
 async fn get_cluster_nixpkgs_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {

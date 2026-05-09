@@ -8,7 +8,7 @@ use crate::web::components::ui::{
     ChartColor, Dot, ErrorText, HelpText, Kicker, Mono, Pill, PillVariant, SectionHeading, StatBlock,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 /// Build a tunnel URL from the proxy URL and subdomain prefix.
 ///

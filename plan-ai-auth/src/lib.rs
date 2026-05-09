@@ -22,7 +22,7 @@ mod middleware;
 #[cfg(feature = "server")]
 pub use middleware::{
     build_auth_layers, login_page, logout_handler, require_auth, ProviderMeta, UserResolver,
-    set_user_resolver, AUTH_PROVIDERS,
+    set_user_resolver, AUTH_PROVIDERS, IMPERSONATE_COOKIE,
 };
 
 #[cfg(feature = "server")]

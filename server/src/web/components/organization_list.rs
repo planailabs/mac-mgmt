@@ -25,7 +25,7 @@ impl Searchable for OrgRow {
 
 #[server]
 async fn list_organizations() -> Result<Vec<OrgRow>, ServerFnError> {
-    use crate::web::user::current_user;
+    use crate::web::user::{current_user, WebUserExt};
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;

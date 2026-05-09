@@ -9,7 +9,7 @@ use crate::web::components::ui::{
     SortableTh, Td, Th,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct GroupInfo {

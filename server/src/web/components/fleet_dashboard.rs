@@ -10,7 +10,7 @@ use crate::web::components::ui::{
     ChartColor, Dot, ErrorText, HelpText, KpiCard, Mono, PageHero, Pill, PillVariant,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FleetEntry {

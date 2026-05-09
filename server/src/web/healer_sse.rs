@@ -14,7 +14,7 @@ use dioxus::fullstack::axum::{
 use std::convert::Infallible;
 use uuid::Uuid;
 
-use super::user::WebUser;
+use super::user::{WebUser, WebUserExt};
 use crate::server_state;
 use mac_mgmt_common::HealerStreamEvent;
 

@@ -12,7 +12,7 @@ use crate::web::components::ui::{
 };
 use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 fn status_variant(status: &str) -> BadgeVariant {
     match status {

@@ -6,7 +6,7 @@ use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 use super::fleet_dashboard::create_proxy_token;
 

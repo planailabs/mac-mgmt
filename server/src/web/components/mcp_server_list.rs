@@ -12,7 +12,7 @@ use crate::web::components::ui::{DataTable, ErrorText, HelpText, PageHeader};
 
 #[server]
 async fn list_mcp_servers() -> Result<Vec<CatalogEntry>, ServerFnError> {
-    use crate::web::user::current_user;
+    use crate::web::user::{current_user, WebUserExt};
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;

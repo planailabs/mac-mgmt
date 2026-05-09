@@ -11,7 +11,7 @@ use crate::web::components::ui::{
     SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UserInfo {

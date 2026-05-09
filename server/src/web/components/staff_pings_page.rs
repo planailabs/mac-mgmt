@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 // ── Wire types ─────────────────────────────────────────────────────────
 

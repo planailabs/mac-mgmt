@@ -10,7 +10,7 @@ use crate::web::components::ui::{
     Button, ButtonKind, ErrorText, FormField, PageHeader,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[server]
 async fn create_bundle(

@@ -11,7 +11,7 @@ use crate::web::components::ui::{
     TdMono, TdMuted,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DaemonVersionRow {

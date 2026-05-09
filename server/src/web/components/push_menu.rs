@@ -6,7 +6,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushResult {

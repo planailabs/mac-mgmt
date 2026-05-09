@@ -7,7 +7,7 @@ use crate::web::components::ui::{
     ActiveSessionCard, Badge, BadgeVariant, Kicker, Pill, PillVariant, TraceStatus, TraceStep,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 // ── Wire types ─────────────────────────────────────────────────────────
 

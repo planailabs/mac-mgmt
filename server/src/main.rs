@@ -422,7 +422,7 @@ fn main() {
         use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
         use std::sync::OnceLock;
 
-        static INIT: OnceLock<Option<Vec<axum_oidc_client::auth::AuthLayer>>> = OnceLock::new();
+        static INIT: OnceLock<Option<Vec<plan_ai_auth::AuthLayer>>> = OnceLock::new();
 
         // Set PORT env var for dioxus if not already set.
         // SAFETY: called before any threads are spawned.
@@ -474,6 +474,11 @@ fn main() {
                 let (_pool, api_rocket, _healer_state) = init_server().await;
                 let cfg = config::load();
 
+                // Install the shared auth user resolver.
+                if let Ok(pool) = crate::server_pool() {
+                    web::auth::install_resolver(pool);
+                }
+
                 let auth_layers = if dev_no_auth {
                     tracing::warn!("DEV_ONLY_NO_AUTH=1 — OIDC disabled, using dev admin user");
                     // Insert dev user once at startup.
@@ -488,8 +493,8 @@ fn main() {
                         }
                     }
                     None
-                } else if cfg.auth.is_some() {
-                    let (layers, _cache) = web::auth::build_auth_layers(&cfg.database.url).await;
+                } else if let Some(auth) = &cfg.auth {
+                    let (layers, _cache) = web::auth::build_auth_layers(auth, &cfg.database.url).await;
                     Some(layers)
                 } else {
                     tracing::warn!("[auth] not configured — web authentication disabled");

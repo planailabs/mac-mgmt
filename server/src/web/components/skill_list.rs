@@ -11,7 +11,7 @@ use crate::web::components::ui::{
     Button, ButtonVariant, DataTable, ErrorText, HelpText, PageHeader, SuccessText,
 };
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[server]
 async fn list_skills() -> Result<Vec<CatalogEntry>, ServerFnError> {

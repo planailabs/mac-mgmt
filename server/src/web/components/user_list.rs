@@ -9,7 +9,7 @@ use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th};
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct UserRow {

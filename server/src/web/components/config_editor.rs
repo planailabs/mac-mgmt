@@ -6,7 +6,7 @@ use super::config_save_bar::SaveBar;
 use super::extra_config_modal::{ExtraConfigField, ExtraConfigModalHost};
 use crate::models::ClusterConfig;
 #[cfg(feature = "server")]
-use crate::web::user::current_user;
+use crate::web::user::{current_user, WebUserExt};
 
 #[server]
 async fn get_current_config(cluster_id: String) -> Result<Option<ClusterConfig>, ServerFnError> {
