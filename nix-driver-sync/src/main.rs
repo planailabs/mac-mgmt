@@ -204,7 +204,7 @@ fn main() -> Result<()> {
                 "--",
                 "sh",
                 "-lc",
-                "nix-store --import /tmp/opengl-driver.nar && rm -f /tmp/opengl-driver.nar",
+                &format!("nix-store --import /tmp/opengl-driver.nar && rm -f /tmp/opengl-driver.nar && nix-store --add-root /run/opengl-driver-gc-root -r {store_path}"),
             ])) {
                 warn!(container = %key, error = %e, "failed to import NAR");
             } else {
