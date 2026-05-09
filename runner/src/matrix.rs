@@ -145,6 +145,17 @@ fn global(agent: &str, llm: &str) -> Value {
     })
 }
 
+/// Returns the agent config fragment that must be merged into the cell's
+/// config so the daemon actually enables the agent (both `openclaw.enabled`
+/// and `opencode.enabled` default to `false` when the section is absent).
+fn agent_config(agent: &str) -> Option<(&'static str, Value)> {
+    match agent {
+        "openclaw" => Some(("openclaw", json!({ "enabled": true }))),
+        "opencode" => Some(("opencode", json!({ "enabled": true }))),
+        _ => None,
+    }
+}
+
 fn relay() -> Value {
     json!({
         "url": "wss://relay.plan.ai",
@@ -185,6 +196,9 @@ fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> Ma
         "relay": relay(),
         "ai_proxy": ai_proxy(),
     });
+    if let Some((k, v)) = agent_config(agent) {
+        config[k] = v;
+    }
     if let Some(mv) = memvault_if_multi(size) {
         config["memvault"] = mv;
     }
@@ -207,6 +221,9 @@ fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
         "relay": relay(),
         "ai_proxy": ai_proxy(),
     });
+    if let Some((k, v)) = agent_config(agent) {
+        config[k] = v;
+    }
     if let Some(mv) = memvault_if_multi(size) {
         config["memvault"] = mv;
     }
@@ -229,6 +246,9 @@ fn build_lms_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
         "relay": relay(),
         "ai_proxy": ai_proxy(),
     });
+    if let Some((k, v)) = agent_config(agent) {
+        config[k] = v;
+    }
     if let Some(mv) = memvault_if_multi(size) {
         config["memvault"] = mv;
     }
@@ -246,6 +266,9 @@ fn build_none_llm_cell(agent: &str, size: u32) -> MatrixCell {
         "relay": relay(),
         "ai_proxy": ai_proxy(),
     });
+    if let Some((k, v)) = agent_config(agent) {
+        config[k] = v;
+    }
     if let Some(mv) = memvault_if_multi(size) {
         config["memvault"] = mv;
     }

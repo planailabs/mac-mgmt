@@ -70,7 +70,7 @@ ollama_model = "qwen2.5:0.5b"
 # Model loaded on every lms-LLM matrix cell (LM Studio identifier).
 lms_model = "qwen2.5-0.5b-instruct"
 # Restrict the matrix axes (omit for defaults).
-# agents = ["openclaw", "none"]
+# agents = ["openclaw", "opencode", "none"]
 # llms = ["ollama", "lms", "cloud"]
 # cloud_providers = ["anthropic", "openai", "groq"]
 

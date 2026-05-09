@@ -1308,7 +1308,7 @@ impl Orchestrator {
                     .matrix
                     .agents
                     .clone()
-                    .unwrap_or_else(|| vec!["openclaw".into(), "none".into()]),
+                    .unwrap_or_else(|| vec!["openclaw".into(), "opencode".into(), "none".into()]),
                 llms: self
                     .config
                     .matrix

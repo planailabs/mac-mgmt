@@ -148,7 +148,7 @@ pub struct MatrixConfig {
     /// Cloud provider API keys. Providers without a key here are skipped when generating the matrix.
     #[serde(default)]
     pub cloud_api_keys: std::collections::HashMap<String, String>,
-    /// Agent providers to include. Default: ["openclaw", "none"].
+    /// Agent providers to include. Default: ["openclaw", "opencode", "none"].
     #[serde(default)]
     pub agents: Option<Vec<String>>,
     /// LLM providers to include. Default: ["ollama", "lms", "cloud"].
