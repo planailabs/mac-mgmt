@@ -214,7 +214,13 @@ fn get_impersonate_cookie(request: &Request<Body>) -> Option<Uuid> {
         .split(';')
         .map(|s| s.trim())
         .find_map(|s| s.strip_prefix("impersonate_user_id="))?;
-    target_id_str.parse().ok()
+    match target_id_str.parse() {
+        Ok(id) => Some(id),
+        Err(_) => {
+            tracing::warn!(raw = target_id_str, "impersonation: invalid UUID in cookie");
+            None
+        }
+    }
 }
 
 async fn try_impersonate(admin_user: WebUser, target_id: Option<Uuid>) -> WebUser {
@@ -226,15 +232,31 @@ async fn try_impersonate(admin_user: WebUser, target_id: Option<Uuid>) -> WebUse
     let admin_id = admin_user.id;
     let resolver = match get_resolver() {
         Some(r) => r,
-        None => return admin_user,
+        None => {
+            tracing::warn!("impersonation: no user resolver set");
+            return admin_user;
+        }
     };
 
     match resolver.load_user_by_id(target_id).await {
         Ok(Some(mut target)) => {
+            tracing::info!(
+                admin = %admin_id,
+                target = %target_id,
+                target_email = %target.email,
+                "impersonating user"
+            );
             target.impersonating_from = Some(admin_id);
             target
         }
-        _ => admin_user,
+        Ok(None) => {
+            tracing::warn!(target = %target_id, "impersonation: target user not found");
+            admin_user
+        }
+        Err(e) => {
+            tracing::error!(target = %target_id, error = %e, "impersonation: failed to load target user");
+            admin_user
+        }
     }
 }
 
