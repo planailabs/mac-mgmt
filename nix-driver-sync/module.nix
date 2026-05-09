@@ -21,6 +21,13 @@ in
       example = [ "default" "gpu-workers" ];
     };
 
+    gpuPci = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "PCI address of the GPU to pass through to containers (e.g. 0000:01:00.0).";
+      example = "0000:01:00.0";
+    };
+
     interval = lib.mkOption {
       type = lib.types.str;
       default = "*-*-* *:00/5:00";
@@ -36,7 +43,8 @@ in
         Type = "oneshot";
         ExecStart = let
           projectArgs = lib.concatMapStringsSep " " (p: "--project ${lib.escapeShellArg p}") cfg.projects;
-        in "${lib.getExe cfg.package} ${projectArgs} --state-file ${stateDir}/state.json";
+          gpuArg = lib.optionalString (cfg.gpuPci != null) " --gpu-pci ${lib.escapeShellArg cfg.gpuPci}";
+        in "${lib.getExe cfg.package} ${projectArgs}${gpuArg} --state-file ${stateDir}/state.json";
         StateDirectory = "nix-driver-sync";
       };
 

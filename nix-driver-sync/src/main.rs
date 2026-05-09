@@ -17,6 +17,10 @@ struct Cli {
     /// Path to the JSON state file tracking per-container store paths
     #[arg(long)]
     state_file: PathBuf,
+
+    /// PCI address of the GPU to pass through (e.g. "0000:01:00.0")
+    #[arg(long)]
+    gpu_pci: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -148,6 +152,26 @@ fn main() -> Result<()> {
                 ])) {
                     warn!(container = %key, error = %e, "failed to add disk device");
                     continue;
+                }
+            }
+
+            // 5a2. Add GPU PCI passthrough device (idempotent)
+            if let Some(pci) = &cli.gpu_pci {
+                if !devices.contains("gpu") {
+                    info!(container = %key, pci, "adding gpu device");
+                    if let Err(e) = run(Command::new("incus").args([
+                        "config",
+                        "device",
+                        "add",
+                        &ct.name,
+                        "gpu",
+                        "gpu",
+                        &format!("pci={pci}"),
+                        "--project",
+                        project,
+                    ])) {
+                        warn!(container = %key, error = %e, "failed to add gpu device");
+                    }
                 }
             }
 
