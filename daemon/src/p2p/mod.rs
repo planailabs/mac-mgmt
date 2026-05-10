@@ -68,6 +68,12 @@ pub struct P2pConfig {
     pub cluster_id: Option<uuid::Uuid>,
     /// Handler state for processing incoming control requests.
     pub handler_state: Option<Arc<handler::HandlerState>>,
+    /// External probe state: set to `true` when at least one listener is active.
+    /// If `None`, the manager creates its own.
+    pub swarm_listening: Option<Arc<AtomicBool>>,
+    /// External probe state: set to `true` when the relay is registered.
+    /// If `None`, the manager creates its own.
+    pub relay_registered: Option<Arc<AtomicBool>>,
 }
 
 /// Manages the libp2p swarm for cluster p2p networking.
@@ -225,8 +231,8 @@ impl P2pManager {
         let peer_registry = Arc::new(RwLock::new(PeerRegistry::default()));
         let active_jobs = Arc::new(AtomicU32::new(0));
         let relay_proxy_url = Arc::new(RwLock::new(None));
-        let swarm_listening = Arc::new(AtomicBool::new(false));
-        let relay_registered = Arc::new(AtomicBool::new(false));
+        let swarm_listening = config.swarm_listening.clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        let relay_registered = config.relay_registered.clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
 
         // Extract stream control for opening RPC streams.
         let stream_control = swarm.behaviour().streams.new_control();

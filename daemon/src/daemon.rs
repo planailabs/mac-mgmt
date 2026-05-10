@@ -1164,6 +1164,26 @@ pub async fn run(
         cfg.relay.remote_ssh_enabled,
     );
 
+    // Register swarm/relay integrated services before P2P init so they
+    // report unhealthy (not missing) when the swarm fails to start.
+    // The shared AtomicBools default to false; the P2pManager sets them
+    // to true when the swarm listens / relay registers.
+    #[cfg(all(feature = "relay", feature = "services"))]
+    let p2p_swarm_listening = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(all(feature = "relay", feature = "services"))]
+    let p2p_relay_registered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(all(feature = "relay", feature = "services"))]
+    if cfg.relay.relay_multiaddr.is_some() || cfg.relay.mdns_enabled {
+        svc_mgr.add_integrated_service(std::sync::Arc::new(
+            crate::services::swarm_svc::SwarmService::new(p2p_swarm_listening.clone()),
+        ));
+        if cfg.relay.relay_multiaddr.is_some() {
+            svc_mgr.add_integrated_service(std::sync::Arc::new(
+                crate::services::relay_svc::RelayService::new(p2p_relay_registered.clone()),
+            ));
+        }
+    }
+
     // Start the libp2p P2P manager if relay_multiaddr is configured.
     #[cfg(feature = "relay")]
     let mut _p2p_mgr = if cfg.relay.relay_multiaddr.is_some() || cfg.relay.mdns_enabled {
@@ -1200,25 +1220,18 @@ pub async fn run(
             server_token: server_token.clone(),
             cluster_id,
             handler_state: Some(handler_state),
+            #[cfg(feature = "services")]
+            swarm_listening: Some(p2p_swarm_listening.clone()),
+            #[cfg(not(feature = "services"))]
+            swarm_listening: None,
+            #[cfg(feature = "services")]
+            relay_registered: Some(p2p_relay_registered.clone()),
+            #[cfg(not(feature = "services"))]
+            relay_registered: None,
         };
         match crate::p2p::P2pManager::new(&host_key, p2p_config).await {
             Ok(mgr) => {
                 tracing::info!(peer_id = %mgr.local_peer_id, "p2p swarm started");
-
-                // Register swarm/relay integrated services now that shared
-                // probe state is available from the P2pManager.
-                #[cfg(feature = "services")]
-                {
-                    svc_mgr.add_integrated_service(std::sync::Arc::new(
-                        crate::services::swarm_svc::SwarmService::new(mgr.swarm_listening()),
-                    ));
-                    if cfg.relay.relay_multiaddr.is_some() {
-                        svc_mgr.add_integrated_service(std::sync::Arc::new(
-                            crate::services::relay_svc::RelayService::new(mgr.relay_registered()),
-                        ));
-                    }
-                }
-
                 Some(mgr)
             }
             Err(e) => {
