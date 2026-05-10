@@ -285,6 +285,29 @@ impl ServiceManager {
         })
     }
 
+    /// Add an integrated service after init (e.g. p2p probe services that
+    /// depend on state only available after the swarm has started).
+    /// The service starts in `Healthy` phase and skips installation.
+    pub fn add_integrated_service(&mut self, svc: Arc<dyn ManagedService>) {
+        debug_assert_eq!(svc.service_mode(), ServiceMode::Integrated);
+        let name = svc.name().to_string();
+        tracing::info!("{name} registered (integrated, post-init)");
+        self.services.push(ServiceState {
+            name,
+            service: svc,
+            phase: ServicePhase::Starting,
+            upgrade_pending: false,
+            restart_pending: false,
+            post_start_done: false,
+            consecutive_crashes: 0,
+            running_store_path: None,
+            registered: false,
+            restart_at: None,
+            connector_env: std::collections::HashMap::new(),
+            connector_env_collected: true,
+        });
+    }
+
     // ── Background install machinery ────────────────────────────────
 
     /// Spawn a background task to serially install the given services.

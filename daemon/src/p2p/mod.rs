@@ -13,7 +13,7 @@ pub mod proxy_helpers;
 pub mod relay_state;
 pub mod rpc;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -82,6 +82,10 @@ pub struct P2pManager {
     pub local_peer_id: PeerId,
     /// Relay's proxy URL (learned from Identify).
     relay_proxy_url: Arc<RwLock<Option<String>>>,
+    /// `true` once the swarm has at least one active listener.
+    swarm_listening: Arc<AtomicBool>,
+    /// `true` while the relay RPC connection is fully registered.
+    relay_registered: Arc<AtomicBool>,
 }
 
 impl P2pManager {
@@ -212,6 +216,8 @@ impl P2pManager {
         let peer_registry = Arc::new(RwLock::new(PeerRegistry::default()));
         let active_jobs = Arc::new(AtomicU32::new(0));
         let relay_proxy_url = Arc::new(RwLock::new(None));
+        let swarm_listening = Arc::new(AtomicBool::new(false));
+        let relay_registered = Arc::new(AtomicBool::new(false));
 
         // Extract stream control for opening RPC streams.
         let stream_control = swarm.behaviour().streams.new_control();
@@ -245,6 +251,8 @@ impl P2pManager {
         let active_jobs_clone = Arc::clone(&active_jobs);
         let relay_proxy_url_clone = Arc::clone(&relay_proxy_url);
         let relay_peer_id_clone = Arc::clone(&relay_peer_id);
+        let swarm_listening_clone = Arc::clone(&swarm_listening);
+        let relay_registered_clone = Arc::clone(&relay_registered);
         tokio::spawn(swarm_loop(
             swarm,
             cmd_rx,
@@ -253,6 +261,8 @@ impl P2pManager {
             active_jobs_clone,
             relay_proxy_url_clone,
             relay_peer_id_clone,
+            swarm_listening_clone,
+            relay_registered_clone,
             stream_control,
             config,
         ));
@@ -264,6 +274,8 @@ impl P2pManager {
             active_jobs,
             local_peer_id,
             relay_proxy_url,
+            swarm_listening,
+            relay_registered,
         })
     }
 
@@ -275,6 +287,16 @@ impl P2pManager {
     /// Get the relay's proxy URL (learned from Identify).
     pub fn relay_proxy_url(&self) -> Option<String> {
         self.relay_proxy_url.try_read().ok()?.clone()
+    }
+
+    /// Shared flag: `true` once at least one swarm listener is active.
+    pub fn swarm_listening(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.swarm_listening)
+    }
+
+    /// Shared flag: `true` while the relay RPC connection is registered.
+    pub fn relay_registered(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.relay_registered)
     }
 
     /// Send a command to the swarm.
@@ -292,6 +314,8 @@ async fn swarm_loop(
     active_jobs: Arc<AtomicU32>,
     relay_proxy_url: Arc<RwLock<Option<String>>>,
     relay_peer_id: Arc<RwLock<Option<PeerId>>>,
+    swarm_listening: Arc<AtomicBool>,
+    relay_registered: Arc<AtomicBool>,
     stream_control: libp2p_stream::Control,
     config: P2pConfig,
 ) {
@@ -368,14 +392,14 @@ async fn swarm_loop(
                     let actions = relay.handle_event(re);
                     execute_relay_actions(
                         actions, &mut swarm, &relay_proxy_url, &relay_peer_id,
-                        &mut authorized_cluster_peers, &event_tx,
+                        &mut authorized_cluster_peers, &event_tx, &relay_registered,
                     ).await;
                 }
 
                 // Handle non-relay swarm events.
                 handle_general_event(
                     event, &event_tx, &peer_registry, &mut swarm,
-                    &authorized_cluster_peers,
+                    &authorized_cluster_peers, &swarm_listening,
                 ).await;
             }
 
@@ -397,7 +421,7 @@ async fn swarm_loop(
                         });
                         execute_relay_actions(
                             actions, &mut swarm, &relay_proxy_url, &relay_peer_id,
-                            &mut authorized_cluster_peers, &event_tx,
+                            &mut authorized_cluster_peers, &event_tx, &relay_registered,
                         ).await;
                     }
                 }
@@ -422,7 +446,7 @@ async fn swarm_loop(
                 let actions = relay.handle_event(RelayEvent::Tick);
                 execute_relay_actions(
                     actions, &mut swarm, &relay_proxy_url, &relay_peer_id,
-                    &mut authorized_cluster_peers, &event_tx,
+                    &mut authorized_cluster_peers, &event_tx, &relay_registered,
                 ).await;
 
                 // If Identified but no RPC stream yet, try opening one.
@@ -434,7 +458,7 @@ async fn swarm_loop(
                                 let actions = relay.handle_event(RelayEvent::RpcStreamOpened { stream });
                                 execute_relay_actions(
                                     actions, &mut swarm, &relay_proxy_url, &relay_peer_id,
-                                    &mut authorized_cluster_peers, &event_tx,
+                                    &mut authorized_cluster_peers, &event_tx, &relay_registered,
                                 ).await;
                             }
                             Err(e) => {
@@ -478,6 +502,7 @@ async fn swarm_loop(
                                     }
                                     send_tunnel_advertisement_rpc(rpc, &config.handler_state).await;
                                     relay.mark_registered();
+                                    relay_registered.store(true, Ordering::Relaxed);
                                 }
                             }
                             Err(e) => {
@@ -501,6 +526,7 @@ async fn execute_relay_actions(
     relay_peer_id: &Arc<RwLock<Option<PeerId>>>,
     authorized_cluster_peers: &mut std::collections::HashSet<PeerId>,
     event_tx: &mpsc::Sender<P2pEvent>,
+    relay_registered: &Arc<AtomicBool>,
 ) {
     for action in actions {
         match action {
@@ -527,6 +553,7 @@ async fn execute_relay_actions(
             RelayAction::DeauthorizePeer(peer_id) => {
                 *relay_peer_id.write().await = None;
                 authorized_cluster_peers.remove(&peer_id);
+                relay_registered.store(false, Ordering::Relaxed);
             }
             RelayAction::Log(level, msg) => {
                 match level {
@@ -547,6 +574,7 @@ async fn handle_general_event(
     peer_registry: &Arc<RwLock<PeerRegistry>>,
     swarm: &mut Swarm<ClusterBehaviour>,
     authorized_cluster_peers: &std::collections::HashSet<PeerId>,
+    swarm_listening: &Arc<AtomicBool>,
 ) {
     match event {
         SwarmEvent::Behaviour(ClusterBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
@@ -588,6 +616,7 @@ async fn handle_general_event(
         }
         SwarmEvent::NewListenAddr { address, .. } => {
             tracing::info!(%address, "listening on");
+            swarm_listening.store(true, Ordering::Relaxed);
         }
         _ => {}
     }

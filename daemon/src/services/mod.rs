@@ -11,8 +11,12 @@ pub mod nvidia_smi;
 pub mod ollama;
 pub mod openclaw;
 pub mod opencode;
+#[cfg(feature = "relay")]
+pub mod relay_svc;
 pub mod restic;
 pub mod rocm_smi;
+#[cfg(feature = "relay")]
+pub mod swarm_svc;
 pub mod unsloth;
 
 use anyhow::Result;

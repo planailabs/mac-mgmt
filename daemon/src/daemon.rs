@@ -1204,6 +1204,21 @@ pub async fn run(
         match crate::p2p::P2pManager::new(&host_key, p2p_config).await {
             Ok(mgr) => {
                 tracing::info!(peer_id = %mgr.local_peer_id, "p2p swarm started");
+
+                // Register swarm/relay integrated services now that shared
+                // probe state is available from the P2pManager.
+                #[cfg(feature = "services")]
+                {
+                    svc_mgr.add_integrated_service(std::sync::Arc::new(
+                        crate::services::swarm_svc::SwarmService::new(mgr.swarm_listening()),
+                    ));
+                    if cfg.relay.relay_multiaddr.is_some() {
+                        svc_mgr.add_integrated_service(std::sync::Arc::new(
+                            crate::services::relay_svc::RelayService::new(mgr.relay_registered()),
+                        ));
+                    }
+                }
+
                 Some(mgr)
             }
             Err(e) => {
