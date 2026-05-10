@@ -190,6 +190,18 @@ async fn trigger_missing_certs(
     }
 }
 
+/// Reload routes, certs, and trigger missing cert issuance.
+async fn reload_all(
+    client: &reqwest::Client,
+    server_url: &str,
+    routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
+    cert_store: &CertStore,
+) {
+    reload_routes(client, server_url, routes).await;
+    reload_certs(client, server_url, cert_store).await;
+    trigger_missing_certs(client, server_url, routes, cert_store).await;
+}
+
 /// Do the initial load (blocking before Pingora starts accepting).
 pub async fn initial_load(
     cfg: &ProxyConfig,
@@ -235,11 +247,20 @@ impl pingora::services::background::BackgroundService for SyncTask {
 
         loop {
             tracing::info!("connecting to SSE event stream");
-            match sse_client
+
+            let connect = sse_client
                 .get(format!("{server_url}/api/internal/events"))
-                .send()
-                .await
-            {
+                .send();
+
+            let resp = tokio::select! {
+                result = connect => result,
+                _ = shutdown.changed() => {
+                    tracing::info!("shutting down sync task");
+                    return;
+                }
+            };
+
+            match resp {
                 Ok(resp) => {
                     use eventsource_stream::Eventsource;
                     use futures::StreamExt;
@@ -251,9 +272,13 @@ impl pingora::services::background::BackgroundService for SyncTask {
                                 match event {
                                     Some(Ok(ev)) if ev.event == "reload" => {
                                         tracing::info!("received reload event");
-                                        reload_routes(&client, server_url, &self.routes).await;
-                                        reload_certs(&client, server_url, &self.cert_store).await;
-                                        trigger_missing_certs(&client, server_url, &self.routes, &self.cert_store).await;
+                                        tokio::select! {
+                                            _ = reload_all(&client, server_url, &self.routes, &self.cert_store) => {}
+                                            _ = shutdown.changed() => {
+                                                tracing::info!("shutting down sync task");
+                                                return;
+                                            }
+                                        }
                                     }
                                     Some(Ok(_)) => {}
                                     Some(Err(e)) => {
@@ -286,8 +311,13 @@ impl pingora::services::background::BackgroundService for SyncTask {
                     return;
                 }
             }
-            reload_routes(&client, server_url, &self.routes).await;
-            reload_certs(&client, server_url, &self.cert_store).await;
+            tokio::select! {
+                _ = reload_all(&client, server_url, &self.routes, &self.cert_store) => {}
+                _ = shutdown.changed() => {
+                    tracing::info!("shutting down sync task");
+                    return;
+                }
+            }
         }
     }
 }
