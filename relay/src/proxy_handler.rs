@@ -174,12 +174,17 @@ async fn proxy_security_headers(
 // ── Subdomain parsing ──────────────────────────────────────────────────
 
 /// Extract (instance_id_prefix, tunnel_name) from the Host header.
+///
+/// The subdomain format is `{hex_prefix}-{tunnel_name}` where the prefix is
+/// ≥12 hex characters. Since the prefix is hex-only (no dashes), the first
+/// dash is always the separator — tunnel names with dashes (e.g. `ai-proxy`)
+/// parse correctly.
 fn parse_subdomain(headers: &HeaderMap, proxy_hostname: &str) -> Option<(String, String)> {
     let host = headers.get("host").and_then(|v| v.to_str().ok())?;
     let host_no_port = host.split(':').next().unwrap_or(host);
     let subdomain = host_no_port.strip_suffix(&format!(".{proxy_hostname}"))?;
 
-    let dash_pos = subdomain.rfind('-')?;
+    let dash_pos = subdomain.find('-')?;
     let instance_prefix = &subdomain[..dash_pos];
     let tunnel_name = &subdomain[dash_pos + 1..];
 
@@ -202,10 +207,7 @@ fn parse_instance_prefix(headers: &HeaderMap, proxy_hostname: &str) -> Option<St
     let host_no_port = host.split(':').next().unwrap_or(host);
     let subdomain = host_no_port.strip_suffix(&format!(".{proxy_hostname}"))?;
 
-    // If subdomain contains a dash and the part before the last dash is long
-    // enough to be an instance prefix, parse it. Otherwise treat the whole
-    // subdomain as the prefix.
-    let prefix = if let Some(dash_pos) = subdomain.rfind('-') {
+    let prefix = if let Some(dash_pos) = subdomain.find('-') {
         let candidate = &subdomain[..dash_pos];
         if candidate.len() >= 12 && candidate.chars().all(|c| c.is_ascii_hexdigit()) {
             candidate
