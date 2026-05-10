@@ -114,6 +114,9 @@ async fn import_pages_projects(credential_id: Uuid, org_id: Uuid, project_names:
         }
     }
 
+    if imported > 0 {
+        crate::api::internal::notify_proxy_reload();
+    }
     Ok(ImportResult { imported, skipped, errors })
 }
 

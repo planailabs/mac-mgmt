@@ -116,6 +116,7 @@ async fn delete_basic_auth_list(list_id: Uuid) -> Result<(), ServerFnError> {
     sqlx::query("DELETE FROM basic_auth_lists WHERE id = $1")
         .bind(list_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    crate::api::internal::notify_proxy_reload();
     Ok(())
 }
 

@@ -319,6 +319,9 @@ async fn bulk_create_pages_project(domain_ids: Vec<Uuid>, credential_id: Uuid) -
             Err(e) => failed.push((domain_name, format!("{e}"))),
         }
     }
+    if !succeeded.is_empty() {
+        crate::api::internal::notify_proxy_reload();
+    }
     Ok(BulkOpResult { succeeded, failed })
 }
 

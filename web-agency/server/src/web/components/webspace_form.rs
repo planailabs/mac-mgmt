@@ -106,6 +106,7 @@ async fn create_webspace(
     .await
     .map_err(|e| ServerFnError::new(format!("failed to create webspace: {e}")))?;
 
+    crate::api::internal::notify_proxy_reload();
     Ok(id)
 }
 

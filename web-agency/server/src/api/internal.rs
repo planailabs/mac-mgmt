@@ -32,9 +32,19 @@ pub struct InternalState {
     pub reload_tx: Arc<broadcast::Sender<()>>,
 }
 
-/// Send a reload notification to all connected proxies.
-pub fn notify_reload(state: &InternalState) {
-    let _ = state.reload_tx.send(());
+/// Global handle to the reload broadcast sender, set once during init.
+static RELOAD_TX: std::sync::OnceLock<Arc<broadcast::Sender<()>>> = std::sync::OnceLock::new();
+
+/// Store the reload sender globally so web components can trigger reloads.
+pub fn set_reload_tx(tx: Arc<broadcast::Sender<()>>) {
+    let _ = RELOAD_TX.set(tx);
+}
+
+/// Notify the proxy of route changes (callable from anywhere, e.g. web components).
+pub fn notify_proxy_reload() {
+    if let Some(tx) = RELOAD_TX.get() {
+        let _ = tx.send(());
+    }
 }
 
 pub fn router(state: InternalState) -> Router<()> {

@@ -536,6 +536,7 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
         }
     }
 
+    crate::api::internal::notify_proxy_reload();
     Ok(())
 }
 
@@ -746,6 +747,7 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
     sqlx::query("DELETE FROM webspace_domains WHERE id = $1")
         .bind(binding_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    crate::api::internal::notify_proxy_reload();
     Ok(())
 }
 
@@ -1813,6 +1815,7 @@ async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
     sqlx::query("DELETE FROM webspaces WHERE id = $1")
         .bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    crate::api::internal::notify_proxy_reload();
     Ok(())
 }
 
@@ -1968,6 +1971,7 @@ async fn update_webspace_settings(webspace_id: Uuid, name: String, relay_url: Op
     .bind(&name).bind(&relay_url).bind(webspace_id)
     .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    crate::api::internal::notify_proxy_reload();
     Ok(())
 }
 
@@ -2087,6 +2091,7 @@ async fn update_webspace_auth(webspace_id: Uuid, auth_mode: String, auth_basic_l
     .bind(&auth_mode).bind(auth_basic_list_id).bind(webspace_id)
     .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    crate::api::internal::notify_proxy_reload();
     Ok(())
 }
 

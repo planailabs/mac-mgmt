@@ -274,9 +274,11 @@ fn main() {
             // Mount internal API (used by the reverse proxy)
             let internal_router = {
                 let (reload_tx, _) = tokio::sync::broadcast::channel::<()>(16);
+                let reload_tx = Arc::new(reload_tx);
+                crate::api::internal::set_reload_tx(reload_tx.clone());
                 crate::api::internal::router(crate::api::internal::InternalState {
                     pool: crate::server_pool().expect("pool for internal API"),
-                    reload_tx: Arc::new(reload_tx),
+                    reload_tx,
                 })
             };
 
