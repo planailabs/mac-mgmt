@@ -244,19 +244,35 @@ pub fn EasyAccess() -> Element {
                                 if node.has_files {
                                     {
                                         let iid = node.instance_id.clone();
+                                        let has_proxy = node.relay_proxy_url.is_some();
                                         rsx! {
-                                            Link { to: Route::FleetFiles { instance_id: iid },
-                                                class: "tile group",
-                                                svg { class: "tile-icon",
-                                                    fill: "none",
-                                                    stroke: "currentColor",
-                                                    stroke_width: "1.5",
-                                                    stroke_linecap: "round",
-                                                    stroke_linejoin: "round",
-                                                    view_box: "0 0 24 24",
-                                                    path { d: "{service_icon(\"files\")}" }
+                                            if has_proxy {
+                                                Link { to: Route::FleetFiles { instance_id: iid },
+                                                    class: "tile group",
+                                                    svg { class: "tile-icon",
+                                                        fill: "none",
+                                                        stroke: "currentColor",
+                                                        stroke_width: "1.5",
+                                                        stroke_linecap: "round",
+                                                        stroke_linejoin: "round",
+                                                        view_box: "0 0 24 24",
+                                                        path { d: "{service_icon(\"files\")}" }
+                                                    }
+                                                    span { class: "tile-label", {t!("easy-access-files")} }
                                                 }
-                                                span { class: "tile-label", {t!("easy-access-files")} }
+                                            } else {
+                                                div { class: "tile-disabled group",
+                                                    svg { class: "tile-icon",
+                                                        fill: "none",
+                                                        stroke: "currentColor",
+                                                        stroke_width: "1.5",
+                                                        stroke_linecap: "round",
+                                                        stroke_linejoin: "round",
+                                                        view_box: "0 0 24 24",
+                                                        path { d: "{service_icon(\"files\")}" }
+                                                    }
+                                                    span { class: "tile-label", {t!("easy-access-files")} }
+                                                }
                                             }
                                         }
                                     }
@@ -266,19 +282,35 @@ pub fn EasyAccess() -> Element {
                                 if node.has_shell {
                                     {
                                         let iid = node.instance_id.clone();
+                                        let has_proxy = node.relay_proxy_url.is_some();
                                         rsx! {
-                                            Link { to: Route::FleetShell { instance_id: iid },
-                                                class: "tile group",
-                                                svg { class: "tile-icon",
-                                                    fill: "none",
-                                                    stroke: "currentColor",
-                                                    stroke_width: "1.5",
-                                                    stroke_linecap: "round",
-                                                    stroke_linejoin: "round",
-                                                    view_box: "0 0 24 24",
-                                                    path { d: "{service_icon(\"shell\")}" }
+                                            if has_proxy {
+                                                Link { to: Route::FleetShell { instance_id: iid },
+                                                    class: "tile group",
+                                                    svg { class: "tile-icon",
+                                                        fill: "none",
+                                                        stroke: "currentColor",
+                                                        stroke_width: "1.5",
+                                                        stroke_linecap: "round",
+                                                        stroke_linejoin: "round",
+                                                        view_box: "0 0 24 24",
+                                                        path { d: "{service_icon(\"shell\")}" }
+                                                    }
+                                                    span { class: "tile-label", {t!("easy-access-shell")} }
                                                 }
-                                                span { class: "tile-label", {t!("easy-access-shell")} }
+                                            } else {
+                                                div { class: "tile-disabled group",
+                                                    svg { class: "tile-icon",
+                                                        fill: "none",
+                                                        stroke: "currentColor",
+                                                        stroke_width: "1.5",
+                                                        stroke_linecap: "round",
+                                                        stroke_linejoin: "round",
+                                                        view_box: "0 0 24 24",
+                                                        path { d: "{service_icon(\"shell\")}" }
+                                                    }
+                                                    span { class: "tile-label", {t!("easy-access-shell")} }
+                                                }
                                             }
                                         }
                                     }
