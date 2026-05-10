@@ -158,7 +158,7 @@ in
       '';
 
       serviceConfig = commonServiceConfig // {
-        ExecStart = "${pkgs.bashInteractive}/bin/bash -lc '${binPath} daemon'";
+        ExecStart = "${pkgs.bashInteractive}/bin/bash -lc 'exec ${binPath} daemon'";
       };
     };
 
@@ -168,7 +168,7 @@ in
       restartIfChanged = false;
 
       serviceConfig = commonServiceConfig // {
-        ExecStart = "${pkgs.bashInteractive}/bin/bash -lc '${binPath} services'";
+        ExecStart = "${pkgs.bashInteractive}/bin/bash -lc 'exec ${binPath} services'";
       };
     };
   };
