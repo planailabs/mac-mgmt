@@ -42,6 +42,9 @@ enum Command {
         /// Learning rate.
         #[arg(long, default_value = "1e-3")]
         learning_rate: f64,
+        /// Compute backend: cpu (NdArray) or gpu (wgpu/Vulkan).
+        #[arg(long, value_enum, default_value = "cpu")]
+        backend: BackendType,
     },
     /// Evaluate a trained model on held-out data.
     Eval {
@@ -54,6 +57,9 @@ enum Command {
         /// Path to exported training data directory.
         #[arg(long, default_value = "./training-data")]
         data: String,
+        /// Compute backend: cpu (NdArray) or gpu (wgpu/Vulkan).
+        #[arg(long, value_enum, default_value = "cpu")]
+        backend: BackendType,
     },
 }
 
@@ -63,6 +69,86 @@ enum ModelType {
     OutcomePredictor,
     IssueClassifier,
     Embedder,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum BackendType {
+    Cpu,
+    Gpu,
+}
+
+fn run_train(model: ModelType, config: mac_mgmt_trainer::training::TrainConfig, backend: BackendType) -> Result<()> {
+    match (model, backend) {
+        (ModelType::ToolSelector, BackendType::Cpu) => {
+            mac_mgmt_trainer::training::train_tool_selector::<
+                burn::backend::Autodiff<burn::backend::NdArray>,
+            >(config)
+        }
+        (ModelType::ToolSelector, BackendType::Gpu) => {
+            mac_mgmt_trainer::training::train_tool_selector::<
+                burn::backend::Autodiff<burn::backend::wgpu::Wgpu>,
+            >(config)
+        }
+        (ModelType::OutcomePredictor, BackendType::Cpu) => {
+            mac_mgmt_trainer::training::train_outcome_predictor::<
+                burn::backend::Autodiff<burn::backend::NdArray>,
+            >(config)
+        }
+        (ModelType::OutcomePredictor, BackendType::Gpu) => {
+            mac_mgmt_trainer::training::train_outcome_predictor::<
+                burn::backend::Autodiff<burn::backend::wgpu::Wgpu>,
+            >(config)
+        }
+        (ModelType::IssueClassifier, BackendType::Cpu) => {
+            mac_mgmt_trainer::training::train_issue_classifier::<
+                burn::backend::Autodiff<burn::backend::NdArray>,
+            >(config)
+        }
+        (ModelType::IssueClassifier, BackendType::Gpu) => {
+            mac_mgmt_trainer::training::train_issue_classifier::<
+                burn::backend::Autodiff<burn::backend::wgpu::Wgpu>,
+            >(config)
+        }
+        (ModelType::Embedder, BackendType::Cpu) => {
+            mac_mgmt_trainer::training::train_embedder::<
+                burn::backend::Autodiff<burn::backend::NdArray>,
+            >(config)
+        }
+        (ModelType::Embedder, BackendType::Gpu) => {
+            mac_mgmt_trainer::training::train_embedder::<
+                burn::backend::Autodiff<burn::backend::wgpu::Wgpu>,
+            >(config)
+        }
+    }
+}
+
+fn run_eval(model: ModelType, checkpoint: &str, data: &str, backend: BackendType) -> Result<()> {
+    match (model, backend) {
+        (ModelType::ToolSelector, BackendType::Cpu) => {
+            mac_mgmt_trainer::inference::eval_tool_selector::<burn::backend::NdArray>(checkpoint, data)
+        }
+        (ModelType::ToolSelector, BackendType::Gpu) => {
+            mac_mgmt_trainer::inference::eval_tool_selector::<burn::backend::wgpu::Wgpu>(checkpoint, data)
+        }
+        (ModelType::OutcomePredictor, BackendType::Cpu) => {
+            mac_mgmt_trainer::inference::eval_outcome_predictor::<burn::backend::NdArray>(checkpoint, data)
+        }
+        (ModelType::OutcomePredictor, BackendType::Gpu) => {
+            mac_mgmt_trainer::inference::eval_outcome_predictor::<burn::backend::wgpu::Wgpu>(checkpoint, data)
+        }
+        (ModelType::IssueClassifier, BackendType::Cpu) => {
+            mac_mgmt_trainer::inference::eval_issue_classifier::<burn::backend::NdArray>(checkpoint, data)
+        }
+        (ModelType::IssueClassifier, BackendType::Gpu) => {
+            mac_mgmt_trainer::inference::eval_issue_classifier::<burn::backend::wgpu::Wgpu>(checkpoint, data)
+        }
+        (ModelType::Embedder, BackendType::Cpu) => {
+            mac_mgmt_trainer::inference::eval_embedder::<burn::backend::NdArray>(checkpoint, data)
+        }
+        (ModelType::Embedder, BackendType::Gpu) => {
+            mac_mgmt_trainer::inference::eval_embedder::<burn::backend::wgpu::Wgpu>(checkpoint, data)
+        }
+    }
 }
 
 #[tokio::main]
@@ -95,6 +181,7 @@ async fn main() -> Result<()> {
             batch_size,
             epochs,
             learning_rate,
+            backend,
         } => {
             let config = mac_mgmt_trainer::training::TrainConfig {
                 data_dir: data,
@@ -103,60 +190,15 @@ async fn main() -> Result<()> {
                 epochs,
                 learning_rate,
             };
-            match model {
-                ModelType::ToolSelector => {
-                    mac_mgmt_trainer::training::train_tool_selector::<
-                        burn::backend::Autodiff<burn::backend::NdArray>,
-                    >(config)?;
-                }
-                ModelType::OutcomePredictor => {
-                    mac_mgmt_trainer::training::train_outcome_predictor::<
-                        burn::backend::Autodiff<burn::backend::NdArray>,
-                    >(config)?;
-                }
-                ModelType::IssueClassifier => {
-                    mac_mgmt_trainer::training::train_issue_classifier::<
-                        burn::backend::Autodiff<burn::backend::NdArray>,
-                    >(config)?;
-                }
-                ModelType::Embedder => {
-                    mac_mgmt_trainer::training::train_embedder::<
-                        burn::backend::Autodiff<burn::backend::NdArray>,
-                    >(config)?;
-                }
-            }
+            run_train(model, config, backend)?;
         }
         Command::Eval {
             model,
             checkpoint,
             data,
+            backend,
         } => {
-            match model {
-                ModelType::ToolSelector => {
-                    mac_mgmt_trainer::inference::eval_tool_selector::<burn::backend::NdArray>(
-                        &checkpoint,
-                        &data,
-                    )?;
-                }
-                ModelType::OutcomePredictor => {
-                    mac_mgmt_trainer::inference::eval_outcome_predictor::<burn::backend::NdArray>(
-                        &checkpoint,
-                        &data,
-                    )?;
-                }
-                ModelType::IssueClassifier => {
-                    mac_mgmt_trainer::inference::eval_issue_classifier::<burn::backend::NdArray>(
-                        &checkpoint,
-                        &data,
-                    )?;
-                }
-                ModelType::Embedder => {
-                    mac_mgmt_trainer::inference::eval_embedder::<burn::backend::NdArray>(
-                        &checkpoint,
-                        &data,
-                    )?;
-                }
-            }
+            run_eval(model, &checkpoint, &data, backend)?;
         }
     }
 
