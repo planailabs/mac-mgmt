@@ -8,6 +8,22 @@ pub const MAX_SEQ_LEN: usize = 512;
 /// Number of recent tool calls to include as history features.
 pub const TOOL_HISTORY_LEN: usize = 5;
 
+/// Category names matching issue_classifier index order.
+const CATEGORY_NAMES: &[&str] = &[
+    "hardware",
+    "network",
+    "disk_space",
+    "config_error",
+    "service_crash",
+    "model_issue",
+    "permission",
+    "dependency",
+    "security",
+    "performance",
+    "tool_needed",
+    "other",
+];
+
 /// A single training sample for the tool selector model.
 /// Each sample represents one tool call decision point in a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,14 +70,13 @@ pub fn extract_tool_selector_samples(
     for msg in &session.messages {
         // Check if this is a tool_result — that means the previous assistant call
         // selected this tool, so we create a sample for predicting it.
-        if msg.role == "tool_result" {
-            if let Some(tool_name) = msg
+        if msg.role == "tool_result"
+            && let Some(tool_name) = msg
                 .metadata
                 .as_ref()
                 .and_then(|m| m.get("tool_name"))
                 .and_then(|v| v.as_str())
-            {
-                if let Some(tool_class) = Vocabulary::tool_class(tool_name) {
+                && let Some(tool_class) = Vocabulary::tool_class(tool_name) {
                     // Build the sample from context accumulated so far
                     let ctx_len = context_tokens.len().min(MAX_SEQ_LEN);
                     let ctx_start = context_tokens.len().saturating_sub(MAX_SEQ_LEN);
@@ -83,18 +98,15 @@ pub fn extract_tool_selector_samples(
 
                     tool_history.push(tool_class);
                 }
-            }
-        }
 
         // Track phase changes from set_phase tool results
-        if msg.role == "tool_result" {
-            if let Some(tool_name) = msg
+        if msg.role == "tool_result"
+            && let Some(tool_name) = msg
                 .metadata
                 .as_ref()
                 .and_then(|m| m.get("tool_name"))
                 .and_then(|v| v.as_str())
-            {
-                if tool_name == "set_phase" {
+                && tool_name == "set_phase" {
                     // Try to extract the phase from the content
                     let content_lower = msg.content.to_lowercase();
                     for phase in &[
@@ -110,8 +122,6 @@ pub fn extract_tool_selector_samples(
                         }
                     }
                 }
-            }
-        }
 
         // Accumulate context tokens
         let role_token = Vocabulary::role_token(&msg.role);
@@ -172,5 +182,191 @@ pub fn extract_outcome_sample(
         tokens,
         roles,
         target,
+    })
+}
+
+/// A single training sample for the issue classifier model.
+/// One sample per staff_ping in the session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueClassifierSample {
+    /// Token IDs of initial issues + first few tool results.
+    pub tokens: Vec<u32>,
+    /// Role IDs for each token position.
+    pub roles: Vec<u32>,
+    /// Target category index (into CATEGORY_NAMES).
+    pub target: usize,
+}
+
+/// Extract issue classifier training samples from a session.
+///
+/// Produces one sample per staff_ping. Input is the initial issues text
+/// plus the first few tool_result messages.
+pub fn extract_issue_classifier_samples(
+    session: &ExportedSession,
+    vocab: &Vocabulary,
+) -> Vec<IssueClassifierSample> {
+    if session.staff_pings.is_empty() {
+        return Vec::new();
+    }
+
+    // Build context: initial_issues + first 5 tool results
+    let mut tokens = vec![tokenizer::CLS];
+    let mut roles = vec![tokenizer::CLS];
+
+    // Encode initial_issues
+    let issues_text = session.initial_issues.to_string();
+    let issue_tokens = vocab.encode_text(&issues_text);
+    for &t in &issue_tokens {
+        if tokens.len() >= MAX_SEQ_LEN - 1 {
+            break;
+        }
+        tokens.push(t);
+        roles.push(tokenizer::ROLE_USER);
+    }
+    tokens.push(tokenizer::SEP);
+    roles.push(tokenizer::ROLE_USER);
+
+    // Add first 5 tool_result messages
+    let tool_results: Vec<_> = session
+        .messages
+        .iter()
+        .filter(|m| m.role == "tool_result")
+        .take(5)
+        .collect();
+
+    for msg in &tool_results {
+        let role_token = Vocabulary::role_token(&msg.role);
+        let msg_tokens = vocab.encode_text(&msg.content);
+        for &t in &msg_tokens {
+            if tokens.len() >= MAX_SEQ_LEN - 1 {
+                break;
+            }
+            tokens.push(t);
+            roles.push(role_token);
+        }
+        tokens.push(tokenizer::SEP);
+        roles.push(role_token);
+    }
+
+    tokens.truncate(MAX_SEQ_LEN);
+    roles.truncate(MAX_SEQ_LEN);
+
+    // One sample per staff_ping
+    session
+        .staff_pings
+        .iter()
+        .filter_map(|ping| {
+            let target = CATEGORY_NAMES
+                .iter()
+                .position(|&c| c == ping.category)?;
+            Some(IssueClassifierSample {
+                tokens: tokens.clone(),
+                roles: roles.clone(),
+                target,
+            })
+        })
+        .collect()
+}
+
+/// A single training sample for the session embedder model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbedderSample {
+    /// Token IDs of initial_issues + diagnosis pin + first 5 tool results.
+    pub tokens: Vec<u32>,
+    /// Role IDs for each token position.
+    pub roles: Vec<u32>,
+    /// Label for contrastive learning (outcome class: 0=done, 1=failed, 2=needs_human).
+    pub label: usize,
+}
+
+/// Extract a session embedder training sample.
+///
+/// Uses initial_issues, the diagnosis pin (if any), and first 5 tool results.
+pub fn extract_embedder_sample(
+    session: &ExportedSession,
+    vocab: &Vocabulary,
+) -> Option<EmbedderSample> {
+    let label = match session.state.as_str() {
+        "done" | "completed" => 0,
+        "failed" => 1,
+        "needs_human_attention" | "cancelled" | "paused" => 2,
+        _ => return None,
+    };
+
+    let mut tokens = vec![tokenizer::CLS];
+    let mut roles = vec![tokenizer::CLS];
+
+    // Encode initial_issues
+    let issues_text = session.initial_issues.to_string();
+    let issue_tokens = vocab.encode_text(&issues_text);
+    for &t in &issue_tokens {
+        if tokens.len() >= MAX_SEQ_LEN - 1 {
+            break;
+        }
+        tokens.push(t);
+        roles.push(tokenizer::ROLE_USER);
+    }
+    tokens.push(tokenizer::SEP);
+    roles.push(tokenizer::ROLE_USER);
+
+    // Find diagnosis pin if present
+    for msg in &session.messages {
+        if msg.role == "tool_result"
+            && let Some(tool_name) = msg
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("tool_name"))
+                .and_then(|v| v.as_str())
+                && tool_name == "pin" {
+                    let pin_tokens = vocab.encode_text(&msg.content);
+                    for &t in &pin_tokens {
+                        if tokens.len() >= MAX_SEQ_LEN - 1 {
+                            break;
+                        }
+                        tokens.push(t);
+                        roles.push(tokenizer::ROLE_PIN);
+                    }
+                    tokens.push(tokenizer::SEP);
+                    roles.push(tokenizer::ROLE_PIN);
+                    break; // Only first pin
+                }
+    }
+
+    // Add first 5 tool results
+    let tool_results: Vec<_> = session
+        .messages
+        .iter()
+        .filter(|m| m.role == "tool_result")
+        .filter(|m| {
+            m.metadata
+                .as_ref()
+                .and_then(|m| m.get("tool_name"))
+                .and_then(|v| v.as_str())
+                != Some("pin")
+        })
+        .take(5)
+        .collect();
+
+    for msg in &tool_results {
+        let role_token = Vocabulary::role_token(&msg.role);
+        let msg_tokens = vocab.encode_text(&msg.content);
+        for &t in &msg_tokens {
+            if tokens.len() >= MAX_SEQ_LEN - 1 {
+                break;
+            }
+            tokens.push(t);
+            roles.push(role_token);
+        }
+        tokens.push(tokenizer::SEP);
+        roles.push(role_token);
+    }
+
+    tokens.truncate(MAX_SEQ_LEN);
+    roles.truncate(MAX_SEQ_LEN);
+
+    Some(EmbedderSample {
+        tokens,
+        roles,
+        label,
     })
 }

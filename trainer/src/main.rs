@@ -114,8 +114,15 @@ async fn main() -> Result<()> {
                         burn::backend::Autodiff<burn::backend::NdArray>,
                     >(config)?;
                 }
-                _ => {
-                    tracing::warn!("model type not yet implemented");
+                ModelType::IssueClassifier => {
+                    mac_mgmt_trainer::training::train_issue_classifier::<
+                        burn::backend::Autodiff<burn::backend::NdArray>,
+                    >(config)?;
+                }
+                ModelType::Embedder => {
+                    mac_mgmt_trainer::training::train_embedder::<
+                        burn::backend::Autodiff<burn::backend::NdArray>,
+                    >(config)?;
                 }
             }
         }
@@ -131,8 +138,23 @@ async fn main() -> Result<()> {
                         &data,
                     )?;
                 }
-                _ => {
-                    tracing::warn!("eval not yet implemented for this model type");
+                ModelType::OutcomePredictor => {
+                    mac_mgmt_trainer::inference::eval_outcome_predictor::<burn::backend::NdArray>(
+                        &checkpoint,
+                        &data,
+                    )?;
+                }
+                ModelType::IssueClassifier => {
+                    mac_mgmt_trainer::inference::eval_issue_classifier::<burn::backend::NdArray>(
+                        &checkpoint,
+                        &data,
+                    )?;
+                }
+                ModelType::Embedder => {
+                    mac_mgmt_trainer::inference::eval_embedder::<burn::backend::NdArray>(
+                        &checkpoint,
+                        &data,
+                    )?;
                 }
             }
         }

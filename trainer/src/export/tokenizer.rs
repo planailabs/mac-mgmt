@@ -132,7 +132,7 @@ impl Vocabulary {
         let max_vocab: usize = 8192;
         let remaining = max_vocab.saturating_sub(id_to_token.len());
         let mut words: Vec<_> = freq.into_iter().collect();
-        words.sort_by(|a, b| b.1.cmp(&a.1));
+        words.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         for (word, _count) in words.into_iter().take(remaining) {
             if !token_to_id.contains_key(&word) {

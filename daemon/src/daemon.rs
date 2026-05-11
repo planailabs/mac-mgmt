@@ -696,6 +696,7 @@ impl Daemon {
             fix_model: healer_cfg.fix_model.clone(),
             validator_provider: None,
             validator_model: None,
+            ml_hints: None,
         };
 
         match self.healer.spawn_session(req).await {

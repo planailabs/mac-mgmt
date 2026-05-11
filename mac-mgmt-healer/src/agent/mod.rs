@@ -11,6 +11,19 @@ pub struct InstanceInfo {
 }
 
 /// Build the system prompt for a healer session.
+/// ML-derived hints to inject into the system prompt.
+/// These are optional predictions from trained models in mac-mgmt-trainer.
+#[derive(Debug, Default, Clone)]
+pub struct MlHints {
+    /// Ranked tool recommendations: (tool_name, confidence 0.0-1.0).
+    pub tool_recommendations: Vec<(String, f32)>,
+    /// Predicted outcome: (label, probability).
+    /// Labels: "success", "failure", "escalation".
+    pub outcome_prediction: Option<(String, f32)>,
+    /// Similar past sessions: (session_label, similarity).
+    pub similar_sessions: Vec<(String, f32)>,
+}
+
 pub fn build_system_prompt(
     cluster_name: &str,
     cluster_id: &str,
@@ -25,6 +38,7 @@ pub fn build_system_prompt(
     auto_approve: bool,
     diagnosis_only: bool,
     metrics_summary: &str,
+    ml_hints: Option<&MlHints>,
 ) -> String {
     let mut prompt = String::with_capacity(4096);
 
@@ -250,6 +264,47 @@ pub fn build_system_prompt(
             Pin your findings with the `pin` tool (use the \"diagnosis\" slot). \
             When ready, call `set_phase(\"remediating\")` to request approval. \
             The session will pause for human review before remediation tools are unlocked.\n");
+    }
+
+    // ML model hints
+    if let Some(hints) = ml_hints {
+        let has_content = !hints.tool_recommendations.is_empty()
+            || hints.outcome_prediction.is_some()
+            || !hints.similar_sessions.is_empty();
+        if has_content {
+            prompt.push_str("\n## ML Model Hints\n\
+                The following are predictions from trained models based on past session data. \
+                Use these as soft guidance — they may be wrong.\n\n");
+
+            if !hints.tool_recommendations.is_empty() {
+                prompt.push_str("**Suggested tools** (ranked by historical relevance):\n");
+                for (tool, confidence) in hints.tool_recommendations.iter().take(5) {
+                    prompt.push_str(&format!("- `{tool}` ({:.0}% confidence)\n", confidence * 100.0));
+                }
+                prompt.push('\n');
+            }
+
+            if let Some((label, prob)) = &hints.outcome_prediction {
+                if *prob > 0.6 {
+                    prompt.push_str(&format!(
+                        "**Outcome forecast**: {label} ({:.0}% probability). ",
+                        prob * 100.0
+                    ));
+                    if label == "failure" || label == "escalation" {
+                        prompt.push_str("Consider early escalation via `staff_ping` if you encounter obstacles.\n");
+                    }
+                    prompt.push('\n');
+                }
+            }
+
+            if !hints.similar_sessions.is_empty() {
+                prompt.push_str("**Similar past sessions**:\n");
+                for (label, similarity) in hints.similar_sessions.iter().take(3) {
+                    prompt.push_str(&format!("- {label} (similarity: {similarity:.2})\n"));
+                }
+                prompt.push('\n');
+            }
+        }
     }
 
     // Resume context

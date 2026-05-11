@@ -124,6 +124,8 @@ pub struct SpawnRequest {
     pub validator_provider: Option<String>,
     /// Validator LLM model name.
     pub validator_model: Option<String>,
+    /// Optional ML model hints (tool recommendations, outcome prediction, similar sessions).
+    pub ml_hints: Option<agent::MlHints>,
 }
 
 impl HealerState {
@@ -450,6 +452,7 @@ impl HealerState {
             fix_model: None,
             validator_provider: None,
             validator_model: None,
+            ml_hints: None,
         };
 
         let state = self.clone();
@@ -829,6 +832,7 @@ async fn run_agent_session(
         req.auto_approve,
         diagnosis_only,
         &metrics_summary,
+        req.ml_hints.as_ref(),
     );
 
     // 5. Transition to Diagnosing

@@ -57,6 +57,8 @@ pub async fn run_export(db_url: &str, output_dir: &str, min_messages: usize) -> 
 
     let mut tool_samples = Vec::new();
     let mut outcome_samples = Vec::new();
+    let mut issue_samples = Vec::new();
+    let mut embedder_samples = Vec::new();
 
     for session in &sessions {
         // Full session export
@@ -78,6 +80,15 @@ pub async fn run_export(db_url: &str, output_dir: &str, min_messages: usize) -> 
         if let Some(os) = features::extract_outcome_sample(session, &vocab) {
             outcome_samples.push(os);
         }
+
+        // Issue classifier samples (one per staff_ping)
+        let ics = features::extract_issue_classifier_samples(session, &vocab);
+        issue_samples.extend(ics);
+
+        // Embedder sample (one per session)
+        if let Some(es) = features::extract_embedder_sample(session, &vocab) {
+            embedder_samples.push(es);
+        }
     }
 
     write_jsonl_file(&tool_selector_path, &tool_samples)?;
@@ -92,6 +103,22 @@ pub async fn run_export(db_url: &str, output_dir: &str, min_messages: usize) -> 
         "wrote {} outcome samples to {}",
         outcome_samples.len(),
         outcome_path.display()
+    );
+
+    let issue_path = output.join("issue_classifier.jsonl");
+    write_jsonl_file(&issue_path, &issue_samples)?;
+    tracing::info!(
+        "wrote {} issue classifier samples to {}",
+        issue_samples.len(),
+        issue_path.display()
+    );
+
+    let embedder_path = output.join("embedder.jsonl");
+    write_jsonl_file(&embedder_path, &embedder_samples)?;
+    tracing::info!(
+        "wrote {} embedder samples to {}",
+        embedder_samples.len(),
+        embedder_path.display()
     );
 
     tracing::info!("export complete → {}", output.display());

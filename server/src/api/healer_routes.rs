@@ -245,6 +245,7 @@ pub async fn create_session(
             .or_else(|| server_cfg.healer.fix_model.clone()),
         validator_provider: None,
         validator_model: None,
+        ml_hints: None,
     };
 
     let session_id = healer.spawn_session(req).await.map_err(|e| {

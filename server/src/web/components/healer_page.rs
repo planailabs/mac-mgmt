@@ -468,6 +468,7 @@ pub async fn start_healer_session(
             .or_else(|| server_cfg.healer.fix_model.clone()),
         validator_provider,
         validator_model,
+        ml_hints: None,
     };
 
     let session_id = healer
