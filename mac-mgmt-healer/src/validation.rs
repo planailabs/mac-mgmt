@@ -487,48 +487,74 @@ impl Tool for ValidatedTool {
     }
 }
 
-// ── HttpValidatorLlm ─────────────────────────────────────────────────
+// ── Swiftide-based validator LLM ──────────────────────────────────────
 
-/// Token tracking context for the validator LLM.
+use swiftide::chat_completion::{
+    ChatCompletion, ChatCompletionRequest, ChatMessage, ChatCompletionResponse,
+};
+
+/// Validator backed by a swiftide `ChatCompletion` provider (same as the main
+/// agent LLM). Uses approve/reject tools instead of parsing free text.
 #[derive(Clone)]
-pub struct ValidatorTokenContext {
-    pub store: crate::store::DynStore,
-    pub session_id: uuid::Uuid,
-    pub provider_label: String, // e.g. "validator:ollama"
-    pub model: String,
-    pub budget_notify: Arc<tokio::sync::Notify>,
+pub struct SwiftideValidatorLlm {
+    llm: Arc<dyn ChatCompletion>,
 }
 
-/// OpenAI-compatible HTTP backend for the validator LLM.
-#[derive(Clone)]
-pub struct HttpValidatorLlm {
-    client: reqwest::Client,
-    url: String,
-    model: String,
-    api_key: Option<String>,
-    token_ctx: Option<ValidatorTokenContext>,
-}
-
-impl HttpValidatorLlm {
-    pub fn new(
-        url: String,
-        model: String,
-        api_key: Option<String>,
-        token_ctx: Option<ValidatorTokenContext>,
-    ) -> Self {
-        let client = reqwest::Client::new();
-        Self {
-            client,
-            url,
-            model,
-            api_key,
-            token_ctx,
-        }
+impl SwiftideValidatorLlm {
+    pub fn new(llm: Box<dyn ChatCompletion>) -> Self {
+        Self { llm: Arc::from(llm) }
     }
 }
 
+/// Build the tool specs for approve/reject tools.
+fn validator_tool_specs() -> Vec<ToolSpec> {
+    let reasoning_schema: schemars::Schema = serde_json::from_value(serde_json::json!({
+        "type": "object",
+        "properties": {
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation of why this tool call is appropriate or inappropriate."
+            }
+        },
+        "required": ["reasoning"]
+    })).unwrap();
+
+    vec![
+        ToolSpec::builder()
+            .name("approve")
+            .description("Approve this tool call — it makes sense given the agent's intent and history.")
+            .parameters_schema(reasoning_schema.clone())
+            .build()
+            .unwrap(),
+        ToolSpec::builder()
+            .name("reject")
+            .description("Reject this tool call — it is wrong, redundant, dangerous, or doesn't match the stated reason.")
+            .parameters_schema(reasoning_schema)
+            .build()
+            .unwrap(),
+    ]
+}
+
+/// Extract the verdict from tool calls in the completion response.
+fn extract_verdict(response: &ChatCompletionResponse) -> Option<ValidationVerdict> {
+    let tool_calls = response.tool_calls.as_ref()?;
+    for tc in tool_calls {
+        let reasoning = tc.args()
+            .and_then(|args| serde_json::from_str::<serde_json::Value>(args).ok())
+            .and_then(|v| v.get("reasoning").and_then(|r| r.as_str()).map(String::from))
+            .unwrap_or_default();
+
+        match tc.name() {
+            "approve" => return Some(ValidationVerdict::Approved { reasoning }),
+            "reject" => return Some(ValidationVerdict::Rejected { explanation: reasoning }),
+            _ => {}
+        }
+    }
+    None
+}
+
 #[async_trait]
-impl ValidatorLlm for HttpValidatorLlm {
+impl ValidatorLlm for SwiftideValidatorLlm {
     async fn validate_tool_call(
         &self,
         ctx: &ValidationContext<'_>,
@@ -549,13 +575,6 @@ impl ValidatorLlm for HttpValidatorLlm {
             history_text = "  (no prior tool calls)\n".to_string();
         }
 
-        let risk_str = match ctx.risk {
-            ToolRisk::ReadOnly => "read_only",
-            ToolRisk::SessionLocal => "session_local",
-            ToolRisk::Mutating => "mutating",
-            ToolRisk::Destructive => "destructive",
-        };
-
         let user_prompt = format!(
             r#"Tool: `{name}` ({risk})
 Description: {desc}
@@ -565,9 +584,9 @@ Agent's reason: "{reason}"
 Recent tool history:
 {history}
 Does this tool call make sense given the agent's stated reason and history?
-Reply with EXACTLY one line: "APPROVED: <brief reasoning>" or "REJECTED: <brief reasoning>"."#,
+Use the `approve` or `reject` tool to record your verdict."#,
             name = ctx.tool_name,
-            risk = risk_str,
+            risk = risk_to_str(ctx.risk),
             desc = ctx.tool_description,
             args = ctx.args,
             reason = ctx.reason,
@@ -584,72 +603,34 @@ Reply with EXACTLY one line: "APPROVED: <brief reasoning>" or "REJECTED: <brief 
             history = history_text,
         );
 
-        let body = serde_json::json!({
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a tool-call validator for an IT operations agent. \
-                        Evaluate whether the proposed tool call is appropriate given the agent's \
-                        stated intent and recent actions. Reply with exactly one line: \
-                        \"APPROVED: <reasoning>\" or \"REJECTED: <reasoning>\". Be concise."
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
-            "max_tokens": 8192,
-            "temperature": 0.0,
-        });
+        let messages = vec![
+            ChatMessage::new_system(
+                "You are a tool-call validator for an IT operations agent. \
+                 Evaluate whether the proposed tool call is appropriate given the agent's \
+                 stated intent and recent actions. Use the `approve` tool if the call is \
+                 reasonable, or the `reject` tool if it is wrong, redundant, or dangerous. \
+                 Always provide brief reasoning."
+            ),
+            ChatMessage::new_user(user_prompt),
+        ];
 
-        let mut req = self.client
-            .post(&self.url)
-            .timeout(std::time::Duration::from_secs(600))
-            .json(&body);
-        if let Some(key) = &self.api_key {
-            req = req.bearer_auth(key);
+        let tools = validator_tool_specs();
+        let request = ChatCompletionRequest::builder()
+            .messages(messages)
+            .tools_spec(tools)
+            .build()
+            .map_err(|e| anyhow::anyhow!("failed to build validation request: {e}"))?;
+
+        let response = self.llm.complete(&request).await
+            .map_err(|e| anyhow::anyhow!("validator completion failed: {e}"))?;
+
+        // Try to extract verdict from tool calls
+        if let Some(verdict) = extract_verdict(&response) {
+            return Ok(verdict);
         }
 
-        let resp = req.send().await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("validator LLM returned {status}: {body}");
-        }
-
-        let json: serde_json::Value = resp.json().await?;
-
-        // Track token usage if configured
-        if let Some(tc) = &self.token_ctx {
-            let input = json.pointer("/usage/prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-            let output = json.pointer("/usage/completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-            if input > 0 || output > 0 {
-                let new_total = tc.store.append_token_event(
-                    tc.session_id, &tc.provider_label, &tc.model, input, output,
-                ).await.unwrap_or(0);
-                let budget = tc.store.get_token_budget(tc.session_id).await.unwrap_or(0);
-                if budget > 0 && new_total >= budget {
-                    tc.budget_notify.notify_one();
-                }
-            }
-        }
-
-        // Try content first, fall back to reasoning field (reasoning models
-        // may put the verdict there when content is empty).
-        let text = json
-            .pointer("/choices/0/message/content")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| {
-                json.pointer("/choices/0/message/reasoning")
-                    .and_then(|v| v.as_str())
-            })
-            .unwrap_or("")
-            .trim()
-            .to_string();
-
-        // Parse verdict
+        // Fallback: try parsing from message content (model didn't use tools)
+        let text = response.message.as_deref().unwrap_or("").trim();
         if let Some(reasoning) = text.strip_prefix("APPROVED:") {
             Ok(ValidationVerdict::Approved {
                 reasoning: reasoning.trim().to_string(),
@@ -659,14 +640,11 @@ Reply with EXACTLY one line: "APPROVED: <brief reasoning>" or "REJECTED: <brief 
                 explanation: reasoning.trim().to_string(),
             })
         } else {
-            // Ambiguous → fail-open. Include raw response for debugging.
+            // Ambiguous → fail-open
             let debug_info = if text.is_empty() {
-                // Content extraction failed — show raw JSON structure
-                let raw = serde_json::to_string(&json).unwrap_or_default();
-                let truncated = if raw.len() > 500 { &raw[..500] } else { &raw };
-                format!("(empty content, raw response: {truncated})")
+                format!("(no tool call and no text content in response)")
             } else {
-                text.clone()
+                text.to_string()
             };
             tracing::warn!("ambiguous validator response: {debug_info}");
             Ok(ValidationVerdict::Approved {
@@ -696,57 +674,43 @@ fn truncate_for_prompt(s: &str, max: usize) -> &str {
 
 // ── Builder helper ───────────────────────────────────────────────────
 
-/// Build a validator LLM from connector config, if configured.
+/// Resolve and build the validator LLM using swiftide's LLM infrastructure.
 ///
-/// `token_ctx` is passed through to `HttpValidatorLlm` for token tracking.
-/// If `None`, validator calls are not tracked.
-pub fn build_validator_llm(
+/// Uses the same `resolve_llm` as the main agent — all provider configs, client
+/// setup, and token tracking are handled identically. Returns `None` if no
+/// validator provider is configured.
+pub async fn build_validator_llm(
     connector_config: &crate::connector::ConnectorConfig,
-    token_ctx: Option<ValidatorTokenContext>,
+    token_ctx: Option<crate::connector::TokenEventContext>,
 ) -> Option<Arc<dyn ValidatorLlm>> {
     let provider = connector_config.validator_provider.as_deref()?;
     let model = connector_config.validator_model.as_deref()?;
 
-    let (url, api_key) = match provider {
-        "ollama" => {
-            let base = connector_config
-                .ollama_url
-                .as_deref()
-                .unwrap_or("http://localhost:11434");
-            (format!("{base}/v1/chat/completions"), None)
-        }
-        "anthropic" => {
-            // Anthropic doesn't use OpenAI-compatible endpoint natively,
-            // but many proxies (litellm, etc.) expose one. For direct Anthropic
-            // usage, we'd need a different client. For now, skip if no proxy.
-            tracing::warn!("anthropic validator requires an OpenAI-compatible proxy; skipping");
-            return None;
-        }
-        "openrouter" => {
-            let key = connector_config.openrouter_api_key.clone();
-            ("https://openrouter.ai/api/v1/chat/completions".to_string(), key)
-        }
-        "openai_compat" => {
-            let base = connector_config.openai_compat_url.as_deref()?;
-            let url = if base.ends_with("/chat/completions") {
-                base.to_string()
-            } else {
-                format!("{}/chat/completions", base.trim_end_matches('/'))
-            };
-            (url, connector_config.openai_compat_api_key.clone())
-        }
-        _ => {
-            tracing::warn!("unknown validator provider: {provider}");
-            return None;
-        }
-    };
-
-    Some(Arc::new(HttpValidatorLlm::new(
-        url,
-        model.to_string(),
-        api_key,
+    match crate::connector::resolve_llm(
+        connector_config,
+        Some(provider),
+        Some(model),
         token_ctx,
-    )))
+    ).await {
+        Ok(handle) => {
+            let llm: Box<dyn ChatCompletion> = match handle.provider {
+                crate::connector::LlmProvider::Ollama(o) => Box::new(o),
+                crate::connector::LlmProvider::Anthropic(a) => Box::new(a),
+                crate::connector::LlmProvider::OpenRouter(o) => Box::new(o),
+                crate::connector::LlmProvider::OpenAICompat(o) => Box::new(o),
+            };
+            tracing::info!(
+                provider = handle.resolved_provider.as_str(),
+                model = %handle.resolved_model,
+                "validator LLM resolved"
+            );
+            Some(Arc::new(SwiftideValidatorLlm::new(llm)))
+        }
+        Err(e) => {
+            tracing::warn!("failed to resolve validator LLM: {e:#}");
+            None
+        }
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────

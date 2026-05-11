@@ -744,16 +744,16 @@ async fn run_agent_session(
 
     // Set up validation layer
     let validation_history = validation::ToolCallHistory::default();
-    let validator_token_ctx = connector_config.validator_provider.as_ref().map(|prov| {
-        validation::ValidatorTokenContext {
+    let validator_token_ctx = if connector_config.validator_provider.is_some() {
+        Some(connector::TokenEventContext {
             store: store.clone(),
             session_id,
-            provider_label: format!("validator:{prov}"),
-            model: connector_config.validator_model.clone().unwrap_or_default(),
             budget_notify: budget_notify.clone(),
-        }
-    });
-    let validator_llm = validation::build_validator_llm(&connector_config, validator_token_ctx);
+        })
+    } else {
+        None
+    };
+    let validator_llm = validation::build_validator_llm(&connector_config, validator_token_ctx).await;
     let validation_config = validation::ValidationConfig {
         validator_llm,
         enabled: true,
