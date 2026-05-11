@@ -77,7 +77,8 @@ pub fn TokenForm() -> Element {
     let mut error = use_signal(|| None::<String>);
     let mut result = use_signal(|| None::<TokenCreateResult>);
 
-    let is_deploy = *kind.read() == "deploy";
+    let kind_val = kind.read().clone();
+    let is_deploy = kind_val == "deploy";
 
     if let Some(res) = &*result.read() {
         return rsx! {
@@ -91,6 +92,14 @@ pub fn TokenForm() -> Element {
                     }
                     div { class: "font-mono text-sm bg-surface-2 p-3 rounded mt-2 select-all",
                         "curl -X POST -H 'Authorization: Bearer {res.token}' \\\n  --data-binary @site.tar.gz \\\n  https://your-server/api/v1/deploy/WEBSPACE_ID"
+                    }
+                }
+                if kind_val == "metrics" {
+                    div { class: "mt-4 text-sm text-fg-muted",
+                        "Use this token to scrape Prometheus metrics:"
+                    }
+                    div { class: "font-mono text-sm bg-surface-2 p-3 rounded mt-2 select-all",
+                        "curl -H 'Authorization: Bearer {res.token}' \\\n  https://your-server/api/metrics"
                     }
                 }
                 div { class: "mt-4",
@@ -132,6 +141,7 @@ pub fn TokenForm() -> Element {
                 select { class: "input", value: "{kind}", oninput: move |evt| kind.set(evt.value()),
                     option { value: "api", "API (general)" }
                     option { value: "deploy", "Deploy (upload tarballs)" }
+                    option { value: "metrics", "Metrics (Prometheus scrape)" }
                 }
             }
 
@@ -142,6 +152,16 @@ pub fn TokenForm() -> Element {
                         option { value: "", "All webspaces" }
                         for ws in &ws_list {
                             option { value: "{ws.id}", "{ws.name}" }
+                        }
+                    }
+                }
+            } else if kind_val == "metrics" {
+                FormField { label: "Organization Scope",
+                    help: "Scope to an org to see only its metrics, or leave as 'All' for admin access (all orgs + global counters).",
+                    select { class: "input", value: "{org_id}", oninput: move |evt| org_id.set(evt.value()),
+                        option { value: "", "All (admin)" }
+                        for org in &org_list {
+                            option { value: "{org.id}", "{org.name}" }
                         }
                     }
                 }
