@@ -1,6 +1,7 @@
 //! Periodic background sync: Cloudflare DNS records and domain renewal dates.
 
 use sqlx::PgPool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -22,6 +23,7 @@ pub fn spawn(pool: PgPool) {
 
 async fn run_sync(pool: &PgPool) -> anyhow::Result<()> {
     tracing::info!("starting periodic sync");
+    super::counters::COUNTERS.reset_sync_gauges();
     sync_cloudflare_dns(pool).await;
     sync_domain_expiry(pool).await;
     sync_nameserver_status(pool).await;
@@ -51,6 +53,7 @@ async fn sync_cloudflare_dns(pool: &PgPool) {
         if let Err(e) = sync_dns_for_domain(pool, *domain_id, domain_name, zone_id, *cred_id).await
         {
             tracing::warn!("DNS sync failed for {domain_name}: {e}");
+            super::counters::COUNTERS.sync_dns_errors.fetch_add(1, Ordering::Relaxed);
         }
     }
     tracing::info!("synced DNS for {} domains", domains.len());
@@ -210,7 +213,10 @@ async fn sync_domain_expiry(pool: &PgPool) {
         match result {
             Ok(true) => updated += 1,
             Ok(false) => {}
-            Err(e) => tracing::warn!("expiry sync failed for {domain_name}: {e}"),
+            Err(e) => {
+                tracing::warn!("expiry sync failed for {domain_name}: {e}");
+                super::counters::COUNTERS.sync_expiry_errors.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
     tracing::info!("updated expiry for {updated}/{} domains", domains.len());
@@ -320,7 +326,10 @@ async fn sync_nameserver_status(pool: &PgPool) {
     for (domain_id, domain_name, zone_id, cf_cred_id, ss_cred_id) in &domains {
         match check_ns_match(pool, *domain_id, &domain_name, zone_id, *cf_cred_id, *ss_cred_id).await {
             Ok(()) => checked += 1,
-            Err(e) => tracing::warn!("NS status check failed for {domain_name}: {e}"),
+            Err(e) => {
+                tracing::warn!("NS status check failed for {domain_name}: {e}");
+                super::counters::COUNTERS.sync_ns_errors.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
     tracing::info!("checked NS status for {checked}/{} domains", domains.len());
@@ -386,7 +395,10 @@ async fn sync_bot_protection(pool: &PgPool) {
     for (domain_id, domain_name, zone_id, cred_id) in &domains {
         match sync_bot_for_domain(pool, *domain_id, zone_id, *cred_id).await {
             Ok(()) => updated += 1,
-            Err(e) => tracing::warn!("bot protection sync failed for {domain_name}: {e}"),
+            Err(e) => {
+                tracing::warn!("bot protection sync failed for {domain_name}: {e}");
+                super::counters::COUNTERS.sync_bot_errors.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
     tracing::info!("synced bot protection for {updated}/{} domains", domains.len());

@@ -15981,6 +15981,7 @@ dependencies = [
  "percent-encoding",
  "plan-ai-auth",
  "plan-ai-design",
+ "prometheus 0.13.4",
  "pulldown-cmark 0.12.2",
  "rand 0.9.4",
  "rcgen",

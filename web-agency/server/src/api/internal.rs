@@ -284,9 +284,27 @@ async fn get_routes(
         })?;
 
         let proxy_token = match get_or_mint_proxy_token(&state.pool, cred_id).await {
-            Ok(t) => t,
+            Ok(t) => {
+                super::counters::COUNTERS.relay_mint_success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                {
+                    let mut map = super::counters::RELAY_MINT_RESULTS.lock().unwrap();
+                    map.insert(host.clone(), super::counters::MintResult {
+                        org_id,
+                        success: true,
+                    });
+                }
+                t
+            }
             Err(e) => {
                 tracing::error!(host = %host, "failed to mint proxy token: {e}");
+                super::counters::COUNTERS.relay_mint_failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                {
+                    let mut map = super::counters::RELAY_MINT_RESULTS.lock().unwrap();
+                    map.insert(host.clone(), super::counters::MintResult {
+                        org_id,
+                        success: false,
+                    });
+                }
                 continue;
             }
         };

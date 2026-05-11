@@ -7,7 +7,7 @@ edition = "2024"
 default = ["web", "server", "webui"]
 web = ["webui", "dioxus/web"]
 webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-i18n", "dep:unic-langid", "dep:plan-ai-design", "dep:pulldown-cmark"]
-server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:percent-encoding", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hmac", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:aes-gcm", "dep:thiserror", "dep:cloudflare-api", "dep:spaceship-api", "dep:async-trait", "dep:tempfile", "dep:rust-embed", "dep:instant-acme", "dep:rcgen", "dep:async-stream", "dep:futures-core", "dep:tar", "dep:flate2", "plan-ai-auth/server"]
+server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:percent-encoding", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hmac", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:aes-gcm", "dep:thiserror", "dep:cloudflare-api", "dep:spaceship-api", "dep:async-trait", "dep:tempfile", "dep:rust-embed", "dep:instant-acme", "dep:rcgen", "dep:async-stream", "dep:futures-core", "dep:tar", "dep:flate2", "dep:prometheus", "plan-ai-auth/server"]
 
 [dependencies]
 dioxus = { version = "0.7", features = ["fullstack", "router"], optional = true }
@@ -51,6 +51,7 @@ async-stream = { version = "0.3", optional = true }
 futures-core = { version = "0.3", optional = true }
 tar = { version = "0.4", optional = true }
 flate2 = { version = "1", optional = true }
+prometheus = { version = "0.13", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }

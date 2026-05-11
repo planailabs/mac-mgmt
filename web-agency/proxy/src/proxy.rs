@@ -234,6 +234,21 @@ impl ProxyHttp for WebAgencyProxy {
         session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> Result<bool> {
+        // Intercept .well-known/web-agency.json on any routed host (before auth)
+        let path = session.req_header().uri.path();
+        if path == "/.well-known/web-agency.json" {
+            let body = b"{\"service\":\"web-agency-proxy\"}";
+            let mut resp = pingora::http::ResponseHeader::build(200, None)
+                .map_err(|e| pingora::Error::because(
+                    pingora::ErrorType::InternalError, "build 200 response", e,
+                ))?;
+            let _ = resp.insert_header("Content-Type", "application/json");
+            let _ = resp.insert_header("Content-Length", &body.len().to_string());
+            session.write_response_header(Box::new(resp), false).await?;
+            session.write_response_body(Some(bytes::Bytes::from_static(body)), true).await?;
+            return Ok(true);
+        }
+
         let host = extract_host(session);
         let routes = self.routes.load();
         let (_, auth) = match routes.get(&host) {

@@ -69,6 +69,9 @@ async fn init_server() -> sqlx::PgPool {
     // Start periodic background sync (DNS records, domain expiry).
     api::sync::spawn(pool.clone());
 
+    // Start periodic reachability checks (every 15 minutes).
+    api::reachability::spawn(pool.clone());
+
     // Start periodic cert renewal (hourly: renew expiring, issue missing).
     {
         let pool = pool.clone();
@@ -101,6 +104,10 @@ async fn init_server() -> sqlx::PgPool {
 
 #[cfg(feature = "server")]
 async fn cert_renewal_tick(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+    let counters = &api::counters::COUNTERS;
+    counters.reset_cert_gauges();
+
     // Renew certs expiring within 30 days
     let expiring: Vec<String> = sqlx::query_scalar(
         "SELECT domain FROM certificates \
@@ -113,8 +120,12 @@ async fn cert_renewal_tick(pool: &sqlx::PgPool) -> anyhow::Result<()> {
 
     for domain in &expiring {
         tracing::info!(domain, "renewing expiring cert");
-        if let Err(e) = api::acme::issue_cert(pool, domain).await {
-            tracing::error!(domain, "renewal failed: {e}");
+        match api::acme::issue_cert(pool, domain).await {
+            Ok(()) => { counters.cert_renewal_success.fetch_add(1, Ordering::Relaxed); }
+            Err(e) => {
+                tracing::error!(domain, "renewal failed: {e}");
+                counters.cert_renewal_failed.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
@@ -137,8 +148,12 @@ async fn cert_renewal_tick(pool: &sqlx::PgPool) -> anyhow::Result<()> {
 
     for domain in &missing {
         tracing::info!(domain, "issuing cert for new domain");
-        if let Err(e) = api::acme::issue_cert(pool, domain).await {
-            tracing::error!(domain, "issuance failed: {e}");
+        match api::acme::issue_cert(pool, domain).await {
+            Ok(()) => { counters.cert_issuance_success.fetch_add(1, Ordering::Relaxed); }
+            Err(e) => {
+                tracing::error!(domain, "issuance failed: {e}");
+                counters.cert_issuance_failed.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
@@ -282,9 +297,15 @@ fn main() {
                 })
             };
 
+            // Mount metrics API (Bearer token auth, not OIDC)
+            let metrics_router = crate::api::metrics::router(crate::api::metrics::MetricsState {
+                pool: crate::server_pool().expect("pool for metrics API"),
+            });
+
             let router = axum::Router::new()
                 .merge(deploy_router)
                 .merge(internal_router)
+                .merge(metrics_router)
                 .merge(web_router);
 
             Ok(router)

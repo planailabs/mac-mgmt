@@ -365,6 +365,15 @@ async fn run_wrangler_deploy(
         }
     }
 
+    // Inject .well-known/web-agency.json so reachability checks can verify the site
+    let well_known_dir = extract_dir.join(".well-known");
+    let _ = tokio::fs::create_dir_all(&well_known_dir).await;
+    let _ = tokio::fs::write(
+        well_known_dir.join("web-agency.json"),
+        b"{\"service\":\"web-agency-pages\"}",
+    )
+    .await;
+
     // Count extracted files for the log
     if let Ok(mut entries) = tokio::fs::read_dir(&extract_dir).await {
         let mut count = 0u32;
@@ -412,6 +421,7 @@ async fn run_wrangler_deploy(
             );
             let _ = sqlx::query("UPDATE deployments SET status = 'success', updated_at = now() WHERE id = $1")
                 .bind(deployment_id).execute(&pool).await;
+            super::counters::COUNTERS.deploy_success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -446,4 +456,5 @@ async fn set_failed(pool: &PgPool, deployment_id: Uuid, msg: &str) {
     tracing::error!(deployment_id = %deployment_id, error = msg, "deployment failed");
     let _ = sqlx::query("UPDATE deployments SET status = 'failed', error_message = $1, updated_at = now() WHERE id = $2")
         .bind(msg).bind(deployment_id).execute(pool).await;
+    super::counters::COUNTERS.deploy_failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
