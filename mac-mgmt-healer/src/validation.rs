@@ -652,10 +652,18 @@ Reply with EXACTLY one line: "APPROVED: <brief reasoning>" or "REJECTED: <brief 
                 explanation: reasoning.trim().to_string(),
             })
         } else {
-            // Ambiguous → fail-open
-            tracing::warn!("ambiguous validator response: {text}");
+            // Ambiguous → fail-open. Include raw response for debugging.
+            let debug_info = if text.is_empty() {
+                // Content extraction failed — show raw JSON structure
+                let raw = serde_json::to_string(&json).unwrap_or_default();
+                let truncated = if raw.len() > 500 { &raw[..500] } else { &raw };
+                format!("(empty content, raw response: {truncated})")
+            } else {
+                text.clone()
+            };
+            tracing::warn!("ambiguous validator response: {debug_info}");
             Ok(ValidationVerdict::Approved {
-                reasoning: format!("(ambiguous validator response, defaulting to approved) {text}"),
+                reasoning: format!("(ambiguous response, defaulting to approved) {debug_info}"),
             })
         }
     }
