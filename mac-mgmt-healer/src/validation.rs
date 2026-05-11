@@ -516,10 +516,7 @@ impl HttpValidatorLlm {
         api_key: Option<String>,
         token_ctx: Option<ValidatorTokenContext>,
     ) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()
-            .unwrap_or_default();
+        let client = reqwest::Client::new();
         Self {
             client,
             url,
@@ -606,7 +603,10 @@ Reply with EXACTLY one line: "APPROVED: <brief reasoning>" or "REJECTED: <brief 
             "temperature": 0.0,
         });
 
-        let mut req = self.client.post(&self.url).json(&body);
+        let mut req = self.client
+            .post(&self.url)
+            .timeout(std::time::Duration::from_secs(600))
+            .json(&body);
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
         }
