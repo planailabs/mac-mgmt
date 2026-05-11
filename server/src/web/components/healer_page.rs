@@ -71,7 +71,11 @@ pub fn running_tools_to_wire(tools: &[mac_mgmt_healer::session::RunningTool]) ->
             name: t.name.clone(),
             args: t.args.clone(),
             started_at: t.started_at.to_rfc3339(),
-            validation: None,
+            validation: t.validation.as_ref().map(|v| mac_mgmt_common::HealerToolValidation {
+                status: v.status.clone(),
+                reasoning: v.reasoning.clone(),
+                risk: v.risk.clone(),
+            }),
         })
         .collect()
 }
@@ -1140,11 +1144,16 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 "destructive" => Some(("D", "bg-danger text-danger-strong")),
                                 _ => None,
                             };
+                            let is_validating = tool.validation.as_ref()
+                                .is_some_and(|v| v.status == "validating");
                             rsx! {
                                 div { class: "px-3 py-2 rounded bg-accent-soft border border-accent flex items-center gap-2",
                                     span { class: "inline-block w-2 h-2 rounded-full bg-accent animate-pulse" }
                                     if let Some((label, cls)) = badge_class {
                                         span { class: "text-[10px] font-bold px-1 rounded {cls}", "{label}" }
+                                    }
+                                    if is_validating {
+                                        span { class: "text-[10px] font-semibold px-1.5 py-0.5 rounded bg-warn-soft text-warn-strong animate-pulse", "Validating..." }
                                     }
                                     span { class: "text-xs font-mono font-semibold text-accent", "{name}" }
                                     if has_args {

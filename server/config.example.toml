@@ -108,6 +108,18 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # fix_provider = "anthropic"                      # provider for the remediation phase
 # fix_model = "claude-sonnet-4-6"                 # model for the remediation phase
 #
+# Validator models for tool-call validation. A cheap/fast second model that checks
+# whether each tool call makes sense before executing it. Uses the same API keys
+# as regular healer models. If omitted, built-in defaults (Gemma 4, Qwen 3, Haiku) are used.
+# [[healer.validator_models]]
+# name = "Gemma 4"
+# model = "gemma4"
+# provider = "ollama"
+# [[healer.validator_models]]
+# name = "Claude Haiku 4.5"
+# model = "claude-haiku-4-5-20251001"
+# provider = "anthropic"
+#
 # Per-cluster overrides are managed via the cluster detail UI (Healer section)
 # and stored in the healer_cluster_settings table. They override these global
 # defaults for: auto_trigger, auto_trigger_provider/model, auto_approve,

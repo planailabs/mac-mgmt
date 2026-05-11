@@ -744,10 +744,21 @@ async fn run_agent_session(
 
     // Set up validation layer
     let validation_history = validation::ToolCallHistory::default();
-    let validator_llm = validation::build_validator_llm(&connector_config);
+    let validator_token_ctx = connector_config.validator_provider.as_ref().map(|prov| {
+        validation::ValidatorTokenContext {
+            store: store.clone(),
+            session_id,
+            provider_label: format!("validator:{prov}"),
+            model: connector_config.validator_model.clone().unwrap_or_default(),
+            budget_notify: budget_notify.clone(),
+        }
+    });
+    let validator_llm = validation::build_validator_llm(&connector_config, validator_token_ctx);
     let validation_config = validation::ValidationConfig {
         validator_llm,
         enabled: true,
+        running_tools: running_tools.clone(),
+        events_tx: events_tx.clone(),
     };
 
     let healer_tools = validation::ValidatedTool::wrap_all(
@@ -977,6 +988,7 @@ async fn run_agent_session(
         let store_after_tool = store.clone();
         let events_tx_after_tool = events_tx.clone();
         let running_tools_after = running_tools.clone();
+        let validation_history_after = validation_history.clone();
 
         builder
             .system_prompt(system_prompt)
@@ -1017,6 +1029,7 @@ async fn run_agent_session(
                         name: name.clone(),
                         args: args.clone(),
                         started_at: Utc::now(),
+                        validation: None,
                     };
                     let snapshot = {
                         let mut tools = running_tools.lock().unwrap();
@@ -1031,6 +1044,7 @@ async fn run_agent_session(
                 let store = store_after_tool.clone();
                 let events_tx = events_tx_after_tool.clone();
                 let running_tools = running_tools_after.clone();
+                let val_history = validation_history_after.clone();
                 let name = tool_call.name().to_string();
                 let args = tool_call.args().map(String::from);
                 let (status, output) = match result {
@@ -1046,13 +1060,29 @@ async fn run_agent_session(
                     };
                     let _ = events_tx.send(HealerEvent::RunningTools { tools: snapshot });
 
+                    // Look up validation result from history (pushed by ValidatedTool)
+                    let val_meta = val_history.recent(1).first().and_then(|r| {
+                        if r.tool_name == name {
+                            r.validation.as_ref().map(|v| serde_json::json!({
+                                "status": if v.approved { "approved" } else { "rejected" },
+                                "reasoning": v.reasoning,
+                                "risk": v.risk,
+                            }))
+                        } else {
+                            None
+                        }
+                    });
+
                     // Persist and broadcast the result
                     let content = format!("{name}: {output}");
-                    let metadata = serde_json::json!({
+                    let mut metadata = serde_json::json!({
                         "tool_name": name,
                         "tool_args": args.as_deref().unwrap_or("{}"),
                         "status": status,
                     });
+                    if let Some(val) = val_meta {
+                        metadata.as_object_mut().unwrap().insert("validation".to_string(), val);
+                    }
                     store
                         .append_message(
                             session_id,

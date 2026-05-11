@@ -157,6 +157,20 @@ pub struct RunningTool {
     pub name: String,
     pub args: Option<String>,
     pub started_at: DateTime<Utc>,
+    /// Validation state: None before validation, Some after verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation: Option<RunningToolValidation>,
+}
+
+/// Validation state attached to a running tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunningToolValidation {
+    /// "validating", "approved", "skipped"
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    /// "read_only", "session_local", "mutating", "destructive"
+    pub risk: String,
 }
 
 /// A staff ping: actionable notification from the healer to admins.

@@ -28,6 +28,10 @@ pub struct ValidationConfig {
     pub validator_llm: Option<Arc<dyn ValidatorLlm>>,
     /// Master switch. When false, `ValidatedTool` delegates directly.
     pub enabled: bool,
+    /// Shared running-tools snapshot for broadcasting validation state.
+    pub running_tools: Arc<std::sync::Mutex<Vec<crate::session::RunningTool>>>,
+    /// Event broadcaster for SSE updates.
+    pub events_tx: tokio::sync::broadcast::Sender<crate::session::HealerEvent>,
 }
 
 // ── Validator LLM trait ──────────────────────────────────────────────
@@ -85,6 +89,7 @@ pub struct ToolCallRecord {
 pub struct ValidationResult {
     pub approved: bool,
     pub reasoning: String,
+    pub risk: &'static str,
 }
 
 /// Maximum result size stored verbatim in history. Larger results are truncated
@@ -306,6 +311,34 @@ impl ValidatedTool {
     }
 }
 
+impl ValidatedTool {
+    /// Update the validation state of a running tool and broadcast the snapshot.
+    fn update_running_tool_validation(
+        &self,
+        tool_name: &str,
+        validation: Option<crate::session::models::RunningToolValidation>,
+    ) {
+        let snapshot = {
+            let mut tools = self.config.running_tools.lock().unwrap();
+            if let Some(t) = tools.iter_mut().find(|t| t.name == tool_name) {
+                t.validation = validation;
+            }
+            tools.clone()
+        };
+        let _ = self.config.events_tx.send(crate::session::HealerEvent::RunningTools { tools: snapshot });
+    }
+
+    /// Remove a tool from the running snapshot (on rejection).
+    fn remove_running_tool(&self, tool_name: &str) {
+        let snapshot = {
+            let mut tools = self.config.running_tools.lock().unwrap();
+            tools.retain(|t| t.name != tool_name);
+            tools.clone()
+        };
+        let _ = self.config.events_tx.send(crate::session::HealerEvent::RunningTools { tools: snapshot });
+    }
+}
+
 #[async_trait]
 impl Tool for ValidatedTool {
     fn name(&self) -> Cow<'_, str> {
@@ -342,9 +375,20 @@ impl Tool for ValidatedTool {
         }
 
         // 3. Layer 1: LLM pre-flight (Mutating/Destructive only)
+        let risk_str = risk_to_str(self.risk);
         let mut validation_result: Option<ValidationResult> = None;
         if self.risk >= ToolRisk::Mutating {
             if let Some(validator) = &self.config.validator_llm {
+                // Broadcast "validating" state
+                self.update_running_tool_validation(
+                    &self.inner.name(),
+                    Some(crate::session::models::RunningToolValidation {
+                        status: "validating".to_string(),
+                        reasoning: None,
+                        risk: risk_str.to_string(),
+                    }),
+                );
+
                 let reason_str = if reason.is_empty() {
                     "(no reason given)"
                 } else {
@@ -369,7 +413,10 @@ impl Tool for ValidatedTool {
                         validation_result = Some(ValidationResult {
                             approved: false,
                             reasoning: explanation.clone(),
+                            risk: risk_str,
                         });
+                        // Remove from running tools (rejection means it won't execute)
+                        self.remove_running_tool(&self.inner.name());
                         // Record rejected call in history
                         self.history.push(ToolCallRecord {
                             tool_name: self.inner.name().to_string(),
@@ -386,12 +433,23 @@ impl Tool for ValidatedTool {
                     Ok(ValidationVerdict::Approved { reasoning }) => {
                         validation_result = Some(ValidationResult {
                             approved: true,
-                            reasoning,
+                            reasoning: reasoning.clone(),
+                            risk: risk_str,
                         });
+                        // Broadcast "approved" state
+                        self.update_running_tool_validation(
+                            &self.inner.name(),
+                            Some(crate::session::models::RunningToolValidation {
+                                status: "approved".to_string(),
+                                reasoning: Some(reasoning),
+                                risk: risk_str.to_string(),
+                            }),
+                        );
                     }
                     Err(e) => {
                         // Fail-open for Mutating, fail-closed for Destructive
                         if self.risk == ToolRisk::Destructive {
+                            self.remove_running_tool(&self.inner.name());
                             return Ok(ToolOutput::Fail(format!(
                                 "[Validator error, blocking destructive call] {e}"
                             )));
@@ -431,6 +489,16 @@ impl Tool for ValidatedTool {
 
 // ── HttpValidatorLlm ─────────────────────────────────────────────────
 
+/// Token tracking context for the validator LLM.
+#[derive(Clone)]
+pub struct ValidatorTokenContext {
+    pub store: crate::store::DynStore,
+    pub session_id: uuid::Uuid,
+    pub provider_label: String, // e.g. "validator:ollama"
+    pub model: String,
+    pub budget_notify: Arc<tokio::sync::Notify>,
+}
+
 /// OpenAI-compatible HTTP backend for the validator LLM.
 #[derive(Clone)]
 pub struct HttpValidatorLlm {
@@ -438,10 +506,16 @@ pub struct HttpValidatorLlm {
     url: String,
     model: String,
     api_key: Option<String>,
+    token_ctx: Option<ValidatorTokenContext>,
 }
 
 impl HttpValidatorLlm {
-    pub fn new(url: String, model: String, api_key: Option<String>) -> Self {
+    pub fn new(
+        url: String,
+        model: String,
+        api_key: Option<String>,
+        token_ctx: Option<ValidatorTokenContext>,
+    ) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
@@ -451,6 +525,7 @@ impl HttpValidatorLlm {
             url,
             model,
             api_key,
+            token_ctx,
         }
     }
 }
@@ -544,6 +619,22 @@ Reply with EXACTLY one line: "APPROVED: <brief reasoning>" or "REJECTED: <brief 
         }
 
         let json: serde_json::Value = resp.json().await?;
+
+        // Track token usage if configured
+        if let Some(tc) = &self.token_ctx {
+            let input = json.pointer("/usage/prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let output = json.pointer("/usage/completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            if input > 0 || output > 0 {
+                let new_total = tc.store.append_token_event(
+                    tc.session_id, &tc.provider_label, &tc.model, input, output,
+                ).await.unwrap_or(0);
+                let budget = tc.store.get_token_budget(tc.session_id).await.unwrap_or(0);
+                if budget > 0 && new_total >= budget {
+                    tc.budget_notify.notify_one();
+                }
+            }
+        }
+
         let text = json
             .pointer("/choices/0/message/content")
             .and_then(|v| v.as_str())
@@ -570,6 +661,16 @@ Reply with EXACTLY one line: "APPROVED: <brief reasoning>" or "REJECTED: <brief 
     }
 }
 
+/// Convert a ToolRisk to its wire string representation.
+pub fn risk_to_str(risk: ToolRisk) -> &'static str {
+    match risk {
+        ToolRisk::ReadOnly => "read_only",
+        ToolRisk::SessionLocal => "session_local",
+        ToolRisk::Mutating => "mutating",
+        ToolRisk::Destructive => "destructive",
+    }
+}
+
 fn truncate_for_prompt(s: &str, max: usize) -> &str {
     if s.len() <= max {
         s
@@ -581,8 +682,12 @@ fn truncate_for_prompt(s: &str, max: usize) -> &str {
 // ── Builder helper ───────────────────────────────────────────────────
 
 /// Build a validator LLM from connector config, if configured.
+///
+/// `token_ctx` is passed through to `HttpValidatorLlm` for token tracking.
+/// If `None`, validator calls are not tracked.
 pub fn build_validator_llm(
     connector_config: &crate::connector::ConnectorConfig,
+    token_ctx: Option<ValidatorTokenContext>,
 ) -> Option<Arc<dyn ValidatorLlm>> {
     let provider = connector_config.validator_provider.as_deref()?;
     let model = connector_config.validator_model.as_deref()?;
@@ -625,6 +730,7 @@ pub fn build_validator_llm(
         url,
         model.to_string(),
         api_key,
+        token_ctx,
     )))
 }
 
@@ -800,5 +906,179 @@ mod tests {
         assert_eq!(recent.len(), MAX_HISTORY);
         assert_eq!(recent.first().unwrap().tool_name, "tool_10");
         assert_eq!(recent.last().unwrap().tool_name, "tool_29");
+    }
+
+    // ── Integration tests with mock tool + mock validator ────────────
+
+    /// A minimal mock tool for testing ValidatedTool wrapping.
+    #[derive(Clone)]
+    struct MockTool {
+        name: &'static str,
+        invoked: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl MockTool {
+        fn new(name: &'static str) -> (Box<dyn Tool>, Arc<std::sync::atomic::AtomicBool>) {
+            let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            (Box::new(Self { name, invoked: invoked.clone() }), invoked)
+        }
+    }
+
+    #[async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> Cow<'_, str> { Cow::Borrowed(self.name) }
+        fn tool_spec(&self) -> ToolSpec {
+            ToolSpec::builder()
+                .name(self.name)
+                .description("mock tool")
+                .build()
+                .unwrap()
+        }
+        async fn invoke(
+            &self,
+            _ctx: &dyn AgentContext,
+            _call: &ToolCall,
+        ) -> Result<ToolOutput, ToolError> {
+            self.invoked.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(ToolOutput::Text("mock result".to_string()))
+        }
+    }
+
+    /// A mock validator that always returns a fixed verdict.
+    #[derive(Clone)]
+    struct MockValidator {
+        verdict: ValidationVerdict,
+    }
+
+    #[async_trait]
+    impl ValidatorLlm for MockValidator {
+        async fn validate_tool_call(&self, _ctx: &ValidationContext<'_>) -> anyhow::Result<ValidationVerdict> {
+            Ok(self.verdict.clone())
+        }
+    }
+
+    /// A mock validator that always returns an error.
+    #[derive(Clone)]
+    struct ErrorValidator;
+
+    #[async_trait]
+    impl ValidatorLlm for ErrorValidator {
+        async fn validate_tool_call(&self, _ctx: &ValidationContext<'_>) -> anyhow::Result<ValidationVerdict> {
+            anyhow::bail!("validator unavailable")
+        }
+    }
+
+    fn test_config(validator: Option<Arc<dyn ValidatorLlm>>) -> ValidationConfig {
+        let (events_tx, _) = tokio::sync::broadcast::channel(16);
+        ValidationConfig {
+            validator_llm: validator,
+            enabled: true,
+            running_tools: Arc::new(std::sync::Mutex::new(Vec::new())),
+            events_tx,
+        }
+    }
+
+    fn make_tool_call(args: &str) -> ToolCall {
+        ToolCall::builder()
+            .id("test-1")
+            .name("mock_tool")
+            .args(args.to_string())
+            .build()
+            .unwrap()
+    }
+
+    fn seed_read(history: &ToolCallHistory) {
+        history.push(ToolCallRecord {
+            tool_name: "read_file".to_string(),
+            args: "{}".to_string(),
+            result: "ok".to_string(),
+            status: "ok".to_string(),
+            timestamp: Utc::now(),
+            validation: None,
+        });
+    }
+
+    #[tokio::test]
+    async fn test_validated_tool_forwards_on_approval() {
+        let (mock_tool, invoked) = MockTool::new("mock_tool");
+        let validator = Arc::new(MockValidator {
+            verdict: ValidationVerdict::Approved { reasoning: "looks good".to_string() },
+        });
+        let config = test_config(Some(validator));
+        let history = ToolCallHistory::default();
+        seed_read(&history);
+
+        let wrapped = ValidatedTool::wrap(mock_tool, ToolRisk::Mutating, config, history.clone());
+        // Use () as AgentContext — swiftide provides a convenience impl
+        let ctx: &dyn AgentContext = &();
+        let call = make_tool_call(r#"{"_reason": "testing approval"}"#);
+
+        let result = wrapped.invoke(ctx, &call).await.unwrap();
+        assert!(result.as_text().is_some());
+        assert_eq!(result.as_text().unwrap(), "mock result");
+        assert!(invoked.load(std::sync::atomic::Ordering::SeqCst));
+
+        // Check history recorded the call with validation
+        let recent = history.recent(1);
+        let last = recent.first().unwrap();
+        assert_eq!(last.tool_name, "mock_tool");
+        assert!(last.validation.is_some());
+        assert!(last.validation.as_ref().unwrap().approved);
+    }
+
+    #[tokio::test]
+    async fn test_validated_tool_blocks_on_rejection() {
+        let (mock_tool, invoked) = MockTool::new("mock_tool");
+        let validator = Arc::new(MockValidator {
+            verdict: ValidationVerdict::Rejected { explanation: "bad idea".to_string() },
+        });
+        let config = test_config(Some(validator));
+        let history = ToolCallHistory::default();
+        seed_read(&history);
+
+        let wrapped = ValidatedTool::wrap(mock_tool, ToolRisk::Mutating, config, history);
+        let ctx: &dyn AgentContext = &();
+        let call = make_tool_call(r#"{"_reason": "testing rejection"}"#);
+
+        let result = wrapped.invoke(ctx, &call).await.unwrap();
+        assert!(result.as_fail().is_some());
+        assert!(result.as_fail().unwrap().contains("bad idea"));
+        assert!(!invoked.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_fail_closed_destructive() {
+        let (mock_tool, invoked) = MockTool::new("mock_tool");
+        let validator: Arc<dyn ValidatorLlm> = Arc::new(ErrorValidator);
+        let config = test_config(Some(validator));
+        let history = ToolCallHistory::default();
+        seed_read(&history);
+
+        let wrapped = ValidatedTool::wrap(mock_tool, ToolRisk::Destructive, config, history);
+        let ctx: &dyn AgentContext = &();
+        let call = make_tool_call(r#"{"_reason": "testing fail-closed"}"#);
+
+        let result = wrapped.invoke(ctx, &call).await.unwrap();
+        assert!(result.as_fail().is_some());
+        assert!(result.as_fail().unwrap().contains("Validator error"));
+        assert!(!invoked.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_fail_open_mutating() {
+        let (mock_tool, invoked) = MockTool::new("mock_tool");
+        let validator: Arc<dyn ValidatorLlm> = Arc::new(ErrorValidator);
+        let config = test_config(Some(validator));
+        let history = ToolCallHistory::default();
+        seed_read(&history);
+
+        let wrapped = ValidatedTool::wrap(mock_tool, ToolRisk::Mutating, config, history);
+        let ctx: &dyn AgentContext = &();
+        let call = make_tool_call(r#"{"_reason": "testing fail-open"}"#);
+
+        let result = wrapped.invoke(ctx, &call).await.unwrap();
+        assert!(result.as_text().is_some());
+        assert_eq!(result.as_text().unwrap(), "mock result");
+        assert!(invoked.load(std::sync::atomic::Ordering::SeqCst));
     }
 }
