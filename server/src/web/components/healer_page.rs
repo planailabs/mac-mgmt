@@ -71,6 +71,7 @@ pub fn running_tools_to_wire(tools: &[mac_mgmt_healer::session::RunningTool]) ->
             name: t.name.clone(),
             args: t.args.clone(),
             started_at: t.started_at.to_rfc3339(),
+            validation: None,
         })
         .collect()
 }
@@ -291,6 +292,8 @@ pub async fn start_healer_session(
     fix_provider: Option<String>,
     fix_model: Option<String>,
     auto_approve: bool,
+    validator_provider: Option<String>,
+    validator_model: Option<String>,
 ) -> Result<String, ServerFnError> {
     use mac_mgmt_healer::agent::InstanceInfo;
     use mac_mgmt_healer::SpawnRequest;
@@ -459,6 +462,8 @@ pub async fn start_healer_session(
         fix_model: fix_model
             .or(cluster_healer.fix_model)
             .or_else(|| server_cfg.healer.fix_model.clone()),
+        validator_provider,
+        validator_model,
     };
 
     let session_id = healer
@@ -621,6 +626,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
     // Encodes "provider:model" or empty for first entry
     let mut selected_model_key = use_signal(String::new);
     let mut selected_fix_model_key = use_signal(|| "none".to_string());
+    let mut selected_validator_key = use_signal(|| "none".to_string());
     let mut auto_approve = use_signal(|| false);
     let mut settings_open = use_signal(|| false);
     let models = ctx.models.clone();
@@ -817,6 +823,47 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             }
                         }
 
+                        // Validator model selector
+                        div { class: "mb-3",
+                            label { class: "block text-sm font-medium text-fg mb-1", "Validator Model" }
+                            select {
+                                class: "w-full px-3 py-2 text-sm border rounded-md ",
+                                value: "{selected_validator_key}",
+                                onchange: move |e| selected_validator_key.set(e.value()),
+                                option { value: "none", "None (static checks only)" }
+                                if !ollama_models.is_empty() {
+                                    optgroup { label: t!("healer-ollama-free"),
+                                        for m in ollama_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
+                                if !anthropic_models.is_empty() {
+                                    optgroup { label: t!("healer-anthropic-cloud"),
+                                        for m in anthropic_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
+                                if !openrouter_models.is_empty() {
+                                    optgroup { label: t!("healer-openrouter-cloud"),
+                                        for m in openrouter_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
+                            }
+                            p { class: "mt-1 text-xs text-fg-muted",
+                                "Optional second model that validates each tool call before execution."
+                            }
+                        }
+
                         div { class: "mb-3",
                             textarea {
                                 class: "w-full px-3 py-2 text-sm border rounded-md ",
@@ -870,8 +917,18 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                         (None, None)
                                     };
                                     let approve = *auto_approve.read();
+                                    let val_key = selected_validator_key.read().clone();
+                                    let (val_provider, val_model) = if val_key != "none" {
+                                        if let Some((p, m)) = val_key.split_once(':') {
+                                            (Some(p.to_string()), Some(m.to_string()))
+                                        } else {
+                                            (None, None)
+                                        }
+                                    } else {
+                                        (None, None)
+                                    };
                                     async move {
-                                        match start_healer_session(instance_id.clone(), user_msg, provider, model, fix_provider, fix_model, approve).await {
+                                        match start_healer_session(instance_id.clone(), user_msg, provider, model, fix_provider, fix_model, approve, val_provider, val_model).await {
                                             Ok(sid) => {
                                                 navigator().push(format!("/fleet/{}/healer/{}", instance_id, sid));
                                             }
@@ -1076,9 +1133,19 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 .map(|a| if a.len() > 120 { format!("{}...", &a[..120]) } else { a.to_string() })
                                 .unwrap_or_default();
                             let has_args = !args_short.is_empty();
+                            // Risk badge
+                            let risk_badge = tool.validation.as_ref().map(|v| v.risk.as_str()).unwrap_or("");
+                            let badge_class = match risk_badge {
+                                "mutating" => Some(("M", "bg-warn text-warn-strong")),
+                                "destructive" => Some(("D", "bg-danger text-danger-strong")),
+                                _ => None,
+                            };
                             rsx! {
                                 div { class: "px-3 py-2 rounded bg-accent-soft border border-accent flex items-center gap-2",
                                     span { class: "inline-block w-2 h-2 rounded-full bg-accent animate-pulse" }
+                                    if let Some((label, cls)) = badge_class {
+                                        span { class: "text-[10px] font-bold px-1 rounded {cls}", "{label}" }
+                                    }
                                     span { class: "text-xs font-mono font-semibold text-accent", "{name}" }
                                     if has_args {
                                         span { class: "text-xs text-fg-muted truncate", "{args_short}" }
@@ -1603,9 +1670,12 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
         .split_once(": ")
         .unwrap_or(("tool", &msg.content));
     let is_error = result.starts_with("Error:");
+    let is_rejected = result.starts_with("[Validation rejected]") || result.starts_with("[Validator rejected]");
     let truncated = result.len() > 500;
     let preview = if truncated { &result[..500] } else { result };
-    let tool_badge = if is_error {
+    let tool_badge = if is_rejected {
+        "badge badge-danger font-mono"
+    } else if is_error {
         "badge badge-danger font-mono"
     } else {
         "badge badge-neutral font-mono"
@@ -1629,21 +1699,61 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
     };
     let has_args = !args.is_empty();
 
+    // Extract validation metadata
+    let _validation_status = msg
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("validation"))
+        .and_then(|v| v.get("status"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let validation_reasoning = msg
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("validation"))
+        .and_then(|v| v.get("reasoning"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let validation_risk = msg
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("validation"))
+        .and_then(|v| v.get("risk"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let risk_badge = match validation_risk {
+        "mutating" => Some(("M", "bg-warn text-warn-strong")),
+        "destructive" => Some(("D", "bg-danger text-danger-strong")),
+        _ => None,
+    };
+
     rsx! {
         div { class: "p-2 rounded bg-surface-2 border border-line-soft",
             details { class: "group",
                 summary { class: "flex items-center gap-2 cursor-pointer select-none",
                     span { class: "{tool_badge}", "{tool_name}" }
+                    if let Some((label, cls)) = risk_badge {
+                        span { class: "text-[10px] font-bold px-1 rounded {cls}", "{label}" }
+                    }
                     if has_args {
                         span { class: "text-xs text-fg-muted truncate max-w-md", "{args_short}" }
                     }
-                    if is_error {
+                    if is_rejected {
+                        span { class: "text-xs font-semibold text-danger", "REJECTED" }
+                    } else if is_error {
                         span { class: "text-xs text-danger", {t!("healer-event-error")} }
                     }
                 }
                 if has_args {
                     pre { class: "mt-2 p-2 text-xs font-mono bg-surface-3 text-fg-muted rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap",
                         "{args}"
+                    }
+                }
+                if !validation_reasoning.is_empty() {
+                    div { class: "mt-1 px-2 py-1 text-xs rounded bg-surface-3 text-fg-muted border-l-2 border-accent",
+                        span { class: "font-semibold", "Validation: " }
+                        "{validation_reasoning}"
                     }
                 }
                 pre { class: "log-output mt-1 max-h-64 min-h-0",

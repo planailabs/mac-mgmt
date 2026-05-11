@@ -120,6 +120,10 @@ pub struct SpawnRequest {
     pub fix_provider: Option<String>,
     /// Optional model override for the remediation phase (fix-model).
     pub fix_model: Option<String>,
+    /// Validator LLM provider for tool-call validation. If None, static checks only.
+    pub validator_provider: Option<String>,
+    /// Validator LLM model name.
+    pub validator_model: Option<String>,
 }
 
 impl HealerState {
@@ -251,7 +255,12 @@ impl HealerState {
 
         // 5. Spawn the agent task
         let state = self.clone();
-        let connector_config = self.inner.connector_config.clone();
+        let mut connector_config = self.inner.connector_config.clone();
+        // Override validator provider/model from the spawn request (UI picker).
+        if req.validator_provider.is_some() {
+            connector_config.validator_provider = req.validator_provider.clone();
+            connector_config.validator_model = req.validator_model.clone();
+        }
         tokio::spawn(async move {
             let result = run_agent_session(
                 &state,
@@ -439,6 +448,8 @@ impl HealerState {
             auto_approve: sess.state_data.get("auto_approve").and_then(|v| v.as_bool()).unwrap_or(false),
             fix_provider: None,
             fix_model: None,
+            validator_provider: None,
+            validator_model: None,
         };
 
         let state = self.clone();

@@ -2600,6 +2600,21 @@ pub struct HealerRunningTool {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub args: Option<String>,
     pub started_at: String,
+    /// Validation status for this tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation: Option<HealerToolValidation>,
+}
+
+/// Validation verdict for a healer tool call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealerToolValidation {
+    /// "approved", "rejected", "skipped", "validating", "error"
+    pub status: String,
+    /// Validator reasoning (both for approvals and rejections).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    /// Risk level: "read_only", "session_local", "mutating", "destructive"
+    pub risk: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

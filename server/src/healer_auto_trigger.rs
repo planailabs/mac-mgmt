@@ -316,5 +316,7 @@ async fn build_spawn_request(
             .or_else(|| crate::config::load().healer.fix_provider.clone()),
         fix_model: cluster_healer.fix_model.clone()
             .or_else(|| crate::config::load().healer.fix_model.clone()),
+        validator_provider: None,
+        validator_model: None,
     })
 }

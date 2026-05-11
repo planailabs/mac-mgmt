@@ -243,6 +243,8 @@ pub async fn create_session(
         fix_model: body.fix_model
             .or(cluster_healer.fix_model)
             .or_else(|| server_cfg.healer.fix_model.clone()),
+        validator_provider: None,
+        validator_model: None,
     };
 
     let session_id = healer.spawn_session(req).await.map_err(|e| {

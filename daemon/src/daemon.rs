@@ -694,6 +694,8 @@ impl Daemon {
             auto_approve: healer_cfg.auto_approve.unwrap_or(true),
             fix_provider: healer_cfg.fix_provider.clone(),
             fix_model: healer_cfg.fix_model.clone(),
+            validator_provider: None,
+            validator_model: None,
         };
 
         match self.healer.spawn_session(req).await {
