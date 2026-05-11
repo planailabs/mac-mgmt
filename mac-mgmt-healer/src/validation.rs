@@ -599,7 +599,7 @@ Reply with EXACTLY one line: "APPROVED: <brief reasoning>" or "REJECTED: <brief 
                     "content": user_prompt
                 }
             ],
-            "max_tokens": 150,
+            "max_tokens": 8192,
             "temperature": 0.0,
         });
 
@@ -635,9 +635,16 @@ Reply with EXACTLY one line: "APPROVED: <brief reasoning>" or "REJECTED: <brief 
             }
         }
 
+        // Try content first, fall back to reasoning field (reasoning models
+        // may put the verdict there when content is empty).
         let text = json
             .pointer("/choices/0/message/content")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                json.pointer("/choices/0/message/reasoning")
+                    .and_then(|v| v.as_str())
+            })
             .unwrap_or("")
             .trim()
             .to_string();
