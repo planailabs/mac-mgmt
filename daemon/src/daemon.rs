@@ -1285,6 +1285,7 @@ pub async fn run(
             context7_api_key: None,
             validator_provider: None,
             validator_model: None,
+            fine_tuned_model: cfg.healer.as_ref().and_then(|h| h.fine_tuned_model.clone()),
         };
         let session_factory = std::sync::Arc::new(
             crate::healer_bridge::LocalSessionFactory::new(
@@ -1438,6 +1439,12 @@ pub async fn run(
             }
 
             _ = health_tick.tick() => {
+                // Run connectors BEFORE health tick so that pre-start
+                // connectors patch config files and connector env vars
+                // are collected before health_tick registers new services
+                // with the supervisor.
+                #[cfg(feature = "services")]
+                tokio::task::block_in_place(|| daemon.svc_mgr.run_connectors_tick());
                 daemon.handle_health_tick().await;
                 #[cfg(all(feature = "services", feature = "relay"))]
                 daemon.update_relay_tunnel_defs(&relay_mgr);
@@ -1448,11 +1455,7 @@ pub async fn run(
                 #[cfg(feature = "services")]
                 daemon.update_relay_config(relay_proxy_hostname!());
                 daemon.refresh_assessment_sample().await;
-                // Send heartbeat BEFORE connectors — connectors run blocking
-                // CLI commands that can hang for minutes.
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
-                #[cfg(feature = "services")]
-                tokio::task::block_in_place(|| daemon.svc_mgr.run_connectors_tick());
                 #[cfg(feature = "memvault")]
                 if let Some(ref mv) = daemon.memvault {
                     mv.tick().await;
@@ -1986,6 +1989,12 @@ pub async fn run_sim(
             }
 
             _ = health_tick.tick() => {
+                // In sim mode, call connectors directly (block_in_place panics
+                // on current_thread runtime used by #[tokio::test]).
+                // Run connectors BEFORE health tick so connector env vars
+                // are collected before services are registered.
+                #[cfg(feature = "services")]
+                daemon.svc_mgr.run_connectors_tick();
                 daemon.handle_health_tick().await;
                 #[cfg(all(feature = "services", feature = "relay"))]
                 daemon.update_relay_tunnel_defs(&relay_mgr);
@@ -1997,10 +2006,6 @@ pub async fn run_sim(
                 daemon.update_relay_config(relay_proxy_hostname!());
                 daemon.refresh_assessment_sample().await;
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
-                // In sim mode, call connectors directly (block_in_place panics
-                // on current_thread runtime used by #[tokio::test]).
-                #[cfg(feature = "services")]
-                daemon.svc_mgr.run_connectors_tick();
             }
 
             _ = heartbeat_tick.tick() => {
@@ -2233,6 +2238,9 @@ pub async fn run_sim_with_services(
             }
 
             _ = health_tick.tick() => {
+                // Run connectors BEFORE health tick so connector env vars
+                // are collected before services are registered.
+                daemon.svc_mgr.run_connectors_tick();
                 daemon.handle_health_tick().await;
                 #[cfg(feature = "relay")]
                 daemon.update_relay_tunnel_defs(&relay_mgr);
@@ -2243,7 +2251,6 @@ pub async fn run_sim_with_services(
                 daemon.update_relay_config(relay_proxy_hostname!());
                 daemon.refresh_assessment_sample().await;
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
-                daemon.svc_mgr.run_connectors_tick();
             }
 
             _ = heartbeat_tick.tick() => {

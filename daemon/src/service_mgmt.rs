@@ -539,6 +539,14 @@ impl ServiceManager {
             if state.service.service_mode() == ServiceMode::Integrated {
                 continue;
             }
+            // Skip services still installing — the binary may not exist yet.
+            // health_tick will register them once install completes.
+            if matches!(
+                state.phase,
+                ServicePhase::Installing | ServicePhase::InstallFailed
+            ) {
+                continue;
+            }
             let name = &state.name;
             if let Some(status) = running_services.get(name.as_str()) {
                 tracing::info!("{name} already running in supervisor (pid {:?}), adopting", status.pid);
