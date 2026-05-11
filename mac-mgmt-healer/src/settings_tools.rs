@@ -9,14 +9,15 @@ use serde::Deserialize;
 use swiftide::chat_completion::{Tool, ToolCall, ToolOutput, ToolSpec, errors::ToolError};
 use swiftide::traits::AgentContext;
 
-use crate::tools::ToolContext;
+use crate::tools::{ToolContext, ToolRisk};
 
-// Re-use the same macro from tools.rs
 macro_rules! settings_tool {
+    // With params + risk
     (
         name: $name:expr,
         struct_name: $struct_name:ident,
         description: $desc:expr,
+        risk: $risk:expr,
         params: $params_ty:ty,
         handler: |$ctx_var:ident, $params_var:ident| $body:expr
     ) => {
@@ -27,6 +28,10 @@ macro_rules! settings_tool {
         impl $struct_name {
             pub fn new(ctx: ToolContext) -> Box<dyn Tool> {
                 Box::new(Self { ctx })
+            }
+            pub fn risk() -> ToolRisk { $risk }
+            pub fn new_with_risk(ctx: ToolContext) -> (Box<dyn Tool>, ToolRisk) {
+                (Box::new(Self { ctx }), $risk)
             }
         }
         #[async_trait]
@@ -63,10 +68,12 @@ macro_rules! settings_tool {
             }
         }
     };
+    // No-params + risk
     (
         name: $name:expr,
         struct_name: $struct_name:ident,
         description: $desc:expr,
+        risk: $risk:expr,
         handler: |$ctx_var:ident| $body:expr
     ) => {
         #[derive(Clone)]
@@ -76,6 +83,10 @@ macro_rules! settings_tool {
         impl $struct_name {
             pub fn new(ctx: ToolContext) -> Box<dyn Tool> {
                 Box::new(Self { ctx })
+            }
+            pub fn risk() -> ToolRisk { $risk }
+            pub fn new_with_risk(ctx: ToolContext) -> (Box<dyn Tool>, ToolRisk) {
+                (Box::new(Self { ctx }), $risk)
             }
         }
         #[async_trait]
@@ -98,6 +109,38 @@ macro_rules! settings_tool {
                 let $ctx_var = &self.ctx;
                 $body
             }
+        }
+    };
+    // Legacy: with params, no risk (defaults to Mutating)
+    (
+        name: $name:expr,
+        struct_name: $struct_name:ident,
+        description: $desc:expr,
+        params: $params_ty:ty,
+        handler: |$ctx_var:ident, $params_var:ident| $body:expr
+    ) => {
+        settings_tool! {
+            name: $name,
+            struct_name: $struct_name,
+            description: $desc,
+            risk: ToolRisk::Mutating,
+            params: $params_ty,
+            handler: |$ctx_var, $params_var| $body
+        }
+    };
+    // Legacy: no params, no risk (defaults to Mutating)
+    (
+        name: $name:expr,
+        struct_name: $struct_name:ident,
+        description: $desc:expr,
+        handler: |$ctx_var:ident| $body:expr
+    ) => {
+        settings_tool! {
+            name: $name,
+            struct_name: $struct_name,
+            description: $desc,
+            risk: ToolRisk::Mutating,
+            handler: |$ctx_var| $body
         }
     };
 }
@@ -153,6 +196,7 @@ settings_tool! {
     name: "wait",
     struct_name: WaitTool,
     description: "Wait for a specified number of seconds (1-300). Use this when you need to wait for a service to restart, a config reload to take effect, or probes to run.",
+    risk: ToolRisk::SessionLocal,
     params: WaitParams,
     handler: |ctx, params| {
         let secs = params.seconds.min(300).max(1);
@@ -182,6 +226,7 @@ settings_tool! {
     name: "request_assessment",
     struct_name: RequestAssessmentTool,
     description: "Request the target instance to run health probes immediately instead of waiting for the next scheduled run. Sends a push event via SSE to the daemon. Use wait (30-60s) then get_probe_status to check results.",
+    risk: ToolRisk::Mutating,
     handler: |ctx| {
         if let Some(push_fn) = &ctx.push_fn {
             push_fn(ctx.cluster_id, mac_mgmt_common::PushEvent::RequestAssessment);
@@ -199,6 +244,7 @@ settings_tool! {
     name: "get_config",
     struct_name: GetConfigTool,
     description: "Get the current cluster configuration as JSON.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.store.get_config(ctx.cluster_id).await {
             Ok(Some(config)) => Ok(ToolOutput::Text(
@@ -214,6 +260,7 @@ settings_tool! {
     name: "patch_config",
     struct_name: PatchConfigTool,
     description: "Merge a JSON patch into the cluster config. Use JSON Merge Patch format — only include fields you want to change. Example: {\"ollama\": {\"port\": 11435}}",
+    risk: ToolRisk::Mutating,
     params: PatchConfigParams,
     handler: |ctx, params| {
         // Get current config
@@ -244,6 +291,7 @@ settings_tool! {
     name: "set_config",
     struct_name: SetConfigTool,
     description: "Replace the entire cluster configuration with new JSON. Use get_config first to see the current config, then modify and set.",
+    risk: ToolRisk::Destructive,
     params: SetConfigParams,
     handler: |ctx, params| {
         let mut config = params.config;
@@ -265,6 +313,7 @@ settings_tool! {
     name: "list_skills",
     struct_name: ListSkillsTool,
     description: "List skills currently assigned to this cluster.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.store.list_skills(ctx.cluster_id).await {
             Ok(rows) => {
@@ -286,6 +335,7 @@ settings_tool! {
     name: "list_mcp_servers",
     struct_name: ListMcpServersTool,
     description: "List MCP servers currently assigned to this cluster.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.store.list_mcp_servers(ctx.cluster_id).await {
             Ok(rows) => {
@@ -307,6 +357,7 @@ settings_tool! {
     name: "add_skill",
     struct_name: AddSkillTool,
     description: "Add a skill channel to this cluster by its channel ID (UUID). Use list_skills to see currently assigned skills.",
+    risk: ToolRisk::Mutating,
     params: AddSkillParams,
     handler: |ctx, params| {
         let channel_id: uuid::Uuid = match params.skill_channel_id.parse() {
@@ -324,6 +375,7 @@ settings_tool! {
     name: "remove_skill",
     struct_name: RemoveSkillTool,
     description: "Remove a skill channel from this cluster by its channel ID (UUID).",
+    risk: ToolRisk::Mutating,
     params: RemoveSkillParams,
     handler: |ctx, params| {
         let channel_id: uuid::Uuid = match params.skill_channel_id.parse() {
@@ -342,6 +394,7 @@ settings_tool! {
     name: "add_mcp_server",
     struct_name: AddMcpServerTool,
     description: "Add an MCP server to this cluster by its ID (UUID). Use list_mcp_servers to see currently assigned servers.",
+    risk: ToolRisk::Mutating,
     params: AddMcpServerParams,
     handler: |ctx, params| {
         let server_id: uuid::Uuid = match params.mcp_server_id.parse() {
@@ -359,6 +412,7 @@ settings_tool! {
     name: "remove_mcp_server",
     struct_name: RemoveMcpServerTool,
     description: "Remove an MCP server from this cluster by its ID (UUID).",
+    risk: ToolRisk::Mutating,
     params: RemoveMcpServerParams,
     handler: |ctx, params| {
         let server_id: uuid::Uuid = match params.mcp_server_id.parse() {
@@ -387,6 +441,7 @@ settings_tool! {
     name: "send_push",
     struct_name: SendPushTool,
     description: "Send a push event to all daemons in the cluster via SSE. Available events: sync_config (reload config), sync_skills (re-sync skills), sync_mcp_servers (re-sync MCP servers), sync_ssh_keys (re-sync SSH keys), self_update (trigger self-update check), sync_nixpkgs (re-sync nixpkgs pin), sync_packages (re-sync unified nix packages), request_assessment (trigger immediate probe run).",
+    risk: ToolRisk::Mutating,
     params: SendPushParams,
     handler: |ctx, params| {
         let event = match params.event.as_str() {
@@ -417,6 +472,7 @@ settings_tool! {
     name: "get_version_info",
     struct_name: GetVersionInfoTool,
     description: "Get version information for the target instance: running daemon version and git commit from the heartbeat, plus available daemon versions from the server's version table.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.instance_data.get_version_info(&ctx.instance_id).await {
             Ok(info) => {
@@ -458,6 +514,7 @@ settings_tool! {
     name: "get_heartbeat",
     struct_name: GetHeartbeatTool,
     description: "Get the full heartbeat data for the target instance: version, hostname, services, tunnels, file tunnels, shell tunnels, sample, services_extended, relay info, and timing.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.instance_data.get_heartbeat_json(&ctx.instance_id).await {
             Ok(Some(json)) => {
@@ -475,6 +532,7 @@ settings_tool! {
     name: "get_cluster_instances",
     struct_name: GetClusterInstancesTool,
     description: "List all instances in the cluster with their status, version, hostname, and last heartbeat time.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.instance_data.get_cluster_instances(ctx.cluster_id).await {
             Ok(rows) if rows.is_empty() => {
@@ -518,6 +576,7 @@ settings_tool! {
     name: "get_service_state",
     struct_name: GetServiceStateTool,
     description: "Get detailed per-service state from the latest heartbeat: health, probe results, timing. Use this to decide whether to restart, wait, or escalate.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.instance_data.get_service_state(&ctx.instance_id).await {
             Ok(Some(r)) => {
@@ -544,6 +603,7 @@ settings_tool! {
     name: "nix_check_upgrades",
     struct_name: NixCheckUpgradesTool,
     description: "Check which nix packages have available upgrades by running `nix-profile-list` on the target instance and comparing installed vs available. Returns the raw profile listing.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         // Use the existing nix-profile-list shell command via the instance access trait
         match ctx.instance.shell_exec("nix-profile-list", None).await {
@@ -564,35 +624,46 @@ settings_tool! {
     }
 }
 
-/// Create all settings tools for a session.
+/// Create all settings tools for a session, each paired with its risk level.
+///
+/// When `diagnosis_only` is true, mutating tools (patch_config, set_config,
+/// add/remove skill/mcp, send_push, request_assessment) are omitted.
+pub fn all_settings_tools_with_risk(ctx: ToolContext, diagnosis_only: bool) -> Vec<(Box<dyn Tool>, ToolRisk)> {
+    let mut tools: Vec<(Box<dyn Tool>, ToolRisk)> = vec![
+        WaitTool::new_with_risk(ctx.clone()),
+        GetConfigTool::new_with_risk(ctx.clone()),
+        ListSkillsTool::new_with_risk(ctx.clone()),
+        ListMcpServersTool::new_with_risk(ctx.clone()),
+        GetVersionInfoTool::new_with_risk(ctx.clone()),
+        GetHeartbeatTool::new_with_risk(ctx.clone()),
+        GetClusterInstancesTool::new_with_risk(ctx.clone()),
+        GetServiceStateTool::new_with_risk(ctx.clone()),
+        NixCheckUpgradesTool::new_with_risk(ctx.clone()),
+    ];
+
+    if !diagnosis_only {
+        tools.push(RequestAssessmentTool::new_with_risk(ctx.clone()));
+        tools.push(PatchConfigTool::new_with_risk(ctx.clone()));
+        tools.push(SetConfigTool::new_with_risk(ctx.clone()));
+        tools.push(AddSkillTool::new_with_risk(ctx.clone()));
+        tools.push(RemoveSkillTool::new_with_risk(ctx.clone()));
+        tools.push(AddMcpServerTool::new_with_risk(ctx.clone()));
+        tools.push(RemoveMcpServerTool::new_with_risk(ctx.clone()));
+        tools.push(SendPushTool::new_with_risk(ctx));
+    }
+
+    tools
+}
+
+/// Create all settings tools for a session (without risk metadata).
 ///
 /// When `diagnosis_only` is true, mutating tools (patch_config, set_config,
 /// add/remove skill/mcp, send_push, request_assessment) are omitted.
 pub fn all_settings_tools(ctx: ToolContext, diagnosis_only: bool) -> Vec<Box<dyn Tool>> {
-    let mut tools: Vec<Box<dyn Tool>> = vec![
-        WaitTool::new(ctx.clone()),
-        GetConfigTool::new(ctx.clone()),
-        ListSkillsTool::new(ctx.clone()),
-        ListMcpServersTool::new(ctx.clone()),
-        GetVersionInfoTool::new(ctx.clone()),
-        GetHeartbeatTool::new(ctx.clone()),
-        GetClusterInstancesTool::new(ctx.clone()),
-        GetServiceStateTool::new(ctx.clone()),
-        NixCheckUpgradesTool::new(ctx.clone()),
-    ];
-
-    if !diagnosis_only {
-        tools.push(RequestAssessmentTool::new(ctx.clone()));
-        tools.push(PatchConfigTool::new(ctx.clone()));
-        tools.push(SetConfigTool::new(ctx.clone()));
-        tools.push(AddSkillTool::new(ctx.clone()));
-        tools.push(RemoveSkillTool::new(ctx.clone()));
-        tools.push(AddMcpServerTool::new(ctx.clone()));
-        tools.push(RemoveMcpServerTool::new(ctx.clone()));
-        tools.push(SendPushTool::new(ctx));
-    }
-
-    tools
+    all_settings_tools_with_risk(ctx, diagnosis_only)
+        .into_iter()
+        .map(|(tool, _)| tool)
+        .collect()
 }
 
 /// JSON Merge Patch (RFC 7386)

@@ -13,6 +13,22 @@ use swiftide::traits::AgentContext;
 /// Callback for sending SSE push events to daemons.
 pub type PushFn = Arc<dyn Fn(uuid::Uuid, mac_mgmt_common::PushEvent) + Send + Sync>;
 
+/// Risk level for a healer tool, controlling which validation tiers fire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ToolRisk {
+    /// Read-only, no side effects. Static checks only, no LLM validation.
+    ReadOnly,
+    /// Session-local bookkeeping (pin, name_session). No external visibility,
+    /// no state machine transitions. Static checks only — not worth validating.
+    SessionLocal,
+    /// Externally visible or state-changing but bounded (config patches, staff_ping,
+    /// set_phase). LLM validation, fail-open on validator error.
+    Mutating,
+    /// Hard to reverse (write_file, set_config, run_command).
+    /// LLM validation, fail-closed on validator error.
+    Destructive,
+}
+
 /// Shared context for all healer tools.
 #[derive(Clone)]
 pub struct ToolContext {
@@ -42,10 +58,12 @@ pub struct ToolContext {
 }
 
 macro_rules! healer_tool {
+    // With params + risk
     (
         name: $name:expr,
         struct_name: $struct_name:ident,
         description: $desc:expr,
+        risk: $risk:expr,
         params: $params_ty:ty,
         handler: |$ctx_var:ident, $params_var:ident| $body:expr
     ) => {
@@ -57,6 +75,12 @@ macro_rules! healer_tool {
         impl $struct_name {
             pub fn new(ctx: ToolContext) -> Box<dyn Tool> {
                 Box::new(Self { ctx })
+            }
+
+            pub fn risk() -> ToolRisk { $risk }
+
+            pub fn new_with_risk(ctx: ToolContext) -> (Box<dyn Tool>, ToolRisk) {
+                (Box::new(Self { ctx }), $risk)
             }
         }
 
@@ -97,11 +121,12 @@ macro_rules! healer_tool {
             }
         }
     };
-    // No-params variant
+    // No-params + risk
     (
         name: $name:expr,
         struct_name: $struct_name:ident,
         description: $desc:expr,
+        risk: $risk:expr,
         handler: |$ctx_var:ident| $body:expr
     ) => {
         #[derive(Clone)]
@@ -112,6 +137,12 @@ macro_rules! healer_tool {
         impl $struct_name {
             pub fn new(ctx: ToolContext) -> Box<dyn Tool> {
                 Box::new(Self { ctx })
+            }
+
+            pub fn risk() -> ToolRisk { $risk }
+
+            pub fn new_with_risk(ctx: ToolContext) -> (Box<dyn Tool>, ToolRisk) {
+                (Box::new(Self { ctx }), $risk)
             }
         }
 
@@ -138,6 +169,38 @@ macro_rules! healer_tool {
                 let $ctx_var = &self.ctx;
                 $body
             }
+        }
+    };
+    // Legacy: with params, no risk (defaults to Mutating)
+    (
+        name: $name:expr,
+        struct_name: $struct_name:ident,
+        description: $desc:expr,
+        params: $params_ty:ty,
+        handler: |$ctx_var:ident, $params_var:ident| $body:expr
+    ) => {
+        healer_tool! {
+            name: $name,
+            struct_name: $struct_name,
+            description: $desc,
+            risk: ToolRisk::Mutating,
+            params: $params_ty,
+            handler: |$ctx_var, $params_var| $body
+        }
+    };
+    // Legacy: no params, no risk (defaults to Mutating)
+    (
+        name: $name:expr,
+        struct_name: $struct_name:ident,
+        description: $desc:expr,
+        handler: |$ctx_var:ident| $body:expr
+    ) => {
+        healer_tool! {
+            name: $name,
+            struct_name: $struct_name,
+            description: $desc,
+            risk: ToolRisk::Mutating,
+            handler: |$ctx_var| $body
         }
     };
 }
@@ -222,6 +285,7 @@ healer_tool! {
     name: "list_files",
     struct_name: ListFilesTool,
     description: "List files in a file tunnel directory on the target instance",
+    risk: ToolRisk::ReadOnly,
     params: ListFilesParams,
     handler: |ctx, params| {
         match ctx.instance.file_list(&params.tunnel_name, params.path.as_deref()).await {
@@ -235,6 +299,7 @@ healer_tool! {
     name: "read_file",
     struct_name: ReadFileTool,
     description: "Read a configuration file from the target instance via a file tunnel",
+    risk: ToolRisk::ReadOnly,
     params: ReadFileParams,
     handler: |ctx, params| {
         match ctx.instance.file_read(&params.tunnel_name, &params.path).await {
@@ -255,6 +320,7 @@ healer_tool! {
     name: "write_file",
     struct_name: WriteFileTool,
     description: "Write a configuration file to the target instance via a file tunnel. Include expected_mtime from a previous read to detect concurrent modifications.",
+    risk: ToolRisk::Destructive,
     params: WriteFileParams,
     handler: |ctx, params| {
         match ctx.instance.file_write(&params.tunnel_name, &params.path, params.content.as_bytes(), params.expected_mtime).await {
@@ -268,6 +334,7 @@ healer_tool! {
     name: "run_command",
     struct_name: RunCommandTool,
     description: "Execute a predefined shell command on the target instance. Returns stdout, stderr, and exit code.",
+    risk: ToolRisk::Destructive,
     params: RunCommandParams,
     handler: |ctx, params| {
         match ctx.instance.shell_exec(&params.command_name, params.user_arg.as_deref()).await {
@@ -293,6 +360,7 @@ healer_tool! {
     name: "fetch_logs",
     struct_name: FetchLogsTool,
     description: "Fetch recent logs from the target instance, optionally filtered by service name",
+    risk: ToolRisk::ReadOnly,
     params: FetchLogsParams,
     handler: |ctx, params| {
         match ctx.instance.log_fetch(params.n.or(Some(200)), params.service.as_deref(), None).await {
@@ -306,6 +374,7 @@ healer_tool! {
     name: "list_file_tunnels",
     struct_name: ListFileTunnelsTool,
     description: "List all available file tunnels on the target instance with descriptions",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         let entries = ctx.file_tunnels_full.as_array();
         match entries {
@@ -334,6 +403,7 @@ healer_tool! {
     name: "list_shell_commands",
     struct_name: ListShellCommandsTool,
     description: "List all available shell commands on the target instance with descriptions",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         let entries = ctx.shell_commands_full.as_array();
         match entries {
@@ -367,6 +437,7 @@ healer_tool! {
     name: "fetch_cluster_logs",
     struct_name: FetchClusterLogsTool,
     description: "Fetch logs from a different instance in the same cluster",
+    risk: ToolRisk::ReadOnly,
     params: ClusterLogsParams,
     handler: |ctx, params| {
         let Some(cluster) = &ctx.cluster else {
@@ -391,6 +462,7 @@ healer_tool! {
     name: "run_cluster_command",
     struct_name: RunClusterCommandTool,
     description: "Run a shell command on a different instance in the same cluster",
+    risk: ToolRisk::Destructive,
     params: ClusterCommandParams,
     handler: |ctx, params| {
         let Some(cluster) = &ctx.cluster else {
@@ -463,6 +535,7 @@ healer_tool! {
     name: "pin",
     struct_name: PinTool,
     description: "Pin important information to the session. Three slots available:\n- \"diagnosis\": Pin once you identify the root cause. Include affected_services.\n- \"remediation\": Pin your remediation plan before applying fixes.\n- \"final_report\": Pin at the end summarizing what was done, what worked, and any remaining issues.\nAll are displayed to staff and persisted across restarts.",
+    risk: ToolRisk::SessionLocal,
     params: PinParams,
     handler: |ctx, params| {
         let slot = match params.slot.as_str() {
@@ -503,6 +576,7 @@ healer_tool! {
     name: "staff_ping",
     struct_name: StaffPingTool,
     description: "Send a notification to the admin staff. Use this when you encounter an issue that requires human intervention, when you find something unexpected that admins should know about, or when you cannot resolve an issue automatically. Categories: hardware, network, disk_space, config_error, service_crash, model_issue, permission, dependency, security, performance, other.",
+    risk: ToolRisk::Mutating,
     params: StaffPingParams,
     handler: |ctx, params| {
         let category = if crate::session::models::PING_CATEGORIES.contains(&params.category.as_str()) {
@@ -527,6 +601,7 @@ healer_tool! {
     name: "list_staff_pings",
     struct_name: ListStaffPingsTool,
     description: "List unresolved staff pings for this instance. Check this before calling staff_ping to avoid creating duplicates.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.store.list_instance_pings(&ctx.instance_id).await {
             Ok(pings) if pings.is_empty() => Ok(ToolOutput::Text("No unresolved staff pings for this instance.".to_string())),
@@ -545,6 +620,7 @@ healer_tool! {
     name: "set_phase",
     struct_name: SetPhaseTool,
     description: "Transition the session to a new phase. Call this when you move between stages of your work. Valid phases: diagnosing (investigating), remediating (applying fixes), verifying (checking if fix worked), done (work complete — whether fixed or not), needs_human_attention (cannot be fixed automatically, requires human intervention).",
+    risk: ToolRisk::Mutating,
     params: SetPhaseParams,
     handler: |ctx, params| {
         let Some(new_state) = crate::session::SessionState::agent_allowed(&params.phase) else {
@@ -593,6 +669,7 @@ healer_tool! {
     name: "name_session",
     struct_name: NameSessionTool,
     description: "Give this session a short, descriptive name summarizing what it is about. Call this early — once you understand the issue. Example: \"OOM crash in ollama\", \"GPU driver mismatch\", \"stale nix store\".",
+    risk: ToolRisk::SessionLocal,
     params: NameSessionParams,
     handler: |ctx, params| {
         let label = params.name.chars().take(120).collect::<String>();
@@ -607,6 +684,7 @@ healer_tool! {
     name: "check_node_online",
     struct_name: CheckNodeOnlineTool,
     description: "Check if the target node is currently connected to the relay. Returns online/offline status.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         let online = ctx.instance.is_online().await;
         Ok(ToolOutput::Text(if online {
@@ -628,6 +706,7 @@ healer_tool! {
     name: "wait_for_node",
     struct_name: WaitForNodeTool,
     description: "Wait for the target node to reconnect to the relay. Use this after a reboot or service restart that may cause the daemon to temporarily disconnect. Waits up to the specified time (default 5 minutes, max 10 minutes).",
+    risk: ToolRisk::ReadOnly,
     params: WaitForNodeParams,
     handler: |ctx, params| {
         if ctx.instance.is_online().await {
@@ -655,6 +734,7 @@ healer_tool! {
     name: "get_probe_status",
     struct_name: GetProbeStatusTool,
     description: "Query the current health probe status for all services on the target instance. Returns fresh data from the latest heartbeat — use this after applying a fix to verify whether services recovered.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.instance_data.get_probe_status(&ctx.instance_id).await {
             Ok(Some(r)) => {
@@ -715,6 +795,7 @@ healer_tool! {
     name: "read_doc",
     struct_name: ReadDocTool,
     description: "Read a mac-mgmt platform documentation page by slug. Use `list_docs` first to see available pages.",
+    risk: ToolRisk::ReadOnly,
     params: ReadDocParams,
     handler: |_ctx, params| {
         let filename = format!("{}.md", params.slug);
@@ -742,6 +823,7 @@ healer_tool! {
     name: "list_docs",
     struct_name: ListDocsTool,
     description: "List all available mac-mgmt documentation pages. Returns slugs that can be passed to `read_doc`.",
+    risk: ToolRisk::ReadOnly,
     handler: |_ctx| {
         let docs: Vec<String> = DocsAssets::iter()
             .map(|f| f.trim_end_matches(".md").to_string())
@@ -756,6 +838,7 @@ healer_tool! {
     name: "get_inventory",
     struct_name: GetInventoryTool,
     description: "Query the latest hardware/software inventory for the target instance. Returns OS, CPU, memory, disks, GPUs, network interfaces, nix version, and security posture. Data is collected every ~6 hours.",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.instance_data.get_inventory(&ctx.instance_id).await {
             Ok(Some(r)) => {
@@ -776,6 +859,7 @@ healer_tool! {
     name: "get_system_sample",
     struct_name: GetSystemSampleTool,
     description: "Query the latest dynamic system sample (CPU load, memory, swap, disk free space, network I/O, process count, thermal state, GPU utilization). Updated with every heartbeat (~30s).",
+    risk: ToolRisk::ReadOnly,
     handler: |ctx| {
         match ctx.instance_data.get_system_sample(&ctx.instance_id).await {
             Ok(Some(r)) => {
@@ -812,6 +896,7 @@ healer_tool! {
     name: "get_probe_history",
     struct_name: GetProbeHistoryTool,
     description: "Query recent probe results (health checks, functional tests) for the target instance. Optionally filter by service name. Returns timing, success/failure, error details, and LLM token counts.",
+    risk: ToolRisk::ReadOnly,
     params: ProbeHistoryParams,
     handler: |ctx, params| {
         let limit = params.limit.unwrap_or(20).min(100);
@@ -866,6 +951,7 @@ healer_tool! {
     name: "get_metrics",
     struct_name: GetMetricsTool,
     description: "Fetch Prometheus metrics from the relay's federation endpoint. Returns metrics from all connected daemons (labelled with instance_id/hostname). Use the filter parameter to narrow output to specific metric names or labels.",
+    risk: ToolRisk::ReadOnly,
     params: MetricsQueryParams,
     handler: |ctx, params| {
         let Some(metrics_url) = &ctx.metrics_url else {
@@ -924,6 +1010,7 @@ healer_tool! {
     name: "use_skill",
     struct_name: UseSkillTool,
     description: "Load a built-in healer skill by slug. Returns a detailed procedure with step-by-step instructions, tool usage patterns, and common pitfalls. Use `list_builtin_skills` to see available skills.",
+    risk: ToolRisk::ReadOnly,
     params: UseSkillParams,
     handler: |_ctx, params| {
         use crate::agent::skills;
@@ -948,6 +1035,7 @@ healer_tool! {
     name: "list_builtin_skills",
     struct_name: ListBuiltinSkillsTool,
     description: "List all available built-in healer skills. Each skill provides a detailed procedure for a common remediation task.",
+    risk: ToolRisk::ReadOnly,
     handler: |_ctx| {
         use crate::agent::skills;
         let mut out = String::from("Available skills:\n\n");
@@ -963,52 +1051,63 @@ healer_tool! {
     }
 }
 
-/// Create all healer tools for a session.
+/// Create all healer tools for a session, each paired with its risk level.
 ///
 /// When `diagnosis_only` is true, mutating tools (write_file, run_command,
 /// run_cluster_command) are omitted — the agent can only observe.
-pub fn all_tools(ctx: ToolContext, diagnosis_only: bool) -> Vec<Box<dyn Tool>> {
+pub fn all_tools_with_risk(ctx: ToolContext, diagnosis_only: bool) -> Vec<(Box<dyn Tool>, ToolRisk)> {
     let has_cluster = ctx.cluster.is_some();
     let has_metrics = ctx.metrics_url.is_some();
 
-    let mut tools: Vec<Box<dyn Tool>> = vec![
-        ListFilesTool::new(ctx.clone()),
-        ReadFileTool::new(ctx.clone()),
-        FetchLogsTool::new(ctx.clone()),
-        ListFileTunnelsTool::new(ctx.clone()),
-        ListShellCommandsTool::new(ctx.clone()),
-        PinTool::new(ctx.clone()),
-        StaffPingTool::new(ctx.clone()),
-        ListStaffPingsTool::new(ctx.clone()),
-        SetPhaseTool::new(ctx.clone()),
-        NameSessionTool::new(ctx.clone()),
-        GetProbeStatusTool::new(ctx.clone()),
-        GetInventoryTool::new(ctx.clone()),
-        GetSystemSampleTool::new(ctx.clone()),
-        GetProbeHistoryTool::new(ctx.clone()),
-        ReadDocTool::new(ctx.clone()),
-        ListDocsTool::new(ctx.clone()),
-        UseSkillTool::new(ctx.clone()),
-        ListBuiltinSkillsTool::new(ctx.clone()),
+    let mut tools: Vec<(Box<dyn Tool>, ToolRisk)> = vec![
+        ListFilesTool::new_with_risk(ctx.clone()),
+        ReadFileTool::new_with_risk(ctx.clone()),
+        FetchLogsTool::new_with_risk(ctx.clone()),
+        ListFileTunnelsTool::new_with_risk(ctx.clone()),
+        ListShellCommandsTool::new_with_risk(ctx.clone()),
+        PinTool::new_with_risk(ctx.clone()),
+        StaffPingTool::new_with_risk(ctx.clone()),
+        ListStaffPingsTool::new_with_risk(ctx.clone()),
+        SetPhaseTool::new_with_risk(ctx.clone()),
+        NameSessionTool::new_with_risk(ctx.clone()),
+        GetProbeStatusTool::new_with_risk(ctx.clone()),
+        GetInventoryTool::new_with_risk(ctx.clone()),
+        GetSystemSampleTool::new_with_risk(ctx.clone()),
+        GetProbeHistoryTool::new_with_risk(ctx.clone()),
+        ReadDocTool::new_with_risk(ctx.clone()),
+        ListDocsTool::new_with_risk(ctx.clone()),
+        UseSkillTool::new_with_risk(ctx.clone()),
+        ListBuiltinSkillsTool::new_with_risk(ctx.clone()),
     ];
 
     if !diagnosis_only {
-        tools.push(WriteFileTool::new(ctx.clone()));
-        tools.push(RunCommandTool::new(ctx.clone()));
+        tools.push(WriteFileTool::new_with_risk(ctx.clone()));
+        tools.push(RunCommandTool::new_with_risk(ctx.clone()));
     }
 
     if has_cluster {
-        tools.push(FetchClusterLogsTool::new(ctx.clone()));
-        tools.push(CheckNodeOnlineTool::new(ctx.clone()));
-        tools.push(WaitForNodeTool::new(ctx.clone()));
+        tools.push(FetchClusterLogsTool::new_with_risk(ctx.clone()));
+        tools.push(CheckNodeOnlineTool::new_with_risk(ctx.clone()));
+        tools.push(WaitForNodeTool::new_with_risk(ctx.clone()));
         if !diagnosis_only {
-            tools.push(RunClusterCommandTool::new(ctx.clone()));
+            tools.push(RunClusterCommandTool::new_with_risk(ctx.clone()));
         }
     }
 
     if has_metrics {
-        tools.push(GetMetricsTool::new(ctx));
+        tools.push(GetMetricsTool::new_with_risk(ctx));
     }
 
     tools
+}
+
+/// Create all healer tools for a session (without risk metadata).
+///
+/// When `diagnosis_only` is true, mutating tools (write_file, run_command,
+/// run_cluster_command) are omitted — the agent can only observe.
+pub fn all_tools(ctx: ToolContext, diagnosis_only: bool) -> Vec<Box<dyn Tool>> {
+    all_tools_with_risk(ctx, diagnosis_only)
+        .into_iter()
+        .map(|(tool, _)| tool)
+        .collect()
 }

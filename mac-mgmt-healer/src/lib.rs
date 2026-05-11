@@ -7,6 +7,7 @@ pub mod session;
 pub mod settings_tools;
 pub mod store;
 pub mod tools;
+pub mod validation;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -729,8 +730,25 @@ async fn run_agent_session(
     // tools). On resume after approval, auto_approve is true so all tools are
     // registered.
     let diagnosis_only = !req.auto_approve;
-    let healer_tools = tools::all_tools(tool_ctx.clone(), diagnosis_only);
-    let settings_tools = settings_tools::all_settings_tools(tool_ctx, diagnosis_only);
+
+    // Set up validation layer
+    let validation_history = validation::ToolCallHistory::default();
+    let validator_llm = validation::build_validator_llm(&connector_config);
+    let validation_config = validation::ValidationConfig {
+        validator_llm,
+        enabled: true,
+    };
+
+    let healer_tools = validation::ValidatedTool::wrap_all(
+        tools::all_tools_with_risk(tool_ctx.clone(), diagnosis_only),
+        validation_config.clone(),
+        validation_history.clone(),
+    );
+    let settings_tools = validation::ValidatedTool::wrap_all(
+        settings_tools::all_settings_tools_with_risk(tool_ctx, diagnosis_only),
+        validation_config.clone(),
+        validation_history.clone(),
+    );
 
     // 4. Build system prompt
     let sample_summary = req
@@ -923,7 +941,12 @@ async fn run_agent_session(
                     match toolbox.available_tools().await {
                         Ok(tools) => {
                             for tool in tools {
-                                builder.add_tool(RenamedTool::wrap(tool));
+                                builder.add_tool(validation::ValidatedTool::wrap(
+                                    RenamedTool::wrap(tool),
+                                    tools::ToolRisk::ReadOnly,
+                                    validation_config.clone(),
+                                    validation_history.clone(),
+                                ));
                             }
                         }
                         Err(e) => {

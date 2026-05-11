@@ -1280,6 +1280,8 @@ pub async fn run(
             openai_compat_model: None,
             token_budget: 200_000,
             context7_api_key: None,
+            validator_provider: None,
+            validator_model: None,
         };
         let session_factory = std::sync::Arc::new(
             crate::healer_bridge::LocalSessionFactory::new(

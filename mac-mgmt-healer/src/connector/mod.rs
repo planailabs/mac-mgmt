@@ -28,6 +28,11 @@ pub struct ConnectorConfig {
     pub token_budget: u64,
     /// Context7 API key for documentation lookup MCP server.
     pub context7_api_key: Option<String>,
+    /// Provider for the validator LLM ("ollama", "openrouter", "openai_compat").
+    /// If None, only static validation (Layer 0) runs — no LLM pre-flight.
+    pub validator_provider: Option<String>,
+    /// Model for the validator LLM. Required when `validator_provider` is set.
+    pub validator_model: Option<String>,
 }
 
 impl Default for ConnectorConfig {
@@ -44,6 +49,8 @@ impl Default for ConnectorConfig {
             openai_compat_model: None,
             token_budget: 200_000,
             context7_api_key: None,
+            validator_provider: None,
+            validator_model: None,
         }
     }
 }
