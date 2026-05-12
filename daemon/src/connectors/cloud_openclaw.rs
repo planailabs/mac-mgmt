@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::{
-    enabled_cloud_configs, non_empty, non_empty_secret, resolve_model, Connector, ConnectorPhase,
+    Connector, ConnectorPhase, enabled_cloud_configs, non_empty, non_empty_secret, resolve_model,
 };
 use crate::sentry_ext;
 use crate::services::openclaw::{config_path, merge_and_validate};
@@ -67,8 +67,8 @@ impl Connector for CloudOpenClaw {
         for config in &enabled {
             let provider = config.provider.as_str();
             let model = resolve_model(config);
-            let base_url = non_empty(&config.base_url)
-                .unwrap_or_else(|| config.provider.base_url());
+            let base_url =
+                non_empty(&config.base_url).unwrap_or_else(|| config.provider.base_url());
 
             let mut provider_cfg = serde_json::json!({ "baseUrl": base_url });
             if let Some(ref api) = config.api {
@@ -79,9 +79,8 @@ impl Connector for CloudOpenClaw {
             }
             // API keys are passed via environment variables (service_env),
             // not embedded in the config file.
-            let model_id = model.split('/').last().unwrap_or(&model);
-            provider_cfg["models"] =
-                serde_json::json!([{ "id": model_id, "name": model_id }]);
+            let model_id = model.splitn(2, '/').nth(1).unwrap_or(&model);
+            provider_cfg["models"] = serde_json::json!([{ "id": model_id, "name": model_id }]);
             custom_providers.insert(provider.to_string(), provider_cfg);
         }
 
