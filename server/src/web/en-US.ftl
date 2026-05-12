@@ -1027,3 +1027,16 @@ overview-kpi-services = Healthy services
 overview-kpi-rollouts = Active rollouts
 overview-kpi-pings = Open staff pings
 overview-activity-title = Live activity
+
+# Model select modal
+model-select-title = Select Models
+model-select-search = Search models…
+model-select-show-selected = Show selected
+model-select-custom = Custom
+model-select-custom-placeholder = Enter model ID…
+model-select-loading = Loading models…
+model-select-error = Failed to load models: { $error }
+model-select-catalog = From catalog
+model-select-apply = Apply
+model-select-apply-count = Apply ({ $count })
+model-select-browse = Select models…

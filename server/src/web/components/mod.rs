@@ -33,6 +33,7 @@ pub mod import_sources;
 pub mod layout;
 pub mod log_viewer;
 pub mod mcp_bundle_detail;
+pub mod model_select_modal;
 pub mod mcp_bundle_form;
 pub mod mcp_bundle_list;
 pub mod mcp_server_detail;

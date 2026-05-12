@@ -502,6 +502,9 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
     let mut form_values: Signal<serde_json::Value> =
         use_signal(|| serde_json::Value::Object(Default::default()));
     let extra_config_open = use_signal(|| false);
+    let model_select_request: Signal<Option<super::model_select_modal::ModelSelectRequest>> =
+        use_signal(|| None);
+    use_context_provider(|| model_select_request);
 
     // Keep form_values in sync when json_text changes (e.g. after config loads)
     use_effect(move || {
@@ -689,6 +692,11 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
     rsx! {
         ExtraConfigModalHost {
             open: extra_config_open,
+            form_values,
+            json_text,
+        }
+        super::model_select_modal::ModelSelectModal {
+            request: model_select_request,
             form_values,
             json_text,
         }
@@ -1403,6 +1411,11 @@ fn SectionFieldRow(
     let resolved = resolve_ref(&field_schema, &defs);
     let is_secret = resolved.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false)
         || field_schema.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false);
+    let model_source_kind = resolved
+        .get("x-model-source")
+        .or_else(|| field_schema.get("x-model-source"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let description = field_schema
         .get("description")
         .or_else(|| resolved.get("description"))
@@ -1569,7 +1582,7 @@ fn SectionFieldRow(
                 // Input column. On phones it spans both grid columns
                 // (under the label) so the field gets the full row
                 // width; on `sm+` it sits as the middle column.
-                div { class: "min-w-0 col-span-2 sm:col-span-1",
+                div { class: "min-w-0 col-span-2 sm:col-span-1 space-y-1",
                     {render_field_input(
                         &field_type,
                         &resolved,
@@ -1589,6 +1602,90 @@ fn SectionFieldRow(
                         sync.clone(),
                         field_name.clone(),
                     )}
+                    // "Select models" button for fields with x-model-source
+                    if let Some(ref source_kind) = model_source_kind {
+                        {
+                            let source_kind = source_kind.clone();
+                            let is_multi = field_type == "array";
+                            let field_path_for_modal = field_path.clone();
+                            let section = section_name.clone();
+                            let mut model_select_req = use_context::<Signal<Option<super::model_select_modal::ModelSelectRequest>>>();
+                            rsx! {
+                                button {
+                                    r#type: "button",
+                                    class: "btn btn-xs btn-secondary",
+                                    onclick: move |_| {
+                                        // Read current value from form for pre-selection
+                                        let current = {
+                                            let fv = form_values.read();
+                                            let val = get_at_path(&fv, &field_path_for_modal);
+                                            match val {
+                                                Some(serde_json::Value::Array(arr)) => {
+                                                    arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                                                }
+                                                Some(serde_json::Value::String(s)) => {
+                                                    if s.is_empty() { vec![] } else { vec![s] }
+                                                }
+                                                _ => vec![],
+                                            }
+                                        };
+                                        // For cloud entries, read provider/api_key from sibling fields
+                                        let (provider, base_url, api_key) = if source_kind == "cloud" {
+                                            let fv = form_values.read();
+                                            // section_name is like "cloud.0"
+                                            let parts: Vec<String> = section.split('.').map(String::from).collect();
+                                            let entry = get_at_path(&fv, &parts);
+                                            let prov = entry.as_ref()
+                                                .and_then(|e| e.get("provider"))
+                                                .and_then(|p| p.as_str())
+                                                .map(String::from);
+                                            let bu = entry.as_ref()
+                                                .and_then(|e| e.get("base_url"))
+                                                .and_then(|b| b.as_str())
+                                                .and_then(|s| if s.is_empty() { None } else { Some(s) })
+                                                .or_else(|| {
+                                                    prov.as_deref().and_then(|p| {
+                                                        // Use CloudProvider base URL
+                                                        match p {
+                                                            "Anthropic" => Some("https://api.anthropic.com/v1"),
+                                                            "Openai" => Some("https://api.openai.com/v1"),
+                                                            "Google" => Some("https://generativelanguage.googleapis.com/v1beta"),
+                                                            "Mistral" => Some("https://api.mistral.ai/v1"),
+                                                            "Groq" => Some("https://api.groq.com/openai/v1"),
+                                                            "Xai" => Some("https://api.x.ai/v1"),
+                                                            "Deepseek" => Some("https://api.deepseek.com/v1"),
+                                                            "Openrouter" => Some("https://openrouter.ai/api/v1"),
+                                                            "Together" => Some("https://api.together.xyz/v1"),
+                                                            _ => None,
+                                                        }
+                                                    })
+                                                })
+                                                .map(String::from);
+                                            let ak = entry.as_ref()
+                                                .and_then(|e| e.get("api_key"))
+                                                .and_then(|k| k.as_str())
+                                                .map(String::from);
+                                            (prov.map(|p| p.to_lowercase()), bu, ak)
+                                        } else {
+                                            (None, None, None)
+                                        };
+                                        model_select_req.set(Some(super::model_select_modal::ModelSelectRequest {
+                                            source_kind: source_kind.clone(),
+                                            current,
+                                            multi: is_multi,
+                                            field_path: field_path_for_modal.clone(),
+                                            provider,
+                                            base_url,
+                                            api_key,
+                                            gateway_host: None,
+                                            gateway_port: None,
+                                        }));
+                                    },
+                                    {t!("model-select-browse")}
+                                }
+                            }
+                        }
+                    }
                 }
                 // Reset column. The arrow does the *most useful* thing
                 // for the field's current state:

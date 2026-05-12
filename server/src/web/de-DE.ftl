@@ -1027,3 +1027,16 @@ overview-kpi-services = Funktionierende Dienste
 overview-kpi-rollouts = Aktive Rollouts
 overview-kpi-pings = Offene Staff-Pings
 overview-activity-title = Live-Aktivität
+
+# Model select modal
+model-select-title = Modelle auswählen
+model-select-search = Modelle suchen…
+model-select-show-selected = Ausgewählte anzeigen
+model-select-custom = Benutzerdefiniert
+model-select-custom-placeholder = Modell-ID eingeben…
+model-select-loading = Modelle werden geladen…
+model-select-error = Fehler beim Laden der Modelle: { $error }
+model-select-catalog = Aus Katalog
+model-select-apply = Anwenden
+model-select-apply-count = Anwenden ({ $count })
+model-select-browse = Modelle auswählen…

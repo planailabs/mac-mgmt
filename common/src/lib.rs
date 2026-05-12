@@ -7,6 +7,7 @@ use std::fmt;
 
 pub mod config_migrate;
 pub mod custom_service;
+pub mod model_source;
 
 // ── Secret wrapper for sensitive config values ──────────────────────────
 
@@ -896,10 +897,10 @@ pub struct OllamaConfig {
     #[schemars(description = "Ollama listen port")]
     #[serde(default = "default_port")]
     pub port: u16,
-    #[schemars(description = "Models to pull on startup; at least one required")]
+    #[schemars(description = "Models to pull on startup; at least one required", extend("x-model-source" = "ollama"))]
     #[serde(default = "default_models")]
     pub models: Vec<String>,
-    #[schemars(description = "Default model for OpenClaw to use")]
+    #[schemars(description = "Default model for OpenClaw to use", extend("x-model-source" = "ollama"))]
     #[serde(default = "default_model")]
     pub default_model: String,
     #[schemars(description = "Package flavour: cpu, rocm (AMD), cuda (NVIDIA), or vulkan")]
@@ -954,10 +955,10 @@ pub struct LmsConfig {
     #[schemars(description = "LM Studio listen port")]
     #[serde(default = "default_lms_port")]
     pub port: u16,
-    #[schemars(description = "Model identifiers to load on startup via `lms load`")]
+    #[schemars(description = "Model identifiers to load on startup via `lms load`", extend("x-model-source" = "lms"))]
     #[serde(default = "default_lms_models")]
     pub models: Vec<String>,
-    #[schemars(description = "Default model identifier for OpenClaw to use")]
+    #[schemars(description = "Default model identifier for OpenClaw to use", extend("x-model-source" = "lms"))]
     #[serde(default = "default_lms_model")]
     pub default_model: String,
 }
@@ -1004,7 +1005,7 @@ pub struct UnslothConfig {
     #[schemars(description = "Unsloth Studio listen port")]
     #[serde(default = "default_unsloth_port")]
     pub port: u16,
-    #[schemars(description = "Default model identifier for agents to use")]
+    #[schemars(description = "Default model identifier for agents to use", extend("x-model-source" = "custom-only"))]
     #[serde(default)]
     pub default_model: String,
 }
@@ -1110,7 +1111,7 @@ pub struct CloudConfig {
     #[schemars(description = "API key for the cloud provider")]
     #[serde(default)]
     pub api_key: Option<Secret>,
-    #[schemars(description = "Default model (e.g. anthropic/claude-sonnet-4-6, openai/gpt-5.4)")]
+    #[schemars(description = "Default model (e.g. anthropic/claude-sonnet-4-6, openai/gpt-5.4)", extend("x-model-source" = "cloud"))]
     #[serde(default = "default_cloud_model")]
     pub default_model: String,
     #[schemars(description = "Custom base URL (for proxies, Bedrock, etc.)", extend("x-advanced" = true))]
