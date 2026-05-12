@@ -523,7 +523,20 @@ pub fn ModelSelectModal(
     let mut custom_input: Signal<String> = use_signal(String::new);
     let mut filter: Signal<String> = use_signal(String::new);
     let mut show_selected: Signal<bool> = use_signal(|| false);
-    let expanded: Signal<HashSet<String>> = use_signal(HashSet::new);
+    let mut expanded: Signal<HashSet<String>> = use_signal(HashSet::new);
+
+    // Build an identity key from the request so we can detect when a
+    // different field opens the modal and reset all internal state.
+    let request_key = format!("{}:{}", req.field_path.join("."), req.source_kind);
+    let mut prev_key: Signal<String> = use_signal(String::new);
+    if *prev_key.read() != request_key {
+        prev_key.set(request_key);
+        selected.set(req.current.iter().cloned().collect());
+        custom_models.set(Vec::new());
+        filter.set(String::new());
+        show_selected.set(false);
+        expanded.set(HashSet::new());
+    }
 
     // Fetch model source.
     let source_kind = req.source_kind.clone();
