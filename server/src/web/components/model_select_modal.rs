@@ -524,7 +524,10 @@ fn build_groups_recursive(items: Vec<(Vec<String>, ModelEntry)>, depth: usize) -
     }
 
     for (key, group) in buckets {
-        {
+        if group.len() == 1 && key.starts_with(':') {
+            // Single model with a `:tag` — emit as leaf, don't wrap in a group.
+            result.push(ModelNode::Model(group.into_iter().next().unwrap().1));
+        } else {
             let children = build_groups_recursive(group, depth + 1);
             // If recursion produced a single group child, unwrap it
             // to avoid unnecessary nesting like "X" → "Y" → items.
