@@ -2,6 +2,9 @@ mod extractor;
 pub mod tokenizer;
 pub mod features;
 pub mod dataset;
+pub mod sft;
+pub mod curriculum;
+pub mod augment;
 
 pub use extractor::ExportedSession;
 
@@ -122,5 +125,114 @@ pub async fn run_export(db_url: &str, output_dir: &str, min_messages: usize) -> 
     );
 
     tracing::info!("export complete → {}", output.display());
+    Ok(())
+}
+
+/// Run the SFT export pipeline: sessions → ChatML conversations.
+///
+/// Can read from DB (db_url) or from a previously exported sessions.jsonl (input_dir).
+pub async fn run_export_sft(
+    db_url: Option<&str>,
+    input_dir: Option<&str>,
+    output_dir: &str,
+    system_template: Option<&str>,
+    embedder_checkpoint: Option<&str>,
+    do_augment: bool,
+    min_messages: usize,
+) -> Result<()> {
+    let output = Path::new(output_dir);
+    std::fs::create_dir_all(output)?;
+
+    // Load sessions from DB or from existing JSONL
+    let sessions = if let Some(url) = db_url {
+        let pool = sqlx::PgPool::connect(url)
+            .await
+            .context("failed to connect to database")?;
+        extractor::extract_all(&pool, min_messages).await?
+    } else if let Some(dir) = input_dir {
+        let sessions_path = Path::new(dir).join("sessions.jsonl");
+        let content = std::fs::read_to_string(&sessions_path)
+            .context("failed to read sessions.jsonl")?;
+        content
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(serde_json::from_str)
+            .collect::<std::result::Result<Vec<ExportedSession>, _>>()
+            .context("failed to parse sessions.jsonl")?
+    } else {
+        anyhow::bail!("either --db-url or --input-dir is required");
+    };
+
+    tracing::info!("loaded {} sessions", sessions.len());
+    if sessions.is_empty() {
+        tracing::warn!("no sessions found");
+        return Ok(());
+    }
+
+    // Generate curriculum (uses embedder if checkpoint provided)
+    let data_dir = input_dir.unwrap_or(output_dir);
+    let curriculum = curriculum::generate_curriculum(
+        &sessions,
+        embedder_checkpoint,
+        data_dir,
+    )?;
+
+    // Save curriculum
+    let curriculum_path = output.join("curriculum.json");
+    std::fs::write(
+        &curriculum_path,
+        serde_json::to_string_pretty(&curriculum)?,
+    )?;
+    tracing::info!(
+        "generated curriculum for {} sessions → {}",
+        curriculum.entries.len(),
+        curriculum_path.display()
+    );
+
+    // Convert to SFT format
+    let mut conversations = sft::convert_sessions(&sessions, system_template);
+    tracing::info!("converted {} conversations", conversations.len());
+
+    // Apply curriculum metadata
+    let curriculum_map: std::collections::HashMap<String, &curriculum::CurriculumEntry> =
+        curriculum
+            .entries
+            .iter()
+            .map(|e| (e.session_id.clone(), e))
+            .collect();
+
+    for conv in &mut conversations {
+        if let Some(entry) = curriculum_map.get(&conv.metadata.session_id) {
+            conv.metadata.curriculum_rank = Some(entry.curriculum_rank);
+            conv.metadata.sample_weight = Some(entry.sample_weight);
+        }
+    }
+
+    // Sort by curriculum rank
+    conversations.sort_by_key(|c| c.metadata.curriculum_rank.unwrap_or(usize::MAX));
+
+    // Augment if requested
+    let conversations = if do_augment {
+        let config = augment::AugmentConfig::default();
+        let augmented = augment::augment(&conversations, &config);
+        tracing::info!(
+            "augmented {} → {} conversations",
+            conversations.len(),
+            augmented.len()
+        );
+        augmented
+    } else {
+        conversations
+    };
+
+    // Write output
+    let sft_path = output.join("sft_conversations.jsonl");
+    write_jsonl_file(&sft_path, &conversations)?;
+    tracing::info!(
+        "wrote {} SFT conversations to {}",
+        conversations.len(),
+        sft_path.display()
+    );
+
     Ok(())
 }

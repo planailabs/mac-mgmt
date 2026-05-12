@@ -81,6 +81,22 @@
             # web-agency (cargo-progenitor installed via: cargo install cargo-progenitor)
             wrangler
 
+            # Trainer fine-tuning (Python + CUDA/Vulkan)
+            (python3.withPackages (ps: with ps; [
+              torch
+              transformers
+              datasets
+              peft
+              trl
+              bitsandbytes
+              safetensors
+              sentencepiece
+              protobuf
+              accelerate
+              scipy
+              unsloth
+            ]))
+
             # web-agency-proxy (BoringSSL build via boring-sys)
             cmake
             clang

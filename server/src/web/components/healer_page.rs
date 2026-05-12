@@ -419,6 +419,7 @@ pub async fn start_healer_session(
             auto_approve: r.auto_approve,
             fix_provider: r.fix_provider,
             fix_model: r.fix_model,
+            fine_tuned_model: None,
         })
         .unwrap_or_default()
     };

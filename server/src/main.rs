@@ -242,6 +242,7 @@ async fn init_server() -> (
         context7_api_key: cfg.healer.context7_api_key.clone(),
         validator_provider: None,
         validator_model: None,
+        fine_tuned_model: cfg.healer.fine_tuned_model.clone(),
     };
     let pg_healer_store = std::sync::Arc::new(
         mac_mgmt_healer::store::pg::PgHealerStore::new(pool.clone()),

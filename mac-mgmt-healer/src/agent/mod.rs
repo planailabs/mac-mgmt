@@ -317,6 +317,93 @@ pub fn build_system_prompt(
     prompt
 }
 
+/// Build a condensed system prompt for a fine-tuned model.
+///
+/// The fine-tuned model has internalized tool descriptions, workflow guidelines,
+/// and staff_ping guidance. This prompt only includes dynamic per-session context.
+pub fn build_system_prompt_finetuned(
+    cluster_name: &str,
+    instance_id: &str,
+    hostname: &str,
+    other_instances: &[InstanceInfo],
+    services_extended: &[mac_mgmt_common::ServiceExtState],
+    sample_summary: &str,
+    resume_context: Option<&str>,
+    auto_approve: bool,
+    diagnosis_only: bool,
+    metrics_summary: &str,
+    ml_hints: Option<&MlHints>,
+) -> String {
+    let mut prompt = String::with_capacity(2048);
+
+    if diagnosis_only {
+        prompt.push_str("Mode: diagnosis-only (no fixes).\n\n");
+    }
+
+    prompt.push_str(&format!("## Target\n- Cluster: {cluster_name}\n- Instance: {instance_id}\n- Hostname: {hostname}\n\n"));
+
+    // Other instances
+    if !other_instances.is_empty() {
+        prompt.push_str("## Cluster Instances\n");
+        for inst in other_instances {
+            let status = if inst.healthy { "healthy" } else { "UNHEALTHY" };
+            prompt.push_str(&format!("- {} ({}): {}\n", inst.instance_prefix, inst.hostname, status));
+        }
+        prompt.push('\n');
+    }
+
+    // Unhealthy services
+    let unhealthy: Vec<_> = services_extended.iter().filter(|s| !s.healthy).collect();
+    if !unhealthy.is_empty() {
+        prompt.push_str("## Detected Issues\n");
+        for svc in &unhealthy {
+            prompt.push_str(&format!("- {}: unhealthy\n", svc.name));
+        }
+        prompt.push('\n');
+    }
+
+    // System resources
+    if !sample_summary.is_empty() {
+        prompt.push_str(&format!("## System Resources\n{sample_summary}\n\n"));
+    }
+
+    // Metrics
+    if !metrics_summary.is_empty() {
+        prompt.push_str(&format!("## Metrics\n{metrics_summary}\n\n"));
+    }
+
+    if !auto_approve {
+        prompt.push_str("## Approval Required\nMutating tools unavailable until human approval. Pin diagnosis, then call `set_phase(\"remediating\")` to request.\n\n");
+    }
+
+    // ML hints
+    if let Some(hints) = ml_hints {
+        if !hints.tool_recommendations.is_empty() || hints.outcome_prediction.is_some() {
+            prompt.push_str("## ML Hints\n");
+            if !hints.tool_recommendations.is_empty() {
+                prompt.push_str("Suggested tools: ");
+                let tools: Vec<_> = hints.tool_recommendations.iter().take(3).map(|(t, c)| format!("`{t}` ({:.0}%)", c * 100.0)).collect();
+                prompt.push_str(&tools.join(", "));
+                prompt.push('\n');
+            }
+            if let Some((label, prob)) = &hints.outcome_prediction {
+                if *prob > 0.6 {
+                    prompt.push_str(&format!("Outcome forecast: {label} ({:.0}%)\n", prob * 100.0));
+                }
+            }
+            prompt.push('\n');
+        }
+    }
+
+    if let Some(ctx) = resume_context {
+        prompt.push_str("## Resume Context\n");
+        prompt.push_str(ctx);
+        prompt.push('\n');
+    }
+
+    prompt
+}
+
 /// Format a DynamicSample into a human-readable summary for the system prompt.
 pub fn format_sample_summary(sample: &serde_json::Value) -> String {
     let mut parts = Vec::new();

@@ -1487,6 +1487,9 @@ pub struct HealerClusterConfig {
     #[schemars(description = "Model for the fix-model (remediation phase)")]
     #[serde(default)]
     pub fix_model: Option<String>,
+    #[schemars(description = "Fine-tuned Ollama model name (e.g. 'mac-mgmt-healer'). Preferred over ollama_model when present in Ollama.")]
+    #[serde(default)]
+    pub fine_tuned_model: Option<String>,
 }
 
 // ── Backup (restic) ───────────────────────────────────────────────────

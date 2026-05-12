@@ -43,6 +43,7 @@ pub(crate) async fn cluster_healer_config(
             auto_approve: r.auto_approve,
             fix_provider: r.fix_provider,
             fix_model: r.fix_model,
+            fine_tuned_model: None,
         },
         _ => mac_mgmt_common::HealerClusterConfig::default(),
     }

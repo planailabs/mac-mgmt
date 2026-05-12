@@ -33,6 +33,9 @@ pub struct ConnectorConfig {
     pub validator_provider: Option<String>,
     /// Model for the validator LLM. Required when `validator_provider` is set.
     pub validator_model: Option<String>,
+    /// Fine-tuned Ollama model name (e.g. "mac-mgmt-healer").
+    /// When set and present in Ollama, preferred over `ollama_model`.
+    pub fine_tuned_model: Option<String>,
 }
 
 impl Default for ConnectorConfig {
@@ -51,6 +54,7 @@ impl Default for ConnectorConfig {
             context7_api_key: None,
             validator_provider: None,
             validator_model: None,
+            fine_tuned_model: None,
         }
     }
 }
@@ -129,8 +133,10 @@ pub async fn resolve_llm(
     let ollama_url = ollama_url.trim_end_matches('/').to_string();
 
     if try_ollama {
+        // Prefer fine-tuned model if available in Ollama, then forced, then configured, then default
         let model = forced_model
             .map(String::from)
+            .or_else(|| config.fine_tuned_model.clone())
             .or_else(|| config.ollama_model.clone())
             .unwrap_or_else(|| "gemma4".to_string());
 

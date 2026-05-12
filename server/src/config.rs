@@ -263,6 +263,11 @@ pub struct HealerConfig {
     /// If empty, built-in defaults (cheap/fast models) are used.
     #[serde(default)]
     pub validator_models: Vec<HealerModelEntry>,
+
+    /// Fine-tuned Ollama model name (e.g. "mac-mgmt-healer").
+    /// When set and present in Ollama, preferred over `ollama_model`.
+    #[serde(default)]
+    pub fine_tuned_model: Option<String>,
 }
 
 fn default_auto_trigger_threshold() -> u32 {
