@@ -5,103 +5,35 @@ use std::collections::HashSet;
 
 // ── Server functions ─────────────────────────────────────────────────
 
-/// Fetch available models from the Ollama cloud library (ollama.com/api/tags).
+/// Load a model source from the pre-generated static catalog.
+/// The catalog is embedded at compile time from `server/ext/model-catalog.json`.
 #[server]
-pub async fn fetch_ollama_models() -> Result<ModelSource, ServerFnError> {
-    fetch_ollama_models_inner("https://ollama.com").await
-}
+pub async fn get_model_catalog(source_id: String) -> Result<ModelSource, ServerFnError> {
+    use std::sync::OnceLock;
 
-#[cfg(feature = "server")]
-async fn fetch_ollama_models_inner(base_url: &str) -> Result<ModelSource, ServerFnError> {
-    #[derive(serde::Deserialize)]
-    struct OllamaTagsResponse {
-        #[serde(default)]
-        models: Vec<OllamaTagModel>,
-    }
-    #[derive(serde::Deserialize)]
-    struct OllamaTagModel {
-        name: String,
-        #[serde(default)]
-        details: Option<OllamaDetails>,
-    }
-    #[derive(serde::Deserialize)]
-    struct OllamaDetails {
-        #[serde(default)]
-        family: Option<String>,
-        #[serde(default)]
-        parameter_size: Option<String>,
-    }
+    static CATALOG: OnceLock<Vec<ModelSource>> = OnceLock::new();
 
-    let client = reqwest::Client::new();
-    let resp: OllamaTagsResponse = client
-        .get(format!("{base_url}/api/tags"))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(format!("ollama fetch: {e}")))?
-        .json()
-        .await
-        .map_err(|e| ServerFnError::new(format!("ollama parse: {e}")))?;
-
-    let models: Vec<_> = resp
-        .models
-        .into_iter()
-        .take(2000)
-        .map(|m| {
-            let family = m
-                .details
-                .as_ref()
-                .and_then(|d| d.family.clone())
-                .unwrap_or_default();
-            let param_size = m
-                .details
-                .as_ref()
-                .and_then(|d| d.parameter_size.clone())
-                .unwrap_or_default();
-            let display = if param_size.is_empty() {
-                m.name.clone()
-            } else {
-                format!("{} ({})", m.name, param_size)
-            };
-            (
-                ModelEntry {
-                    model_id: m.name.clone(),
-                    full_model_id: m.name,
-                    display_name: display,
-                },
-                family,
-            )
-        })
-        .collect();
-
-    // Build a family lookup from the API response's `details.family` field.
-    let family_map: std::collections::HashMap<String, String> = models
-        .iter()
-        .map(|(e, f)| (e.model_id.clone(), f.clone()))
-        .collect();
-    let entries: Vec<ModelEntry> = models.into_iter().map(|(e, _)| e).collect();
-
-    // Group by family (from API), then recursively by model ID tokens.
-    let groups = auto_group(entries, |entry| {
-        let family = family_map
-            .get(&entry.model_id)
-            .cloned()
-            .unwrap_or_default();
-        if family.is_empty() {
-            vec![]
-        } else {
-            vec![family.to_lowercase()]
-        }
+    let sources = CATALOG.get_or_init(|| {
+        let json = include_str!("../../../ext/model-catalog.json");
+        let catalog: crate::model_catalog_fetch::ModelCatalog =
+            serde_json::from_str(json).expect("failed to parse embedded model-catalog.json");
+        catalog.sources
     });
 
-    Ok(ModelSource {
-        id: "ollama".into(),
-        display_name: "Ollama".into(),
-        groups,
-    })
+    sources
+        .iter()
+        .find(|s| s.id == source_id)
+        .cloned()
+        .ok_or_else(|| {
+            ServerFnError::new(format!(
+                "source '{}' not found in catalog (available: {})",
+                source_id,
+                sources.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(", ")
+            ))
+        })
 }
 
-/// Fetch models from the OpenClaw gateway.
+/// Fetch models from the OpenClaw gateway (live, not from static catalog).
 #[server]
 pub async fn fetch_openclaw_models(
     gateway_host: String,
@@ -171,7 +103,7 @@ async fn fetch_openclaw_models_inner(
         })
         .collect();
 
-    let groups = auto_group(entries, |entry| {
+    let groups = crate::model_catalog_fetch::auto_group(entries, |entry| {
         let provider = entry
             .full_model_id
             .split('/')
@@ -186,385 +118,6 @@ async fn fetch_openclaw_models_inner(
         display_name: "OpenClaw".into(),
         groups,
     })
-}
-
-/// Fetch models from OpenRouter (public, no auth required).
-#[server]
-pub async fn fetch_openrouter_models() -> Result<ModelSource, ServerFnError> {
-    fetch_openrouter_models_inner().await
-}
-
-#[cfg(feature = "server")]
-async fn fetch_openrouter_models_inner() -> Result<ModelSource, ServerFnError> {
-    #[derive(serde::Deserialize)]
-    struct ModelsResponse {
-        #[serde(default)]
-        data: Vec<OpenRouterModel>,
-    }
-    #[derive(serde::Deserialize)]
-    struct OpenRouterModel {
-        id: String,
-        #[serde(default)]
-        name: String,
-    }
-
-    let client = reqwest::Client::new();
-    let resp: ModelsResponse = client
-        .get("https://openrouter.ai/api/v1/models")
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(format!("openrouter fetch: {e}")))?
-        .json()
-        .await
-        .map_err(|e| ServerFnError::new(format!("openrouter parse: {e}")))?;
-
-    let entries: Vec<ModelEntry> = resp
-        .data
-        .into_iter()
-        .map(|m| {
-            let model_id = m.id.clone();
-            let display = if m.name.is_empty() {
-                model_id.clone()
-            } else {
-                m.name
-            };
-            ModelEntry {
-                model_id: model_id.clone(),
-                full_model_id: format!("openrouter/{model_id}"),
-                display_name: display,
-            }
-        })
-        .collect();
-
-    let groups = auto_group(entries, |entry| {
-        // OpenRouter IDs are like "anthropic/claude-sonnet-4-6"
-        // Extract the provider prefix as the first group segment.
-        let parts: Vec<&str> = entry.model_id.splitn(2, '/').collect();
-        if parts.len() == 2 {
-            vec![parts[0].to_string()]
-        } else {
-            vec!["other".to_string()]
-        }
-    });
-
-    Ok(ModelSource {
-        id: "openrouter".into(),
-        display_name: "OpenRouter".into(),
-        groups,
-    })
-}
-
-/// Fetch models from a cloud provider's /v1/models or equivalent.
-#[server]
-pub async fn fetch_cloud_provider_models(
-    provider: String,
-    base_url: String,
-    api_key: String,
-) -> Result<ModelSource, ServerFnError> {
-    fetch_cloud_provider_models_inner(&provider, &base_url, &api_key).await
-}
-
-#[cfg(feature = "server")]
-async fn fetch_cloud_provider_models_inner(
-    provider: &str,
-    base_url: &str,
-    api_key: &str,
-) -> Result<ModelSource, ServerFnError> {
-    #[derive(serde::Deserialize)]
-    struct ModelsResponse {
-        #[serde(default)]
-        data: Option<Vec<ModelObj>>,
-        // Google uses { models: [...] } instead of { data: [...] }
-        #[serde(default)]
-        models: Option<Vec<GoogleModelObj>>,
-    }
-    #[derive(serde::Deserialize)]
-    struct ModelObj {
-        id: String,
-    }
-    #[derive(serde::Deserialize)]
-    struct GoogleModelObj {
-        #[serde(default)]
-        name: String,
-        #[serde(default, rename = "displayName")]
-        display_name: String,
-    }
-
-    let client = reqwest::Client::new();
-
-    let (url, entries) = if provider == "google" {
-        let url = format!("{base_url}/models?key={api_key}");
-        let resp: ModelsResponse = client
-            .get(&url)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| ServerFnError::new(format!("{provider} fetch: {e}")))?
-            .json()
-            .await
-            .map_err(|e| ServerFnError::new(format!("{provider} parse: {e}")))?;
-        let models = resp.models.unwrap_or_default();
-        let entries: Vec<ModelEntry> = models
-            .into_iter()
-            .map(|m| {
-                // Google model name is like "models/gemini-2.5-flash"
-                let id = m
-                    .name
-                    .strip_prefix("models/")
-                    .unwrap_or(&m.name)
-                    .to_string();
-                let display = if m.display_name.is_empty() {
-                    id.clone()
-                } else {
-                    m.display_name
-                };
-                ModelEntry {
-                    model_id: id.clone(),
-                    full_model_id: format!("{provider}/{id}"),
-                    display_name: display,
-                }
-            })
-            .collect();
-        (url, entries)
-    } else if provider == "anthropic" {
-        let url = format!("{base_url}/models");
-        let resp: serde_json::Value = client
-            .get(&url)
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| ServerFnError::new(format!("{provider} fetch: {e}")))?
-            .json()
-            .await
-            .map_err(|e| ServerFnError::new(format!("{provider} parse: {e}")))?;
-        let data = resp
-            .get("data")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let entries: Vec<ModelEntry> = data
-            .into_iter()
-            .filter_map(|v| {
-                let id = v.get("id")?.as_str()?.to_string();
-                let display = v
-                    .get("display_name")
-                    .and_then(|d| d.as_str())
-                    .unwrap_or(&id)
-                    .to_string();
-                Some(ModelEntry {
-                    model_id: id.clone(),
-                    full_model_id: format!("{provider}/{id}"),
-                    display_name: display,
-                })
-            })
-            .collect();
-        (url, entries)
-    } else {
-        // OpenAI-compatible: Mistral, Groq, xAI, Deepseek, Together, OpenAI, etc.
-        let url = format!("{base_url}/models");
-        let resp: ModelsResponse = client
-            .get(&url)
-            .bearer_auth(api_key)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| ServerFnError::new(format!("{provider} fetch: {e}")))?
-            .json()
-            .await
-            .map_err(|e| ServerFnError::new(format!("{provider} parse: {e}")))?;
-        let models = resp.data.unwrap_or_default();
-        let entries: Vec<ModelEntry> = models
-            .into_iter()
-            .map(|m| ModelEntry {
-                model_id: m.id.clone(),
-                full_model_id: format!("{provider}/{}", m.id),
-                display_name: m.id,
-            })
-            .collect();
-        (url, entries)
-    };
-
-    let _ = url; // suppress unused
-
-    let prov_display = titlecase(provider);
-    // Recursive grouping by model ID tokens — no hardcoded families needed.
-    let groups = auto_group(entries, |_| vec![]);
-
-    Ok(ModelSource {
-        id: provider.to_string(),
-        display_name: prov_display,
-        groups,
-    })
-}
-
-// ── Grouping helpers ─────────────────────────────────────────────────
-
-#[cfg(feature = "server")]
-fn titlecase(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-    }
-}
-
-/// Split a model ID into semantic tokens for grouping.
-/// Splits on `/`, `-`, and `:`, with adjacent numeric segments merged
-/// into version numbers.
-///
-/// "claude-sonnet-4-6"                → ["claude", "sonnet", "4.6"]
-/// "gpt-5.4-mini"                     → ["gpt", "5.4", "mini"]
-/// "gemini-2.5-flash"                 → ["gemini", "2.5", "flash"]
-/// "qwen3:0.6b"                       → ["qwen3", ":0.6b"]
-/// "llama3.3:70b"                     → ["llama3.3", ":70b"]
-/// "anthropic/claude-sonnet-4-6"      → ["anthropic", "claude", "sonnet", "4.6"]
-/// "meta-llama/llama-3.3-70b"         → ["meta", "llama", "llama", "3.3", "70b"]
-#[cfg(feature = "server")]
-fn tokenize_model_id(model_id: &str) -> Vec<String> {
-    // Split on `:` — first part is the base name, rest are tags (size variants).
-    let colon_parts: Vec<&str> = model_id.splitn(2, ':').collect();
-    let base = colon_parts[0];
-    let tag = colon_parts.get(1).copied();
-
-    // Split on both `/` and `-` to handle "provider/model-name" and plain
-    // "model-name" uniformly.
-    let raw_parts: Vec<&str> = base.split(&['/', '-'][..]).collect();
-
-    // Merge adjacent purely-numeric parts into version numbers:
-    // e.g. ["4", "6"] → "4.6"; standalone "3.5" stays as-is.
-    let mut tokens: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < raw_parts.len() {
-        let part = raw_parts[i];
-        if part.is_empty() {
-            i += 1;
-            continue;
-        }
-        if is_numeric_segment(part) && i + 1 < raw_parts.len() && is_numeric_segment(raw_parts[i + 1]) {
-            tokens.push(format!("{}.{}", part, raw_parts[i + 1]));
-            i += 2;
-        } else {
-            tokens.push(part.to_string());
-            i += 1;
-        }
-    }
-
-    // Add the `:tag` as a separate grouping level so size variants cluster
-    // under the base model name: e.g. "qwen3" group contains ":0.6b", ":4b", ":8b".
-    if let Some(t) = tag {
-        tokens.push(format!(":{t}"));
-    }
-
-    tokens
-}
-
-#[cfg(feature = "server")]
-fn is_numeric_segment(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit() || c == '.')
-}
-
-/// Build recursive groups from a flat list of (model_entry, extra_segments) pairs.
-/// `extra_segments` are prepended to the auto-detected token groups (e.g. provider name).
-///
-/// Algorithm: given a set of model IDs, find the longest shared prefix tokens among
-/// siblings. If ≥2 models share a prefix, group them under that prefix. Recurse
-/// into each group with the remaining suffix tokens.
-#[cfg(feature = "server")]
-fn auto_group(entries: Vec<ModelEntry>, extra_prefix: impl Fn(&ModelEntry) -> Vec<String>) -> Vec<ModelNode> {
-    // Build (full_segments, entry) pairs.
-    let items: Vec<(Vec<String>, ModelEntry)> = entries
-        .into_iter()
-        .map(|e| {
-            let mut segs = extra_prefix(&e);
-            segs.extend(tokenize_model_id(&e.model_id));
-            (segs, e)
-        })
-        .collect();
-
-    build_groups_recursive(items, 0)
-}
-
-#[cfg(feature = "server")]
-fn build_groups_recursive(items: Vec<(Vec<String>, ModelEntry)>, depth: usize) -> Vec<ModelNode> {
-    use std::collections::BTreeMap;
-
-    if items.is_empty() {
-        return vec![];
-    }
-
-    // If only one item or we've exhausted segments, emit leaves.
-    if items.len() == 1 || depth >= 6 {
-        return items
-            .into_iter()
-            .map(|(_, e)| ModelNode::Model(e))
-            .collect();
-    }
-
-    // Group by the token at `depth`.
-    let mut buckets: BTreeMap<String, Vec<(Vec<String>, ModelEntry)>> = BTreeMap::new();
-    let mut no_segment: Vec<(Vec<String>, ModelEntry)> = Vec::new();
-
-    for item in items {
-        if depth < item.0.len() {
-            let key = item.0[depth].to_lowercase();
-            buckets.entry(key).or_default().push(item);
-        } else {
-            no_segment.push(item);
-        }
-    }
-
-    let mut result: Vec<ModelNode> = Vec::new();
-
-    // Items that ran out of segments become leaves.
-    for (_, e) in no_segment {
-        result.push(ModelNode::Model(e));
-    }
-
-    for (key, group) in buckets {
-        if group.len() == 1 && key.starts_with(':') {
-            // Single model with a `:tag` — emit as leaf, don't wrap in a group.
-            result.push(ModelNode::Model(group.into_iter().next().unwrap().1));
-        } else {
-            let children = build_groups_recursive(group, depth + 1);
-            // If recursion produced a single group child, unwrap it
-            // to avoid unnecessary nesting like "X" → "Y" → items.
-            if children.len() == 1 {
-                if let ModelNode::Group {
-                    name: child_name,
-                    display_name: _,
-                    children: grandchildren,
-                } = &children[0]
-                {
-                    let merged_name = format!("{}-{}", key, child_name);
-                    result.push(ModelNode::Group {
-                        display_name: titlecase(&merged_name),
-                        name: merged_name,
-                        children: grandchildren.clone(),
-                    });
-                    continue;
-                }
-            }
-            result.push(ModelNode::Group {
-                display_name: titlecase(&key),
-                name: key,
-                children,
-            });
-        }
-    }
-
-    // Sort: groups first (alphabetically), then models.
-    result.sort_by(|a, b| {
-        let sort_key = |n: &ModelNode| match n {
-            ModelNode::Group { name, .. } => (0, name.to_lowercase()),
-            ModelNode::Model(e) => (1, e.model_id.to_lowercase()),
-        };
-        sort_key(a).cmp(&sort_key(b))
-    });
-
-    result
 }
 
 // ── Modal state ──────────────────────────────────────────────────────
@@ -626,45 +179,45 @@ pub fn ModelSelectModal(
     // Fetch model source.
     let source_kind = req.source_kind.clone();
     let provider = req.provider.clone();
-    let base_url = req.base_url.clone();
-    let api_key = req.api_key.clone();
     let gw_host = req.gateway_host.clone();
     let gw_port = req.gateway_port;
 
     let catalog = use_server_future(move || {
         let sk = source_kind.clone();
         let prov = provider.clone();
-        let bu = base_url.clone();
-        let ak = api_key.clone();
         let gh = gw_host.clone();
         let gp = gw_port;
         async move {
             match sk.as_str() {
-                "ollama" => fetch_ollama_models().await,
-                "openrouter" => fetch_openrouter_models().await,
+                // Sources served from the static catalog
+                "ollama" | "openrouter" | "lms" => {
+                    let catalog_id = if sk == "lms" { "ollama".to_string() } else { sk.clone() };
+                    get_model_catalog(catalog_id).await
+                }
+                // OpenClaw is fetched live from the local gateway
                 "openclaw" => {
                     let host = gh.unwrap_or_else(|| "127.0.0.1".into());
                     let port = gp.unwrap_or(18789);
                     fetch_openclaw_models(host, port, None).await
                 }
+                // Cloud providers: look up by provider slug in the static catalog
                 "cloud" => {
-                    if let (Some(p), Some(b), Some(k)) = (prov, bu, ak) {
-                        fetch_cloud_provider_models(p, b, k).await
-                    } else {
+                    let catalog_id = prov.unwrap_or_else(|| sk.clone());
+                    get_model_catalog(catalog_id).await.or_else(|_| {
                         Ok(ModelSource {
                             id: "cloud".into(),
                             display_name: "Cloud".into(),
                             groups: vec![],
                         })
-                    }
+                    })
                 }
-                // "lms" uses ollama catalog too
-                "lms" => fetch_ollama_models().await,
-                // "custom-only" — no catalog
-                _ => Ok(ModelSource {
-                    id: sk.clone(),
-                    display_name: sk,
-                    groups: vec![],
+                // Try the static catalog for any other source_kind
+                _ => get_model_catalog(sk.clone()).await.or_else(|_| {
+                    Ok(ModelSource {
+                        id: sk.clone(),
+                        display_name: sk,
+                        groups: vec![],
+                    })
                 }),
             }
         }

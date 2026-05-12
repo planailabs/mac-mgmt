@@ -10,6 +10,10 @@ mod config;
 mod db;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod mcp_schema;
+#[cfg(feature = "server")]
+mod model_catalog_fetch;
+#[cfg(feature = "server")]
+mod generate_model_catalog;
 #[cfg(feature = "webui")]
 mod models;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
@@ -383,6 +387,45 @@ enum Commands {
         #[arg(short, long)]
         model: Option<String>,
     },
+    /// Fetch models from provider APIs and write server/ext/model-catalog.json
+    GenerateModelCatalog(GenerateModelCatalogArgs),
+}
+
+#[derive(clap::Args)]
+pub struct GenerateModelCatalogArgs {
+    /// Output file path
+    #[arg(short, long, default_value = "server/ext/model-catalog.json")]
+    pub output: String,
+    /// Ollama library base URL
+    #[arg(long, default_value = "https://ollama.com")]
+    pub ollama_url: String,
+    /// Disable OpenRouter fetching
+    #[arg(long)]
+    pub no_openrouter: bool,
+    /// Anthropic API key (or set ANTHROPIC_API_KEY)
+    #[arg(long)]
+    pub anthropic_key: Option<String>,
+    /// OpenAI API key (or set OPENAI_API_KEY)
+    #[arg(long)]
+    pub openai_key: Option<String>,
+    /// Google/Gemini API key (or set GEMINI_API_KEY)
+    #[arg(long)]
+    pub google_key: Option<String>,
+    /// Mistral API key (or set MISTRAL_API_KEY)
+    #[arg(long)]
+    pub mistral_key: Option<String>,
+    /// Groq API key (or set GROQ_API_KEY)
+    #[arg(long)]
+    pub groq_key: Option<String>,
+    /// xAI API key (or set XAI_API_KEY)
+    #[arg(long)]
+    pub xai_key: Option<String>,
+    /// DeepSeek API key (or set DEEPSEEK_API_KEY)
+    #[arg(long)]
+    pub deepseek_key: Option<String>,
+    /// Together API key (or set TOGETHER_API_KEY)
+    #[arg(long)]
+    pub together_key: Option<String>,
 }
 
 fn main() {
@@ -402,6 +445,17 @@ fn main() {
                 let rt = tokio::runtime::Runtime::new().expect("failed to create runtime");
                 rt.block_on(dump_healer_sessions(&cfg.database.url, output, model.as_deref()));
                 return;
+            }
+            #[cfg(feature = "server")]
+            Commands::GenerateModelCatalog(args) => {
+                let rt = tokio::runtime::Runtime::new().expect("failed to create runtime");
+                rt.block_on(generate_model_catalog::run(args));
+                return;
+            }
+            #[cfg(not(feature = "server"))]
+            Commands::GenerateModelCatalog(_) => {
+                eprintln!("generate-model-catalog requires the server feature");
+                std::process::exit(1);
             }
         }
     }
