@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use mac_mgmt_common::model_source::{ModelEntry, ModelNode, ModelSource};
+use mac_mgmt_common::model_source::{ModelNode, ModelSource};
 use std::collections::HashSet;
 
 // ── Server functions ─────────────────────────────────────────────────
@@ -33,94 +33,6 @@ pub async fn get_model_catalog(source_id: String) -> Result<ModelSource, ServerF
         })
 }
 
-/// Fetch models from the OpenClaw gateway (live, not from static catalog).
-#[server]
-pub async fn fetch_openclaw_models(
-    gateway_host: String,
-    gateway_port: u16,
-    token: Option<String>,
-) -> Result<ModelSource, ServerFnError> {
-    fetch_openclaw_models_inner(&gateway_host, gateway_port, token.as_deref()).await
-}
-
-#[cfg(feature = "server")]
-async fn fetch_openclaw_models_inner(
-    host: &str,
-    port: u16,
-    token: Option<&str>,
-) -> Result<ModelSource, ServerFnError> {
-    #[derive(serde::Deserialize)]
-    struct ModelsResponse {
-        #[serde(default)]
-        data: Vec<ModelObj>,
-    }
-    #[derive(serde::Deserialize)]
-    struct ModelObj {
-        id: String,
-        #[serde(default)]
-        owned_by: String,
-    }
-
-    let url = format!("http://{host}:{port}/v1/models");
-    let client = reqwest::Client::new();
-    let mut req = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10));
-    if let Some(tok) = token {
-        req = req.bearer_auth(tok);
-    }
-    let resp: ModelsResponse = req
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(format!("openclaw fetch: {e}")))?
-        .json()
-        .await
-        .map_err(|e| ServerFnError::new(format!("openclaw parse: {e}")))?;
-
-    let entries: Vec<ModelEntry> = resp
-        .data
-        .into_iter()
-        .map(|m| {
-            let provider = if !m.owned_by.is_empty() {
-                m.owned_by.clone()
-            } else {
-                m.id.split('/').next().unwrap_or("unknown").to_string()
-            };
-            let model_id = if m.id.contains('/') {
-                m.id.split('/').last().unwrap_or(&m.id).to_string()
-            } else {
-                m.id.clone()
-            };
-            ModelEntry {
-                display_name: model_id.clone(),
-                model_id,
-                full_model_id: if m.id.contains('/') {
-                    m.id
-                } else {
-                    format!("{provider}/{}", m.id)
-                },
-                ..Default::default()
-            }
-        })
-        .collect();
-
-    let groups = crate::model_catalog_fetch::auto_group(entries, |entry| {
-        let provider = entry
-            .full_model_id
-            .split('/')
-            .next()
-            .unwrap_or("unknown")
-            .to_string();
-        vec![provider]
-    });
-
-    Ok(ModelSource {
-        id: "openclaw".into(),
-        display_name: "OpenClaw".into(),
-        groups,
-    })
-}
-
 // ── Modal state ──────────────────────────────────────────────────────
 
 /// Request to open the model selection modal. Set into a context signal.
@@ -132,14 +44,6 @@ pub struct ModelSelectRequest {
     pub field_path: Vec<String>,
     /// For cloud: provider slug
     pub provider: Option<String>,
-    /// For cloud: base URL
-    pub base_url: Option<String>,
-    /// For cloud: API key (from the form being edited)
-    pub api_key: Option<String>,
-    /// For openclaw: gateway host
-    pub gateway_host: Option<String>,
-    /// For openclaw: gateway port
-    pub gateway_port: Option<u16>,
 }
 
 // ── Modal component ──────────────────────────────────────────────────
@@ -180,46 +84,26 @@ pub fn ModelSelectModal(
     // Fetch model source.
     let source_kind = req.source_kind.clone();
     let provider = req.provider.clone();
-    let gw_host = req.gateway_host.clone();
-    let gw_port = req.gateway_port;
 
     let catalog = use_server_future(move || {
         let sk = source_kind.clone();
         let prov = provider.clone();
-        let gh = gw_host.clone();
-        let gp = gw_port;
         async move {
-            match sk.as_str() {
-                // Sources served from the static catalog
-                "ollama" | "openrouter" | "lms" => {
-                    get_model_catalog(sk.clone()).await
-                }
-                // OpenClaw is fetched live from the local gateway
-                "openclaw" => {
-                    let host = gh.unwrap_or_else(|| "127.0.0.1".into());
-                    let port = gp.unwrap_or(18789);
-                    fetch_openclaw_models(host, port, None).await
-                }
-                // Cloud providers: look up by provider slug in the static catalog
-                "cloud" => {
-                    let catalog_id = prov.unwrap_or_else(|| sk.clone());
-                    get_model_catalog(catalog_id).await.or_else(|_| {
-                        Ok(ModelSource {
-                            id: "cloud".into(),
-                            display_name: "Cloud".into(),
-                            groups: vec![],
-                        })
-                    })
-                }
-                // Try the static catalog for any other source_kind
-                _ => get_model_catalog(sk.clone()).await.or_else(|_| {
+            // For cloud sources, look up by provider slug (e.g. "anthropic")
+            let catalog_id = if sk == "cloud" {
+                prov.unwrap_or(sk.clone())
+            } else {
+                sk.clone()
+            };
+            let result: Result<ModelSource, ServerFnError> =
+                get_model_catalog(catalog_id).await.or_else(|_| {
                     Ok(ModelSource {
                         id: sk.clone(),
                         display_name: sk,
                         groups: vec![],
                     })
-                }),
-            }
+                });
+            result
         }
     })?;
 

@@ -1629,45 +1629,18 @@ fn SectionFieldRow(
                                                 _ => vec![],
                                             }
                                         };
-                                        // For cloud entries, read provider/api_key from sibling fields
-                                        let (provider, base_url, api_key) = if source_kind == "cloud" {
+                                        // For cloud entries, read provider slug from sibling fields
+                                        let provider = if source_kind == "cloud" {
                                             let fv = form_values.read();
                                             // section_name is like "cloud.0"
                                             let parts: Vec<String> = section.split('.').map(String::from).collect();
                                             let entry = get_at_path(&fv, &parts);
-                                            let prov = entry.as_ref()
+                                            entry.as_ref()
                                                 .and_then(|e| e.get("provider"))
                                                 .and_then(|p| p.as_str())
-                                                .map(String::from);
-                                            let bu = entry.as_ref()
-                                                .and_then(|e| e.get("base_url"))
-                                                .and_then(|b| b.as_str())
-                                                .and_then(|s| if s.is_empty() { None } else { Some(s) })
-                                                .or_else(|| {
-                                                    prov.as_deref().and_then(|p| {
-                                                        // Use CloudProvider base URL
-                                                        match p {
-                                                            "Anthropic" => Some("https://api.anthropic.com/v1"),
-                                                            "Openai" => Some("https://api.openai.com/v1"),
-                                                            "Google" => Some("https://generativelanguage.googleapis.com/v1beta"),
-                                                            "Mistral" => Some("https://api.mistral.ai/v1"),
-                                                            "Groq" => Some("https://api.groq.com/openai/v1"),
-                                                            "Xai" => Some("https://api.x.ai/v1"),
-                                                            "Deepseek" => Some("https://api.deepseek.com/v1"),
-                                                            "Openrouter" => Some("https://openrouter.ai/api/v1"),
-                                                            "Together" => Some("https://api.together.xyz/v1"),
-                                                            _ => None,
-                                                        }
-                                                    })
-                                                })
-                                                .map(String::from);
-                                            let ak = entry.as_ref()
-                                                .and_then(|e| e.get("api_key"))
-                                                .and_then(|k| k.as_str())
-                                                .map(String::from);
-                                            (prov.map(|p| p.to_lowercase()), bu, ak)
+                                                .map(|p| p.to_lowercase())
                                         } else {
-                                            (None, None, None)
+                                            None
                                         };
                                         model_select_req.set(Some(super::model_select_modal::ModelSelectRequest {
                                             source_kind: source_kind.clone(),
@@ -1675,10 +1648,6 @@ fn SectionFieldRow(
                                             multi: is_multi,
                                             field_path: field_path_for_modal.clone(),
                                             provider,
-                                            base_url,
-                                            api_key,
-                                            gateway_host: None,
-                                            gateway_port: None,
                                         }));
                                     },
                                     {t!("model-select-browse")}
