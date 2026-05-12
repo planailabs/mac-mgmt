@@ -62,6 +62,20 @@ pub async fn run(args: &crate::GenerateModelCatalogArgs) {
         }
     }
 
+    // ── LM Studio (public) ───────────────────────────────────────
+    if !args.no_lms {
+        let url = &args.lms_url;
+        tracing::info!("fetching lms ({url})...");
+        match model_catalog_fetch::fetch_lms_models(url).await {
+            Ok(src) => {
+                let n: usize = src.groups.iter().map(|g| g.count_models()).sum();
+                tracing::info!("lms: {n} models");
+                sources.push(src);
+            }
+            Err(e) => tracing::error!("lms: {e}"),
+        }
+    }
+
     // ── OpenRouter (public) ─────────────────────────────────────
     if !args.no_openrouter {
         tracing::info!("fetching openrouter...");

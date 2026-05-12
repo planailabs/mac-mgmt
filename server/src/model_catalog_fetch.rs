@@ -158,6 +158,182 @@ pub async fn fetch_ollama_models(base_url: &str) -> Result<ModelSource, String> 
     })
 }
 
+/// Fetch models from the LM Studio catalog (lmstudio.ai/models).
+///
+/// 1. Scrapes the listing page for model slugs (`/models/<slug>`)
+/// 2. Fetches each model's page and extracts the JSON-LD `CreativeWork`
+///    block which contains the display name and model IDs in `keywords`.
+pub async fn fetch_lms_models(base_url: &str) -> Result<ModelSource, String> {
+    use scraper::{Html, Selector};
+
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:149.0) Gecko/20100101 Firefox/149.0")
+        .build()
+        .map_err(|e| format!("lms: client build: {e}"))?;
+
+    // Step 1: Get all model slugs from the listing page
+    let listing_url = format!("{base_url}/models?sort=created");
+    tracing::info!("lms: fetching listing {listing_url}");
+
+    let resp = client
+        .get(&listing_url)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("lms listing fetch: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("lms listing: HTTP {}", resp.status()));
+    }
+    let html_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("lms listing read: {e}"))?;
+
+    let doc = Html::parse_document(&html_text);
+    let link_sel = Selector::parse("a[href]").unwrap();
+
+    let mut slugs: Vec<String> = Vec::new();
+    for el in doc.select(&link_sel) {
+        if let Some(href) = el.value().attr("href") {
+            if let Some(slug) = href.strip_prefix("/models/") {
+                if !slug.is_empty() && !slug.contains('?') && !slug.contains('/') {
+                    let s = slug.to_string();
+                    if !slugs.contains(&s) {
+                        slugs.push(s);
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!("lms: found {} model slugs", slugs.len());
+
+    // Step 2: Fetch each model page and extract from JSON-LD
+    let mut entries: Vec<ModelEntry> = Vec::new();
+    let delay = std::time::Duration::from_millis(300);
+    let ld_sel = Selector::parse("script[type='application/ld+json']").unwrap();
+
+    for (i, slug) in slugs.iter().enumerate() {
+        let model_url = format!("{base_url}/models/{slug}");
+        tracing::info!("lms: [{}/{}] fetching {model_url}", i + 1, slugs.len());
+
+        let resp = match client
+            .get(&model_url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("lms: {slug}: fetch error: {e}");
+                continue;
+            }
+        };
+        if !resp.status().is_success() {
+            tracing::warn!("lms: {slug}: HTTP {}", resp.status());
+            continue;
+        }
+        let page_html = match resp.text().await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("lms: {slug}: read error: {e}");
+                continue;
+            }
+        };
+
+        let page_doc = Html::parse_document(&page_html);
+
+        // Find the CreativeWork JSON-LD block
+        let mut display_name = String::new();
+        let mut model_ids: Vec<String> = Vec::new();
+
+        for script in page_doc.select(&ld_sel) {
+            let json_text = script.text().collect::<String>();
+            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_text) {
+                if data.get("@type").and_then(|t| t.as_str()) == Some("CreativeWork") {
+                    display_name = data
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or(slug)
+                        .to_string();
+
+                    if let Some(keywords) = data.get("keywords").and_then(|k| k.as_array()) {
+                        for kw in keywords {
+                            if let Some(s) = kw.as_str() {
+                                // Model IDs contain a `/` and are lowercase
+                                // e.g. "qwen/qwen3-4b-2507", skip display patterns like "qwen/Qwen3"
+                                if s.contains('/') && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '/' | '-' | '_' | '.'))
+                                {
+                                    model_ids.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        if model_ids.is_empty() {
+            tracing::debug!("lms: {slug}: no model IDs found, using slug");
+            entries.push(ModelEntry {
+                model_id: slug.clone(),
+                full_model_id: slug.clone(),
+                display_name: if display_name.is_empty() {
+                    slug.clone()
+                } else {
+                    display_name
+                },
+                ..Default::default()
+            });
+        } else {
+            tracing::debug!("lms: {slug}: {} variant(s): {:?}", model_ids.len(), model_ids);
+            for mid in &model_ids {
+                let short_id = mid.split('/').last().unwrap_or(mid).to_string();
+                let variant_display = if model_ids.len() == 1 {
+                    display_name.clone()
+                } else {
+                    format!("{display_name} ({short_id})")
+                };
+                entries.push(ModelEntry {
+                    model_id: mid.clone(),
+                    full_model_id: mid.clone(),
+                    display_name: variant_display,
+                    ..Default::default()
+                });
+            }
+        }
+
+        // Rate-limit
+        if i + 1 < slugs.len() {
+            tokio::time::sleep(delay).await;
+        }
+    }
+
+    tracing::info!("lms: scraped {} models from {} pages", entries.len(), slugs.len());
+
+    let groups = auto_group(entries, |entry| {
+        // Group by org prefix (e.g. "qwen", "google", "nvidia")
+        let provider = entry
+            .model_id
+            .split('/')
+            .next()
+            .unwrap_or("other")
+            .to_string();
+        if provider == entry.model_id {
+            vec![] // no slash, no provider prefix
+        } else {
+            vec![provider]
+        }
+    });
+
+    Ok(ModelSource {
+        id: "lms".into(),
+        display_name: "LM Studio".into(),
+        groups,
+    })
+}
+
 /// Fetch models from an OpenClaw gateway (`/v1/models`).
 pub async fn fetch_openclaw_models(
     host: &str,

@@ -438,6 +438,12 @@ pub struct GenerateModelCatalogArgs {
     /// Disable OpenClaw fetching
     #[arg(long)]
     pub no_openclaw: bool,
+    /// LM Studio catalog base URL
+    #[arg(long, default_value = "https://lmstudio.ai")]
+    pub lms_url: String,
+    /// Disable LM Studio fetching
+    #[arg(long)]
+    pub no_lms: bool,
 }
 
 fn main() {
