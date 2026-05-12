@@ -46,7 +46,7 @@ async fn fetch_ollama_models_inner(base_url: &str) -> Result<ModelSource, Server
     let models: Vec<_> = resp
         .models
         .into_iter()
-        .take(500)
+        .take(2000)
         .map(|m| {
             let family = m
                 .details
