@@ -524,13 +524,7 @@ fn build_groups_recursive(items: Vec<(Vec<String>, ModelEntry)>, depth: usize) -
     }
 
     for (key, group) in buckets {
-        if group.len() == 1 {
-            // Single item in bucket — emit as leaf, no group wrapper.
-            result.push(ModelNode::Model(group.into_iter().next().unwrap().1));
-        } else {
-            // Check: do ALL items in this bucket share the NEXT token too?
-            // If so, merge this level to avoid single-child chains
-            // (e.g. don't create "claude" → "sonnet" → ... if everything is "claude-sonnet-*").
+        {
             let children = build_groups_recursive(group, depth + 1);
             // If recursion produced a single group child, unwrap it
             // to avoid unnecessary nesting like "X" → "Y" → items.
