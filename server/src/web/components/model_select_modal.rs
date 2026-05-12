@@ -412,15 +412,16 @@ fn titlecase(s: &str) -> String {
 }
 
 /// Split a model ID into semantic tokens for grouping.
-/// Splits on `-` for the base name, then adds the `:tag` as a separate level.
-/// Adjacent numeric segments are merged into version numbers.
+/// Splits on `/`, `-`, and `:`, with adjacent numeric segments merged
+/// into version numbers.
 ///
-/// "claude-sonnet-4-6" → ["claude", "sonnet", "4.6"]
-/// "gpt-5.4-mini"      → ["gpt", "5.4", "mini"]
-/// "gemini-2.5-flash"  → ["gemini", "2.5", "flash"]
-/// "qwen3:0.6b"        → ["qwen3", ":0.6b"]
-/// "llama3.3:70b"      → ["llama3.3", ":70b"]
-/// "gemma3:1b"          → ["gemma3", ":1b"]
+/// "claude-sonnet-4-6"                → ["claude", "sonnet", "4.6"]
+/// "gpt-5.4-mini"                     → ["gpt", "5.4", "mini"]
+/// "gemini-2.5-flash"                 → ["gemini", "2.5", "flash"]
+/// "qwen3:0.6b"                       → ["qwen3", ":0.6b"]
+/// "llama3.3:70b"                     → ["llama3.3", ":70b"]
+/// "anthropic/claude-sonnet-4-6"      → ["anthropic", "claude", "sonnet", "4.6"]
+/// "meta-llama/llama-3.3-70b"         → ["meta", "llama", "llama", "3.3", "70b"]
 #[cfg(feature = "server")]
 fn tokenize_model_id(model_id: &str) -> Vec<String> {
     // Split on `:` — first part is the base name, rest are tags (size variants).
@@ -428,7 +429,9 @@ fn tokenize_model_id(model_id: &str) -> Vec<String> {
     let base = colon_parts[0];
     let tag = colon_parts.get(1).copied();
 
-    let raw_parts: Vec<&str> = base.split('-').collect();
+    // Split on both `/` and `-` to handle "provider/model-name" and plain
+    // "model-name" uniformly.
+    let raw_parts: Vec<&str> = base.split(&['/', '-'][..]).collect();
 
     // Merge adjacent purely-numeric parts into version numbers:
     // e.g. ["4", "6"] → "4.6"; standalone "3.5" stays as-is.
@@ -436,6 +439,10 @@ fn tokenize_model_id(model_id: &str) -> Vec<String> {
     let mut i = 0;
     while i < raw_parts.len() {
         let part = raw_parts[i];
+        if part.is_empty() {
+            i += 1;
+            continue;
+        }
         if is_numeric_segment(part) && i + 1 < raw_parts.len() && is_numeric_segment(raw_parts[i + 1]) {
             tokens.push(format!("{}.{}", part, raw_parts[i + 1]));
             i += 2;
