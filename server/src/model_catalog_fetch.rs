@@ -82,8 +82,9 @@ pub async fn fetch_ollama_models(base_url: &str) -> Result<ModelSource, String> 
                 .filter(|s| !s.is_empty())
                 .collect();
 
-            // Check if model supports tool calling
+            // Check capabilities
             let has_tools = caps.iter().any(|c| c.eq_ignore_ascii_case("tools"));
+            let is_cloud = caps.iter().any(|c| c.eq_ignore_ascii_case("cloud"));
 
             // Extract the href to get the canonical model path (e.g. "/library/mistral-medium-3.5")
             let href = li
@@ -96,27 +97,33 @@ pub async fn fetch_ollama_models(base_url: &str) -> Result<ModelSource, String> 
                 .unwrap_or(&name)
                 .to_string();
 
-            let display = if sizes.is_empty() && caps.is_empty() {
-                name.clone()
+            tracing::debug!("  {model_id} sizes={sizes:?} caps={caps:?} tools={has_tools} cloud={is_cloud}");
+
+            // Emit individual `:size` entries for each advertised size,
+            // plus a base entry when there are no sizes or as the default.
+            if sizes.is_empty() {
+                entries.push(ModelEntry {
+                    model_id: model_id.clone(),
+                    full_model_id: model_id,
+                    display_name: name,
+                    supports_tools: has_tools,
+                    sizes: vec![],
+                    is_cloud,
+                });
             } else {
-                let mut parts = Vec::new();
-                if !sizes.is_empty() {
-                    parts.push(sizes.join(", "));
+                for size in &sizes {
+                    let sized_id = format!("{model_id}:{size}");
+                    let sized_display = format!("{name}:{size}");
+                    entries.push(ModelEntry {
+                        model_id: sized_id.clone(),
+                        full_model_id: sized_id,
+                        display_name: sized_display,
+                        supports_tools: has_tools,
+                        sizes: sizes.clone(),
+                        is_cloud,
+                    });
                 }
-                if !caps.is_empty() {
-                    parts.push(caps.join(", "));
-                }
-                format!("{} ({})", name, parts.join(" | "))
-            };
-
-            tracing::debug!("  {model_id} sizes={sizes:?} caps={caps:?} tools={has_tools}");
-
-            entries.push(ModelEntry {
-                model_id: model_id.clone(),
-                full_model_id: model_id,
-                display_name: display,
-                supports_tools: has_tools,
-            });
+            }
             page_count += 1;
         }
 

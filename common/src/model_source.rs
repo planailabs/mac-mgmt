@@ -13,6 +13,12 @@ pub struct ModelEntry {
     /// Whether the model advertises tool/function-calling support.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub supports_tools: bool,
+    /// Available parameter sizes (e.g. ["1b", "7b", "70b"]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sizes: Vec<String>,
+    /// Whether this is a cloud-only model (no local weights).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_cloud: bool,
 }
 
 /// A node in the model tree — either a named group of children or a leaf model.
