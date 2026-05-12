@@ -36,7 +36,7 @@ pub async fn get_model_catalog(source_id: String) -> Result<ModelSource, ServerF
 // ── Modal state ──────────────────────────────────────────────────────
 
 /// Request to open the model selection modal. Set into a context signal.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModelSelectRequest {
     pub source_kind: String,
     pub current: Vec<String>,
@@ -48,17 +48,49 @@ pub struct ModelSelectRequest {
 
 // ── Modal component ──────────────────────────────────────────────────
 
+/// Outer shell: when `request` is `Some`, render a keyed inner component.
+/// Changing the key forces Dioxus to unmount/remount the inner component,
+/// which resets every hook (signals, server futures, effects) — eliminating
+/// stale-state mixups between different fields or source kinds.
 #[component]
 pub fn ModelSelectModal(
     request: Signal<Option<ModelSelectRequest>>,
     form_values: Signal<serde_json::Value>,
     json_text: Signal<String>,
 ) -> Element {
-    // Close & reset when request is None
     let Some(req) = request.read().clone() else {
         return rsx! {};
     };
 
+    // Identity key: changes whenever a different field, source, or provider
+    // opens the modal, causing a full hook reset.
+    let modal_key = format!(
+        "{}:{}:{}",
+        req.field_path.join("."),
+        req.source_kind,
+        req.provider.as_deref().unwrap_or(""),
+    );
+
+    rsx! {
+        ModelSelectModalInner {
+            key: "{modal_key}",
+            req,
+            request,
+            form_values,
+            json_text,
+        }
+    }
+}
+
+/// Inner component — all hooks are scoped to one specific request.
+/// When the outer key changes, this component is fully remounted.
+#[component]
+fn ModelSelectModalInner(
+    req: ModelSelectRequest,
+    request: Signal<Option<ModelSelectRequest>>,
+    form_values: Signal<serde_json::Value>,
+    json_text: Signal<String>,
+) -> Element {
     let mut selected: Signal<HashSet<String>> = use_signal(|| {
         req.current.iter().cloned().collect::<HashSet<_>>()
     });
@@ -68,19 +100,6 @@ pub fn ModelSelectModal(
     let mut show_selected: Signal<bool> = use_signal(|| false);
     let mut expanded: Signal<HashSet<String>> = use_signal(HashSet::new);
 
-    // Build an identity key from the request so we can detect when a
-    // different field opens the modal and reset all internal state.
-    let request_key = format!("{}:{}", req.field_path.join("."), req.source_kind);
-    let mut prev_key: Signal<String> = use_signal(String::new);
-    if *prev_key.read() != request_key {
-        prev_key.set(request_key);
-        selected.set(req.current.iter().cloned().collect());
-        custom_models.set(Vec::new());
-        filter.set(String::new());
-        show_selected.set(false);
-        expanded.set(HashSet::new());
-    }
-
     // Fetch model source.
     let source_kind = req.source_kind.clone();
     let provider = req.provider.clone();
@@ -89,7 +108,6 @@ pub fn ModelSelectModal(
         let sk = source_kind.clone();
         let prov = provider.clone();
         async move {
-            // For cloud sources, look up by provider slug (e.g. "anthropic")
             let catalog_id = if sk == "cloud" {
                 prov.unwrap_or(sk.clone())
             } else {
@@ -142,10 +160,10 @@ pub fn ModelSelectModal(
         .map(|s| s.list_all().into_iter().map(|e| e.full_model_id).collect())
         .unwrap_or_default();
     // On first load, populate custom_models from current selections not in catalog.
+    let current_for_effect = req.current.clone();
     use_effect(move || {
         if !loading {
-            let current_customs: Vec<String> = req
-                .current
+            let current_customs: Vec<String> = current_for_effect
                 .iter()
                 .filter(|id| !catalog_ids.contains(*id))
                 .cloned()
