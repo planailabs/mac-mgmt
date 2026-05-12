@@ -130,7 +130,7 @@ async fn relay_file_list(
     let result: serde_json::Value = document::eval(&js).await.map_err(|e| format!("{e}"))?;
     let text: String = result.as_str().unwrap_or("").to_string();
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("parse: {e}"))?;
-    Ok(v["entries"].as_array().cloned().unwrap_or_default())
+    Ok(v["body"]["entries"].as_array().cloned().unwrap_or_default())
 }
 
 async fn relay_file_read(
@@ -311,7 +311,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
                     Ok(result) => {
                         let status = result["status"].as_u64().unwrap_or(500);
                         if status == 200 {
-                            if let Some(new_mtime) = result["mtime"].as_i64() {
+                            if let Some(new_mtime) = result["body"]["mtime"].as_i64() {
                                 editor_mtime.set(new_mtime);
                             }
                             editor_dirty.set(false);
@@ -319,7 +319,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
                         } else if status == 409 {
                             save_status.set(Some(t!("file-editor-conflict").to_string()));
                         } else {
-                            let err = result["error"].as_str().unwrap_or("Save failed");
+                            let err = result["body"]["error"].as_str().unwrap_or("Save failed");
                             save_status.set(Some(err.to_string()));
                         }
                     }
