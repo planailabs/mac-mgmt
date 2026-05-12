@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use mac_mgmt_common::model_source::{group_models, ModelEntry, ModelNode, ModelSource};
+use mac_mgmt_common::model_source::{ModelEntry, ModelNode, ModelSource};
 use std::collections::HashSet;
 
 // ── Server functions ─────────────────────────────────────────────────
@@ -74,26 +74,25 @@ async fn fetch_ollama_models_inner(base_url: &str) -> Result<ModelSource, Server
         })
         .collect();
 
-    let entries_with_family = models;
-    // Group by family, then by base model name (before the colon/size tag).
-    let groups = group_models(
-        entries_with_family.iter().map(|(e, _)| e.clone()).collect(),
-        |entry| {
-            let family = entries_with_family
-                .iter()
-                .find(|(e, _)| e.model_id == entry.model_id)
-                .map(|(_, f)| f.clone())
-                .unwrap_or_default();
-            let family_group = if family.is_empty() {
-                "Other".to_string()
-            } else {
-                titlecase(&family)
-            };
-            // Sub-group: base model name (strip :tag).
-            let base = entry.model_id.split(':').next().unwrap_or(&entry.model_id);
-            vec![family_group, base.to_string()]
-        },
-    );
+    // Build a family lookup from the API response's `details.family` field.
+    let family_map: std::collections::HashMap<String, String> = models
+        .iter()
+        .map(|(e, f)| (e.model_id.clone(), f.clone()))
+        .collect();
+    let entries: Vec<ModelEntry> = models.into_iter().map(|(e, _)| e).collect();
+
+    // Group by family (from API), then recursively by model ID tokens.
+    let groups = auto_group(entries, |entry| {
+        let family = family_map
+            .get(&entry.model_id)
+            .cloned()
+            .unwrap_or_default();
+        if family.is_empty() {
+            vec![]
+        } else {
+            vec![family.to_lowercase()]
+        }
+    });
 
     Ok(ModelSource {
         id: "ollama".into(),
@@ -172,19 +171,14 @@ async fn fetch_openclaw_models_inner(
         })
         .collect();
 
-    let groups = group_models(entries, |entry| {
+    let groups = auto_group(entries, |entry| {
         let provider = entry
             .full_model_id
             .split('/')
             .next()
             .unwrap_or("unknown")
             .to_string();
-        let family = guess_model_family(&entry.model_id);
-        let mut segs = vec![titlecase(&provider)];
-        if !family.is_empty() {
-            segs.push(family);
-        }
-        segs
+        vec![provider]
     });
 
     Ok(ModelSource {
@@ -243,19 +237,14 @@ async fn fetch_openrouter_models_inner() -> Result<ModelSource, ServerFnError> {
         })
         .collect();
 
-    let groups = group_models(entries, |entry| {
+    let groups = auto_group(entries, |entry| {
         // OpenRouter IDs are like "anthropic/claude-sonnet-4-6"
+        // Extract the provider prefix as the first group segment.
         let parts: Vec<&str> = entry.model_id.splitn(2, '/').collect();
         if parts.len() == 2 {
-            let provider = titlecase(parts[0]);
-            let family = guess_model_family(parts[1]);
-            let mut segs = vec![provider];
-            if !family.is_empty() {
-                segs.push(family);
-            }
-            segs
+            vec![parts[0].to_string()]
         } else {
-            vec!["Other".to_string()]
+            vec!["other".to_string()]
         }
     });
 
@@ -401,14 +390,8 @@ async fn fetch_cloud_provider_models_inner(
     let _ = url; // suppress unused
 
     let prov_display = titlecase(provider);
-    let groups = group_models(entries, |entry| {
-        let family = guess_model_family(&entry.model_id);
-        if family.is_empty() {
-            vec![]
-        } else {
-            vec![family]
-        }
-    });
+    // Recursive grouping by model ID tokens — no hardcoded families needed.
+    let groups = auto_group(entries, |_| vec![]);
 
     Ok(ModelSource {
         id: provider.to_string(),
@@ -428,58 +411,156 @@ fn titlecase(s: &str) -> String {
     }
 }
 
-/// Heuristic: extract a model family name from a model ID.
-/// E.g. "claude-sonnet-4-6" → "Claude 4", "gpt-5.4-mini" → "GPT 5",
-/// "gemini-2.5-flash" → "Gemini 2.5", "llama-3.3-70b" → "Llama 3.3".
+/// Split a model ID into semantic tokens for grouping.
+/// Splits on `-` for the base name, then adds the `:tag` as a separate level.
+/// Adjacent numeric segments are merged into version numbers.
+///
+/// "claude-sonnet-4-6" → ["claude", "sonnet", "4.6"]
+/// "gpt-5.4-mini"      → ["gpt", "5.4", "mini"]
+/// "gemini-2.5-flash"  → ["gemini", "2.5", "flash"]
+/// "qwen3:0.6b"        → ["qwen3", ":0.6b"]
+/// "llama3.3:70b"      → ["llama3.3", ":70b"]
+/// "gemma3:1b"          → ["gemma3", ":1b"]
 #[cfg(feature = "server")]
-fn guess_model_family(model_id: &str) -> String {
-    // Known prefix patterns: name-version
-    let families: &[(&str, &str)] = &[
-        ("claude-opus-4-7", "Claude 4.7"),
-        ("claude-opus-4-6", "Claude 4.6"),
-        ("claude-sonnet-4-6", "Claude 4.6"),
-        ("claude-opus-4-5", "Claude 4.5"),
-        ("claude-sonnet-4-5", "Claude 4.5"),
-        ("claude-haiku-4-5", "Claude 4.5"),
-        ("claude-opus-4", "Claude 4"),
-        ("claude-sonnet-4", "Claude 4"),
-        ("claude-3-5", "Claude 3.5"),
-        ("claude-3", "Claude 3"),
-        ("gpt-5.5", "GPT 5.5"),
-        ("gpt-5.4", "GPT 5.4"),
-        ("gpt-5", "GPT 5"),
-        ("gpt-4o", "GPT 4o"),
-        ("gpt-4.1", "GPT 4.1"),
-        ("gpt-4", "GPT 4"),
-        ("o4-", "O4"),
-        ("o3-", "O3"),
-        ("o1-", "O1"),
-        ("gemini-3", "Gemini 3"),
-        ("gemini-2.5", "Gemini 2.5"),
-        ("gemini-2", "Gemini 2"),
-        ("gemini-1.5", "Gemini 1.5"),
-        ("llama-4", "Llama 4"),
-        ("llama-3.3", "Llama 3.3"),
-        ("llama-3.2", "Llama 3.2"),
-        ("llama-3.1", "Llama 3.1"),
-        ("llama-3", "Llama 3"),
-        ("mistral-large", "Mistral Large"),
-        ("mistral-small", "Mistral Small"),
-        ("mistral-medium", "Mistral Medium"),
-        ("deepseek-", "DeepSeek"),
-        ("grok-3", "Grok 3"),
-        ("grok-2", "Grok 2"),
-        ("qwen", "Qwen"),
-        ("phi", "Phi"),
-    ];
+fn tokenize_model_id(model_id: &str) -> Vec<String> {
+    // Split on `:` — first part is the base name, rest are tags (size variants).
+    let colon_parts: Vec<&str> = model_id.splitn(2, ':').collect();
+    let base = colon_parts[0];
+    let tag = colon_parts.get(1).copied();
 
-    let lower = model_id.to_lowercase();
-    for (prefix, family) in families {
-        if lower.starts_with(prefix) {
-            return family.to_string();
+    let raw_parts: Vec<&str> = base.split('-').collect();
+
+    // Merge adjacent purely-numeric parts into version numbers:
+    // e.g. ["4", "6"] → "4.6"; standalone "3.5" stays as-is.
+    let mut tokens: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < raw_parts.len() {
+        let part = raw_parts[i];
+        if is_numeric_segment(part) && i + 1 < raw_parts.len() && is_numeric_segment(raw_parts[i + 1]) {
+            tokens.push(format!("{}.{}", part, raw_parts[i + 1]));
+            i += 2;
+        } else {
+            tokens.push(part.to_string());
+            i += 1;
         }
     }
-    String::new()
+
+    // Add the `:tag` as a separate grouping level so size variants cluster
+    // under the base model name: e.g. "qwen3" group contains ":0.6b", ":4b", ":8b".
+    if let Some(t) = tag {
+        tokens.push(format!(":{t}"));
+    }
+
+    tokens
+}
+
+#[cfg(feature = "server")]
+fn is_numeric_segment(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit() || c == '.')
+}
+
+/// Build recursive groups from a flat list of (model_entry, extra_segments) pairs.
+/// `extra_segments` are prepended to the auto-detected token groups (e.g. provider name).
+///
+/// Algorithm: given a set of model IDs, find the longest shared prefix tokens among
+/// siblings. If ≥2 models share a prefix, group them under that prefix. Recurse
+/// into each group with the remaining suffix tokens.
+#[cfg(feature = "server")]
+fn auto_group(entries: Vec<ModelEntry>, extra_prefix: impl Fn(&ModelEntry) -> Vec<String>) -> Vec<ModelNode> {
+    // Build (full_segments, entry) pairs.
+    let items: Vec<(Vec<String>, ModelEntry)> = entries
+        .into_iter()
+        .map(|e| {
+            let mut segs = extra_prefix(&e);
+            segs.extend(tokenize_model_id(&e.model_id));
+            (segs, e)
+        })
+        .collect();
+
+    build_groups_recursive(items, 0)
+}
+
+#[cfg(feature = "server")]
+fn build_groups_recursive(items: Vec<(Vec<String>, ModelEntry)>, depth: usize) -> Vec<ModelNode> {
+    use std::collections::BTreeMap;
+
+    if items.is_empty() {
+        return vec![];
+    }
+
+    // If only one item or we've exhausted segments, emit leaves.
+    if items.len() == 1 || depth >= 6 {
+        return items
+            .into_iter()
+            .map(|(_, e)| ModelNode::Model(e))
+            .collect();
+    }
+
+    // Group by the token at `depth`.
+    let mut buckets: BTreeMap<String, Vec<(Vec<String>, ModelEntry)>> = BTreeMap::new();
+    let mut no_segment: Vec<(Vec<String>, ModelEntry)> = Vec::new();
+
+    for item in items {
+        if depth < item.0.len() {
+            let key = item.0[depth].to_lowercase();
+            buckets.entry(key).or_default().push(item);
+        } else {
+            no_segment.push(item);
+        }
+    }
+
+    let mut result: Vec<ModelNode> = Vec::new();
+
+    // Items that ran out of segments become leaves.
+    for (_, e) in no_segment {
+        result.push(ModelNode::Model(e));
+    }
+
+    for (key, group) in buckets {
+        if group.len() == 1 {
+            // Single item in bucket — emit as leaf, no group wrapper.
+            result.push(ModelNode::Model(group.into_iter().next().unwrap().1));
+        } else {
+            // Check: do ALL items in this bucket share the NEXT token too?
+            // If so, merge this level to avoid single-child chains
+            // (e.g. don't create "claude" → "sonnet" → ... if everything is "claude-sonnet-*").
+            let children = build_groups_recursive(group, depth + 1);
+            // If recursion produced a single group child, unwrap it
+            // to avoid unnecessary nesting like "X" → "Y" → items.
+            if children.len() == 1 {
+                if let ModelNode::Group {
+                    name: child_name,
+                    display_name: _,
+                    children: grandchildren,
+                } = &children[0]
+                {
+                    let merged_name = format!("{}-{}", key, child_name);
+                    result.push(ModelNode::Group {
+                        display_name: titlecase(&merged_name),
+                        name: merged_name,
+                        children: grandchildren.clone(),
+                    });
+                    continue;
+                }
+            }
+            result.push(ModelNode::Group {
+                display_name: titlecase(&key),
+                name: key,
+                children,
+            });
+        }
+    }
+
+    // Sort: groups first (alphabetically), then models.
+    result.sort_by(|a, b| {
+        let sort_key = |n: &ModelNode| match n {
+            ModelNode::Group { name, .. } => (0, name.to_lowercase()),
+            ModelNode::Model(e) => (1, e.model_id.to_lowercase()),
+        };
+        sort_key(a).cmp(&sort_key(b))
+    });
+
+    result
 }
 
 // ── Modal state ──────────────────────────────────────────────────────
