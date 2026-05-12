@@ -426,6 +426,18 @@ pub struct GenerateModelCatalogArgs {
     /// Together API key (or set TOGETHER_API_KEY)
     #[arg(long)]
     pub together_key: Option<String>,
+    /// OpenClaw gateway host
+    #[arg(long, default_value = "127.0.0.1")]
+    pub openclaw_host: String,
+    /// OpenClaw gateway port
+    #[arg(long, default_value_t = 18789)]
+    pub openclaw_port: u16,
+    /// OpenClaw gateway token (or set OPENCLAW_TOKEN)
+    #[arg(long)]
+    pub openclaw_token: Option<String>,
+    /// Disable OpenClaw fetching
+    #[arg(long)]
+    pub no_openclaw: bool,
 }
 
 fn main() {

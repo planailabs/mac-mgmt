@@ -151,6 +151,88 @@ pub async fn fetch_ollama_models(base_url: &str) -> Result<ModelSource, String> 
     })
 }
 
+/// Fetch models from an OpenClaw gateway (`/v1/models`).
+pub async fn fetch_openclaw_models(
+    host: &str,
+    port: u16,
+    token: Option<&str>,
+) -> Result<ModelSource, String> {
+    #[derive(serde::Deserialize)]
+    struct ModelsResponse {
+        #[serde(default)]
+        data: Vec<ModelObj>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ModelObj {
+        id: String,
+        #[serde(default)]
+        owned_by: String,
+    }
+
+    let url = format!("http://{host}:{port}/v1/models");
+    tracing::info!("openclaw: fetching {url}");
+
+    let client = reqwest::Client::new();
+    let mut req = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10));
+    if let Some(tok) = token {
+        req = req.bearer_auth(tok);
+    }
+    let resp: ModelsResponse = req
+        .send()
+        .await
+        .map_err(|e| format!("openclaw fetch: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("openclaw parse: {e}"))?;
+
+    tracing::info!("openclaw: received {} raw models", resp.data.len());
+
+    let entries: Vec<ModelEntry> = resp
+        .data
+        .into_iter()
+        .map(|m| {
+            let provider = if !m.owned_by.is_empty() {
+                m.owned_by.clone()
+            } else {
+                m.id.split('/').next().unwrap_or("unknown").to_string()
+            };
+            let model_id = if m.id.contains('/') {
+                m.id.split('/').last().unwrap_or(&m.id).to_string()
+            } else {
+                m.id.clone()
+            };
+            ModelEntry {
+                display_name: model_id.clone(),
+                model_id,
+                full_model_id: if m.id.contains('/') {
+                    m.id
+                } else {
+                    format!("{provider}/{}", m.id)
+                },
+                ..Default::default()
+            }
+        })
+        .collect();
+
+    let groups = auto_group(entries, |entry| {
+        let provider = entry
+            .full_model_id
+            .split('/')
+            .next()
+            .unwrap_or("unknown")
+            .to_string();
+        vec![provider]
+    });
+
+    Ok(ModelSource {
+        id: "openclaw".into(),
+        display_name: "OpenClaw".into(),
+        groups,
+    })
+}
+
 /// Fetch models from OpenRouter (public, no auth required).
 pub async fn fetch_openrouter_models() -> Result<ModelSource, String> {
     #[derive(serde::Deserialize)]

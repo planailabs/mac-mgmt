@@ -39,6 +39,29 @@ pub async fn run(args: &crate::GenerateModelCatalogArgs) {
         }
     }
 
+    // ── OpenClaw (local gateway) ──────────────────────────────────
+    if !args.no_openclaw {
+        let token = args
+            .openclaw_token
+            .clone()
+            .or_else(|| std::env::var("OPENCLAW_TOKEN").ok());
+        tracing::info!("fetching openclaw ({}:{})...", args.openclaw_host, args.openclaw_port);
+        match model_catalog_fetch::fetch_openclaw_models(
+            &args.openclaw_host,
+            args.openclaw_port,
+            token.as_deref(),
+        )
+        .await
+        {
+            Ok(src) => {
+                let n: usize = src.groups.iter().map(|g| g.count_models()).sum();
+                tracing::info!("openclaw: {n} models");
+                sources.push(src);
+            }
+            Err(e) => tracing::warn!("openclaw: {e} (skipping)"),
+        }
+    }
+
     // ── OpenRouter (public) ─────────────────────────────────────
     if !args.no_openrouter {
         tracing::info!("fetching openrouter...");
