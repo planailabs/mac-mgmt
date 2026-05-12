@@ -28,27 +28,27 @@ pub async fn run(args: &crate::GenerateModelCatalogArgs) {
     // ── Ollama (public) ─────────────────────────────────────────
     {
         let url = &args.ollama_url;
-        eprint!("fetching ollama ({url})...");
+        tracing::info!("fetching ollama ({url})...");
         match model_catalog_fetch::fetch_ollama_models(url).await {
             Ok(src) => {
                 let n: usize = src.groups.iter().map(|g| g.count_models()).sum();
-                eprintln!(" {n} models");
+                tracing::info!("ollama: {n} models");
                 sources.push(src);
             }
-            Err(e) => eprintln!(" error: {e}"),
+            Err(e) => tracing::error!("ollama: {e}"),
         }
     }
 
     // ── OpenRouter (public) ─────────────────────────────────────
     if !args.no_openrouter {
-        eprint!("fetching openrouter...");
+        tracing::info!("fetching openrouter...");
         match model_catalog_fetch::fetch_openrouter_models().await {
             Ok(src) => {
                 let n: usize = src.groups.iter().map(|g| g.count_models()).sum();
-                eprintln!(" {n} models");
+                tracing::info!("openrouter: {n} models");
                 sources.push(src);
             }
-            Err(e) => eprintln!(" error: {e}"),
+            Err(e) => tracing::error!("openrouter: {e}"),
         }
     }
 
@@ -56,22 +56,22 @@ pub async fn run(args: &crate::GenerateModelCatalogArgs) {
     for &(provider, env_var, base_url) in CLOUD_PROVIDERS {
         let key = resolve_key(args, provider, env_var);
         if let Some(api_key) = key {
-            eprint!("fetching {provider}...");
+            tracing::info!("fetching {provider}...");
             match model_catalog_fetch::fetch_cloud_provider_models(provider, base_url, &api_key)
                 .await
             {
                 Ok(src) => {
                     let n: usize = src.groups.iter().map(|g| g.count_models()).sum();
-                    eprintln!(" {n} models");
+                    tracing::info!("{provider}: {n} models");
                     sources.push(src);
                 }
-                Err(e) => eprintln!(" error: {e}"),
+                Err(e) => tracing::error!("{provider}: {e}"),
             }
         }
     }
 
     if sources.is_empty() {
-        eprintln!("warning: no sources fetched, catalog will be empty");
+        tracing::warn!("no sources fetched, catalog will be empty");
     }
 
     let catalog = ModelCatalog {
@@ -93,7 +93,7 @@ pub async fn run(args: &crate::GenerateModelCatalogArgs) {
         .flat_map(|s| &s.groups)
         .map(|g| g.count_models())
         .sum();
-    eprintln!(
+    tracing::info!(
         "wrote {} source(s), {} total models to {}",
         catalog.sources.len(),
         total,

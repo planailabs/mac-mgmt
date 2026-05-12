@@ -9,86 +9,140 @@ use std::collections::BTreeMap;
 
 // ── Provider fetch functions ────────────────────────────────────────
 
-/// Fetch models from the Ollama cloud library (ollama.com/api/tags).
+/// Fetch models from the Ollama library by scraping the search pages.
+///
+/// Paginates through `{base_url}/search?page=N&o=newest` using HTMX headers
+/// until no more "next page" link is found. A short delay is inserted between
+/// requests to avoid overwhelming the server.
 pub async fn fetch_ollama_models(base_url: &str) -> Result<ModelSource, String> {
-    #[derive(serde::Deserialize)]
-    struct OllamaTagsResponse {
-        #[serde(default)]
-        models: Vec<OllamaTagModel>,
-    }
-    #[derive(serde::Deserialize)]
-    struct OllamaTagModel {
-        name: String,
-        #[serde(default)]
-        details: Option<OllamaDetails>,
-    }
-    #[derive(serde::Deserialize)]
-    struct OllamaDetails {
-        #[serde(default)]
-        family: Option<String>,
-        #[serde(default)]
-        parameter_size: Option<String>,
-    }
+    use scraper::{Html, Selector};
 
     let client = reqwest::Client::new();
-    let resp: OllamaTagsResponse = client
-        .get(format!("{base_url}/api/tags"))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| format!("ollama fetch: {e}"))?
-        .json()
-        .await
-        .map_err(|e| format!("ollama parse: {e}"))?;
+    let model_sel = Selector::parse("li[x-test-model]").unwrap();
+    let title_sel = Selector::parse("[x-test-search-response-title]").unwrap();
+    let size_sel = Selector::parse("[x-test-size]").unwrap();
+    let next_page_sel = Selector::parse("li[hx-get]").unwrap();
+    let link_sel = Selector::parse("a[href]").unwrap();
+    // Capabilities: vision, tools, thinking, embedding, cloud, etc.
+    let cap_sel = Selector::parse("[x-test-capability]").unwrap();
 
-    let models: Vec<_> = resp
-        .models
-        .into_iter()
-        .take(2000)
-        .map(|m| {
-            let family = m
-                .details
-                .as_ref()
-                .and_then(|d| d.family.clone())
-                .unwrap_or_default();
-            let param_size = m
-                .details
-                .as_ref()
-                .and_then(|d| d.parameter_size.clone())
-                .unwrap_or_default();
-            let display = if param_size.is_empty() {
-                m.name.clone()
-            } else {
-                format!("{} ({})", m.name, param_size)
-            };
-            (
-                ModelEntry {
-                    model_id: m.name.clone(),
-                    full_model_id: m.name,
-                    display_name: display,
-                },
-                family,
-            )
-        })
-        .collect();
+    let mut entries: Vec<ModelEntry> = Vec::new();
+    let mut page = 1u32;
+    let delay = std::time::Duration::from_millis(500);
 
-    let family_map: std::collections::HashMap<String, String> = models
-        .iter()
-        .map(|(e, f)| (e.model_id.clone(), f.clone()))
-        .collect();
-    let entries: Vec<ModelEntry> = models.into_iter().map(|(e, _)| e).collect();
+    loop {
+        let url = format!("{base_url}/search?page={page}&o=newest");
+        tracing::info!("ollama: fetching page {page} ({url})");
 
-    let groups = auto_group(entries, |entry| {
-        let family = family_map
-            .get(&entry.model_id)
-            .cloned()
-            .unwrap_or_default();
-        if family.is_empty() {
-            vec![]
-        } else {
-            vec![family.to_lowercase()]
+        let resp = client
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:149.0) Gecko/20100101 Firefox/149.0")
+            .header("HX-Request", "true")
+            .header("HX-Current-URL", format!("{base_url}/search?o=newest"))
+            .header("Referer", format!("{base_url}/search?o=newest"))
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("ollama page {page} fetch: {e}"))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("ollama page {page}: HTTP {}", resp.status()));
         }
-    });
+
+        let html_text = resp
+            .text()
+            .await
+            .map_err(|e| format!("ollama page {page} read: {e}"))?;
+
+        let doc = Html::parse_fragment(&html_text);
+        let mut page_count = 0u32;
+
+        for li in doc.select(&model_sel) {
+            // Extract model name from the title span
+            let name = li
+                .select(&title_sel)
+                .next()
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+
+            // Extract sizes from x-test-size spans (e.g. "128b", "70b")
+            let sizes: Vec<String> = li
+                .select(&size_sel)
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            // Extract capabilities
+            let caps: Vec<String> = li
+                .select(&cap_sel)
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            // Check if model supports tool calling
+            let has_tools = caps.iter().any(|c| c.eq_ignore_ascii_case("tools"));
+
+            // Extract the href to get the canonical model path (e.g. "/library/mistral-medium-3.5")
+            let href = li
+                .select(&link_sel)
+                .next()
+                .and_then(|a| a.value().attr("href"))
+                .unwrap_or_default();
+            let model_id = href
+                .strip_prefix("/library/")
+                .unwrap_or(&name)
+                .to_string();
+
+            let display = if sizes.is_empty() && caps.is_empty() {
+                name.clone()
+            } else {
+                let mut parts = Vec::new();
+                if !sizes.is_empty() {
+                    parts.push(sizes.join(", "));
+                }
+                if !caps.is_empty() {
+                    parts.push(caps.join(", "));
+                }
+                format!("{} ({})", name, parts.join(" | "))
+            };
+
+            tracing::debug!("  {model_id} sizes={sizes:?} caps={caps:?} tools={has_tools}");
+
+            entries.push(ModelEntry {
+                model_id: model_id.clone(),
+                full_model_id: model_id,
+                display_name: display,
+                supports_tools: has_tools,
+            });
+            page_count += 1;
+        }
+
+        tracing::info!("ollama: page {page} yielded {page_count} models (total: {})", entries.len());
+
+        // Check for next page: look for an <li> with hx-get="/search?page=N"
+        let has_next = doc.select(&next_page_sel).any(|el| {
+            el.value()
+                .attr("hx-get")
+                .map(|v| v.contains("page="))
+                .unwrap_or(false)
+        });
+
+        if !has_next || page_count == 0 {
+            tracing::info!("ollama: no more pages after page {page}");
+            break;
+        }
+
+        page += 1;
+        // Rate-limit: wait before fetching the next page
+        tokio::time::sleep(delay).await;
+    }
+
+    tracing::info!("ollama: scraped {} models total across {page} page(s)", entries.len());
+
+    let groups = auto_group(entries, |_| vec![]);
 
     Ok(ModelSource {
         id: "ollama".into(),
@@ -136,6 +190,7 @@ pub async fn fetch_openrouter_models() -> Result<ModelSource, String> {
                 model_id: model_id.clone(),
                 full_model_id: format!("openrouter/{model_id}"),
                 display_name: display,
+                ..Default::default()
             }
         })
         .collect();
@@ -215,6 +270,7 @@ pub async fn fetch_cloud_provider_models(
                     model_id: id.clone(),
                     full_model_id: format!("{provider}/{id}"),
                     display_name: display,
+                    ..Default::default()
                 }
             })
             .collect::<Vec<_>>()
@@ -248,6 +304,7 @@ pub async fn fetch_cloud_provider_models(
                     model_id: id.clone(),
                     full_model_id: format!("{provider}/{id}"),
                     display_name: display,
+                    ..Default::default()
                 })
             })
             .collect::<Vec<_>>()
@@ -271,6 +328,7 @@ pub async fn fetch_cloud_provider_models(
                 model_id: m.id.clone(),
                 full_model_id: format!("{provider}/{}", m.id),
                 display_name: m.id,
+                ..Default::default()
             })
             .collect::<Vec<_>>()
     };

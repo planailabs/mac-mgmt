@@ -448,6 +448,14 @@ fn main() {
             }
             #[cfg(feature = "server")]
             Commands::GenerateModelCatalog(args) => {
+                // Lightweight tracing for CLI — show info+ logs from our crate.
+                tracing_subscriber::fmt()
+                    .with_env_filter(
+                        tracing_subscriber::EnvFilter::try_from_default_env()
+                            .unwrap_or_else(|_| "mac_mgmt_server=info".parse().unwrap()),
+                    )
+                    .with_target(false)
+                    .init();
                 let rt = tokio::runtime::Runtime::new().expect("failed to create runtime");
                 rt.block_on(generate_model_catalog::run(args));
                 return;

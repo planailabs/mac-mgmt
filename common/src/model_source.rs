@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A single selectable model entry (leaf node in the tree).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ModelEntry {
     /// Short model ID (e.g. "claude-sonnet-4-6", "phi4-mini").
     pub model_id: String,
@@ -10,6 +10,9 @@ pub struct ModelEntry {
     pub full_model_id: String,
     /// Human-readable display name (e.g. "Claude Sonnet 4.6").
     pub display_name: String,
+    /// Whether the model advertises tool/function-calling support.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub supports_tools: bool,
 }
 
 /// A node in the model tree — either a named group of children or a leaf model.
@@ -195,11 +198,13 @@ mod tests {
                                     model_id: "claude-opus-4-6".into(),
                                     full_model_id: "anthropic/claude-opus-4-6".into(),
                                     display_name: "Claude Opus 4.6".into(),
+                                    ..Default::default()
                                 }),
                                 ModelNode::Model(ModelEntry {
                                     model_id: "claude-sonnet-4-6".into(),
                                     full_model_id: "anthropic/claude-sonnet-4-6".into(),
                                     display_name: "Claude Sonnet 4.6".into(),
+                                    ..Default::default()
                                 }),
                             ],
                         },
@@ -207,6 +212,7 @@ mod tests {
                             model_id: "claude-haiku-4-5".into(),
                             full_model_id: "anthropic/claude-haiku-4-5".into(),
                             display_name: "Claude Haiku 4.5".into(),
+                            ..Default::default()
                         }),
                     ],
                 },
@@ -217,6 +223,7 @@ mod tests {
                         model_id: "deepseek-chat".into(),
                         full_model_id: "deepseek/deepseek-chat".into(),
                         display_name: "DeepSeek Chat".into(),
+                        ..Default::default()
                     })],
                 },
             ],
@@ -301,16 +308,19 @@ mod tests {
                 model_id: "a".into(),
                 full_model_id: "x/a".into(),
                 display_name: "A".into(),
+                ..Default::default()
             },
             ModelEntry {
                 model_id: "b".into(),
                 full_model_id: "x/b".into(),
                 display_name: "B".into(),
+                ..Default::default()
             },
             ModelEntry {
                 model_id: "c".into(),
                 full_model_id: "y/c".into(),
                 display_name: "C".into(),
+                ..Default::default()
             },
         ];
         let tree = group_models(entries, |e| {

@@ -99,6 +99,7 @@ async fn fetch_openclaw_models_inner(
                 } else {
                     format!("{provider}/{}", m.id)
                 },
+                ..Default::default()
             }
         })
         .collect();
