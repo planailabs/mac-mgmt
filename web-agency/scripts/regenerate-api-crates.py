@@ -34,6 +34,11 @@ SS_JSON = os.path.join(WEB_AGENCY_DIR, "openapi-spaceship.json")
 SS_TRIMMED = os.path.join(WEB_AGENCY_DIR, "spaceship-api", "openapi-trimmed.json")
 SS_OUTPUT = os.path.join(WEB_AGENCY_DIR, "spaceship-api")
 
+CD_DOCS_URL = "https://changedetection.io/docs/api_v1/index.html"
+CD_JSON = os.path.join(WEB_AGENCY_DIR, "openapi-changedetection.json")
+CD_TRIMMED = os.path.join(WEB_AGENCY_DIR, "changedetection-api", "openapi-trimmed.json")
+CD_OUTPUT = os.path.join(WEB_AGENCY_DIR, "changedetection-api")
+
 # Paths we need from the Cloudflare API
 CF_KEEP_PATHS = [
     "/accounts",
@@ -85,20 +90,30 @@ def fix_double_encoded_utf8(obj):
     return obj
 
 
-def download_spaceship_spec():
-    """Download the Spaceship OpenAPI spec by extracting it from their Redoc docs page."""
-    print(f"Downloading Spaceship spec from {SS_DOCS_URL}...")
-    resp = requests.get(SS_DOCS_URL, timeout=60)
+def download_redoc_spec(docs_url, output_path, name):
+    """Download an OpenAPI spec by extracting __redoc_state from a Redoc docs page."""
+    print(f"Downloading {name} spec from {docs_url}...")
+    resp = requests.get(docs_url, timeout=60)
     resp.raise_for_status()
     m = re.search(r'__redoc_state\s*=\s*(.*?)\s*;\s*\n', resp.text, re.DOTALL)
     if not m:
-        print("Could not find __redoc_state in Spaceship docs page", file=sys.stderr)
+        print(f"Could not find __redoc_state in {name} docs page", file=sys.stderr)
         sys.exit(1)
     state = json.loads(m.group(1))
     spec = fix_double_encoded_utf8(state["spec"]["data"])
-    with open(SS_JSON, "w") as f:
+    with open(output_path, "w") as f:
         json.dump(spec, f, indent=2, ensure_ascii=False)
-    print(f"  Written to {SS_JSON} (paths: {len(spec.get('paths', {}))})")
+    print(f"  Written to {output_path} (paths: {len(spec.get('paths', {}))})")
+
+
+def download_spaceship_spec():
+    """Download the Spaceship OpenAPI spec by extracting it from their Redoc docs page."""
+    download_redoc_spec(SS_DOCS_URL, SS_JSON, "Spaceship")
+
+
+def download_changedetection_spec():
+    """Download the ChangeDetection.io OpenAPI spec by extracting it from their Redoc docs page."""
+    download_redoc_spec(CD_DOCS_URL, CD_JSON, "ChangeDetection.io")
 
 
 def yaml_to_json(yaml_path):
@@ -472,9 +487,66 @@ SS_EXTRA_DEPS = {
 }
 
 
+def downgrade_openapi_31_types(obj):
+    """Convert OpenAPI 3.1 type arrays to 3.0 nullable format.
+
+    3.1 uses `type: ["string", "null"]` for nullable fields; progenitor
+    expects 3.0 style `type: "string", nullable: true`.
+    """
+    if isinstance(obj, dict):
+        if "type" in obj and isinstance(obj["type"], list):
+            types = [t for t in obj["type"] if t != "null"]
+            nullable = "null" in obj["type"]
+            if len(types) == 1:
+                obj["type"] = types[0]
+            elif len(types) > 1:
+                # Multiple non-null types: pick the first (best effort)
+                obj["type"] = types[0]
+            else:
+                # Only null — use string as fallback
+                obj["type"] = "string"
+            if nullable:
+                obj["nullable"] = True
+        for v in obj.values():
+            if isinstance(v, (dict, list)):
+                downgrade_openapi_31_types(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, (dict, list)):
+                downgrade_openapi_31_types(item)
+
+
+def trim_changedetection():
+    """Trim the ChangeDetection.io OpenAPI spec (light touch — spec is small)."""
+    print("Loading ChangeDetection.io OpenAPI JSON...")
+    with open(CD_JSON) as f:
+        spec = json.load(f)
+
+    print(f"  Paths: {len(spec.get('paths', {}))}")
+    print(f"  Schemas: {len(spec.get('components', {}).get('schemas', {}))}")
+
+    # Downgrade 3.1 → 3.0 for progenitor compatibility
+    print("  Downgrading OpenAPI 3.1 type arrays to 3.0 nullable format...")
+    spec["openapi"] = "3.0.3"
+    downgrade_openapi_31_types(spec)
+
+    # Apply generic fixes
+    print("  Fixing enum bools...")
+    fix_enum_bools(spec)
+    print("  Simplifying anyOf patterns...")
+    simplify_anyof(spec)
+
+    os.makedirs(os.path.dirname(CD_TRIMMED), exist_ok=True)
+    with open(CD_TRIMMED, "w") as f:
+        json.dump(spec, f, indent=2)
+    print(f"  Written to {CD_TRIMMED}")
+    return spec
+
+
 if __name__ == "__main__":
     download_cloudflare_spec()
     download_spaceship_spec()
+    download_changedetection_spec()
 
     trim_cloudflare()
     generate_crate(CF_TRIMMED, CF_OUTPUT, "cloudflare-api",
@@ -484,4 +556,7 @@ if __name__ == "__main__":
     generate_crate(SS_TRIMMED, SS_OUTPUT, "spaceship-api",
                    extra_deps=SS_EXTRA_DEPS)
 
-    print("\nDone! Run 'cargo check -p cloudflare-api -p spaceship-api' to verify.")
+    trim_changedetection()
+    generate_crate(CD_TRIMMED, CD_OUTPUT, "changedetection-api")
+
+    print("\nDone! Run 'cargo check -p cloudflare-api -p spaceship-api -p changedetection-api' to verify.")

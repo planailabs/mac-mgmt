@@ -1714,6 +1714,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "changedetection-api"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "progenitor-client",
+ "regress",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "uuid",
+]
+
+[[package]]
 name = "charset"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
