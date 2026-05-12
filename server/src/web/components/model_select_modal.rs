@@ -192,8 +192,7 @@ pub fn ModelSelectModal(
             match sk.as_str() {
                 // Sources served from the static catalog
                 "ollama" | "openrouter" | "lms" => {
-                    let catalog_id = if sk == "lms" { "ollama".to_string() } else { sk.clone() };
-                    get_model_catalog(catalog_id).await
+                    get_model_catalog(sk.clone()).await
                 }
                 // OpenClaw is fetched live from the local gateway
                 "openclaw" => {

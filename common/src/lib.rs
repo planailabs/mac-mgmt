@@ -1111,6 +1111,9 @@ pub struct CloudConfig {
     #[schemars(description = "API key for the cloud provider")]
     #[serde(default)]
     pub api_key: Option<Secret>,
+    #[schemars(description = "Models available via this cloud provider", extend("x-model-source" = "cloud"))]
+    #[serde(default)]
+    pub models: Vec<String>,
     #[schemars(description = "Default model (e.g. anthropic/claude-sonnet-4-6, openai/gpt-5.4)", extend("x-model-source" = "cloud"))]
     #[serde(default = "default_cloud_model")]
     pub default_model: String,
