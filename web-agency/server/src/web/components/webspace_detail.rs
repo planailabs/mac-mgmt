@@ -28,6 +28,8 @@ struct WebspaceData {
     production_branch: Option<String>,
     git_source: Option<GitRepoInfo>,
     build_config: Option<BuildConfigInfo>,
+    changedetection_credential_id: Option<Uuid>,
+    changedetection_credential_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,16 +107,17 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Uuid, Option<String>, String, Option<Uuid>)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Uuid, Option<String>, String, Option<Uuid>, Option<Uuid>)>(
         "SELECT w.id, w.name, w.hosting_type, w.cloudflare_pages_project, w.cloudflare_credential_id, \
-         w.runtime, w.local_status, w.organization_id, w.relay_url, w.auth_mode, w.auth_basic_list_id \
+         w.runtime, w.local_status, w.organization_id, w.relay_url, w.auth_mode, w.auth_basic_list_id, \
+         w.changedetection_credential_id \
          FROM webspaces w WHERE w.id = $1",
     )
     .bind(webspace_id).fetch_optional(&pool).await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
-    let (id, name, hosting_type, cf_project, cf_cred_id, runtime, local_status, org_id, relay_url, auth_mode, auth_basic_list_id) = row;
+    let (id, name, hosting_type, cf_project, cf_cred_id, runtime, local_status, org_id, relay_url, auth_mode, auth_basic_list_id, cd_cred_id) = row;
 
     // Fetch basic auth list name if set
     let auth_basic_list_name = if let Some(list_id) = auth_basic_list_id {
@@ -221,6 +224,14 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
         }
     }
 
+    // Fetch changedetection credential name
+    let cd_cred_name = if let Some(cid) = cd_cred_id {
+        sqlx::query_scalar::<_, String>("SELECT name FROM credentials WHERE id = $1")
+            .bind(cid).fetch_optional(&pool).await.ok().flatten()
+    } else {
+        None
+    };
+
     Ok(WebspaceData {
         id, name, hosting_type, cloudflare_pages_project: cf_project,
         cloudflare_credential_id: cf_cred_id, runtime, local_status, relay_url,
@@ -229,7 +240,39 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
         auth_mode, auth_basic_list_name,
         bindings,
         pages_subdomain, production_branch, git_source, build_config: build_config_info,
+        changedetection_credential_id: cd_cred_id,
+        changedetection_credential_name: cd_cred_name,
     })
+}
+
+#[server]
+async fn list_cd_creds() -> Result<Vec<CredOption>, ServerFnError> {
+    let _user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+    let rows = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT id, name FROM credentials WHERE credential_type = 'changedetection' ORDER BY name",
+    )
+    .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows.into_iter().map(|(id, name)| CredOption { id, name }).collect())
+}
+
+#[server]
+async fn set_webspace_changedetection(webspace_id: Uuid, credential_id: Option<Uuid>) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+
+    sqlx::query("UPDATE webspaces SET changedetection_credential_id = $1, updated_at = now() WHERE id = $2")
+        .bind(credential_id).bind(webspace_id)
+        .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
 }
 
 #[server]
@@ -1127,6 +1170,14 @@ pub fn WebspaceDetail(id: String) -> Element {
                 current_mode: data.auth_mode.clone(),
                 current_list_name: data.auth_basic_list_name.clone(),
             }
+        }
+
+        // Change Detection
+        SectionHeading { class: "mt-6", "Change Detection" }
+        ChangeDetectionSection {
+            webspace_id: data.id,
+            current_credential_id: data.changedetection_credential_id,
+            current_credential_name: data.changedetection_credential_name.clone(),
         }
 
         // Domain bindings
@@ -2093,6 +2144,78 @@ async fn update_webspace_auth(webspace_id: Uuid, auth_mode: String, auth_basic_l
 
     crate::api::internal::notify_proxy_reload();
     Ok(())
+}
+
+#[component]
+fn ChangeDetectionSection(webspace_id: Uuid, current_credential_id: Option<Uuid>, current_credential_name: Option<String>) -> Element {
+    let mut refresh: Signal<u32> = use_context();
+    let cd_creds = use_server_future(list_cd_creds)?;
+    let cred_list: Vec<CredOption> = match &*cd_creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
+
+    let mut selected_cred = use_signal(move || current_credential_id.map(|id| id.to_string()).unwrap_or_default());
+    let mut saving = use_signal(|| false);
+    let mut result_msg = use_signal(|| None::<String>);
+
+    rsx! {
+        Card {
+            div { class: "p-6 space-y-4",
+                div { class: "flex items-center gap-3",
+                    span { class: "text-sm text-fg-muted", "Current:" }
+                    if let Some(ref name) = current_credential_name {
+                        Badge { variant: BadgeVariant::Info, "{name}" }
+                    } else {
+                        span { class: "text-fg-muted text-sm", "Not configured" }
+                    }
+                }
+
+                if cred_list.is_empty() {
+                    div { class: "text-sm text-fg-muted", "No ChangeDetection.io credentials available. Create one first." }
+                } else {
+                    div { class: "flex items-end gap-3",
+                        FormField { label: "Credential",
+                            select {
+                                class: "input w-64",
+                                value: "{selected_cred}",
+                                oninput: move |evt| selected_cred.set(evt.value()),
+                                option { value: "", "None" }
+                                for c in &cred_list {
+                                    option { value: "{c.id}", "{c.name}" }
+                                }
+                            }
+                        }
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            disabled: *saving.read(),
+                            onclick: {
+                                let wid = webspace_id;
+                                move |_| {
+                                    let cred_str = selected_cred.read().clone();
+                                    saving.set(true);
+                                    result_msg.set(None);
+                                    spawn(async move {
+                                        let cid = uuid::Uuid::parse_str(&cred_str).ok();
+                                        match set_webspace_changedetection(wid, cid).await {
+                                            Ok(()) => {
+                                                result_msg.set(Some("Saved".into()));
+                                                *refresh.write() += 1;
+                                            }
+                                            Err(e) => result_msg.set(Some(format!("Error: {e}"))),
+                                        }
+                                        saving.set(false);
+                                    });
+                                }
+                            },
+                            if *saving.read() { "Saving..." } else { "Save" }
+                        }
+                    }
+                }
+
+                if let Some(ref msg) = *result_msg.read() {
+                    div { class: "text-sm text-fg-muted", "{msg}" }
+                }
+            }
+        }
+    }
 }
 
 #[component]

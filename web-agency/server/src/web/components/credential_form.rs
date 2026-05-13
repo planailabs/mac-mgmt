@@ -87,6 +87,18 @@ async fn test_credential(credential_id: Uuid) -> Result<String, ServerFnError> {
                 domains.total_count.unwrap_or(0)
             ))
         }
+        "changedetection" => {
+            let (client, _group) = crate::credentials::changedetection_client(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
+            let info = client.get_system_info().await
+                .map_err(|e| ServerFnError::new(format!("ChangeDetection API error: {e}")))?;
+            let info = info.into_inner();
+            Ok(format!(
+                "OK - v{}, {} watch(es)",
+                info.version.as_deref().unwrap_or("?"),
+                info.watch_count.unwrap_or(0),
+            ))
+        }
         _ => Err(ServerFnError::new("unknown credential type")),
     }
 }
@@ -167,6 +179,7 @@ pub fn CredentialForm() -> Element {
                             "cloudflare" => data_json.set(r#"{"api_token": "", "account_id": ""}"#.to_string()),
                             "spaceship" => data_json.set(r#"{"api_key": "", "api_secret": ""}"#.to_string()),
                             "mac-mgmt" => data_json.set(r#"{"server_url": "", "token": ""}"#.to_string()),
+                            "changedetection" => data_json.set(r#"{"api_url": "", "api_key": "", "group": ""}"#.to_string()),
                             _ => {}
                         }
                         credential_type.set(val);
@@ -174,6 +187,7 @@ pub fn CredentialForm() -> Element {
                     option { value: "cloudflare", "Cloudflare" }
                     option { value: "spaceship", "Spaceship" }
                     option { value: "mac-mgmt", "mac-mgmt (Relay)" }
+                    option { value: "changedetection", "ChangeDetection.io" }
                 }
             }
 

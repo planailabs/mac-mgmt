@@ -92,6 +92,41 @@ pub async fn mac_mgmt_credential(
     Ok((server_url, token))
 }
 
+/// Build a ChangeDetection.io API client from a stored credential.
+///
+/// Returns the client (with `x-api-key` injected as a default header) and the
+/// group name that watches should be organized under.
+pub async fn changedetection_client(
+    pool: &PgPool,
+    cred_id: Uuid,
+) -> anyhow::Result<(changedetection_api::Client, String)> {
+    let data = credential_json(pool, cred_id, "changedetection").await?;
+    let api_url = data["api_url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing api_url"))?;
+    let api_key = data["api_key"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing api_key"))?;
+    let group = data["group"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing group"))?
+        .to_string();
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::HeaderName::from_static("x-api-key"),
+        reqwest::header::HeaderValue::from_str(api_key)
+            .map_err(|e| anyhow::anyhow!("invalid api_key header value: {e}"))?,
+    );
+    let http = reqwest::ClientBuilder::new()
+        .default_headers(headers)
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+
+    Ok((changedetection_api::Client::new_with_client(api_url, http), group))
+}
+
 /// Build a Spaceship API client from a stored credential.
 pub async fn spaceship_client(
     pool: &PgPool,

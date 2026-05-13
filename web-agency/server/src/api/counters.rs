@@ -28,6 +28,7 @@ pub struct GlobalCounters {
     pub sync_expiry_errors: AtomicU64,
     pub sync_ns_errors: AtomicU64,
     pub sync_bot_errors: AtomicU64,
+    pub sync_changedetection_errors: AtomicU64,
     pub cert_renewal_success: AtomicU64,
     pub cert_renewal_failed: AtomicU64,
     pub cert_issuance_success: AtomicU64,
@@ -47,6 +48,7 @@ impl GlobalCounters {
             sync_expiry_errors: AtomicU64::new(0),
             sync_ns_errors: AtomicU64::new(0),
             sync_bot_errors: AtomicU64::new(0),
+            sync_changedetection_errors: AtomicU64::new(0),
             cert_renewal_success: AtomicU64::new(0),
             cert_renewal_failed: AtomicU64::new(0),
             cert_issuance_success: AtomicU64::new(0),
@@ -64,6 +66,7 @@ impl GlobalCounters {
         self.sync_expiry_errors.store(0, Ordering::Relaxed);
         self.sync_ns_errors.store(0, Ordering::Relaxed);
         self.sync_bot_errors.store(0, Ordering::Relaxed);
+        self.sync_changedetection_errors.store(0, Ordering::Relaxed);
     }
 
     /// Reset all per-cycle cert gauges to 0.

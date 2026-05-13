@@ -9,7 +9,14 @@ struct OrgData {
     id: Uuid,
     name: String,
     show_billing: bool,
+    default_changedetection_credential_id: Option<Uuid>,
     members: Vec<MemberRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CdCredOption {
+    id: Uuid,
+    name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,8 +34,8 @@ async fn get_org(org_id: Uuid) -> Result<OrgData, ServerFnError> {
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let (org_name, show_billing) = sqlx::query_as::<_, (String, bool)>(
-        "SELECT name, show_billing FROM organizations WHERE id = $1",
+    let (org_name, show_billing, default_cd_cred_id) = sqlx::query_as::<_, (String, bool, Option<Uuid>)>(
+        "SELECT name, show_billing, default_changedetection_credential_id FROM organizations WHERE id = $1",
     )
     .bind(org_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("organization not found"))?;
@@ -43,7 +50,7 @@ async fn get_org(org_id: Uuid) -> Result<OrgData, ServerFnError> {
     .map(|(user_id, email, name, role)| MemberRow { user_id, email, name, role })
     .collect();
 
-    Ok(OrgData { id: org_id, name: org_name, show_billing, members })
+    Ok(OrgData { id: org_id, name: org_name, show_billing, default_changedetection_credential_id: default_cd_cred_id, members })
 }
 
 #[server]
@@ -95,6 +102,29 @@ async fn set_show_billing(org_id: Uuid, value: bool) -> Result<(), ServerFnError
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    Ok(())
+}
+
+#[server]
+async fn list_cd_creds_for_org() -> Result<Vec<CdCredOption>, ServerFnError> {
+    let _user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+    let rows = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT id, name FROM credentials WHERE credential_type = 'changedetection' ORDER BY name",
+    ).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows.into_iter().map(|(id, name)| CdCredOption { id, name }).collect())
+}
+
+#[server]
+async fn set_org_default_changedetection(org_id: Uuid, credential_id: Option<Uuid>) -> Result<(), ServerFnError> {
+    use crate::web::user::WebUserExt;
+    let user = crate::web::user::current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+
+    sqlx::query("UPDATE organizations SET default_changedetection_credential_id = $1 WHERE id = $2")
+        .bind(credential_id).bind(org_id)
+        .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
 
@@ -153,6 +183,9 @@ pub fn OrganizationDetail(id: String) -> Element {
                 }
             }
         }
+
+        // Default CD credential
+        DefaultCdCredSection { org_id: data.id, current: data.default_changedetection_credential_id }
 
         SectionHeading { class: "mt-4", "Members" }
         Card {
@@ -242,6 +275,58 @@ pub fn OrganizationDetail(id: String) -> Element {
                 }
                 if let Some(err) = &*error.read() {
                     div { class: "mt-2 text-danger text-sm", "{err}" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn DefaultCdCredSection(org_id: Uuid, current: Option<Uuid>) -> Element {
+    let cd_creds = use_server_future(list_cd_creds_for_org)?;
+    let cred_list: Vec<CdCredOption> = match &*cd_creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
+
+    if cred_list.is_empty() {
+        return rsx! {};
+    }
+
+    let mut selected = use_signal(move || current.map(|id| id.to_string()).unwrap_or_default());
+    let mut saving = use_signal(|| false);
+
+    rsx! {
+        Card { class: "mt-4 p-4",
+            div { class: "flex items-center justify-between gap-4",
+                div {
+                    span { class: "text-sm font-medium", "Default ChangeDetection.io credential" }
+                    p { class: "text-xs text-fg-muted", "Pre-fills the credential dropdown when creating new webspaces in this org." }
+                }
+                div { class: "flex items-center gap-2",
+                    select {
+                        class: "input w-48",
+                        value: "{selected}",
+                        oninput: move |evt| selected.set(evt.value()),
+                        option { value: "", "None" }
+                        for c in &cred_list {
+                            option { value: "{c.id}", "{c.name}" }
+                        }
+                    }
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        disabled: *saving.read(),
+                        onclick: {
+                            let oid = org_id;
+                            move |_| {
+                                let cred_str = selected.read().clone();
+                                saving.set(true);
+                                spawn(async move {
+                                    let cid = Uuid::parse_str(&cred_str).ok();
+                                    let _ = set_org_default_changedetection(oid, cid).await;
+                                    saving.set(false);
+                                });
+                            }
+                        },
+                        if *saving.read() { "Saving..." } else { "Save" }
+                    }
                 }
             }
         }

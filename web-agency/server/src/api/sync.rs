@@ -28,6 +28,7 @@ async fn run_sync(pool: &PgPool) -> anyhow::Result<()> {
     sync_domain_expiry(pool).await;
     sync_nameserver_status(pool).await;
     sync_bot_protection(pool).await;
+    sync_changedetection(pool).await;
     tracing::info!("periodic sync complete");
     Ok(())
 }
@@ -423,6 +424,205 @@ async fn sync_bot_for_domain(
         .execute(pool)
         .await?;
 
+    Ok(())
+}
+
+// ── ChangeDetection.io sync ─────────────────────────────────────────
+
+async fn sync_changedetection(pool: &PgPool) {
+    let webspaces = match sqlx::query_as::<_, (Uuid, String, Uuid)>(
+        "SELECT w.id, w.name, w.changedetection_credential_id \
+         FROM webspaces w \
+         WHERE w.changedetection_credential_id IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!("failed to list webspaces for changedetection sync: {e}");
+            return;
+        }
+    };
+
+    let mut synced = 0usize;
+    for (ws_id, ws_name, cred_id) in &webspaces {
+        match sync_changedetection_for_webspace(pool, *ws_id, ws_name, *cred_id).await {
+            Ok(()) => synced += 1,
+            Err(e) => {
+                tracing::warn!("changedetection sync failed for webspace {ws_name}: {e}");
+                super::counters::COUNTERS
+                    .sync_changedetection_errors
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    tracing::info!("synced changedetection for {synced}/{} webspaces", webspaces.len());
+}
+
+async fn sync_changedetection_for_webspace(
+    pool: &PgPool,
+    ws_id: Uuid,
+    ws_name: &str,
+    cred_id: Uuid,
+) -> anyhow::Result<()> {
+    let (client, group_name) =
+        crate::credentials::changedetection_client(pool, cred_id).await?;
+
+    // 1. Find or create the tag/group.
+    let tag_uuid = find_or_create_tag(&client, &group_name).await?;
+    let tag_uuid_str = tag_uuid.to_string();
+
+    // 2. Get bound hostnames for this webspace.
+    let bindings = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT d.name, s.name \
+         FROM webspace_domains wd \
+         JOIN domains d ON d.id = wd.domain_id \
+         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+         WHERE wd.webspace_id = $1",
+    )
+    .bind(ws_id)
+    .fetch_all(pool)
+    .await?;
+
+    let expected_urls: Vec<String> = bindings
+        .iter()
+        .map(|(domain, sub)| {
+            let hostname = match sub.as_deref() {
+                Some(s) if s != "@" => format!("{s}.{domain}"),
+                _ => domain.clone(),
+            };
+            format!("https://{hostname}")
+        })
+        .collect();
+
+    // 3. List existing watches in this group.
+    let existing = client
+        .list_watches(None, Some(&group_name))
+        .await
+        .map_err(|e| anyhow::anyhow!("list_watches failed: {e}"))?;
+    let watches = existing.into_inner();
+
+    // 4. Create missing watches.
+    for url in &expected_urls {
+        let already_exists = watches.values().any(|w| {
+            w.url.as_deref() == Some(url.as_str())
+        });
+        if !already_exists {
+            let title_str = url
+                .strip_prefix("https://")
+                .unwrap_or(url);
+            let body = serde_json::json!({
+                "url": url,
+                "title": title_str,
+                "tag": &tag_uuid_str,
+            });
+            let create: changedetection_api::types::CreateWatch =
+                serde_json::from_value(body)
+                    .map_err(|e| anyhow::anyhow!("failed to build CreateWatch: {e}"))?;
+            client
+                .create_watch(&create)
+                .await
+                .map_err(|e| anyhow::anyhow!("create_watch for {url} failed: {e}"))?;
+            tracing::info!(webspace = ws_name, url, "created changedetection watch");
+        }
+    }
+
+    // 5. Delete stale watches (only within the group).
+    for (uuid_str, watch) in &watches {
+        let watch_url = watch.url.as_deref().unwrap_or("");
+        if !expected_urls.iter().any(|u| u == watch_url) {
+            let watch_uuid: uuid::Uuid = match uuid_str.parse() {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            if let Err(e) =
+                safe_delete_watch(&client, &watch_uuid, watch_url, &tag_uuid_str, watch)
+                    .await
+            {
+                tracing::warn!(
+                    webspace = ws_name,
+                    url = watch_url,
+                    "failed to delete stale watch: {e}"
+                );
+            } else {
+                tracing::info!(
+                    webspace = ws_name,
+                    url = watch_url,
+                    "deleted stale changedetection watch"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Find an existing tag by title or create a new one.
+async fn find_or_create_tag(
+    client: &changedetection_api::Client,
+    group_name: &str,
+) -> anyhow::Result<uuid::Uuid> {
+    let tags = client
+        .list_tags()
+        .await
+        .map_err(|e| anyhow::anyhow!("list_tags failed: {e}"))?;
+
+    for (uuid_str, tag) in tags.into_inner().iter() {
+        if tag.title.as_deref().map(|t| t.as_str()) == Some(group_name) {
+            let uuid: uuid::Uuid = uuid_str
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid tag UUID {uuid_str}: {e}"))?;
+            return Ok(uuid);
+        }
+    }
+
+    // Create new tag.
+    let body = serde_json::json!({ "title": group_name });
+    let create: changedetection_api::types::CreateTag = serde_json::from_value(body)
+        .map_err(|e| anyhow::anyhow!("failed to build CreateTag: {e}"))?;
+    let resp = client
+        .create_tag(&create)
+        .await
+        .map_err(|e| anyhow::anyhow!("create_tag failed: {e}"))?;
+    let tag_resp = resp.into_inner();
+    tag_resp
+        .uuid
+        .ok_or_else(|| anyhow::anyhow!("create_tag returned no UUID"))
+}
+
+/// Delete a watch only if it belongs to the expected tag/group.
+///
+/// This prevents accidentally removing watches that a user created outside
+/// the managed group.
+async fn safe_delete_watch(
+    client: &changedetection_api::Client,
+    watch_uuid: &uuid::Uuid,
+    watch_url: &str,
+    expected_tag_uuid: &str,
+    watch: &changedetection_api::types::Watch,
+) -> anyhow::Result<()> {
+    // Verify the watch belongs to the expected group.
+    let belongs = watch
+        .tag
+        .as_deref()
+        .map(|t| t.as_str() == expected_tag_uuid)
+        .unwrap_or(false)
+        || watch.tags.iter().any(|t| t == expected_tag_uuid);
+
+    if !belongs {
+        tracing::warn!(
+            uuid = %watch_uuid,
+            url = watch_url,
+            "skipping delete: watch does not belong to expected tag {expected_tag_uuid}"
+        );
+        return Ok(());
+    }
+
+    client
+        .delete_watch(watch_uuid)
+        .await
+        .map_err(|e| anyhow::anyhow!("delete_watch {watch_uuid} failed: {e}"))?;
     Ok(())
 }
 

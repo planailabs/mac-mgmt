@@ -116,6 +116,18 @@ async fn test_credential_conn(credential_id: Uuid) -> Result<String, ServerFnErr
             let resp = client.list_domains(0, 1).await.map_err(|e| ServerFnError::new(format!("SS: {e}")))?;
             Ok(format!("OK — {} domain(s)", resp.total_count.unwrap_or(0)))
         }
+        "changedetection" => {
+            let (client, _group) = crate::credentials::changedetection_client(&pool, credential_id).await
+                .map_err(|e| ServerFnError::new(format!("{e}")))?;
+            let info = client.get_system_info().await
+                .map_err(|e| ServerFnError::new(format!("CD: {e}")))?;
+            let info = info.into_inner();
+            Ok(format!(
+                "OK — v{}, {} watch(es)",
+                info.version.as_deref().unwrap_or("?"),
+                info.watch_count.unwrap_or(0),
+            ))
+        }
         _ => Err(ServerFnError::new("unknown type")),
     }
 }
@@ -198,6 +210,7 @@ pub fn CredentialEdit(id: String) -> Element {
                             "cloudflare" => r#"{"api_token": "...", "account_id": "..."}"#,
                             "spaceship" => r#"{"api_key": "...", "api_secret": "..."}"#,
                             "mac-mgmt" => r#"{"server_url": "...", "token": "..."}"#,
+                            "changedetection" => r#"{"api_url": "...", "api_key": "...", "group": "..."}"#,
                             _ => "{}",
                         },
                         value: "{new_data}", oninput: move |evt| new_data.set(evt.value()) }
