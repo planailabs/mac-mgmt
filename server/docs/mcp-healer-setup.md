@@ -13,9 +13,9 @@ The mac-mgmt server exposes a [Streamable HTTP MCP](https://modelcontextprotocol
 
 ```bash
 claude mcp add --transport http \
-  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
   mac-mgmt-healer \
-  https://your-server.example.com/mcp/healer
+  https://your-server.example.com/mcp/healer \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
 ```
 
 ### Via config file
