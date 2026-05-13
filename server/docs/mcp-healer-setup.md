@@ -9,6 +9,17 @@ The mac-mgmt server exposes a [Streamable HTTP MCP](https://modelcontextprotocol
 
 ## Claude Code
 
+### Via CLI
+
+```bash
+claude mcp add --transport http \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  mac-mgmt-healer \
+  https://your-server.example.com/mcp/healer
+```
+
+### Via config file
+
 Add to your project's `.mcp.json` or `~/.claude/mcp.json`:
 
 ```json
@@ -25,7 +36,9 @@ Add to your project's `.mcp.json` or `~/.claude/mcp.json`:
 }
 ```
 
-Then use the `/heal-staff-pings` skill or call tools directly:
+### Usage
+
+Use the `/heal-staff-pings` skill or call tools directly:
 
 ```
 > list_staff_pings
