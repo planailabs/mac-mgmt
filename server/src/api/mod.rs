@@ -362,6 +362,11 @@ pub fn build_rocket(
         healer_routes::get_healer_settings,
         healer_routes::put_healer_settings,
         healer_routes::stream_session,
+        // Admin — staff pings
+        healer_routes::admin_list_staff_pings,
+        healer_routes::admin_get_staff_ping,
+        healer_routes::admin_resolve_staff_ping,
+        healer_routes::admin_unresolve_staff_ping,
         // Admin — skill centers
         routes::admin_list_skill_centers,
         routes::admin_create_skill_center,

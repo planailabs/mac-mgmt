@@ -600,6 +600,237 @@ pub async fn stream_session(
     })
 }
 
+// ── Admin — Staff pings ───────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct StaffPingRow {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub cluster_id: Uuid,
+    pub instance_id: String,
+    pub category: String,
+    pub message: String,
+    pub resolved: bool,
+    pub resolved_by: Option<String>,
+    pub resolved_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// List all staff pings, optionally filtered by cluster, instance, resolved status, or category.
+#[get("/admin/staff-pings?<cluster_id>&<instance_id>&<resolved>&<category>&<limit>")]
+pub async fn admin_list_staff_pings(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    cluster_id: Option<&str>,
+    instance_id: Option<&str>,
+    resolved: Option<bool>,
+    category: Option<&str>,
+    limit: Option<i64>,
+) -> Result<Json<Vec<StaffPingRow>>, Status> {
+    let limit = limit.unwrap_or(200).min(1000);
+
+    // Build query dynamically based on filters
+    let mut conditions: Vec<String> = Vec::new();
+    let mut param_idx = 0u32;
+
+    if cluster_id.is_some() {
+        param_idx += 1;
+        conditions.push(format!("cluster_id = ${param_idx}"));
+    }
+    if instance_id.is_some() {
+        param_idx += 1;
+        conditions.push(format!("instance_id = ${param_idx}"));
+    }
+    if resolved.is_some() {
+        param_idx += 1;
+        conditions.push(format!("resolved = ${param_idx}"));
+    }
+    if category.is_some() {
+        param_idx += 1;
+        conditions.push(format!("category = ${param_idx}"));
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    param_idx += 1;
+    let sql = format!(
+        "SELECT id, session_id, cluster_id, instance_id, category, message, \
+                resolved, resolved_by, resolved_at, created_at \
+         FROM healer_staff_pings {where_clause} \
+         ORDER BY resolved ASC, created_at DESC \
+         LIMIT ${param_idx}"
+    );
+
+    let mut query = sqlx::query_as::<_, StaffPingSqlRow>(&sql);
+
+    if let Some(cid) = cluster_id {
+        let cid: Uuid = cid.parse().map_err(|_| Status::BadRequest)?;
+        query = query.bind(cid);
+    }
+    if let Some(iid) = instance_id {
+        query = query.bind(iid.to_string());
+    }
+    if let Some(r) = resolved {
+        query = query.bind(r);
+    }
+    if let Some(cat) = category {
+        query = query.bind(cat.to_string());
+    }
+    query = query.bind(limit);
+
+    let rows = query
+        .fetch_all(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(rows.into_iter().map(Into::into).collect()))
+}
+
+/// Get a single staff ping by ID.
+#[get("/admin/staff-pings/<ping_id>")]
+pub async fn admin_get_staff_ping(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    ping_id: &str,
+) -> Result<Json<StaffPingRow>, Status> {
+    let pid: Uuid = ping_id.parse().map_err(|_| Status::BadRequest)?;
+
+    let row = sqlx::query_as::<_, StaffPingSqlRow>(
+        "SELECT id, session_id, cluster_id, instance_id, category, message, \
+                resolved, resolved_by, resolved_at, created_at \
+         FROM healer_staff_pings WHERE id = $1",
+    )
+    .bind(pid)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?
+    .ok_or(Status::NotFound)?;
+
+    Ok(Json(row.into()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveStaffPingBody {
+    #[serde(default)]
+    pub resolved_by: Option<String>,
+}
+
+/// Resolve a staff ping.
+#[post("/admin/staff-pings/<ping_id>/resolve", data = "<body>")]
+pub async fn admin_resolve_staff_ping(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    ping_id: &str,
+    body: Json<ResolveStaffPingBody>,
+) -> Result<Status, Status> {
+    let pid: Uuid = ping_id.parse().map_err(|_| Status::BadRequest)?;
+
+    let resolved_by = body
+        .resolved_by
+        .as_deref()
+        .unwrap_or("admin");
+
+    let result = sqlx::query(
+        "UPDATE healer_staff_pings \
+         SET resolved = true, resolved_by = $1, resolved_at = now() \
+         WHERE id = $2 AND NOT resolved",
+    )
+    .bind(resolved_by)
+    .bind(pid)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if result.rows_affected() == 0 {
+        // Either not found or already resolved — check which
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM healer_staff_pings WHERE id = $1)",
+        )
+        .bind(pid)
+        .fetch_one(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+        if !exists {
+            return Err(Status::NotFound);
+        }
+        // Already resolved — return success (idempotent)
+    }
+
+    Ok(Status::NoContent)
+}
+
+/// Unresolve (reopen) a staff ping.
+#[post("/admin/staff-pings/<ping_id>/unresolve")]
+pub async fn admin_unresolve_staff_ping(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    ping_id: &str,
+) -> Result<Status, Status> {
+    let pid: Uuid = ping_id.parse().map_err(|_| Status::BadRequest)?;
+
+    let result = sqlx::query(
+        "UPDATE healer_staff_pings \
+         SET resolved = false, resolved_by = NULL, resolved_at = NULL \
+         WHERE id = $1 AND resolved",
+    )
+    .bind(pid)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if result.rows_affected() == 0 {
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM healer_staff_pings WHERE id = $1)",
+        )
+        .bind(pid)
+        .fetch_one(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+        if !exists {
+            return Err(Status::NotFound);
+        }
+    }
+
+    Ok(Status::NoContent)
+}
+
+#[derive(sqlx::FromRow)]
+struct StaffPingSqlRow {
+    id: Uuid,
+    session_id: Uuid,
+    cluster_id: Uuid,
+    instance_id: String,
+    category: String,
+    message: String,
+    resolved: bool,
+    resolved_by: Option<String>,
+    resolved_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<StaffPingSqlRow> for StaffPingRow {
+    fn from(r: StaffPingSqlRow) -> Self {
+        Self {
+            id: r.id,
+            session_id: r.session_id,
+            cluster_id: r.cluster_id,
+            instance_id: r.instance_id,
+            category: r.category,
+            message: r.message,
+            resolved: r.resolved,
+            resolved_by: r.resolved_by,
+            resolved_at: r.resolved_at,
+            created_at: r.created_at,
+        }
+    }
+}
+
 // ── Internal sqlx row types ────────────────────────────────────────────
 
 #[derive(sqlx::FromRow)]
