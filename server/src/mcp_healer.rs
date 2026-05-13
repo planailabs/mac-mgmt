@@ -20,7 +20,7 @@ use rmcp::handler::server::tool::{ToolCallContext, ToolRouter};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::service::RequestContext;
-use rmcp::{RoleServer, ServerHandler, tool, tool_router};
+use rmcp::{Peer, RoleServer, ServerHandler, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use swiftide::chat_completion::{Tool as SwiftideTool, ToolCall, ToolOutput};
@@ -45,6 +45,9 @@ pub struct HealerMcpServer {
     tool_descriptors: RwLock<Vec<rmcp::model::Tool>>,
     /// Active session context.
     session_ctx: RwLock<Option<SessionContext>>,
+    /// MCP peer handle — stored during initialize so we can send
+    /// `tools/list_changed` notifications after create/end session.
+    peer: RwLock<Option<Peer<RoleServer>>>,
     /// Meta-tool router (always available).
     meta_router: ToolRouter<Self>,
 }
@@ -78,6 +81,7 @@ impl HealerMcpServer {
             tools: RwLock::new(Vec::new()),
             tool_descriptors: RwLock::new(Vec::new()),
             session_ctx: RwLock::new(None),
+            peer: RwLock::new(None),
             meta_router: Self::tool_router(),
         }
     }
@@ -677,6 +681,11 @@ impl HealerMcpServer {
         *self.tools.write().await = all_tools;
         *self.tool_descriptors.write().await = descriptors;
 
+        // Notify the client that the tool list has changed so it re-fetches.
+        if let Some(peer) = self.peer.read().await.as_ref() {
+            let _ = peer.notify_tool_list_changed().await;
+        }
+
         format!(
             "Session created.\n- session_id: {session_id}\n- instance: {}\n- cluster: {}\n- tools available: {tool_count}\n\n\
              Call get_system_prompt to load the healer instructions.",
@@ -692,6 +701,11 @@ impl HealerMcpServer {
         let ctx = self.session_ctx.write().await.take();
         self.tools.write().await.clear();
         self.tool_descriptors.write().await.clear();
+
+        // Notify the client that the tool list has changed.
+        if let Some(peer) = self.peer.read().await.as_ref() {
+            let _ = peer.notify_tool_list_changed().await;
+        }
 
         match ctx {
             Some(ctx) => format!(
@@ -971,6 +985,9 @@ impl ServerHandler for HealerMcpServer {
                     None,
                 ));
             }
+
+            // Store peer handle so we can send tools/list_changed later.
+            *self.peer.write().await = Some(context.peer.clone());
 
             let info = self.get_info();
             Ok(InitializeResult {
