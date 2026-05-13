@@ -61,11 +61,12 @@ fn build_sse_client(token: &str) -> reqwest::Client {
 }
 
 /// Fetch routes from the server API and update the shared route table.
+/// Returns `true` on success.
 async fn reload_routes(
     client: &reqwest::Client,
     server_url: &str,
     routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
-) {
+) -> bool {
     match client
         .get(format!("{server_url}/api/internal/routes"))
         .send()
@@ -130,19 +131,27 @@ async fn reload_routes(
                 }
                 tracing::info!(count = map.len(), "loaded routes");
                 routes.store(Arc::new(map));
+                true
             }
-            Err(e) => tracing::error!("failed to parse routes: {e}"),
+            Err(e) => {
+                tracing::error!("failed to parse routes: {e}");
+                false
+            }
         },
-        Err(e) => tracing::error!("failed to fetch routes: {e}"),
+        Err(e) => {
+            tracing::error!("failed to fetch routes: {e}");
+            false
+        }
     }
 }
 
 /// Fetch certs from server and update the cert store in memory.
+/// Returns `true` on success.
 async fn reload_certs(
     client: &reqwest::Client,
     server_url: &str,
     cert_store: &CertStore,
-) {
+) -> bool {
     match client
         .get(format!("{server_url}/api/internal/certs"))
         .send()
@@ -161,10 +170,17 @@ async fn reload_certs(
                 }
                 tracing::info!(count = map.len(), "loaded certs");
                 cert_store.replace_all(map);
+                true
             }
-            Err(e) => tracing::error!("failed to parse certs: {e}"),
+            Err(e) => {
+                tracing::error!("failed to parse certs: {e}");
+                false
+            }
         },
-        Err(e) => tracing::error!("failed to fetch certs: {e}"),
+        Err(e) => {
+            tracing::error!("failed to fetch certs: {e}");
+            false
+        }
     }
 }
 
@@ -197,12 +213,13 @@ async fn reload_all(
     routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
     cert_store: &CertStore,
 ) {
-    reload_routes(client, server_url, routes).await;
-    reload_certs(client, server_url, cert_store).await;
+    let _ = reload_routes(client, server_url, routes).await;
+    let _ = reload_certs(client, server_url, cert_store).await;
     trigger_missing_certs(client, server_url, routes, cert_store).await;
 }
 
 /// Do the initial load (blocking before Pingora starts accepting).
+/// Retries every 10 seconds until both routes and certs load successfully.
 pub async fn initial_load(
     cfg: &ProxyConfig,
     routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
@@ -210,9 +227,16 @@ pub async fn initial_load(
 ) {
     let token = cfg.internal_token();
     let client = build_client(&token);
-    reload_routes(&client, &cfg.server_url, routes).await;
-    reload_certs(&client, &cfg.server_url, cert_store).await;
-    trigger_missing_certs(&client, &cfg.server_url, routes, cert_store).await;
+    loop {
+        let routes_ok = reload_routes(&client, &cfg.server_url, routes).await;
+        let certs_ok = reload_certs(&client, &cfg.server_url, cert_store).await;
+        if routes_ok && certs_ok {
+            trigger_missing_certs(&client, &cfg.server_url, routes, cert_store).await;
+            return;
+        }
+        tracing::warn!("initial sync failed, retrying in 10s");
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
 }
 
 /// Build a Pingora background service that listens to SSE events and reloads.
