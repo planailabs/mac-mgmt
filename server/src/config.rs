@@ -87,7 +87,7 @@ fn default_nixpkgs_project() -> String {
     "plan-ai/nixpkgs".to_string()
 }
 fn default_nixpkgs_branch() -> String {
-    "trunk".to_string()
+    "plan-ai".to_string()
 }
 
 #[derive(Debug, Deserialize)]

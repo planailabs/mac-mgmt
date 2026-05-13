@@ -37,3 +37,4 @@ relay.toml
 test-*.sh
 
 state
+__pycache__
