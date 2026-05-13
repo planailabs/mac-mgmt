@@ -39,6 +39,11 @@ CD_JSON = os.path.join(WEB_AGENCY_DIR, "openapi-changedetection.json")
 CD_TRIMMED = os.path.join(WEB_AGENCY_DIR, "changedetection-api", "openapi-trimmed.json")
 CD_OUTPUT = os.path.join(WEB_AGENCY_DIR, "changedetection-api")
 
+DF_SPEC_URL = "https://github.com/dataforseo/OpenApiDocumentation/raw/refs/heads/master/openapi_specification.yaml"
+DF_YAML = os.path.join(WEB_AGENCY_DIR, "openapi-dataforseo.yaml")
+DF_TRIMMED = os.path.join(WEB_AGENCY_DIR, "dataforseo-api", "openapi-trimmed.json")
+DF_OUTPUT = os.path.join(WEB_AGENCY_DIR, "dataforseo-api")
+
 # Paths we need from the Cloudflare API
 CF_KEEP_PATHS = [
     "/accounts",
@@ -475,6 +480,63 @@ def cf_post_gen_fixups(code):
     return code
 
 
+def df_post_gen_fixups(code):
+    """Post-generation fixups for the DataForSEO crate.
+
+    Progenitor merges /path and /path/{param} into a single function with
+    an Option<&str> param, then generates `encode_path(&param.to_string())`
+    which doesn't compile. Fix by scanning each function for Option path
+    params and patching the corresponding encode_path calls.
+    """
+    # Find functions with Option<&'a str> path params and fix their encode_path calls
+    # Pattern: function bodies between `pub async fn` markers
+    import re
+
+    # Find all Option params: capture the param name
+    option_params = set()
+    for m in re.finditer(r'(\w+): Option<&\'a str>', code):
+        option_params.add(m.group(1))
+
+    for param in option_params:
+        # Replace `encode_path(&{param}.to_string())` with
+        # `encode_path(&{param}.unwrap_or_default().to_string())`
+        # only within function bodies that declare this param as Option
+        old = f"encode_path(&{param}.to_string())"
+        new = f"encode_path(&{param}.unwrap_or_default().to_string())"
+
+        # Find each function that has this param as Option and fix only those
+        fn_pattern = re.compile(
+            rf'((?:pub\s+)?async\s+fn\s+\w+[^{{]*{param}:\s*Option<&\'a\s+str>[^{{]*\{{)',
+            re.DOTALL,
+        )
+        result = []
+        last_end = 0
+        for fm in fn_pattern.finditer(code):
+            # Find the end of this function (matching braces)
+            fn_start = fm.start()
+            fn_header_end = fm.end()
+            # Add everything before this function unchanged
+            result.append(code[last_end:fn_header_end])
+            # Find the closing brace of this function (brace-matching)
+            depth = 1
+            pos = fn_header_end
+            while pos < len(code) and depth > 0:
+                if code[pos] == '{':
+                    depth += 1
+                elif code[pos] == '}':
+                    depth -= 1
+                pos += 1
+            fn_body = code[fn_header_end:pos]
+            fn_body = fn_body.replace(old, new)
+            result.append(fn_body)
+            last_end = pos
+        if result:
+            result.append(code[last_end:])
+            code = ''.join(result)
+
+    return code
+
+
 CF_EXTRA_DEPS = {
     'thiserror = "2"': "thiserror",
     'tracing = "0.1"': "tracing",
@@ -516,6 +578,81 @@ def downgrade_openapi_31_types(obj):
                 downgrade_openapi_31_types(item)
 
 
+def dedup_operation_ids(spec):
+    """Make duplicate operationId values unique by appending the path tag."""
+    from collections import Counter
+    op_ids = []
+    for path, methods in spec.get("paths", {}).items():
+        for method, op in methods.items():
+            if isinstance(op, dict) and "operationId" in op:
+                op_ids.append((op["operationId"], path, method, op))
+    counts = Counter(oid for oid, _, _, _ in op_ids)
+    dupes = {k for k, v in counts.items() if v > 1}
+    if dupes:
+        print(f"  Deduplicating {len(dupes)} operationIds: {dupes}")
+    seen = {}
+    for oid, path, method, op in op_ids:
+        if oid in dupes:
+            key = (oid,)
+            idx = seen.get(key, 0)
+            seen[key] = idx + 1
+            if idx > 0:
+                # Build unique suffix from the first path tag or the path itself
+                tags = op.get("tags", [])
+                suffix = tags[0] if tags else path.strip("/").split("/")[0]
+                suffix = suffix.replace(" ", "").replace("/", "_").replace("{", "").replace("}", "")
+                op["operationId"] = f"{oid}_{suffix}"
+                print(f"    {oid} -> {op['operationId']} ({method.upper()} {path})")
+
+
+def download_dataforseo_spec():
+    """Download the DataForSEO OpenAPI spec from GitHub."""
+    print(f"Downloading DataForSEO spec from {DF_SPEC_URL}...")
+    resp = requests.get(DF_SPEC_URL, timeout=120)
+    resp.raise_for_status()
+    with open(DF_YAML, "wb") as f:
+        f.write(resp.content)
+    print(f"  Written to {DF_YAML} ({len(resp.content)} bytes)")
+
+
+def trim_dataforseo():
+    """Trim the DataForSEO OpenAPI spec (light touch — keep full spec with fixes)."""
+    print("Converting DataForSEO YAML to JSON...")
+
+    json_path = os.path.join(tempfile.gettempdir(), "df-openapi.json")
+    try:
+        spec = yaml_to_json(DF_YAML)
+        with open(json_path, "w") as f:
+            json.dump(spec, f)
+    except FileNotFoundError:
+        print("yq not found, trying pre-converted JSON...")
+        if os.path.exists(json_path):
+            with open(json_path) as f:
+                spec = json.load(f)
+        else:
+            print("No pre-converted JSON found. Install yq: nix-shell -p yq-go", file=sys.stderr)
+            sys.exit(1)
+
+    print(f"  Paths: {len(spec.get('paths', {}))}")
+    print(f"  Schemas: {len(spec.get('components', {}).get('schemas', {}))}")
+
+    # Apply generic fixes
+    print("  Deduplicating operationIds...")
+    dedup_operation_ids(spec)
+    print("  Fixing enum bools...")
+    fix_enum_bools(spec)
+    print("  Simplifying anyOf patterns...")
+    simplify_anyof(spec)
+    print("  Fixing missing request body schemas...")
+    add_missing_request_body_schemas(spec)
+
+    os.makedirs(os.path.dirname(DF_TRIMMED), exist_ok=True)
+    with open(DF_TRIMMED, "w") as f:
+        json.dump(spec, f, indent=2)
+    print(f"  Written to {DF_TRIMMED}")
+    return spec
+
+
 def trim_changedetection():
     """Trim the ChangeDetection.io OpenAPI spec (light touch — spec is small)."""
     print("Loading ChangeDetection.io OpenAPI JSON...")
@@ -547,6 +684,7 @@ if __name__ == "__main__":
     download_cloudflare_spec()
     download_spaceship_spec()
     download_changedetection_spec()
+    download_dataforseo_spec()
 
     trim_cloudflare()
     generate_crate(CF_TRIMMED, CF_OUTPUT, "cloudflare-api",
@@ -559,4 +697,8 @@ if __name__ == "__main__":
     trim_changedetection()
     generate_crate(CD_TRIMMED, CD_OUTPUT, "changedetection-api")
 
-    print("\nDone! Run 'cargo check -p cloudflare-api -p spaceship-api -p changedetection-api' to verify.")
+    trim_dataforseo()
+    generate_crate(DF_TRIMMED, DF_OUTPUT, "dataforseo-api",
+                   post_gen_fixups=df_post_gen_fixups)
+
+    print("\nDone! Run 'cargo check -p cloudflare-api -p spaceship-api -p changedetection-api -p dataforseo-api' to verify.")

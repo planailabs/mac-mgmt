@@ -2920,6 +2920,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dataforseo-api"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "progenitor-client",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+]
+
+[[package]]
 name = "debugid"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
