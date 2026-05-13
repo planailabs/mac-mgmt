@@ -163,6 +163,11 @@ impl HealerState {
         &*self.inner.session_factory
     }
 
+    /// Get the push function (for sending SSE events to daemons).
+    pub fn push_fn(&self) -> Option<&tools::PushFn> {
+        self.inner.push_fn.as_ref()
+    }
+
     /// Set the push callback for sending SSE events to daemons.
     /// Must be called after construction, before spawning sessions.
     pub fn set_push_fn(&mut self, f: tools::PushFn) {

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use russh::keys::{Algorithm, PrivateKey, decode_secret_key, encode_pkcs8_pem};
+use russh::keys::{PrivateKey, decode_secret_key, encode_pkcs8_pem};
 use std::fs;
 use std::path::PathBuf;
 
@@ -28,9 +28,17 @@ pub fn load_or_generate() -> Result<PrivateKey> {
     tracing::info!("generating new Ed25519 host key at {}", path.display());
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
 
-    let mut rng = rand::rngs::OsRng;
-    let key = PrivateKey::random(&mut rng, Algorithm::Ed25519)
-        .context("failed to generate Ed25519 key")?;
+    // Generate a random Ed25519 key.
+    // Use rand to fill a seed, then construct the key via ssh_key types
+    // to avoid rand_core version conflicts between rand and russh.
+    let mut seed = [0u8; 32];
+    rand::Fill::fill(&mut seed, &mut rand::rng());
+    let key = PrivateKey::new(
+        russh::keys::ssh_key::private::KeypairData::Ed25519(
+            russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed),
+        ),
+        ""
+    ).context("failed to create Ed25519 key")?;
 
     let mut pem_buf = Vec::new();
     encode_pkcs8_pem(&key, &mut pem_buf).context("failed to encode host key as PKCS8 PEM")?;

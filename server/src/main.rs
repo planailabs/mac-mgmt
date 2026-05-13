@@ -18,6 +18,8 @@ mod generate_model_catalog;
 mod models;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod healer_auto_trigger;
+#[cfg(feature = "server")]
+mod mcp_healer;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod rollout_health;
 #[cfg(feature = "webui")]
@@ -614,6 +616,21 @@ fn main() {
                     response
                 },
             ));
+
+            // MCP healer endpoint — uses its own admin token auth, not OIDC.
+            // Must be mounted before the OIDC auth layers.
+            {
+                let pool = crate::server_state::server_pool().unwrap();
+                let store = crate::server_state::pg_healer_store().unwrap();
+                let healer = crate::server_state::healer_state();
+                let instance_data = healer.as_ref().map(|h| h.instance_data().clone());
+                let push_fn = healer.as_ref().and_then(|h| h.push_fn().map(|p| p.clone()));
+                if let Some(instance_data) = instance_data {
+                    let mcp_service =
+                        mcp_healer::build_mcp_service(pool, store, instance_data, push_fn);
+                    router = router.nest_service("/mcp/healer", mcp_service);
+                }
+            }
 
             if let Some(auth_layers) = auth_layers {
                 router = router

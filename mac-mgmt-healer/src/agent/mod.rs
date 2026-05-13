@@ -317,6 +317,79 @@ pub fn build_system_prompt(
     prompt
 }
 
+/// Build a system prompt adapted for external MCP clients (e.g. Claude Code).
+///
+/// Key differences from the autonomous agent prompt:
+/// - Instructs the agent that it works interactively with a human operator
+/// - Replaces `staff_ping` escalation with "ask the human on console"
+/// - Removes staff_ping tool guidance section
+pub fn build_system_prompt_external(
+    cluster_name: &str,
+    cluster_id: &str,
+    instance_id: &str,
+    hostname: &str,
+    other_instances: &[InstanceInfo],
+    services_extended: &[ServiceExtState],
+    sample_summary: &str,
+    file_tunnels: &[String],
+    shell_commands: &[String],
+    resume_context: Option<&str>,
+    metrics_summary: &str,
+) -> String {
+    let mut prompt = build_system_prompt(
+        cluster_name,
+        cluster_id,
+        instance_id,
+        hostname,
+        other_instances,
+        services_extended,
+        sample_summary,
+        file_tunnels,
+        shell_commands,
+        resume_context,
+        /* auto_approve */ true,
+        /* diagnosis_only */ false,
+        metrics_summary,
+        /* ml_hints */ None,
+    );
+
+    // Replace autonomous preamble with interactive one
+    let autonomous_preamble = "You are an autonomous server healing agent for the mac-mgmt fleet management system.\n\
+        You run non-interactively over multiple rounds with no human in the loop.\n\
+        Diagnose the issue, apply fixes, verify the result, and mark the session done — all on your own.\n\
+        Do not ask for confirmation or wait for human input. If you get stuck after exhausting your options, \
+        call `staff_ping` and set phase to `needs_human_attention`.";
+    let interactive_preamble = "You are a server healing agent for the mac-mgmt fleet management system.\n\
+        You are working interactively with a human operator via an MCP client (e.g. Claude Code).\n\
+        Diagnose the issue, apply fixes, verify the result, and mark the session done.\n\
+        If you get stuck after exhausting your options, stop and ask the human operator for help directly \
+        — do NOT create staff pings for escalation.";
+    prompt = prompt.replace(autonomous_preamble, interactive_preamble);
+
+    // Replace staff_ping guidance section
+    let staff_ping_section_start = "## When to use staff_ping\n";
+    if let Some(start) = prompt.find(staff_ping_section_start) {
+        // Find the next section header (## )
+        let rest = &prompt[start + staff_ping_section_start.len()..];
+        let section_end = rest.find("\n## ")
+            .map(|pos| start + staff_ping_section_start.len() + pos)
+            .unwrap_or(prompt.len());
+        let replacement = "## When to escalate to the human operator\n\
+            When you encounter issues you cannot resolve after multiple attempts, \
+            stop and report your findings to the human operator on the console. \
+            Do NOT create staff pings — the human is watching and can intervene directly.\n\
+            Situations that warrant escalation:\n\
+            - Hardware failures, disk errors, GPU issues\n\
+            - Network/DNS problems you cannot fix via config\n\
+            - Missing credentials or permissions\n\
+            - Repeated crash loops after remediation attempts\n\
+            - Security concerns\n\n";
+        prompt.replace_range(start..section_end, replacement);
+    }
+
+    prompt
+}
+
 /// Build a condensed system prompt for a fine-tuned model.
 ///
 /// The fine-tuned model has internalized tool descriptions, workflow guidelines,

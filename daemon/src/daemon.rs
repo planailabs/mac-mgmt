@@ -1052,8 +1052,8 @@ pub async fn run(
             std::sync::Arc::new(crate::ai_proxy::usage::UsageTracker::new(usage_path));
         // Generate an in-memory probe token with no budget for assessment probes.
         use rand::Rng;
-        let probe_token: String = rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
+        let probe_token: String = rand::rng()
+            .sample_iter(&rand::distr::Alphanumeric)
             .take(32)
             .map(char::from)
             .collect();

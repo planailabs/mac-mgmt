@@ -60,8 +60,15 @@ pub fn daemon_config_with_relay(
 
 /// Generate a random ed25519 host key for simulation.
 pub fn generate_host_key() -> russh::keys::PrivateKey {
-    let mut rng = rand::rngs::OsRng;
-    russh::keys::PrivateKey::random(&mut rng, russh::keys::Algorithm::Ed25519).unwrap()
+    use rand::RngCore;
+    let mut seed = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut seed);
+    russh::keys::PrivateKey::new(
+        russh::keys::ssh_key::private::KeypairData::Ed25519(
+            russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed),
+        ),
+        ""
+    ).unwrap()
 }
 
 /// Start a daemon, returning (shutdown_sender, instance_id).

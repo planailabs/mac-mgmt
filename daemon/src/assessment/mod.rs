@@ -263,7 +263,7 @@ impl Default for Assessor {
 #[allow(dead_code)]
 pub fn jittered(base: Duration, jitter_secs: u64) -> Duration {
     use rand::Rng;
-    let jitter = rand::thread_rng().gen_range(0..=(jitter_secs * 2)) as i64 - jitter_secs as i64;
+    let jitter = rand::rng().random_range(0..=(jitter_secs * 2)) as i64 - jitter_secs as i64;
     let secs = (base.as_secs() as i64 + jitter).max(1) as u64;
     Duration::from_secs(secs)
 }
