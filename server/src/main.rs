@@ -604,24 +604,6 @@ fn main() {
                     axum::routing::get(web::healer_sse::view_session_sse),
                 );
 
-            // MCP healer endpoint — uses its own admin token auth, not OIDC.
-            // route_service with a wildcard path ensures it takes priority over
-            // the Dioxus catch-all fallback.
-            {
-                let pool = crate::server_state::server_pool().unwrap();
-                let store = crate::server_state::pg_healer_store().unwrap();
-                let healer = crate::server_state::healer_state();
-                let instance_data = healer.as_ref().map(|h| h.instance_data().clone());
-                let push_fn = healer.as_ref().and_then(|h| h.push_fn().map(|p| p.clone()));
-                if let Some(instance_data) = instance_data {
-                    let mcp_service =
-                        mcp_healer::build_mcp_service(pool, store, instance_data, push_fn);
-                    router = router
-                        .route_service("/mcp/healer", mcp_service.clone())
-                        .route_service("/mcp/healer/", mcp_service);
-                }
-            }
-
             // Disable nginx response buffering so streaming server functions
             // (healer session streams, JsonStream) are forwarded immediately
             // instead of being buffered until completion.
@@ -663,6 +645,25 @@ fn main() {
                         axum::routing::get(web::components::easy_access::easy_access_direct),
                     )
                     .layer(axum::middleware::from_fn(web::auth::require_auth));
+            }
+
+            // MCP healer endpoint — merged AFTER the OIDC auth layers are
+            // applied so it is not wrapped by require_auth. The MCP server
+            // uses its own admin token auth in the initialize() handshake.
+            {
+                let pool = crate::server_state::server_pool().unwrap();
+                let store = crate::server_state::pg_healer_store().unwrap();
+                let healer = crate::server_state::healer_state();
+                let instance_data = healer.as_ref().map(|h| h.instance_data().clone());
+                let push_fn = healer.as_ref().and_then(|h| h.push_fn().map(|p| p.clone()));
+                if let Some(instance_data) = instance_data {
+                    let mcp_service =
+                        mcp_healer::build_mcp_service(pool, store, instance_data, push_fn);
+                    let mcp_router = axum::Router::new()
+                        .route_service("/mcp/healer", mcp_service.clone())
+                        .route_service("/mcp/healer/", mcp_service);
+                    router = router.merge(mcp_router);
+                }
             }
 
             Ok(router)
