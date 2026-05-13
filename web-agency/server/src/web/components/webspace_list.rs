@@ -17,6 +17,7 @@ struct WebspaceRow {
     domain_count: i64,
     organization_name: String,
     has_changedetection: bool,
+    has_missing_cname: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,24 +42,46 @@ async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
         return Ok(vec![]);
     }
 
-    type Row = (Uuid, String, String, Option<String>, Option<String>, Option<String>, Option<String>, String, i64, String, bool);
+    // has_missing_cname: the webspace has at least one domain binding where
+    // no CNAME dns_record exists for that subdomain on that domain.
+    let missing_cname_subquery = "\
+        EXISTS( \
+            SELECT 1 FROM webspace_domains wd2 \
+            JOIN domains d2 ON d2.id = wd2.domain_id \
+            LEFT JOIN subdomains s2 ON s2.id = wd2.subdomain_id \
+            WHERE wd2.webspace_id = w.id \
+              AND NOT EXISTS( \
+                  SELECT 1 FROM dns_records dr \
+                  WHERE dr.domain_id = d2.id \
+                    AND dr.record_type = 'CNAME' \
+                    AND dr.name = COALESCE(s2.name, '@') \
+              ) \
+        )";
+
+    type Row = (Uuid, String, String, Option<String>, Option<String>, Option<String>, Option<String>, String, i64, String, bool, bool);
     let rows = if user.is_admin {
         sqlx::query_as::<_, Row>(
-            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, w.auth_mode, \
-             (SELECT count(*) FROM webspace_domains wd WHERE wd.webspace_id = w.id), o.name, \
-             w.changedetection_credential_id IS NOT NULL \
-             FROM webspaces w JOIN organizations o ON o.id = w.organization_id \
-             ORDER BY w.name",
+            &format!(
+                "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, w.auth_mode, \
+                 (SELECT count(*) FROM webspace_domains wd WHERE wd.webspace_id = w.id), o.name, \
+                 w.changedetection_credential_id IS NOT NULL, \
+                 {missing_cname_subquery} \
+                 FROM webspaces w JOIN organizations o ON o.id = w.organization_id \
+                 ORDER BY w.name"
+            ),
         )
         .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, Row>(
-            "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, w.auth_mode, \
-             (SELECT count(*) FROM webspace_domains wd WHERE wd.webspace_id = w.id), o.name, \
-             w.changedetection_credential_id IS NOT NULL \
-             FROM webspaces w JOIN organizations o ON o.id = w.organization_id \
-             WHERE w.organization_id = ANY($1) \
-             ORDER BY w.name",
+            &format!(
+                "SELECT w.id, w.name, w.hosting_type, w.runtime, w.local_status, w.cloudflare_pages_project, w.relay_url, w.auth_mode, \
+                 (SELECT count(*) FROM webspace_domains wd WHERE wd.webspace_id = w.id), o.name, \
+                 w.changedetection_credential_id IS NOT NULL, \
+                 {missing_cname_subquery} \
+                 FROM webspaces w JOIN organizations o ON o.id = w.organization_id \
+                 WHERE w.organization_id = ANY($1) \
+                 ORDER BY w.name"
+            ),
         )
         .bind(&org_ids)
         .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
@@ -66,8 +89,8 @@ async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, auth_mode, domain_count, organization_name, has_changedetection)| {
-            WebspaceRow { id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, auth_mode, domain_count, organization_name, has_changedetection }
+        .map(|(id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, auth_mode, domain_count, organization_name, has_changedetection, has_missing_cname)| {
+            WebspaceRow { id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, auth_mode, domain_count, organization_name, has_changedetection, has_missing_cname }
         })
         .collect())
 }
@@ -145,6 +168,7 @@ pub fn WebspaceList() -> Element {
         "local" => all_rows.iter().filter(|r| r.hosting_type == "local").collect(),
         "relay" => all_rows.iter().filter(|r| r.hosting_type == "relay").collect(),
         "tunnel" => all_rows.iter().filter(|r| r.hosting_type == "tunnel").collect(),
+        "missing_cname" => all_rows.iter().filter(|r| r.has_missing_cname).collect(),
         "no_cd" => all_rows.iter().filter(|r| !r.has_changedetection).collect(),
         "has_cd" => all_rows.iter().filter(|r| r.has_changedetection).collect(),
         _ => all_rows.iter().collect(),
@@ -195,6 +219,7 @@ pub fn WebspaceList() -> Element {
                     ("local", "Local", all_rows.iter().filter(|r| r.hosting_type == "local").count()),
                     ("relay", "Relay", all_rows.iter().filter(|r| r.hosting_type == "relay").count()),
                     ("tunnel", "Tunnel", all_rows.iter().filter(|r| r.hosting_type == "tunnel").count()),
+                    ("missing_cname", "Missing CNAME", all_rows.iter().filter(|r| r.has_missing_cname).count()),
                     ("no_cd", "No Change Detection", all_rows.iter().filter(|r| !r.has_changedetection).count()),
                     ("has_cd", "Has Change Detection", all_rows.iter().filter(|r| r.has_changedetection).count()),
                 ];
