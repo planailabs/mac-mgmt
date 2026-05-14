@@ -653,6 +653,30 @@ def trim_dataforseo():
     return spec
 
 
+def strip_unsupported_cd_fields(spec):
+    """Remove fields from the ChangeDetection spec that the deployed server rejects.
+
+    The upstream spec includes llm_change_summary and llm_intent, but the
+    server returns 400 "Unknown field(s)" when they are sent.  Strip them
+    from every schema so the generated client never serializes them.
+    """
+    drop = {"llm_change_summary", "llm_intent"}
+    schemas = spec.get("components", {}).get("schemas", {})
+    stripped = 0
+    for name, schema in schemas.items():
+        props = schema.get("properties", {})
+        for field in drop:
+            if field in props:
+                del props[field]
+                stripped += 1
+                # Also remove from required if present
+                req = schema.get("required", [])
+                if field in req:
+                    req.remove(field)
+    if stripped:
+        print(f"  Stripped {stripped} unsupported LLM fields from schemas")
+
+
 def trim_changedetection():
     """Trim the ChangeDetection.io OpenAPI spec (light touch — spec is small)."""
     print("Loading ChangeDetection.io OpenAPI JSON...")
@@ -666,6 +690,9 @@ def trim_changedetection():
     print("  Downgrading OpenAPI 3.1 type arrays to 3.0 nullable format...")
     spec["openapi"] = "3.0.3"
     downgrade_openapi_31_types(spec)
+
+    # Strip fields not supported by the deployed server
+    strip_unsupported_cd_fields(spec)
 
     # Apply generic fixes
     print("  Fixing enum bools...")

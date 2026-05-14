@@ -78,7 +78,7 @@ pub mod types {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub date_created: ::std::option::Option<i64>,
         ///Keep only lines containing these substrings (plain text,
-        /// case-insensitive) â simpler alternative to regex
+        /// case-insensitive) — simpler alternative to regex
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub extract_lines_containing: ::std::vec::Vec<CreateTagExtractLinesContainingItem>,
         ///Regex patterns to extract specific text after filtering
@@ -132,19 +132,10 @@ pub mod types {
         ///CSS/XPath selectors to extract specific content from the page
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub include_filters: ::std::vec::Vec<CreateTagIncludeFiltersItem>,
-        ///Instructions for the AI to summarise changes in notifications. When
-        /// set, replaces {{diff}} with a human-readable description.
-        #[serde(default = "defaults::create_tag_llm_change_summary")]
-        pub llm_change_summary: CreateTagLlmChangeSummary,
         ///Internal cache of AI evaluation results keyed by (intent, diff) hash
         /// (auto-managed).
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub llm_evaluation_cache: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-        ///Plain-English intent for AI-based change filtering. The AI evaluates
-        /// every detected change against this and only notifies when it
-        /// matches.
-        #[serde(default = "defaults::create_tag_llm_intent")]
-        pub llm_intent: CreateTagLlmIntent,
         ///Number of tokens consumed by the AI on the most recent check.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub llm_last_tokens_used: ::std::option::Option<i64>,
@@ -1128,178 +1119,6 @@ pub mod types {
     }
 
     impl<'de> ::serde::Deserialize<'de> for CreateTagIncludeFiltersItem {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Instructions for the AI to summarise changes in notifications. When set,
-    /// replaces {{diff}} with a human-readable description.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Instructions for the AI to summarise changes in
-    /// notifications. When set, replaces {{diff}} with a human-readable
-    /// description.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct CreateTagLlmChangeSummary(::std::string::String);
-    impl ::std::ops::Deref for CreateTagLlmChangeSummary {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<CreateTagLlmChangeSummary> for ::std::string::String {
-        fn from(value: CreateTagLlmChangeSummary) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for CreateTagLlmChangeSummary {
-        fn default() -> Self {
-            CreateTagLlmChangeSummary("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for CreateTagLlmChangeSummary {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for CreateTagLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for CreateTagLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for CreateTagLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for CreateTagLlmChangeSummary {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Plain-English intent for AI-based change filtering. The AI evaluates
-    /// every detected change against this and only notifies when it matches.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Plain-English intent for AI-based change filtering. The
-    /// AI evaluates every detected change against this and only notifies when
-    /// it matches.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct CreateTagLlmIntent(::std::string::String);
-    impl ::std::ops::Deref for CreateTagLlmIntent {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<CreateTagLlmIntent> for ::std::string::String {
-        fn from(value: CreateTagLlmIntent) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for CreateTagLlmIntent {
-        fn default() -> Self {
-            CreateTagLlmIntent("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for CreateTagLlmIntent {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for CreateTagLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for CreateTagLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for CreateTagLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for CreateTagLlmIntent {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -2572,7 +2391,7 @@ pub mod types {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub date_created: ::std::option::Option<i64>,
         ///Keep only lines containing these substrings (plain text,
-        /// case-insensitive) â simpler alternative to regex
+        /// case-insensitive) — simpler alternative to regex
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub extract_lines_containing: ::std::vec::Vec<CreateWatchExtractLinesContainingItem>,
         ///Regex patterns to extract specific text after filtering
@@ -2626,19 +2445,10 @@ pub mod types {
         ///CSS/XPath selectors to extract specific content from the page
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub include_filters: ::std::vec::Vec<CreateWatchIncludeFiltersItem>,
-        ///Instructions for the AI to summarise changes in notifications. When
-        /// set, replaces {{diff}} with a human-readable description.
-        #[serde(default = "defaults::create_watch_llm_change_summary")]
-        pub llm_change_summary: CreateWatchLlmChangeSummary,
         ///Internal cache of AI evaluation results keyed by (intent, diff) hash
         /// (auto-managed).
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub llm_evaluation_cache: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-        ///Plain-English intent for AI-based change filtering. The AI evaluates
-        /// every detected change against this and only notifies when it
-        /// matches.
-        #[serde(default = "defaults::create_watch_llm_intent")]
-        pub llm_intent: CreateWatchLlmIntent,
         ///Number of tokens consumed by the AI on the most recent check.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub llm_last_tokens_used: ::std::option::Option<i64>,
@@ -3607,178 +3417,6 @@ pub mod types {
     }
 
     impl<'de> ::serde::Deserialize<'de> for CreateWatchIncludeFiltersItem {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Instructions for the AI to summarise changes in notifications. When set,
-    /// replaces {{diff}} with a human-readable description.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Instructions for the AI to summarise changes in
-    /// notifications. When set, replaces {{diff}} with a human-readable
-    /// description.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct CreateWatchLlmChangeSummary(::std::string::String);
-    impl ::std::ops::Deref for CreateWatchLlmChangeSummary {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<CreateWatchLlmChangeSummary> for ::std::string::String {
-        fn from(value: CreateWatchLlmChangeSummary) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for CreateWatchLlmChangeSummary {
-        fn default() -> Self {
-            CreateWatchLlmChangeSummary("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for CreateWatchLlmChangeSummary {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for CreateWatchLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for CreateWatchLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for CreateWatchLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for CreateWatchLlmChangeSummary {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Plain-English intent for AI-based change filtering. The AI evaluates
-    /// every detected change against this and only notifies when it matches.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Plain-English intent for AI-based change filtering. The
-    /// AI evaluates every detected change against this and only notifies when
-    /// it matches.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct CreateWatchLlmIntent(::std::string::String);
-    impl ::std::ops::Deref for CreateWatchLlmIntent {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<CreateWatchLlmIntent> for ::std::string::String {
-        fn from(value: CreateWatchLlmIntent) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for CreateWatchLlmIntent {
-        fn default() -> Self {
-            CreateWatchLlmIntent("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for CreateWatchLlmIntent {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for CreateWatchLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for CreateWatchLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for CreateWatchLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for CreateWatchLlmIntent {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -7545,7 +7183,7 @@ pub mod types {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub date_created: ::std::option::Option<i64>,
         ///Keep only lines containing these substrings (plain text,
-        /// case-insensitive) â simpler alternative to regex
+        /// case-insensitive) — simpler alternative to regex
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub extract_lines_containing: ::std::vec::Vec<TagExtractLinesContainingItem>,
         ///Regex patterns to extract specific text after filtering
@@ -7599,19 +7237,10 @@ pub mod types {
         ///CSS/XPath selectors to extract specific content from the page
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub include_filters: ::std::vec::Vec<TagIncludeFiltersItem>,
-        ///Instructions for the AI to summarise changes in notifications. When
-        /// set, replaces {{diff}} with a human-readable description.
-        #[serde(default = "defaults::tag_llm_change_summary")]
-        pub llm_change_summary: TagLlmChangeSummary,
         ///Internal cache of AI evaluation results keyed by (intent, diff) hash
         /// (auto-managed).
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub llm_evaluation_cache: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-        ///Plain-English intent for AI-based change filtering. The AI evaluates
-        /// every detected change against this and only notifies when it
-        /// matches.
-        #[serde(default = "defaults::tag_llm_intent")]
-        pub llm_intent: TagLlmIntent,
         ///Number of tokens consumed by the AI on the most recent check.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub llm_last_tokens_used: ::std::option::Option<i64>,
@@ -7756,9 +7385,7 @@ pub mod types {
                 ignore_text: Default::default(),
                 in_stock_only: defaults::default_bool::<true>(),
                 include_filters: Default::default(),
-                llm_change_summary: defaults::tag_llm_change_summary(),
                 llm_evaluation_cache: Default::default(),
-                llm_intent: defaults::tag_llm_intent(),
                 llm_last_tokens_used: Default::default(),
                 llm_prefilter: Default::default(),
                 llm_tokens_used_cumulative: Default::default(),
@@ -8662,178 +8289,6 @@ pub mod types {
     }
 
     impl<'de> ::serde::Deserialize<'de> for TagIncludeFiltersItem {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Instructions for the AI to summarise changes in notifications. When set,
-    /// replaces {{diff}} with a human-readable description.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Instructions for the AI to summarise changes in
-    /// notifications. When set, replaces {{diff}} with a human-readable
-    /// description.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct TagLlmChangeSummary(::std::string::String);
-    impl ::std::ops::Deref for TagLlmChangeSummary {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<TagLlmChangeSummary> for ::std::string::String {
-        fn from(value: TagLlmChangeSummary) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for TagLlmChangeSummary {
-        fn default() -> Self {
-            TagLlmChangeSummary("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for TagLlmChangeSummary {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for TagLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for TagLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for TagLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for TagLlmChangeSummary {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Plain-English intent for AI-based change filtering. The AI evaluates
-    /// every detected change against this and only notifies when it matches.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Plain-English intent for AI-based change filtering. The
-    /// AI evaluates every detected change against this and only notifies when
-    /// it matches.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct TagLlmIntent(::std::string::String);
-    impl ::std::ops::Deref for TagLlmIntent {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<TagLlmIntent> for ::std::string::String {
-        fn from(value: TagLlmIntent) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for TagLlmIntent {
-        fn default() -> Self {
-            TagLlmIntent("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for TagLlmIntent {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for TagLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for TagLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for TagLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for TagLlmIntent {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -10080,7 +9535,7 @@ pub mod types {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub date_created: ::std::option::Option<i64>,
         ///Keep only lines containing these substrings (plain text,
-        /// case-insensitive) â simpler alternative to regex
+        /// case-insensitive) — simpler alternative to regex
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub extract_lines_containing: ::std::vec::Vec<UpdateWatchExtractLinesContainingItem>,
         ///Regex patterns to extract specific text after filtering
@@ -10139,19 +9594,10 @@ pub mod types {
         /// watch" endpoint marks the watch as viewed.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub last_viewed: ::std::option::Option<u64>,
-        ///Instructions for the AI to summarise changes in notifications. When
-        /// set, replaces {{diff}} with a human-readable description.
-        #[serde(default = "defaults::update_watch_llm_change_summary")]
-        pub llm_change_summary: UpdateWatchLlmChangeSummary,
         ///Internal cache of AI evaluation results keyed by (intent, diff) hash
         /// (auto-managed).
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub llm_evaluation_cache: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-        ///Plain-English intent for AI-based change filtering. The AI evaluates
-        /// every detected change against this and only notifies when it
-        /// matches.
-        #[serde(default = "defaults::update_watch_llm_intent")]
-        pub llm_intent: UpdateWatchLlmIntent,
         ///Number of tokens consumed by the AI on the most recent check.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub llm_last_tokens_used: ::std::option::Option<i64>,
@@ -10282,9 +9728,7 @@ pub mod types {
                 in_stock_only: defaults::default_bool::<true>(),
                 include_filters: Default::default(),
                 last_viewed: Default::default(),
-                llm_change_summary: defaults::update_watch_llm_change_summary(),
                 llm_evaluation_cache: Default::default(),
-                llm_intent: defaults::update_watch_llm_intent(),
                 llm_last_tokens_used: Default::default(),
                 llm_prefilter: Default::default(),
                 llm_tokens_used_cumulative: Default::default(),
@@ -11186,178 +10630,6 @@ pub mod types {
     }
 
     impl<'de> ::serde::Deserialize<'de> for UpdateWatchIncludeFiltersItem {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Instructions for the AI to summarise changes in notifications. When set,
-    /// replaces {{diff}} with a human-readable description.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Instructions for the AI to summarise changes in
-    /// notifications. When set, replaces {{diff}} with a human-readable
-    /// description.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct UpdateWatchLlmChangeSummary(::std::string::String);
-    impl ::std::ops::Deref for UpdateWatchLlmChangeSummary {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<UpdateWatchLlmChangeSummary> for ::std::string::String {
-        fn from(value: UpdateWatchLlmChangeSummary) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for UpdateWatchLlmChangeSummary {
-        fn default() -> Self {
-            UpdateWatchLlmChangeSummary("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for UpdateWatchLlmChangeSummary {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for UpdateWatchLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for UpdateWatchLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for UpdateWatchLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for UpdateWatchLlmChangeSummary {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Plain-English intent for AI-based change filtering. The AI evaluates
-    /// every detected change against this and only notifies when it matches.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Plain-English intent for AI-based change filtering. The
-    /// AI evaluates every detected change against this and only notifies when
-    /// it matches.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct UpdateWatchLlmIntent(::std::string::String);
-    impl ::std::ops::Deref for UpdateWatchLlmIntent {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<UpdateWatchLlmIntent> for ::std::string::String {
-        fn from(value: UpdateWatchLlmIntent) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for UpdateWatchLlmIntent {
-        fn default() -> Self {
-            UpdateWatchLlmIntent("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for UpdateWatchLlmIntent {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for UpdateWatchLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for UpdateWatchLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for UpdateWatchLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for UpdateWatchLlmIntent {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -12785,7 +12057,7 @@ pub mod types {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub date_created: ::std::option::Option<i64>,
         ///Keep only lines containing these substrings (plain text,
-        /// case-insensitive) â simpler alternative to regex
+        /// case-insensitive) — simpler alternative to regex
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub extract_lines_containing: ::std::vec::Vec<WatchExtractLinesContainingItem>,
         ///Regex patterns to extract specific text after filtering
@@ -12867,19 +12139,10 @@ pub mod types {
         /// for listing.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub link: ::std::option::Option<::std::string::String>,
-        ///Instructions for the AI to summarise changes in notifications. When
-        /// set, replaces {{diff}} with a human-readable description.
-        #[serde(default = "defaults::watch_llm_change_summary")]
-        pub llm_change_summary: WatchLlmChangeSummary,
         ///Internal cache of AI evaluation results keyed by (intent, diff) hash
         /// (auto-managed).
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub llm_evaluation_cache: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-        ///Plain-English intent for AI-based change filtering. The AI evaluates
-        /// every detected change against this and only notifies when it
-        /// matches.
-        #[serde(default = "defaults::watch_llm_intent")]
-        pub llm_intent: WatchLlmIntent,
         ///Number of tokens consumed by the AI on the most recent check.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub llm_last_tokens_used: ::std::option::Option<i64>,
@@ -13047,9 +12310,7 @@ pub mod types {
                 last_notification_error: Default::default(),
                 last_viewed: Default::default(),
                 link: Default::default(),
-                llm_change_summary: defaults::watch_llm_change_summary(),
                 llm_evaluation_cache: Default::default(),
-                llm_intent: defaults::watch_llm_intent(),
                 llm_last_tokens_used: Default::default(),
                 llm_prefilter: Default::default(),
                 llm_tokens_used_cumulative: Default::default(),
@@ -13204,7 +12465,7 @@ pub mod types {
     ///    },
     ///    "extract_lines_containing": {
     ///      "description": "Keep only lines containing these substrings (plain
-    /// text, case-insensitive) â simpler alternative to regex",
+    /// text, case-insensitive) — simpler alternative to regex",
     ///      "type": "array",
     ///      "items": {
     ///        "type": "string",
@@ -13319,27 +12580,11 @@ pub mod types {
     ///      },
     ///      "maxItems": 100
     ///    },
-    ///    "llm_change_summary": {
-    ///      "description": "Instructions for the AI to summarise changes in
-    /// notifications. When set, replaces {{diff}} with a human-readable
-    /// description.",
-    ///      "default": "",
-    ///      "type": "string",
-    ///      "maxLength": 2000
-    ///    },
     ///    "llm_evaluation_cache": {
     ///      "description": "Internal cache of AI evaluation results keyed by
     /// (intent, diff) hash (auto-managed).",
     ///      "readOnly": true,
     ///      "type": "object"
-    ///    },
-    ///    "llm_intent": {
-    ///      "description": "Plain-English intent for AI-based change filtering.
-    /// The AI evaluates every detected change against this and only notifies
-    /// when it matches.",
-    ///      "default": "",
-    ///      "type": "string",
-    ///      "maxLength": 2000
     ///    },
     ///    "llm_last_tokens_used": {
     ///      "description": "Number of tokens consumed by the AI on the most
@@ -13684,7 +12929,7 @@ pub mod types {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub date_created: ::std::option::Option<i64>,
         ///Keep only lines containing these substrings (plain text,
-        /// case-insensitive) â simpler alternative to regex
+        /// case-insensitive) — simpler alternative to regex
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub extract_lines_containing: ::std::vec::Vec<WatchBaseExtractLinesContainingItem>,
         ///Regex patterns to extract specific text after filtering
@@ -13738,19 +12983,10 @@ pub mod types {
         ///CSS/XPath selectors to extract specific content from the page
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub include_filters: ::std::vec::Vec<WatchBaseIncludeFiltersItem>,
-        ///Instructions for the AI to summarise changes in notifications. When
-        /// set, replaces {{diff}} with a human-readable description.
-        #[serde(default = "defaults::watch_base_llm_change_summary")]
-        pub llm_change_summary: WatchBaseLlmChangeSummary,
         ///Internal cache of AI evaluation results keyed by (intent, diff) hash
         /// (auto-managed).
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub llm_evaluation_cache: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-        ///Plain-English intent for AI-based change filtering. The AI evaluates
-        /// every detected change against this and only notifies when it
-        /// matches.
-        #[serde(default = "defaults::watch_base_llm_intent")]
-        pub llm_intent: WatchBaseLlmIntent,
         ///Number of tokens consumed by the AI on the most recent check.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub llm_last_tokens_used: ::std::option::Option<i64>,
@@ -13880,9 +13116,7 @@ pub mod types {
                 ignore_text: Default::default(),
                 in_stock_only: defaults::default_bool::<true>(),
                 include_filters: Default::default(),
-                llm_change_summary: defaults::watch_base_llm_change_summary(),
                 llm_evaluation_cache: Default::default(),
-                llm_intent: defaults::watch_base_llm_intent(),
                 llm_last_tokens_used: Default::default(),
                 llm_prefilter: Default::default(),
                 llm_tokens_used_cumulative: Default::default(),
@@ -14784,178 +14018,6 @@ pub mod types {
     }
 
     impl<'de> ::serde::Deserialize<'de> for WatchBaseIncludeFiltersItem {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Instructions for the AI to summarise changes in notifications. When set,
-    /// replaces {{diff}} with a human-readable description.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Instructions for the AI to summarise changes in
-    /// notifications. When set, replaces {{diff}} with a human-readable
-    /// description.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct WatchBaseLlmChangeSummary(::std::string::String);
-    impl ::std::ops::Deref for WatchBaseLlmChangeSummary {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<WatchBaseLlmChangeSummary> for ::std::string::String {
-        fn from(value: WatchBaseLlmChangeSummary) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for WatchBaseLlmChangeSummary {
-        fn default() -> Self {
-            WatchBaseLlmChangeSummary("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for WatchBaseLlmChangeSummary {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for WatchBaseLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for WatchBaseLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for WatchBaseLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for WatchBaseLlmChangeSummary {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Plain-English intent for AI-based change filtering. The AI evaluates
-    /// every detected change against this and only notifies when it matches.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Plain-English intent for AI-based change filtering. The
-    /// AI evaluates every detected change against this and only notifies when
-    /// it matches.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct WatchBaseLlmIntent(::std::string::String);
-    impl ::std::ops::Deref for WatchBaseLlmIntent {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<WatchBaseLlmIntent> for ::std::string::String {
-        fn from(value: WatchBaseLlmIntent) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for WatchBaseLlmIntent {
-        fn default() -> Self {
-            WatchBaseLlmIntent("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for WatchBaseLlmIntent {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for WatchBaseLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for WatchBaseLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for WatchBaseLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for WatchBaseLlmIntent {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -17078,178 +16140,6 @@ pub mod types {
         }
     }
 
-    ///Instructions for the AI to summarise changes in notifications. When set,
-    /// replaces {{diff}} with a human-readable description.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Instructions for the AI to summarise changes in
-    /// notifications. When set, replaces {{diff}} with a human-readable
-    /// description.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct WatchLlmChangeSummary(::std::string::String);
-    impl ::std::ops::Deref for WatchLlmChangeSummary {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<WatchLlmChangeSummary> for ::std::string::String {
-        fn from(value: WatchLlmChangeSummary) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for WatchLlmChangeSummary {
-        fn default() -> Self {
-            WatchLlmChangeSummary("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for WatchLlmChangeSummary {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for WatchLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for WatchLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for WatchLlmChangeSummary {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for WatchLlmChangeSummary {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
-    ///Plain-English intent for AI-based change filtering. The AI evaluates
-    /// every detected change against this and only notifies when it matches.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Plain-English intent for AI-based change filtering. The
-    /// AI evaluates every detected change against this and only notifies when
-    /// it matches.",
-    ///  "default": "",
-    ///  "type": "string",
-    ///  "maxLength": 2000
-    ///}
-    /// ```
-    /// </details>
-    #[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct WatchLlmIntent(::std::string::String);
-    impl ::std::ops::Deref for WatchLlmIntent {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-
-    impl ::std::convert::From<WatchLlmIntent> for ::std::string::String {
-        fn from(value: WatchLlmIntent) -> Self {
-            value.0
-        }
-    }
-
-    impl ::std::default::Default for WatchLlmIntent {
-        fn default() -> Self {
-            WatchLlmIntent("".to_string())
-        }
-    }
-
-    impl ::std::str::FromStr for WatchLlmIntent {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() > 2000usize {
-                return Err("longer than 2000 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-
-    impl ::std::convert::TryFrom<&str> for WatchLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<&::std::string::String> for WatchLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl ::std::convert::TryFrom<::std::string::String> for WatchLlmIntent {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-
-    impl<'de> ::serde::Deserialize<'de> for WatchLlmIntent {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-
     ///HTTP method to use
     ///
     /// <details><summary>JSON schema</summary>
@@ -18617,14 +17507,6 @@ pub mod types {
             super::CreateTagFetchBackend("system".to_string())
         }
 
-        pub(super) fn create_tag_llm_change_summary() -> super::CreateTagLlmChangeSummary {
-            super::CreateTagLlmChangeSummary("".to_string())
-        }
-
-        pub(super) fn create_tag_llm_intent() -> super::CreateTagLlmIntent {
-            super::CreateTagLlmIntent("".to_string())
-        }
-
         pub(super) fn create_tag_processor() -> super::CreateTagProcessor {
             super::CreateTagProcessor::TextJsonDiff
         }
@@ -18636,14 +17518,6 @@ pub mod types {
 
         pub(super) fn create_watch_fetch_backend() -> super::CreateWatchFetchBackend {
             super::CreateWatchFetchBackend("system".to_string())
-        }
-
-        pub(super) fn create_watch_llm_change_summary() -> super::CreateWatchLlmChangeSummary {
-            super::CreateWatchLlmChangeSummary("".to_string())
-        }
-
-        pub(super) fn create_watch_llm_intent() -> super::CreateWatchLlmIntent {
-            super::CreateWatchLlmIntent("".to_string())
         }
 
         pub(super) fn create_watch_processor() -> super::CreateWatchProcessor {
@@ -18670,14 +17544,6 @@ pub mod types {
             super::TagFetchBackend("system".to_string())
         }
 
-        pub(super) fn tag_llm_change_summary() -> super::TagLlmChangeSummary {
-            super::TagLlmChangeSummary("".to_string())
-        }
-
-        pub(super) fn tag_llm_intent() -> super::TagLlmIntent {
-            super::TagLlmIntent("".to_string())
-        }
-
         pub(super) fn tag_processor() -> super::TagProcessor {
             super::TagProcessor::TextJsonDiff
         }
@@ -18689,14 +17555,6 @@ pub mod types {
 
         pub(super) fn update_watch_fetch_backend() -> super::UpdateWatchFetchBackend {
             super::UpdateWatchFetchBackend("system".to_string())
-        }
-
-        pub(super) fn update_watch_llm_change_summary() -> super::UpdateWatchLlmChangeSummary {
-            super::UpdateWatchLlmChangeSummary("".to_string())
-        }
-
-        pub(super) fn update_watch_llm_intent() -> super::UpdateWatchLlmIntent {
-            super::UpdateWatchLlmIntent("".to_string())
         }
 
         pub(super) fn update_watch_processor() -> super::UpdateWatchProcessor {
@@ -18711,14 +17569,6 @@ pub mod types {
             super::WatchFetchBackend("system".to_string())
         }
 
-        pub(super) fn watch_llm_change_summary() -> super::WatchLlmChangeSummary {
-            super::WatchLlmChangeSummary("".to_string())
-        }
-
-        pub(super) fn watch_llm_intent() -> super::WatchLlmIntent {
-            super::WatchLlmIntent("".to_string())
-        }
-
         pub(super) fn watch_processor() -> super::WatchProcessor {
             super::WatchProcessor::TextJsonDiff
         }
@@ -18729,14 +17579,6 @@ pub mod types {
 
         pub(super) fn watch_base_fetch_backend() -> super::WatchBaseFetchBackend {
             super::WatchBaseFetchBackend("system".to_string())
-        }
-
-        pub(super) fn watch_base_llm_change_summary() -> super::WatchBaseLlmChangeSummary {
-            super::WatchBaseLlmChangeSummary("".to_string())
-        }
-
-        pub(super) fn watch_base_llm_intent() -> super::WatchBaseLlmIntent {
-            super::WatchBaseLlmIntent("".to_string())
         }
 
         pub(super) fn watch_base_processor() -> super::WatchBaseProcessor {
@@ -19900,7 +18742,7 @@ impl Client {
     /// schemas provided by installed processor plugins.
     ///
     ///**Use this URL** with Swagger UI or Redoc to get schema-accurate
-    /// documentation for your specific install â it includes every
+    /// documentation for your specific install — it includes every
     /// `processor_config_<name>` schema block contributed by
     /// installed processors (e.g. `processor_config_restock_diff` from the
     /// built-in restock plugin).
