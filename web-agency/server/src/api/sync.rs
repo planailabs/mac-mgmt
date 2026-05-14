@@ -487,12 +487,23 @@ async fn sync_changedetection_for_webspace(
     let (client, group_name) =
         crate::credentials::changedetection_client(pool, cred_id).await?;
 
-    // 1. Resolve the per-webspace tag (format: "group:webspace").
-    let tag_title = format!("{group_name}:{ws_name}");
-    let tag_uuid =
-        resolve_or_create_tag(&client, pool, ws_id, cached_tag_id, &tag_title).await?;
-    let tag_uuid_str = tag_uuid.to_string();
-    tracing::debug!(webspace = ws_name, tag = %tag_uuid, title = %tag_title, "resolved changedetection tag");
+    // 1a. Resolve the credential-level group tag.
+    let group_tag_uuid = find_or_create_tag(&client, &group_name).await?;
+    let group_tag_str = group_tag_uuid.to_string();
+
+    // 1b. Resolve the per-webspace tag (format: "group:webspace").
+    let ws_tag_title = format!("{group_name}:{ws_name}");
+    let ws_tag_uuid =
+        resolve_or_create_tag(&client, pool, ws_id, cached_tag_id, &ws_tag_title).await?;
+    let ws_tag_str = ws_tag_uuid.to_string();
+
+    let watch_tags = vec![&group_tag_str, &ws_tag_str];
+    tracing::debug!(
+        webspace = ws_name,
+        group_tag = %group_tag_uuid,
+        ws_tag = %ws_tag_uuid,
+        "resolved changedetection tags"
+    );
 
     // 2. Get bound hostnames for this webspace.
     let bindings = sqlx::query_as::<_, (String, Option<String>)>(
@@ -519,9 +530,9 @@ async fn sync_changedetection_for_webspace(
     expected_urls.sort();
     expected_urls.dedup();
 
-    // 3. List existing watches in this tag.
+    // 3. List existing watches in the webspace tag.
     let existing = client
-        .list_watches(None, Some(&tag_title))
+        .list_watches(None, Some(&ws_tag_title))
         .await
         .map_err(|e| anyhow::anyhow!("list_watches failed: {e}"))?;
     let watches = existing.into_inner();
@@ -548,7 +559,7 @@ async fn sync_changedetection_for_webspace(
                 .as_deref()
                 .map(|t| t.as_str() == title_str)
                 .unwrap_or(false);
-            let tags_ok = watch.tags.iter().any(|t| t == &tag_uuid_str);
+            let tags_ok = watch_tags.iter().all(|t| watch.tags.iter().any(|wt| wt == *t));
 
             if !title_ok || !tags_ok {
                 let watch_uuid: uuid::Uuid = uuid_str
@@ -556,7 +567,7 @@ async fn sync_changedetection_for_webspace(
                     .map_err(|e| anyhow::anyhow!("invalid watch UUID {uuid_str}: {e}"))?;
                 let body = serde_json::json!({
                     "title": title_str,
-                    "tags": [&tag_uuid_str],
+                    "tags": &watch_tags,
                 });
                 let update: changedetection_api::types::UpdateWatch =
                     serde_json::from_value(body)
@@ -571,7 +582,7 @@ async fn sync_changedetection_for_webspace(
             let body = serde_json::json!({
                 "url": url,
                 "title": title_str,
-                "tags": [&tag_uuid_str],
+                "tags": &watch_tags,
             });
             let create: changedetection_api::types::CreateWatch =
                 serde_json::from_value(body)
@@ -593,7 +604,7 @@ async fn sync_changedetection_for_webspace(
                 Err(_) => continue,
             };
             if let Err(e) =
-                safe_delete_watch(&client, &watch_uuid, watch_url, &tag_uuid_str, watch)
+                safe_delete_watch(&client, &watch_uuid, watch_url, &ws_tag_str, watch)
                     .await
             {
                 tracing::warn!(
@@ -612,6 +623,40 @@ async fn sync_changedetection_for_webspace(
     }
 
     Ok(())
+}
+
+/// Find an existing tag by title or create a new one (no DB caching).
+async fn find_or_create_tag(
+    client: &changedetection_api::Client,
+    title: &str,
+) -> anyhow::Result<uuid::Uuid> {
+    let tags = client
+        .list_tags()
+        .await
+        .map_err(|e| anyhow::anyhow!("list_tags failed: {e}"))?;
+
+    for (uuid_str, tag) in tags.into_inner().iter() {
+        if tag.title.as_deref().map(|t| t.as_str()) == Some(title) {
+            let uuid: uuid::Uuid = uuid_str
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid tag UUID {uuid_str}: {e}"))?;
+            return Ok(uuid);
+        }
+    }
+
+    let body = serde_json::json!({ "title": title });
+    let create: changedetection_api::types::CreateTag = serde_json::from_value(body)
+        .map_err(|e| anyhow::anyhow!("failed to build CreateTag: {e}"))?;
+    let resp = client
+        .create_tag(&create)
+        .await
+        .map_err(|e| anyhow::anyhow!("create_tag failed: {e}"))?;
+    let tag_resp = resp.into_inner();
+    let uuid = tag_resp
+        .uuid
+        .ok_or_else(|| anyhow::anyhow!("create_tag returned no UUID"))?;
+    tracing::info!(tag = %uuid, title, "created new changedetection tag");
+    Ok(uuid)
 }
 
 /// Resolve a per-webspace tag, creating it if needed and caching the UUID.
