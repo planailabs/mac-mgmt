@@ -26,3 +26,18 @@ for img in server relay runner relay-ssh; do
     "docker://${REGISTRY}/${PROJECT}/${img}:latest" \
     --dest-creds "${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD}"
 done
+
+# NixOS-in-Docker test images (shared self-signed CA across all three)
+for img in test-mac-mgmt-relay test-mac-mgmt-server test-mac-mgmt-daemon; do
+  nix build ".#nixosConfigurations.${img}.config.system.build.dockerImage" -L
+
+  skopeo copy \
+    "docker-archive:$(readlink -f result)" \
+    "docker://${REGISTRY}/${PROJECT}/${img}:${TAG}" \
+    --dest-creds "${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD}"
+
+  skopeo copy \
+    "docker-archive:$(readlink -f result)" \
+    "docker://${REGISTRY}/${PROJECT}/${img}:latest" \
+    --dest-creds "${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD}"
+done

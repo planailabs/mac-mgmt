@@ -6,9 +6,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
+    nixos2docker.url = "git+https://git.plan.ai/plan-ai/nixos2docker";
+    nixos2docker.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, nixos2docker, ... }:
     {
       overlays.default = import ./overlay.nix { gitSha = self.rev or self.dirtyRev or "unknown"; };
       nixosModules.default = import ./server/module.nix;
@@ -18,6 +20,132 @@
       nixosModules.relay = import ./relay/module.nix;
       nixosModules.runner = import ./runner/module.nix;
       nixosModules.nix-driver-sync = import ./nix-driver-sync/module.nix;
+
+      # ── NixOS-in-Docker images ────────────────────────────────────
+      # Build with:
+      #   nix build .#nixosConfigurations.relay.config.system.build.dockerImage
+      #   nix build .#nixosConfigurations.mac-mgmt-server.config.system.build.dockerImage
+      #   nix build .#nixosConfigurations.daemon.config.system.build.dockerImage
+      # Then: docker load < result
+      # Run:  docker run -d --tmpfs /run --tmpfs /run/lock --tmpfs /tmp --stop-signal SIGRTMIN+3 <image>
+
+      nixosConfigurations = let
+        x86Pkgs = import nixpkgs { system = "x86_64-linux"; };
+
+        # Shared self-signed CA for all test containers
+        sharedCA = x86Pkgs.runCommand "mac-mgmt-test-ca" {
+          nativeBuildInputs = [ x86Pkgs.openssl ];
+        } ''
+          mkdir -p $out
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -keyout $out/ca-key.pem -out $out/ca-cert.pem \
+            -days 3650 -nodes -subj "/CN=mac-mgmt Test CA"
+        '';
+
+        sharedCAModule = { ... }: {
+          security.pki.certificateFiles = [ "${sharedCA}/ca-cert.pem" ];
+          environment.etc."mac-mgmt-test-ca/ca-cert.pem".source = "${sharedCA}/ca-cert.pem";
+          environment.etc."mac-mgmt-test-ca/ca-key.pem".source = "${sharedCA}/ca-key.pem";
+        };
+      in {
+        test-mac-mgmt-relay = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            nixos2docker.nixosModules.default
+            self.nixosModules.relay
+            sharedCAModule
+            ({ lib, ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+
+              virtualisation.dockerImage.name = "test-mac-mgmt-relay";
+              virtualisation.dockerImage.tag = "latest";
+
+              networking.hostName = "relay";
+
+              services.mac-mgmt-relay = {
+                enable = true;
+                settings = {
+                  listen_addr = "0.0.0.0:7380";
+                  server_api_url = "https://api.plan.ai";
+                  proxy_hostname = "plan-ai-relay.com";
+                  proxy_url = "https://plan-ai-relay.com";
+                  data_dir = "/var/lib/mac-mgmt-relay";
+                  cors_origins = [ "https://mgmt.plan.ai" ];
+                };
+              };
+
+              # libp2p QUIC enumerates interfaces via netlink
+              systemd.services.mac-mgmt-relay.serviceConfig.RestrictAddressFamilies =
+                lib.mkForce [ "AF_INET" "AF_INET6" "AF_UNIX" "AF_NETLINK" ];
+
+              fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
+              boot.loader.grub.enable = false;
+              system.stateVersion = "24.11";
+            })
+          ];
+        };
+
+        test-mac-mgmt-server = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            nixos2docker.nixosModules.default
+            self.nixosModules.default
+            sharedCAModule
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+
+              virtualisation.dockerImage.name = "test-mac-mgmt-server";
+              virtualisation.dockerImage.tag = "latest";
+
+              networking.hostName = "mac-mgmt-server";
+
+              services.mac-mgmt-server = {
+                enable = true;
+                settings = {
+                  api.external_url = "https://api.plan.ai/";
+                  git.state_dir = "/var/lib/mac-mgmt-server";
+                };
+              };
+
+              fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
+              boot.loader.grub.enable = false;
+              system.stateVersion = "24.11";
+            })
+          ];
+        };
+
+        test-mac-mgmt-daemon = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            nixos2docker.nixosModules.default
+            self.nixosModules.daemon
+            sharedCAModule
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+
+              virtualisation.dockerImage.name = "test-mac-mgmt-daemon";
+              virtualisation.dockerImage.tag = "latest";
+
+              networking.hostName = "daemon";
+
+              services.mac-mgmt = {
+                enable = true;
+                version = "test";
+                system = "x86_64-linux";
+                serverUrl = "https://api.plan.ai";
+                environmentFile = "/etc/mac-mgmt.env";
+                settings = {
+                  daemon.log_level = "info";
+                };
+              };
+
+              fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
+              boot.loader.grub.enable = false;
+              system.stateVersion = "24.11";
+            })
+          ];
+        };
+      };
     } //
     flake-utils.lib.eachDefaultSystem (system:
       let

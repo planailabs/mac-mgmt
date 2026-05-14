@@ -18,6 +18,26 @@
         "type": "github"
       }
     },
+    "nixos2docker": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1778800054,
+        "narHash": "sha256-5npbOr0NAqPhUl11YOKUS3/G7p5c9u8kN1SrWoYEHOM=",
+        "ref": "refs/heads/trunk",
+        "rev": "0f538f6bc364b9ec4463d9429af1dc3d130fc3c4",
+        "revCount": 11,
+        "type": "git",
+        "url": "https://git.plan.ai/plan-ai/nixos2docker"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://git.plan.ai/plan-ai/nixos2docker"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1777641297,
@@ -37,6 +57,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "nixos2docker": "nixos2docker",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"
       }
