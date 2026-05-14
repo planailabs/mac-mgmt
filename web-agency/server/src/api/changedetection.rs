@@ -2,7 +2,8 @@
 //!
 //! `POST /api/changedetection/{secret}` — accept notification from changedetection.io
 //!
-//! Auth: the secret in the URL is the auth token (stored per-webspace).
+//! Auth: the secret in the URL is the auth token (stored per sub-URL in
+//! `changedetection_suburls`).
 
 use dioxus::fullstack::axum::{
     self as axum,
@@ -38,37 +39,39 @@ async fn receive_notification(
     Path(secret): Path<String>,
     axum::Json(payload): axum::Json<NotificationBody>,
 ) -> StatusCode {
-    let ws_id: Option<Uuid> = match sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM webspaces WHERE changedetection_secret = $1",
+    let suburl = match sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT id, webspace_id FROM changedetection_suburls WHERE secret = $1",
     )
     .bind(&secret)
     .fetch_optional(&state.pool)
     .await
     {
-        Ok(id) => id,
+        Ok(row) => row,
         Err(e) => {
             tracing::error!("changedetection webhook db error: {e}");
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
     };
 
-    let Some(ws_id) = ws_id else {
+    let Some((suburl_id, ws_id)) = suburl else {
         return StatusCode::NOT_FOUND;
     };
 
     if let Err(e) = sqlx::query(
-        "INSERT INTO changedetection_notifications (webspace_id, title, body) VALUES ($1, $2, $3)",
+        "INSERT INTO changedetection_notifications (webspace_id, suburl_id, title, body) \
+         VALUES ($1, $2, $3, $4)",
     )
     .bind(ws_id)
+    .bind(suburl_id)
     .bind(&payload.title)
     .bind(&payload.body)
     .execute(&state.pool)
     .await
     {
-        tracing::error!(%ws_id, "failed to insert changedetection notification: {e}");
+        tracing::error!(%ws_id, %suburl_id, "failed to insert changedetection notification: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
 
-    tracing::debug!(%ws_id, title = ?payload.title, "received changedetection notification");
+    tracing::debug!(%ws_id, %suburl_id, title = ?payload.title, "received changedetection notification");
     StatusCode::OK
 }

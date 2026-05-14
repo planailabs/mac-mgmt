@@ -1863,21 +1863,53 @@ async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
-    // Clean up changedetection tag if one was cached.
-    if let Ok(Some((cred_id, tag_id))) = sqlx::query_as::<_, (Uuid, Uuid)>(
-        "SELECT changedetection_credential_id, changedetection_tag_id \
-         FROM webspaces WHERE id = $1 \
-         AND changedetection_credential_id IS NOT NULL \
-         AND changedetection_tag_id IS NOT NULL",
+    // Clean up changedetection tags: delete all sub-URL tags and the webspace tag.
+    if let Ok(Some(cred_id)) = sqlx::query_scalar::<_, Uuid>(
+        "SELECT changedetection_credential_id FROM webspaces WHERE id = $1 \
+         AND changedetection_credential_id IS NOT NULL",
     )
     .bind(webspace_id)
     .fetch_optional(&pool)
     .await
     {
         match crate::credentials::changedetection_client(&pool, cred_id).await {
-            Ok((client, _)) => {
-                if let Err(e) = client.delete_tag(&tag_id).await {
-                    tracing::warn!(%webspace_id, %tag_id, "failed to delete changedetection tag: {e}");
+            Ok((client, group_name)) => {
+                // Delete all sub-URL tags.
+                let suburl_tags = sqlx::query_scalar::<_, Uuid>(
+                    "SELECT tag_id FROM changedetection_suburls \
+                     WHERE webspace_id = $1 AND tag_id IS NOT NULL",
+                )
+                .bind(webspace_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+                for tag_id in &suburl_tags {
+                    if let Err(e) = client.delete_tag(tag_id).await {
+                        tracing::warn!(%webspace_id, %tag_id, "failed to delete suburl tag: {e}");
+                    }
+                }
+                // Delete the webspace-level tag ("group:ws_name").
+                let ws_name = sqlx::query_scalar::<_, String>(
+                    "SELECT name FROM webspaces WHERE id = $1",
+                )
+                .bind(webspace_id)
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten();
+                if let Some(ws_name) = ws_name {
+                    let ws_tag_title = format!("{group_name}:{ws_name}");
+                    if let Ok(tags) = client.list_tags().await {
+                        for (uuid_str, tag) in tags.into_inner().iter() {
+                            if tag.title.as_deref().map(|t| t.as_str()) == Some(&ws_tag_title) {
+                                if let Ok(uuid) = uuid_str.parse::<Uuid>() {
+                                    if let Err(e) = client.delete_tag(&uuid).await {
+                                        tracing::warn!(%webspace_id, title = ws_tag_title, "failed to delete webspace tag: {e}");
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Err(e) => {

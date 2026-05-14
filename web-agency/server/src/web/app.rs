@@ -29,6 +29,7 @@ use super::components::user_form::UserForm;
 use super::components::user_list::UserList;
 use super::components::webspace_changedetection::{
     WebspaceChangedetection, WebspaceChangedetectionNotification,
+    WebspaceChangedetectionSuburl,
 };
 use super::components::webspace_detail::WebspaceDetail;
 use super::components::webspace_form::WebspaceForm;
@@ -66,6 +67,8 @@ pub enum Route {
     WebspaceDetail { id: String },
     #[route("/webspaces/:id/changedetection")]
     WebspaceChangedetection { id: String },
+    #[route("/webspaces/:id/changedetection/suburls/:suburl_id")]
+    WebspaceChangedetectionSuburl { id: String, suburl_id: String },
     #[route("/webspaces/:id/changedetection/:notification_id")]
     WebspaceChangedetectionNotification { id: String, notification_id: String },
     #[route("/contacts")]
