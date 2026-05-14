@@ -430,8 +430,8 @@ async fn sync_bot_for_domain(
 // ── ChangeDetection.io sync ─────────────────────────────────────────
 
 async fn sync_changedetection(pool: &PgPool) {
-    let webspaces = match sqlx::query_as::<_, (Uuid, String, Uuid)>(
-        "SELECT w.id, w.name, w.changedetection_credential_id \
+    let webspaces = match sqlx::query_as::<_, (Uuid, String, Uuid, Option<Uuid>)>(
+        "SELECT w.id, w.name, w.changedetection_credential_id, w.changedetection_tag_id \
          FROM webspaces w \
          WHERE w.changedetection_credential_id IS NOT NULL",
     )
@@ -446,8 +446,10 @@ async fn sync_changedetection(pool: &PgPool) {
     };
 
     let mut synced = 0usize;
-    for (ws_id, ws_name, cred_id) in &webspaces {
-        match sync_changedetection_for_webspace(pool, *ws_id, ws_name, *cred_id).await {
+    for (ws_id, ws_name, cred_id, cached_tag_id) in &webspaces {
+        match sync_changedetection_for_webspace(pool, *ws_id, ws_name, *cred_id, *cached_tag_id)
+            .await
+        {
             Ok(()) => synced += 1,
             Err(e) => {
                 tracing::warn!("changedetection sync failed for webspace {ws_name}: {e}");
@@ -465,14 +467,17 @@ async fn sync_changedetection_for_webspace(
     ws_id: Uuid,
     ws_name: &str,
     cred_id: Uuid,
+    cached_tag_id: Option<Uuid>,
 ) -> anyhow::Result<()> {
     let (client, group_name) =
         crate::credentials::changedetection_client(pool, cred_id).await?;
 
-    // 1. Find or create the tag/group.
-    let tag_uuid = find_or_create_tag(&client, &group_name).await?;
+    // 1. Resolve the per-webspace tag (format: "group:webspace").
+    let tag_title = format!("{group_name}:{ws_name}");
+    let tag_uuid =
+        resolve_or_create_tag(&client, pool, ws_id, cached_tag_id, &tag_title).await?;
     let tag_uuid_str = tag_uuid.to_string();
-    tracing::debug!(webspace = ws_name, tag = %tag_uuid, group = %group_name, "resolved changedetection tag");
+    tracing::debug!(webspace = ws_name, tag = %tag_uuid, title = %tag_title, "resolved changedetection tag");
 
     // 2. Get bound hostnames for this webspace.
     let bindings = sqlx::query_as::<_, (String, Option<String>)>(
@@ -499,9 +504,9 @@ async fn sync_changedetection_for_webspace(
     expected_urls.sort();
     expected_urls.dedup();
 
-    // 3. List existing watches in this group.
+    // 3. List existing watches in this tag.
     let existing = client
-        .list_watches(None, Some(&group_name))
+        .list_watches(None, Some(&tag_title))
         .await
         .map_err(|e| anyhow::anyhow!("list_watches failed: {e}"))?;
     let watches = existing.into_inner();
@@ -594,27 +599,63 @@ async fn sync_changedetection_for_webspace(
     Ok(())
 }
 
-/// Find an existing tag by title or create a new one.
-async fn find_or_create_tag(
+/// Resolve a per-webspace tag, creating it if needed and caching the UUID.
+///
+/// If `cached_tag_id` is set, verify it still exists and update its title if
+/// it doesn't match `tag_title`.  Otherwise search by title or create a new
+/// tag, then store the UUID in the webspaces table.
+async fn resolve_or_create_tag(
     client: &changedetection_api::Client,
-    group_name: &str,
+    pool: &PgPool,
+    ws_id: Uuid,
+    cached_tag_id: Option<Uuid>,
+    tag_title: &str,
 ) -> anyhow::Result<uuid::Uuid> {
+    // Fast path: we have a cached UUID — verify it exists.
+    if let Some(id) = cached_tag_id {
+        match client.get_tag(&id, None, None).await {
+            Ok(resp) => {
+                let tag = resp.into_inner();
+                // Update title if it drifted.
+                let current_title = tag.title.as_deref().map(|t| t.as_str());
+                if current_title != Some(tag_title) {
+                    let body = serde_json::json!({ "title": tag_title });
+                    let update: changedetection_api::types::Tag =
+                        serde_json::from_value(body)
+                            .map_err(|e| anyhow::anyhow!("failed to build Tag update: {e}"))?;
+                    client
+                        .update_tag(&id, &update)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("update_tag title failed: {e}"))?;
+                    tracing::info!(tag = %id, title = tag_title, "updated changedetection tag title");
+                }
+                return Ok(id);
+            }
+            Err(_) => {
+                // Cached UUID is stale — fall through to search/create.
+                tracing::warn!(tag = %id, "cached changedetection tag not found, re-resolving");
+            }
+        }
+    }
+
+    // Search existing tags by title.
     let tags = client
         .list_tags()
         .await
         .map_err(|e| anyhow::anyhow!("list_tags failed: {e}"))?;
 
     for (uuid_str, tag) in tags.into_inner().iter() {
-        if tag.title.as_deref().map(|t| t.as_str()) == Some(group_name) {
+        if tag.title.as_deref().map(|t| t.as_str()) == Some(tag_title) {
             let uuid: uuid::Uuid = uuid_str
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid tag UUID {uuid_str}: {e}"))?;
+            cache_tag_id(pool, ws_id, uuid).await;
             return Ok(uuid);
         }
     }
 
     // Create new tag.
-    let body = serde_json::json!({ "title": group_name });
+    let body = serde_json::json!({ "title": tag_title });
     let create: changedetection_api::types::CreateTag = serde_json::from_value(body)
         .map_err(|e| anyhow::anyhow!("failed to build CreateTag: {e}"))?;
     let resp = client
@@ -625,8 +666,23 @@ async fn find_or_create_tag(
     let uuid = tag_resp
         .uuid
         .ok_or_else(|| anyhow::anyhow!("create_tag returned no UUID"))?;
-    tracing::info!(tag = %uuid, group = group_name, "created new changedetection tag");
+    cache_tag_id(pool, ws_id, uuid).await;
+    tracing::info!(tag = %uuid, title = tag_title, "created new changedetection tag");
     Ok(uuid)
+}
+
+/// Persist the resolved tag UUID in the webspaces table.
+async fn cache_tag_id(pool: &PgPool, ws_id: Uuid, tag_id: Uuid) {
+    if let Err(e) = sqlx::query(
+        "UPDATE webspaces SET changedetection_tag_id = $1 WHERE id = $2",
+    )
+    .bind(tag_id)
+    .bind(ws_id)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(%ws_id, %tag_id, "failed to cache changedetection tag id: {e}");
+    }
 }
 
 /// Delete a watch only if it belongs to the expected tag/group.
