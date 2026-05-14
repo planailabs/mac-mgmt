@@ -7,18 +7,33 @@ use uuid::Uuid;
 
 const SYNC_INTERVAL: Duration = Duration::from_secs(6 * 3600); // every 6 hours
 
+/// Lock to ensure only one sync runs at a time.
+static SYNC_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Spawn the periodic sync background task.
 pub fn spawn(pool: PgPool) {
     tokio::spawn(async move {
         // Small delay to let the server finish starting.
         tokio::time::sleep(Duration::from_secs(10)).await;
         loop {
-            if let Err(e) = run_sync(&pool).await {
-                tracing::error!("periodic sync failed: {e}");
-            }
+            trigger_sync(&pool).await;
             tokio::time::sleep(SYNC_INTERVAL).await;
         }
     });
+}
+
+/// Run a sync if one isn't already in progress. Returns false if skipped.
+pub async fn trigger_sync(pool: &PgPool) -> bool {
+    if SYNC_RUNNING.swap(true, Ordering::AcqRel) {
+        tracing::info!("sync already running, skipping");
+        return false;
+    }
+    let result = run_sync(pool).await;
+    SYNC_RUNNING.store(false, Ordering::Release);
+    if let Err(e) = result {
+        tracing::error!("periodic sync failed: {e}");
+    }
+    true
 }
 
 async fn run_sync(pool: &PgPool) -> anyhow::Result<()> {

@@ -1854,6 +1854,29 @@ async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
+    // Clean up changedetection tag if one was cached.
+    if let Ok(Some((cred_id, tag_id))) = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT changedetection_credential_id, changedetection_tag_id \
+         FROM webspaces WHERE id = $1 \
+         AND changedetection_credential_id IS NOT NULL \
+         AND changedetection_tag_id IS NOT NULL",
+    )
+    .bind(webspace_id)
+    .fetch_optional(&pool)
+    .await
+    {
+        match crate::credentials::changedetection_client(&pool, cred_id).await {
+            Ok((client, _)) => {
+                if let Err(e) = client.delete_tag(&tag_id).await {
+                    tracing::warn!(%webspace_id, %tag_id, "failed to delete changedetection tag: {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(%webspace_id, "failed to get changedetection client for tag cleanup: {e}");
+            }
+        }
+    }
+
     // Remove domain bindings
     sqlx::query("DELETE FROM webspace_domains WHERE webspace_id = $1")
         .bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;

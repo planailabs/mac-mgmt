@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::ui::PageHeader;
+use super::ui::{Button, ButtonVariant, PageHeader};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct DashboardStats {
@@ -74,6 +74,20 @@ async fn get_dashboard_stats() -> Result<DashboardStats, ServerFnError> {
     }
 }
 
+#[server]
+async fn trigger_sync() -> Result<String, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    if !user.is_admin {
+        return Err(ServerFnError::new("admin required"));
+    }
+    let pool = crate::server_pool()?;
+    let pool2 = pool.clone();
+    tokio::spawn(async move {
+        crate::api::sync::trigger_sync(&pool2).await;
+    });
+    Ok("Sync triggered".to_string())
+}
+
 #[component]
 pub fn Dashboard() -> Element {
     let stats = use_server_future(get_dashboard_stats)?;
@@ -81,6 +95,8 @@ pub fn Dashboard() -> Element {
         Some(Ok(s)) => s.clone(),
         _ => DashboardStats::default(),
     };
+
+    let mut sync_status = use_signal(|| None::<String>);
 
     rsx! {
         PageHeader { "Dashboard" }
@@ -99,6 +115,30 @@ pub fn Dashboard() -> Element {
                 StatCard {
                     label: "Billing Total",
                     value: format!("{:.2} EUR", cents as f64 / 100.0),
+                }
+            }
+        }
+
+        if s.is_admin {
+            div { class: "mt-8",
+                h3 { class: "text-lg font-semibold text-fg mb-3", "Admin Actions" }
+                div { class: "flex items-center gap-4",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        onclick: move |_| {
+                            spawn(async move {
+                                sync_status.set(Some("Syncing...".to_string()));
+                                match trigger_sync().await {
+                                    Ok(msg) => sync_status.set(Some(msg)),
+                                    Err(e) => sync_status.set(Some(format!("Error: {e}"))),
+                                }
+                            });
+                        },
+                        "Trigger Sync"
+                    }
+                    if let Some(msg) = sync_status() {
+                        span { class: "text-sm text-fg-muted", "{msg}" }
+                    }
                 }
             }
         }
