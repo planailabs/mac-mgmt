@@ -280,6 +280,7 @@ impl HealerStore for PgHealerStore {
                     provider, model, label \
              FROM healer_sessions \
              WHERE state NOT IN ('completed', 'done', 'failed', 'cancelled', 'paused', 'needs_human_attention') \
+               AND created_by != 'admin-mcp' \
              ORDER BY created_at ASC",
         )
         .fetch_all(&self.pool)
@@ -451,6 +452,22 @@ impl HealerStore for PgHealerStore {
         .fetch_one(&self.pool)
         .await
         .unwrap_or(false))
+    }
+
+    async fn find_mcp_session(&self) -> Result<Option<HealerSession>> {
+        let row = sqlx::query_as::<_, SessionRow>(
+            "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
+                    created_at, updated_at, completed_at, error_message, initial_issues, \
+                    provider, model, label \
+             FROM healer_sessions \
+             WHERE created_by = 'admin-mcp' \
+               AND state NOT IN ('completed', 'done', 'failed', 'cancelled', 'needs_human_attention') \
+             ORDER BY created_at DESC \
+             LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(Into::into))
     }
 
     // -- Cluster settings -------------------------------------------------

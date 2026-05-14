@@ -416,6 +416,178 @@ struct PeerInstanceRow {
     hostname: Option<String>,
 }
 
+// ── Session context builder ──────────────────────────────────────────
+
+impl HealerMcpServer {
+    /// Build the full session context from a heartbeat, mint a proxy token,
+    /// load all healer tools, and populate `self.session_ctx` / `self.tools` /
+    /// `self.tool_descriptors`. Returns the number of tools loaded.
+    ///
+    /// Used by both `create_session` and warm-session restore on `initialize`.
+    async fn build_session_context(
+        &self,
+        cluster_id: Uuid,
+        instance_id: &str,
+        session_id: Uuid,
+    ) -> Result<usize, String> {
+        // Look up heartbeat data
+        let hb = sqlx::query_as::<_, HeartbeatContextRow>(
+            "SELECT relay_proxy_url, services_extended, file_tunnels, shell_tunnels, sample, hostname \
+             FROM daemon_heartbeats WHERE cluster_id = $1 AND instance_id = $2",
+        )
+        .bind(cluster_id)
+        .bind(instance_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("Error querying heartbeats: {e}"))?
+        .ok_or_else(|| "Error: instance not found in heartbeats".to_string())?;
+
+        let relay_url = hb
+            .relay_proxy_url
+            .as_ref()
+            .ok_or_else(|| "Error: instance has no relay proxy URL".to_string())?
+            .clone();
+
+        let cluster_name = sqlx::query_as::<_, ClusterNameRow>(
+            "SELECT name FROM clusters WHERE id = $1",
+        )
+        .bind(cluster_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| r.name)
+        .unwrap_or_else(|| cluster_id.to_string());
+
+        // Mint proxy token
+        let healer_scopes: &[&str] = &["files:read", "files:write", "shell:exec", "logs:read"];
+        let (proxy_token, _) = self
+            .store
+            .mint_proxy_token_scoped(cluster_id, None, Some(healer_scopes))
+            .await
+            .map_err(|e| format!("Error minting proxy token: {e}"))?;
+
+        // Build relay access
+        let relay_client = Arc::new(RelayClient::new(relay_url.clone(), proxy_token));
+        let instance_prefix: String = instance_id.chars().take(12).collect();
+        let instance_access: mac_mgmt_healer::instance_access::DynInstanceAccess =
+            Arc::new(RelayInstanceAccess::new(relay_client.clone(), instance_prefix.clone()));
+        let cluster_access: Option<DynClusterAccess> =
+            Some(Arc::new(RelayClusterAccess::new(relay_client)));
+
+        // Parse services, tunnels, sample from heartbeat
+        let services_extended: Vec<mac_mgmt_common::ServiceExtState> = hb
+            .services_extended
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let file_tunnels_full = hb.file_tunnels.clone().unwrap_or(serde_json::Value::Array(vec![]));
+        let file_tunnel_names: Vec<String> = match &file_tunnels_full {
+            serde_json::Value::Array(arr) => arr
+                .iter()
+                .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect(),
+            _ => vec![],
+        };
+
+        let shell_tunnels_full = hb.shell_tunnels.clone().unwrap_or(serde_json::Value::Array(vec![]));
+        let shell_command_names: Vec<String> = match &shell_tunnels_full {
+            serde_json::Value::Array(arr) => arr
+                .iter()
+                .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect(),
+            _ => vec![],
+        };
+
+        let sample_summary = hb
+            .sample
+            .as_ref()
+            .map(|s| mac_mgmt_healer::agent::format_sample_summary(s))
+            .unwrap_or_default();
+
+        // Get peer instances
+        let peer_instances: Vec<mac_mgmt_healer::agent::InstanceInfo> =
+            sqlx::query_as::<_, PeerInstanceRow>(
+                "SELECT instance_id, hostname FROM daemon_heartbeats \
+                 WHERE cluster_id = $1 AND instance_id != $2 \
+                 AND reported_at > now() - interval '5 minutes'",
+            )
+            .bind(cluster_id)
+            .bind(instance_id)
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| mac_mgmt_healer::agent::InstanceInfo {
+                instance_prefix: r.instance_id.chars().take(12).collect(),
+                hostname: r.hostname.unwrap_or_else(|| "unknown".to_string()),
+                healthy: true,
+            })
+            .collect();
+
+        let cluster_instance_prefixes: Vec<String> =
+            peer_instances.iter().map(|i| i.instance_prefix.clone()).collect();
+
+        // Build ToolContext
+        let (events_tx, _) = tokio::sync::broadcast::channel(64);
+        let tool_ctx = ToolContext {
+            instance: instance_access,
+            instance_data: self.instance_data.clone(),
+            cluster: cluster_access,
+            target_instance: instance_prefix,
+            cluster_instances: cluster_instance_prefixes,
+            file_tunnels: file_tunnel_names.clone(),
+            file_tunnels_full,
+            shell_commands: shell_command_names.clone(),
+            shell_commands_full: shell_tunnels_full,
+            store: self.store.clone(),
+            session_id,
+            cluster_id,
+            instance_id: instance_id.to_string(),
+            push_fn: self.push_fn.clone(),
+            events_tx,
+            metrics_url: Some(format!("{}/metrics", relay_url)),
+            auto_approve: true,
+            approval_notify: Arc::new(tokio::sync::Notify::new()),
+        };
+
+        // Build all tools
+        let healer_tools = mac_mgmt_healer::tools::all_tools_with_risk(tool_ctx.clone(), false);
+        let settings_tools =
+            mac_mgmt_healer::settings_tools::all_settings_tools_with_risk(tool_ctx, false);
+
+        let mut all_tools = healer_tools;
+        all_tools.extend(settings_tools);
+
+        let descriptors: Vec<rmcp::model::Tool> = all_tools
+            .iter()
+            .map(|(tool, risk)| swiftide_spec_to_rmcp_tool(&tool.tool_spec(), *risk))
+            .collect();
+
+        let tool_count = all_tools.len();
+
+        // Store session context
+        *self.session_ctx.write().await = Some(SessionContext {
+            session_id,
+            cluster_id,
+            instance_id: instance_id.to_string(),
+            cluster_name,
+            hostname: hb.hostname.unwrap_or_else(|| "unknown".to_string()),
+            services_extended,
+            sample_summary,
+            file_tunnels: file_tunnel_names,
+            shell_commands: shell_command_names,
+            other_instances: peer_instances,
+            metrics_url: Some(format!("{}/metrics", relay_url)),
+        });
+        *self.tools.write().await = all_tools;
+        *self.tool_descriptors.write().await = descriptors;
+
+        Ok(tool_count)
+    }
+}
+
 #[tool_router]
 impl HealerMcpServer {
     #[tool(
@@ -487,9 +659,29 @@ impl HealerMcpServer {
         &self,
         Parameters(params): Parameters<CreateSessionParams>,
     ) -> String {
-        // Check no session already active
-        if self.session_ctx.read().await.is_some() {
-            return "Error: a session is already active. Call end_session first.".to_string();
+        // If a warm session is already active for the same instance, return it.
+        // For a different instance, end the old session first.
+        {
+            let guard = self.session_ctx.read().await;
+            if let Some(ctx) = guard.as_ref() {
+                if ctx.instance_id == params.instance_id {
+                    let tool_count = self.tools.read().await.len();
+                    return format!(
+                        "Session created.\n- session_id: {}\n- instance: {}\n- cluster: {}\n- tools available: {tool_count}\n\n\
+                         Call get_system_prompt to load the healer instructions.",
+                        ctx.session_id, ctx.instance_id, ctx.cluster_id,
+                    );
+                }
+            }
+        }
+        // End any existing session (different instance or stale).
+        if let Some(old_ctx) = self.session_ctx.write().await.take() {
+            let _ = self
+                .store
+                .transition_state(old_ctx.session_id, &mac_mgmt_healer::session::models::SessionState::Done, &serde_json::json!({}))
+                .await;
+            self.tools.write().await.clear();
+            self.tool_descriptors.write().await.clear();
         }
 
         let cluster_id: Uuid = match params.cluster_id.parse() {
@@ -497,125 +689,17 @@ impl HealerMcpServer {
             Err(_) => return "Error: invalid cluster_id UUID".to_string(),
         };
 
-        // Look up heartbeat data
-        let hb = match sqlx::query_as::<_, HeartbeatContextRow>(
-            "SELECT relay_proxy_url, services_extended, file_tunnels, shell_tunnels, sample, hostname \
-             FROM daemon_heartbeats WHERE cluster_id = $1 AND instance_id = $2",
-        )
-        .bind(cluster_id)
-        .bind(&params.instance_id)
-        .fetch_optional(&self.pool)
-        .await
-        {
-            Ok(Some(hb)) => hb,
-            Ok(None) => return "Error: instance not found in heartbeats".to_string(),
-            Err(e) => return format!("Error querying heartbeats: {e}"),
-        };
-
-        let relay_url = match &hb.relay_proxy_url {
-            Some(url) => url.clone(),
-            None => return "Error: instance has no relay proxy URL".to_string(),
-        };
-
-        // Get cluster name
-        let cluster_name = sqlx::query_as::<_, ClusterNameRow>(
-            "SELECT name FROM clusters WHERE id = $1",
-        )
-        .bind(cluster_id)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten()
-        .map(|r| r.name)
-        .unwrap_or_else(|| cluster_id.to_string());
-
-        // Mint proxy token
-        let healer_scopes: &[&str] = &["files:read", "files:write", "shell:exec", "logs:read"];
-        let (proxy_token, _proxy_expires) = match self
-            .store
-            .mint_proxy_token_scoped(cluster_id, None, Some(healer_scopes))
-            .await
-        {
-            Ok(t) => t,
-            Err(e) => return format!("Error minting proxy token: {e}"),
-        };
-
-        // Build relay access
-        let relay_client = Arc::new(RelayClient::new(relay_url.clone(), proxy_token));
-        let instance_prefix: String = params.instance_id.chars().take(12).collect();
-        let instance_access: mac_mgmt_healer::instance_access::DynInstanceAccess = Arc::new(
-            RelayInstanceAccess::new(relay_client.clone(), instance_prefix.clone()),
-        );
-        let cluster_access: Option<DynClusterAccess> =
-            Some(Arc::new(RelayClusterAccess::new(relay_client)));
-
-        // Parse services, tunnels, sample from heartbeat
-        let services_extended: Vec<mac_mgmt_common::ServiceExtState> = hb
-            .services_extended
-            .as_ref()
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-
-        let file_tunnels_full = hb.file_tunnels.clone().unwrap_or(serde_json::Value::Array(vec![]));
-        let file_tunnel_names: Vec<String> = match &file_tunnels_full {
-            serde_json::Value::Array(arr) => arr
-                .iter()
-                .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
-                .collect(),
-            _ => vec![],
-        };
-
-        let shell_tunnels_full = hb.shell_tunnels.clone().unwrap_or(serde_json::Value::Array(vec![]));
-        let shell_command_names: Vec<String> = match &shell_tunnels_full {
-            serde_json::Value::Array(arr) => arr
-                .iter()
-                .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
-                .collect(),
-            _ => vec![],
-        };
-
-        let sample_summary = hb
-            .sample
-            .as_ref()
-            .map(|s| mac_mgmt_healer::agent::format_sample_summary(s))
-            .unwrap_or_default();
-
-        // Get peer instances
-        let peer_instances: Vec<mac_mgmt_healer::agent::InstanceInfo> =
-            sqlx::query_as::<_, PeerInstanceRow>(
-                "SELECT instance_id, hostname FROM daemon_heartbeats \
-                 WHERE cluster_id = $1 AND instance_id != $2 \
-                 AND reported_at > now() - interval '5 minutes'",
-            )
-            .bind(cluster_id)
-            .bind(&params.instance_id)
-            .fetch_all(&self.pool)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|r| mac_mgmt_healer::agent::InstanceInfo {
-                instance_prefix: r.instance_id.chars().take(12).collect(),
-                hostname: r.hostname.unwrap_or_else(|| "unknown".to_string()),
-                healthy: true,
-            })
-            .collect();
-
-        let cluster_instance_prefixes: Vec<String> =
-            peer_instances.iter().map(|i| i.instance_prefix.clone()).collect();
-
         // Create a healer session in the DB
-        let initial_issues = serde_json::json!([]);
-        let state_data = serde_json::json!({});
         let session_id = match self
             .store
             .create_session(
                 cluster_id,
                 &params.instance_id,
                 "admin-mcp",
-                &initial_issues,
-                &state_data,
-                None, // provider
-                None, // model
+                &serde_json::json!([]),
+                &serde_json::json!({}),
+                None,
+                None,
                 Some("mcp-session"),
             )
             .await
@@ -624,73 +708,31 @@ impl HealerMcpServer {
             Err(e) => return format!("Error creating session: {e}"),
         };
 
-        // Build ToolContext
-        let (events_tx, _) = tokio::sync::broadcast::channel(64);
-        let tool_ctx = ToolContext {
-            instance: instance_access,
-            instance_data: self.instance_data.clone(),
-            cluster: cluster_access,
-            target_instance: instance_prefix,
-            cluster_instances: cluster_instance_prefixes,
-            file_tunnels: file_tunnel_names.clone(),
-            file_tunnels_full,
-            shell_commands: shell_command_names.clone(),
-            shell_commands_full: shell_tunnels_full,
-            store: self.store.clone(),
-            session_id,
-            cluster_id,
-            instance_id: params.instance_id.clone(),
-            push_fn: self.push_fn.clone(),
-            events_tx,
-            metrics_url: Some(format!("{}/metrics", relay_url)),
-            auto_approve: true,
-            approval_notify: Arc::new(tokio::sync::Notify::new()),
-        };
-
-        // Build all tools
-        let healer_tools =
-            mac_mgmt_healer::tools::all_tools_with_risk(tool_ctx.clone(), false);
-        let settings_tools =
-            mac_mgmt_healer::settings_tools::all_settings_tools_with_risk(tool_ctx, false);
-
-        let mut all_tools = healer_tools;
-        all_tools.extend(settings_tools);
-
-        // Convert to rmcp descriptors
-        let descriptors: Vec<rmcp::model::Tool> = all_tools
-            .iter()
-            .map(|(tool, risk)| swiftide_spec_to_rmcp_tool(&tool.tool_spec(), *risk))
-            .collect();
-
-        let tool_count = all_tools.len();
-
-        // Store session context
-        *self.session_ctx.write().await = Some(SessionContext {
-            session_id,
-            cluster_id,
-            instance_id: params.instance_id.clone(),
-            cluster_name,
-            hostname: hb.hostname.unwrap_or_else(|| "unknown".to_string()),
-            services_extended,
-            sample_summary,
-            file_tunnels: file_tunnel_names,
-            shell_commands: shell_command_names,
-            other_instances: peer_instances,
-            metrics_url: Some(format!("{}/metrics", relay_url)),
-        });
-        *self.tools.write().await = all_tools;
-        *self.tool_descriptors.write().await = descriptors;
-
-        // Notify the client that the tool list has changed so it re-fetches.
-        if let Some(peer) = self.peer.read().await.as_ref() {
-            let _ = peer.notify_tool_list_changed().await;
+        // Build the full session context (heartbeat, proxy token, tools).
+        match self
+            .build_session_context(cluster_id, &params.instance_id, session_id)
+            .await
+        {
+            Ok(tool_count) => {
+                // Notify the client that the tool list has changed.
+                if let Some(peer) = self.peer.read().await.as_ref() {
+                    let _ = peer.notify_tool_list_changed().await;
+                }
+                format!(
+                    "Session created.\n- session_id: {session_id}\n- instance: {}\n- cluster: {}\n- tools available: {tool_count}\n\n\
+                     Call get_system_prompt to load the healer instructions.",
+                    params.instance_id, params.cluster_id,
+                )
+            }
+            Err(e) => {
+                // Clean up the DB session on failure.
+                let _ = self
+                    .store
+                    .fail_session(session_id, &e, &serde_json::json!({}))
+                    .await;
+                e
+            }
         }
-
-        format!(
-            "Session created.\n- session_id: {session_id}\n- instance: {}\n- cluster: {}\n- tools available: {tool_count}\n\n\
-             Call get_system_prompt to load the healer instructions.",
-            params.instance_id, params.cluster_id,
-        )
     }
 
     #[tool(
@@ -989,6 +1031,26 @@ impl ServerHandler for HealerMcpServer {
             // Store peer handle so we can send tools/list_changed later.
             *self.peer.write().await = Some(context.peer.clone());
 
+            // Restore warm MCP session if one exists in the database.
+            // This makes healer tools available from the first tools/list
+            // call, avoiding the need for a tools/list_changed notification.
+            if let Ok(Some(sess)) = self.store.find_mcp_session().await {
+                tracing::info!(
+                    session_id = %sess.id,
+                    instance = %sess.instance_id,
+                    "restoring warm MCP session"
+                );
+                match self
+                    .build_session_context(sess.cluster_id, &sess.instance_id, sess.id)
+                    .await
+                {
+                    Ok(n) => tracing::info!(tools = n, "warm session restored"),
+                    Err(e) => tracing::warn!(
+                        "warm session restore failed (instance offline?): {e}"
+                    ),
+                }
+            }
+
             let info = self.get_info();
             Ok(InitializeResult {
                 protocol_version: ProtocolVersion::LATEST,
@@ -1083,11 +1145,6 @@ pub fn build_mcp_service(
         StreamableHttpServerConfig, StreamableHttpService,
         session::local::LocalSessionManager,
     };
-
-    let pool = pool;
-    let store = store;
-    let instance_data = instance_data;
-    let push_fn = push_fn;
 
     StreamableHttpService::new(
         move || {

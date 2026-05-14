@@ -110,6 +110,11 @@ pub trait HealerStore: Send + Sync + 'static {
     async fn has_running_session(&self, instance_id: &str) -> Result<bool>;
     async fn has_recent_session(&self, instance_id: &str) -> Result<bool>;
 
+    /// Find the most recent non-terminal MCP-managed session
+    /// (`created_by = 'admin-mcp'`). Used to restore warm sessions on
+    /// MCP reconnect.
+    async fn find_mcp_session(&self) -> Result<Option<HealerSession>>;
+
     // -- Cluster settings -------------------------------------------------
 
     async fn get_config(&self, cluster_id: Uuid) -> Result<Option<serde_json::Value>>;

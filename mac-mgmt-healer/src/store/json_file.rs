@@ -238,15 +238,16 @@ impl HealerStore for JsonFileStore {
             .all_sessions()?
             .into_iter()
             .filter(|sf| {
-                !matches!(
-                    sf.session.state,
-                    SessionState::Completed
-                        | SessionState::Done
-                        | SessionState::Failed
-                        | SessionState::Cancelled
-                        | SessionState::Paused
-                        | SessionState::NeedsHumanAttention
-                )
+                sf.session.created_by != "admin-mcp"
+                    && !matches!(
+                        sf.session.state,
+                        SessionState::Completed
+                            | SessionState::Done
+                            | SessionState::Failed
+                            | SessionState::Cancelled
+                            | SessionState::Paused
+                            | SessionState::NeedsHumanAttention
+                    )
             })
             .map(|sf| sf.session)
             .collect();
@@ -412,6 +413,27 @@ impl HealerStore for JsonFileStore {
             .all_sessions()?
             .iter()
             .any(|sf| sf.session.instance_id == instance_id && sf.session.created_at > cutoff))
+    }
+
+    async fn find_mcp_session(&self) -> Result<Option<HealerSession>> {
+        let mut sessions: Vec<HealerSession> = self
+            .all_sessions()?
+            .into_iter()
+            .filter(|sf| {
+                sf.session.created_by == "admin-mcp"
+                    && !matches!(
+                        sf.session.state,
+                        SessionState::Completed
+                            | SessionState::Done
+                            | SessionState::Failed
+                            | SessionState::Cancelled
+                            | SessionState::NeedsHumanAttention
+                    )
+            })
+            .map(|sf| sf.session)
+            .collect();
+        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(sessions.into_iter().next())
     }
 
     // -- Cluster settings (not applicable in local mode) ------------------
