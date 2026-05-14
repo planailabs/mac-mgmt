@@ -6,7 +6,7 @@ services:
       - /run
       - /run/lock
       - /tmp
-    stop_signal: SIGRTMIN+3
+
     networks:
       - mac-mgmt-test
 
@@ -17,7 +17,7 @@ services:
       - /run
       - /run/lock
       - /tmp
-    stop_signal: SIGRTMIN+3
+
     depends_on:
       - test-mac-mgmt-server
     networks:
@@ -30,7 +30,7 @@ services:
       - /run
       - /run/lock
       - /tmp
-    stop_signal: SIGRTMIN+3
+
     depends_on:
       - test-mac-mgmt-server
       - test-mac-mgmt-relay

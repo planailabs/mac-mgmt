@@ -25,11 +25,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1778800054,
-        "narHash": "sha256-5npbOr0NAqPhUl11YOKUS3/G7p5c9u8kN1SrWoYEHOM=",
+        "lastModified": 1778802548,
+        "narHash": "sha256-TnhaqfRnzyFqcuUZ88obeLk/3BnJlkvFhSOnQsJEp/o=",
         "ref": "refs/heads/trunk",
-        "rev": "0f538f6bc364b9ec4463d9429af1dc3d130fc3c4",
-        "revCount": 11,
+        "rev": "27dca9bcfc12e9a0e46248cd55d9ce51413ad05c",
+        "revCount": 12,
         "type": "git",
         "url": "https://git.plan.ai/plan-ai/nixos2docker"
       },
