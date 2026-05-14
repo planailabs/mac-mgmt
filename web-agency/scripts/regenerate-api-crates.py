@@ -722,14 +722,21 @@ def fix_cd_spec_issues(spec):
 
     # Fix response codes: the API returns 201 for create operations but
     # the spec only lists 200.  Add 201 alongside 200 where missing.
+    # Similarly, DELETE endpoints return 204 but spec only lists 200.
     for path, methods in spec.get("paths", {}).items():
         for method, op in methods.items():
-            if method != "post" or not isinstance(op, dict):
+            if not isinstance(op, dict):
                 continue
             responses = op.get("responses", {})
-            if "200" in responses and "201" not in responses:
+            if method == "post" and "200" in responses and "201" not in responses:
                 responses["201"] = responses["200"]
                 print(f"  Added 201 response to POST {path}")
+            if method == "delete" and "200" in responses and "204" not in responses:
+                # Replace 200 with 204 — progenitor can't handle multiple
+                # success response types, and the real API returns 204.
+                del responses["200"]
+                responses["204"] = {"description": "Deleted"}
+                print(f"  Replaced 200 with 204 response for DELETE {path}")
 
 
 def trim_changedetection():

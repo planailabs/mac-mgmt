@@ -1198,16 +1198,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Web page change monitor (watch) deleted successfully",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string",
-                  "example": "OK"
-                }
-              }
-            }
+          "204": {
+            "description": "Deleted"
           }
         }
       }
@@ -1911,8 +1903,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Tag deleted successfully"
+          "204": {
+            "description": "Deleted"
           }
         }
       }

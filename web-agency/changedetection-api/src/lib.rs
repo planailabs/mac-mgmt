@@ -17880,7 +17880,7 @@ impl Client {
     pub async fn delete_watch<'a>(
         &'a self,
         uuid: &'a ::uuid::Uuid,
-    ) -> Result<ResponseValue<ByteStream>, Error<()>> {
+    ) -> Result<ResponseValue<()>, Error<()>> {
         let url = format!("{}/watch/{}", self.baseurl, encode_path(&uuid.to_string()),);
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
         header_map.append(
@@ -17897,7 +17897,7 @@ impl Client {
         self.post(&result, &info).await?;
         let response = result?;
         match response.status().as_u16() {
-            200u16 => Ok(ResponseValue::stream(response)),
+            204u16 => Ok(ResponseValue::empty(response)),
             _ => Err(Error::UnexpectedResponse(response)),
         }
     }
@@ -18399,7 +18399,7 @@ impl Client {
         self.post(&result, &info).await?;
         let response = result?;
         match response.status().as_u16() {
-            200u16 => Ok(ResponseValue::empty(response)),
+            204u16 => Ok(ResponseValue::empty(response)),
             _ => Err(Error::UnexpectedResponse(response)),
         }
     }
