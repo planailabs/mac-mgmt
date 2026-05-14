@@ -1,6 +1,6 @@
 services:
   test-mac-mgmt-server:
-    image: test-mac-mgmt-server:latest
+    image: registry.plan.ai/plan-ai/mac-mgmt/test-mac-mgmt-server:latest
     container_name: test-mac-mgmt-server
     tmpfs:
       - /run
@@ -11,7 +11,7 @@ services:
       - mac-mgmt-test
 
   test-mac-mgmt-relay:
-    image: test-mac-mgmt-relay:latest
+    image: registry.plan.ai/plan-ai/mac-mgmt/test-mac-mgmt-relay:latest
     container_name: test-mac-mgmt-relay
     tmpfs:
       - /run
@@ -24,7 +24,7 @@ services:
       - mac-mgmt-test
 
   test-mac-mgmt-daemon:
-    image: test-mac-mgmt-daemon:latest
+    image: registry.plan.ai/plan-ai/mac-mgmt/test-mac-mgmt-daemon:latest
     container_name: test-mac-mgmt-daemon
     tmpfs:
       - /run
