@@ -653,12 +653,14 @@ def trim_dataforseo():
     return spec
 
 
-def strip_unsupported_cd_fields(spec):
-    """Remove fields from the ChangeDetection spec that the deployed server rejects.
+def fix_cd_spec_issues(spec):
+    """Fix issues in the ChangeDetection spec where the spec diverges from reality.
 
-    The upstream spec includes llm_change_summary and llm_intent, but the
-    server returns 400 "Unknown field(s)" when they are sent.  Strip them
-    from every schema so the generated client never serializes them.
+    - Strip llm_change_summary and llm_intent: the upstream spec includes them
+      but the deployed server returns 400 "Unknown field(s)".
+    - Fix last_error type: spec says string but the API returns false (boolean)
+      when there's no error.  Remove the type so progenitor treats it as
+      serde_json::Value.
     """
     drop = {"llm_change_summary", "llm_intent"}
     schemas = spec.get("components", {}).get("schemas", {})
@@ -669,12 +671,19 @@ def strip_unsupported_cd_fields(spec):
             if field in props:
                 del props[field]
                 stripped += 1
-                # Also remove from required if present
                 req = schema.get("required", [])
                 if field in req:
                     req.remove(field)
+        # last_error: API returns false (bool) or "error msg" (string).
+        # Remove the string type so progenitor generates serde_json::Value.
+        if "last_error" in props:
+            props["last_error"] = {
+                "description": props["last_error"].get("description", ""),
+                "readOnly": True,
+            }
     if stripped:
         print(f"  Stripped {stripped} unsupported LLM fields from schemas")
+    print("  Fixed last_error type (string|bool → untyped)")
 
 
 def trim_changedetection():
@@ -691,8 +700,8 @@ def trim_changedetection():
     spec["openapi"] = "3.0.3"
     downgrade_openapi_31_types(spec)
 
-    # Strip fields not supported by the deployed server
-    strip_unsupported_cd_fields(spec)
+    # Fix spec-vs-reality mismatches
+    fix_cd_spec_issues(spec)
 
     # Apply generic fixes
     print("  Fixing enum bools...")
