@@ -718,7 +718,18 @@ def fix_cd_spec_issues(spec):
     visit_properties(spec.get("components", {}).get("schemas", {}))
     if stripped:
         print(f"  Stripped {stripped} unsupported LLM fields from schemas")
-    print("  Fixed last_error type (string|bool → untyped)")
+    print("  Fixed computed/mixed-type fields → untyped")
+
+    # Fix response codes: the API returns 201 for create operations but
+    # the spec only lists 200.  Add 201 alongside 200 where missing.
+    for path, methods in spec.get("paths", {}).items():
+        for method, op in methods.items():
+            if method != "post" or not isinstance(op, dict):
+                continue
+            responses = op.get("responses", {})
+            if "200" in responses and "201" not in responses:
+                responses["201"] = responses["200"]
+                print(f"  Added 201 response to POST {path}")
 
 
 def trim_changedetection():

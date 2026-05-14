@@ -17766,6 +17766,7 @@ impl Client {
         let response = result?;
         match response.status().as_u16() {
             200u16 => Ok(ResponseValue::stream(response)),
+            201u16 => Ok(ResponseValue::stream(response)),
             500u16 => Err(Error::ErrorResponse(ResponseValue::stream(response))),
             _ => Err(Error::UnexpectedResponse(response)),
         }
@@ -18679,6 +18680,7 @@ impl Client {
         let response = result?;
         match response.status().as_u16() {
             200u16 => ResponseValue::from_response(response).await,
+            201u16 => ResponseValue::from_response(response).await,
             500u16 => Err(Error::ErrorResponse(ResponseValue::empty(response))),
             _ => Err(Error::UnexpectedResponse(response)),
         }

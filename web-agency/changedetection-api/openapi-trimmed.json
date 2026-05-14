@@ -1002,6 +1002,17 @@
                 }
               }
             }
+          },
+          "201": {
+            "description": "Web page change monitor (watch) created successfully",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "OK"
+                }
+              }
+            }
           }
         }
       }
@@ -2224,6 +2235,21 @@
           },
           "500": {
             "description": "Server error"
+          },
+          "201": {
+            "description": "URLs imported successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "description": "List of created watch UUIDs"
+                }
+              }
+            }
           }
         }
       }
