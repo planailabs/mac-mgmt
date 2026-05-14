@@ -48,6 +48,7 @@ reqwest = { workspace = true, features = ["blocking", "stream"] }
 rustls = { workspace = true }
 russh = { version = "0.60", default-features = false, features = ["ring", "flate2"] }
 rand = "0.9"
+rand_core = "0.10"
 futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 mac-mgmt-common = { path = "../common", features = ["sentry"] }

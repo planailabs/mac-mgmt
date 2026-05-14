@@ -8140,6 +8140,7 @@ dependencies = [
  "prometheus 0.14.0",
  "ramhorns",
  "rand 0.9.4",
+ "rand_core 0.10.1",
  "regex",
  "reqwest 0.13.2",
  "rocket",
