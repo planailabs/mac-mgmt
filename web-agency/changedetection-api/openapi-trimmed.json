@@ -595,14 +595,14 @@
                 "readOnly": true
               },
               "last_changed": {
-                "type": "integer",
                 "description": "Unix timestamp of last change",
                 "readOnly": true,
                 "x-computed": true
               },
               "last_error": {
                 "description": "Last error message (false when no error, string when error occurred, null if not checked yet)",
-                "readOnly": true
+                "readOnly": true,
+                "nullable": true
               },
               "last_viewed": {
                 "type": "integer",
@@ -610,8 +610,6 @@
                 "minimum": 0
               },
               "link": {
-                "type": "string",
-                "format": "string",
                 "description": "The watch URL rendered in case of any Jinja2 markup, always use this for listing.",
                 "readOnly": true,
                 "x-computed": true
@@ -677,19 +675,16 @@
                 "nullable": true
               },
               "viewed": {
-                "type": "integer",
                 "description": "Computed property - true if watch has been viewed, false otherwise (deprecated, use last_viewed instead)",
                 "readOnly": true,
                 "x-computed": true
               },
               "history_n": {
-                "type": "integer",
                 "description": "Number of history snapshots available",
                 "readOnly": true,
                 "x-computed": true
               },
               "processor_config_restock_diff": {
-                "type": "object",
                 "readOnly": true,
                 "x-computed": true,
                 "description": "Resolved restock/price processor config for this watch.\nIf a tag with `overrides_watch: true` is assigned to this watch, the tag's config is\nreturned here instead of the watch's own config. Use `processor_config_restock_diff_source`\nto determine where the config originated.\n",
@@ -722,7 +717,6 @@
                 }
               },
               "processor_config_restock_diff_source": {
-                "type": "string",
                 "readOnly": true,
                 "x-computed": true,
                 "description": "Indicates the origin of `processor_config_restock_diff`.\n- `watch`: config comes from the watch itself\n- `tag:<uuid>`: config is overridden by the tag with the given UUID\n"

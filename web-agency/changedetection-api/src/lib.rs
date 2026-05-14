@@ -11874,13 +11874,11 @@ pub mod types {
     ///        "history_n": {
     ///          "description": "Number of history snapshots available",
     ///          "readOnly": true,
-    ///          "type": "integer",
     ///          "x-computed": true
     ///        },
     ///        "last_changed": {
     ///          "description": "Unix timestamp of last change",
     ///          "readOnly": true,
-    ///          "type": "integer",
     ///          "x-computed": true
     ///        },
     ///        "last_checked": {
@@ -11912,8 +11910,6 @@ pub mod types {
     ///          "description": "The watch URL rendered in case of any Jinja2
     /// markup, always use this for listing.",
     ///          "readOnly": true,
-    ///          "type": "string",
-    ///          "format": "string",
     ///          "x-computed": true
     ///        },
     ///        "notification_alert_count": {
@@ -11948,7 +11944,6 @@ pub mod types {
     /// config. Use `processor_config_restock_diff_source`\nto determine where
     /// the config originated.\n",
     ///          "readOnly": true,
-    ///          "type": "object",
     ///          "properties": {
     ///            "follow_price_changes": {
     ///              "type": "boolean"
@@ -11990,7 +11985,6 @@ pub mod types {
     /// itself\n- `tag:<uuid>`: config is overridden by the tag with the given
     /// UUID\n",
     ///          "readOnly": true,
-    ///          "type": "string",
     ///          "x-computed": true
     ///        },
     ///        "remote_server_reply": {
@@ -12005,7 +11999,6 @@ pub mod types {
     ///          "description": "Computed property - true if watch has been
     /// viewed, false otherwise (deprecated, use last_viewed instead)",
     ///          "readOnly": true,
-    ///          "type": "integer",
     ///          "x-computed": true
     ///        }
     ///      }
@@ -12096,7 +12089,7 @@ pub mod types {
         pub headers: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
         ///Number of history snapshots available
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub history_n: ::std::option::Option<i64>,
+        pub history_n: ::std::option::Option<::serde_json::Value>,
         ///Maximum number of history snapshots to keep (null = use system
         /// default)
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -12115,7 +12108,7 @@ pub mod types {
         pub include_filters: ::std::vec::Vec<WatchIncludeFiltersItem>,
         ///Unix timestamp of last change
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub last_changed: ::std::option::Option<i64>,
+        pub last_changed: ::std::option::Option<::serde_json::Value>,
         ///Unix timestamp of last check
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub last_checked: ::std::option::Option<i64>,
@@ -12134,7 +12127,7 @@ pub mod types {
         ///The watch URL rendered in case of any Jinja2 markup, always use this
         /// for listing.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub link: ::std::option::Option<::std::string::String>,
+        pub link: ::std::option::Option<::serde_json::Value>,
         ///Internal cache of AI evaluation results keyed by (intent, diff) hash
         /// (auto-managed).
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
@@ -12200,7 +12193,7 @@ pub mod types {
         /// - `watch`: config comes from the watch itself
         /// - `tag:<uuid>`: config is overridden by the tag with the given UUID
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub processor_config_restock_diff_source: ::std::option::Option<::std::string::String>,
+        pub processor_config_restock_diff_source: ::std::option::Option<::serde_json::Value>,
         ///Proxy configuration
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub proxy: ::std::option::Option<WatchProxy>,
@@ -12261,7 +12254,7 @@ pub mod types {
         ///Computed property - true if watch has been viewed, false otherwise
         /// (deprecated, use last_viewed instead)
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub viewed: ::std::option::Option<i64>,
+        pub viewed: ::std::option::Option<::serde_json::Value>,
         ///Delay in seconds for webdriver
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub webdriver_delay: ::std::option::Option<i64>,
@@ -16650,7 +16643,6 @@ pub mod types {
     /// Use `processor_config_restock_diff_source`\nto determine where the
     /// config originated.\n",
     ///  "readOnly": true,
-    ///  "type": "object",
     ///  "properties": {
     ///    "follow_price_changes": {
     ///      "type": "boolean"

@@ -690,13 +690,23 @@ def fix_cd_spec_issues(spec):
                         req = obj.get("required", [])
                         if field in req:
                             req.remove(field)
-                # last_error: API returns false (bool) or "error msg" (string).
-                # Remove the string type so progenitor generates serde_json::Value.
-                if "last_error" in props:
-                    props["last_error"] = {
-                        "description": props["last_error"].get("description", ""),
-                        "readOnly": True,
-                    }
+                # Several read-only fields have type mismatches between the
+                # spec and the live API (e.g. last_error is "string" but
+                # returns false, viewed is "integer" but returns false).
+                # Remove the type constraint from read-only computed fields
+                # and known mixed-type fields so progenitor generates
+                # serde_json::Value.
+                mixed_type_fields = {"last_error"}
+                for pname, pval in list(props.items()):
+                    if not isinstance(pval, dict):
+                        continue
+                    is_computed = pval.get("readOnly") and pval.get("x-computed")
+                    is_mixed = pname in mixed_type_fields
+                    if is_computed or is_mixed:
+                        props[pname] = {
+                            k: v for k, v in pval.items()
+                            if k not in ("type", "format")
+                        }
             for v in obj.values():
                 if isinstance(v, (dict, list)):
                     visit_properties(v)
