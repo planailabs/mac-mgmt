@@ -199,10 +199,10 @@ impl P2pManager {
             .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(3600)))
             .build();
 
-        // Listen on QUIC (both IPv4 and IPv6).
+        // Listen on QUIC and TCP (both IPv4 and IPv6).
         // Failures are non-fatal: the swarm can still dial the relay and
         // operate without local listeners (common behind NAT). An orphaned
-        // UDP socket from a container runtime or a previous crash can hold
+        // socket from a container runtime or a previous crash can hold
         // the port; logging a warning lets the daemon continue rather than
         // losing all p2p connectivity.
         let quic_v4: Multiaddr = format!("/ip4/0.0.0.0/udp/{}/quic-v1", config.p2p_port)
@@ -216,6 +216,21 @@ impl P2pManager {
             .context("invalid QUIC IPv6 listen address")?;
         if let Err(e) = swarm.listen_on(quic_v6) {
             tracing::warn!("failed to listen on QUIC IPv6 (port {}): {e}", config.p2p_port);
+        }
+
+        // TCP listeners on the same port — fallback for peers that cannot
+        // reach us over QUIC/UDP (e.g. when dialing via WSS relay).
+        let tcp_v4: Multiaddr = format!("/ip4/0.0.0.0/tcp/{}", config.p2p_port)
+            .parse()
+            .context("invalid TCP listen address")?;
+        if let Err(e) = swarm.listen_on(tcp_v4) {
+            tracing::warn!("failed to listen on TCP IPv4 (port {}): {e}", config.p2p_port);
+        }
+        let tcp_v6: Multiaddr = format!("/ip6/::/tcp/{}", config.p2p_port)
+            .parse()
+            .context("invalid TCP listen address")?;
+        if let Err(e) = swarm.listen_on(tcp_v6) {
+            tracing::warn!("failed to listen on TCP IPv6 (port {}): {e}", config.p2p_port);
         }
 
         // Connect to relay if configured
