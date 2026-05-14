@@ -445,8 +445,9 @@ async fn sync_bot_for_domain(
 // ── ChangeDetection.io sync ─────────────────────────────────────────
 
 async fn sync_changedetection(pool: &PgPool) {
-    let webspaces = match sqlx::query_as::<_, (Uuid, String, Uuid, Option<Uuid>)>(
-        "SELECT w.id, w.name, w.changedetection_credential_id, w.changedetection_tag_id \
+    let webspaces = match sqlx::query_as::<_, (Uuid, String, Uuid, Option<Uuid>, Option<String>)>(
+        "SELECT w.id, w.name, w.changedetection_credential_id, \
+                w.changedetection_tag_id, w.changedetection_secret \
          FROM webspaces w \
          WHERE w.changedetection_credential_id IS NOT NULL",
     )
@@ -461,9 +462,16 @@ async fn sync_changedetection(pool: &PgPool) {
     };
 
     let mut synced = 0usize;
-    for (ws_id, ws_name, cred_id, cached_tag_id) in &webspaces {
-        match sync_changedetection_for_webspace(pool, *ws_id, ws_name, *cred_id, *cached_tag_id)
-            .await
+    for (ws_id, ws_name, cred_id, cached_tag_id, secret) in &webspaces {
+        match sync_changedetection_for_webspace(
+            pool,
+            *ws_id,
+            ws_name,
+            *cred_id,
+            *cached_tag_id,
+            secret.as_deref(),
+        )
+        .await
         {
             Ok(()) => synced += 1,
             Err(e) => {
@@ -475,6 +483,9 @@ async fn sync_changedetection(pool: &PgPool) {
         }
     }
     tracing::info!("synced changedetection for {synced}/{} webspaces", webspaces.len());
+
+    // Garbage-collect orphaned watches and tags.
+    gc_changedetection(pool).await;
 }
 
 async fn sync_changedetection_for_webspace(
@@ -483,9 +494,25 @@ async fn sync_changedetection_for_webspace(
     ws_name: &str,
     cred_id: Uuid,
     cached_tag_id: Option<Uuid>,
+    existing_secret: Option<&str>,
 ) -> anyhow::Result<()> {
     let (client, group_name) =
         crate::credentials::changedetection_client(pool, cred_id).await?;
+
+    // 0. Ensure a webhook secret exists for this webspace.
+    let secret = match existing_secret {
+        Some(s) => s.to_string(),
+        None => {
+            let s = generate_secret();
+            sqlx::query("UPDATE webspaces SET changedetection_secret = $1 WHERE id = $2")
+                .bind(&s)
+                .bind(ws_id)
+                .execute(pool)
+                .await?;
+            tracing::info!(webspace = ws_name, "generated changedetection webhook secret");
+            s
+        }
+    };
 
     // 1a. Resolve the credential-level group tag.
     let group_tag_uuid = find_or_create_tag(&client, &group_name).await?;
@@ -496,6 +523,9 @@ async fn sync_changedetection_for_webspace(
     let ws_tag_uuid =
         resolve_or_create_tag(&client, pool, ws_id, cached_tag_id, &ws_tag_title).await?;
     let ws_tag_str = ws_tag_uuid.to_string();
+
+    // 1c. Ensure the webspace tag has notification_urls pointing to our webhook.
+    sync_tag_notifications(&client, ws_tag_uuid, &secret).await?;
 
     let watch_tags = vec![&group_tag_str, &ws_tag_str];
     tracing::debug!(
@@ -777,6 +807,176 @@ async fn safe_delete_watch(
         .delete_watch(watch_uuid)
         .await
         .map_err(|e| anyhow::anyhow!("delete_watch {watch_uuid} failed: {e}"))?;
+    Ok(())
+}
+
+/// Generate a random hex secret for webhook URLs.
+fn generate_secret() -> String {
+    use rand::Rng;
+    let bytes: [u8; 32] = rand::rng().random();
+    hex::encode(bytes)
+}
+
+/// Ensure the webspace tag has notification_urls pointing to our webhook.
+async fn sync_tag_notifications(
+    client: &changedetection_api::Client,
+    tag_uuid: Uuid,
+    secret: &str,
+) -> anyhow::Result<()> {
+    let agency_domain = crate::config::config()
+        .proxy
+        .as_ref()
+        .map(|p| p.agency_domain.as_str())
+        .unwrap_or("localhost");
+    let webhook_url = format!("json://https://{agency_domain}/api/changedetection/{secret}");
+
+    // Check current tag to see if notification_urls already includes our webhook.
+    let tag = client
+        .get_tag(&tag_uuid, None, None)
+        .await
+        .map_err(|e| anyhow::anyhow!("get_tag for notification sync failed: {e}"))?
+        .into_inner();
+
+    let already_set = tag.notification_urls.iter().any(|u| u.as_str() == webhook_url);
+    if already_set {
+        return Ok(());
+    }
+
+    let body = serde_json::json!({
+        "notification_urls": [&webhook_url],
+        "notification_format": "markdown",
+    });
+    let update: changedetection_api::types::Tag = serde_json::from_value(body)
+        .map_err(|e| anyhow::anyhow!("failed to build Tag notification update: {e}"))?;
+    client
+        .update_tag(&tag_uuid, &update)
+        .await
+        .map_err(|e| anyhow::anyhow!("update_tag notification_urls failed: {e}"))?;
+    tracing::info!(tag = %tag_uuid, "set changedetection tag notification_urls");
+    Ok(())
+}
+
+/// Garbage-collect orphaned watches and tags across all changedetection credentials.
+async fn gc_changedetection(pool: &PgPool) {
+    // Get distinct credentials used by webspaces.
+    let creds = match sqlx::query_as::<_, (Uuid,)>(
+        "SELECT DISTINCT changedetection_credential_id \
+         FROM webspaces WHERE changedetection_credential_id IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("gc_changedetection: failed to list credentials: {e}");
+            return;
+        }
+    };
+
+    for (cred_id,) in &creds {
+        if let Err(e) = gc_for_credential(pool, *cred_id).await {
+            tracing::warn!(%cred_id, "changedetection GC failed: {e}");
+        }
+    }
+}
+
+async fn gc_for_credential(pool: &PgPool, cred_id: Uuid) -> anyhow::Result<()> {
+    let (client, group_name) =
+        crate::credentials::changedetection_client(pool, cred_id).await?;
+
+    // Collect all valid hostnames for webspaces using this credential.
+    let valid_hostnames: std::collections::HashSet<String> = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT d.name, s.name \
+         FROM webspace_domains wd \
+         JOIN webspaces w ON w.id = wd.webspace_id \
+         JOIN domains d ON d.id = wd.domain_id \
+         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+         WHERE w.changedetection_credential_id = $1",
+    )
+    .bind(cred_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|(domain, sub)| match sub.as_deref() {
+        Some(s) if s != "@" => format!("{s}.{domain}"),
+        _ => domain,
+    })
+    .collect();
+
+    // Collect webspace names that use this credential.
+    let valid_ws_names: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM webspaces WHERE changedetection_credential_id = $1",
+    )
+    .bind(cred_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
+
+    // Resolve the group tag.
+    let group_tag_uuid = find_or_create_tag(&client, &group_name).await?;
+
+    // GC orphaned watches: list all watches with the group tag.
+    let watches = client
+        .list_watches(None, Some(&group_name))
+        .await
+        .map_err(|e| anyhow::anyhow!("gc list_watches failed: {e}"))?
+        .into_inner();
+
+    for (uuid_str, watch) in &watches {
+        let watch_url = watch.url.as_deref().unwrap_or("");
+        let hostname = watch_url
+            .strip_prefix("https://")
+            .or_else(|| watch_url.strip_prefix("http://"))
+            .unwrap_or(watch_url)
+            .split('/')
+            .next()
+            .unwrap_or("");
+
+        if !hostname.is_empty() && !valid_hostnames.contains(hostname) {
+            if let Ok(uuid) = uuid_str.parse::<Uuid>() {
+                if let Err(e) = client.delete_watch(&uuid).await {
+                    tracing::warn!(url = watch_url, "gc: failed to delete orphaned watch: {e}");
+                } else {
+                    tracing::info!(url = watch_url, "gc: deleted orphaned changedetection watch");
+                }
+            }
+        }
+    }
+
+    // GC orphaned webspace tags: list all tags and check "group:ws_name" pattern.
+    let tags = client
+        .list_tags()
+        .await
+        .map_err(|e| anyhow::anyhow!("gc list_tags failed: {e}"))?
+        .into_inner();
+
+    let prefix = format!("{group_name}:");
+    for (uuid_str, tag) in tags.iter() {
+        let title = match tag.title.as_deref().map(|t| t.as_str()) {
+            Some(t) => t,
+            None => continue,
+        };
+        if !title.starts_with(&prefix) {
+            continue;
+        }
+        let ws_name = &title[prefix.len()..];
+        if ws_name.is_empty() || valid_ws_names.contains(ws_name) {
+            continue;
+        }
+        // This tag belongs to a webspace that no longer exists.
+        if let Ok(uuid) = uuid_str.parse::<Uuid>() {
+            if uuid == group_tag_uuid {
+                continue; // Never delete the group tag itself.
+            }
+            if let Err(e) = client.delete_tag(&uuid).await {
+                tracing::warn!(title, "gc: failed to delete orphaned tag: {e}");
+            } else {
+                tracing::info!(title, "gc: deleted orphaned changedetection tag");
+            }
+        }
+    }
+
     Ok(())
 }
 

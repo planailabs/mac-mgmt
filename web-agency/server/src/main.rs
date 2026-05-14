@@ -302,10 +302,17 @@ fn main() {
                 pool: crate::server_pool().expect("pool for metrics API"),
             });
 
+            // Mount changedetection webhook API (secret-in-URL auth)
+            let cd_router =
+                crate::api::changedetection::router(crate::api::changedetection::ChangeDetectionState {
+                    pool: crate::server_pool().expect("pool for changedetection API"),
+                });
+
             let router = axum::Router::new()
                 .merge(deploy_router)
                 .merge(internal_router)
                 .merge(metrics_router)
+                .merge(cd_router)
                 .merge(web_router);
 
             Ok(router)

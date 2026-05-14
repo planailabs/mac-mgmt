@@ -27,6 +27,9 @@ use super::components::token_list::TokenList;
 use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
 use super::components::user_list::UserList;
+use super::components::webspace_changedetection::{
+    WebspaceChangedetection, WebspaceChangedetectionNotification,
+};
 use super::components::webspace_detail::WebspaceDetail;
 use super::components::webspace_form::WebspaceForm;
 use super::components::webspace_import::WebspaceImport;
@@ -61,6 +64,10 @@ pub enum Route {
     WebspaceImport {},
     #[route("/webspaces/:id")]
     WebspaceDetail { id: String },
+    #[route("/webspaces/:id/changedetection")]
+    WebspaceChangedetection { id: String },
+    #[route("/webspaces/:id/changedetection/:notification_id")]
+    WebspaceChangedetectionNotification { id: String, notification_id: String },
     #[route("/contacts")]
     ContactList {},
     #[route("/contacts/new")]

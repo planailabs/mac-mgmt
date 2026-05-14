@@ -1174,10 +1174,19 @@ pub fn WebspaceDetail(id: String) -> Element {
 
         // Change Detection
         SectionHeading { class: "mt-6", "Change Detection" }
-        ChangeDetectionSection {
-            webspace_id: data.id,
-            current_credential_id: data.changedetection_credential_id,
-            current_credential_name: data.changedetection_credential_name.clone(),
+        Card {
+            div { class: "p-6 flex items-center gap-3",
+                if let Some(ref name) = data.changedetection_credential_name {
+                    Badge { variant: BadgeVariant::Info, "{name}" }
+                } else {
+                    span { class: "text-fg-muted text-sm", "Not configured" }
+                }
+                Link {
+                    to: crate::web::app::Route::WebspaceChangedetection { id: data.id.to_string() },
+                    class: "text-brand underline text-sm",
+                    "Settings & Notifications"
+                }
+            }
         }
 
         // Domain bindings
