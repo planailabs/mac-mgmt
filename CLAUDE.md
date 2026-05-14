@@ -72,6 +72,16 @@ Steps:
 
 The daemon applies `config_migrate::migrate()` to remote JSON configs before deserializing. If deserialization still fails after migration, the daemon falls back to local config. The server applies migrations when reading configs from the database (GET /api/config, web UI) and before validating incoming configs (PUT, PATCH).
 
+## Web-agency: regenerating OpenAPI progenitor crates
+
+When fixing spec-vs-reality mismatches or updating API clients, add the fix to `web-agency/scripts/regenerate-api-crates.py` (e.g. in `fix_cd_spec_issues`, `post_gen_fixups`, or a new trim function). Then always run the **full** script to regenerate all crates:
+
+```
+nix-shell -p python3 python3Packages.requests yq-go --run "python3 web-agency/scripts/regenerate-api-crates.py"
+```
+
+Do not run partial Python snippets to regenerate individual crates — the full script ensures consistent spec downloads, trimming, and generation across all API crates. Partial runs are only acceptable for quickly testing a new fixup before integrating it into the script.
+
 ## Chaos testing: run `/chaos-test` after significant daemon changes
 
 After making non-trivial changes to the daemon (event loop, heartbeat logic, SSE handling, config reload, service management, relay integration), run `/chaos-test` to check for regressions under fault injection. The chaos test suite exercises the daemon with randomized endpoint failures, rapid SSE pushes, multi-daemon coordination, and supervisor lifecycle — catching race conditions and error handling bugs that unit tests miss. A quick run (`/chaos-test 5`) takes under two minutes; a thorough sweep (`/chaos-test 30`) takes about ten.

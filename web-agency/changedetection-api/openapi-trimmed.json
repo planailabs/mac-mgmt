@@ -601,10 +601,8 @@
                 "x-computed": true
               },
               "last_error": {
-                "type": "string",
                 "description": "Last error message (false when no error, string when error occurred, null if not checked yet)",
-                "readOnly": true,
-                "nullable": true
+                "readOnly": true
               },
               "last_viewed": {
                 "type": "integer",

@@ -11891,11 +11891,7 @@ pub mod types {
     ///        "last_error": {
     ///          "description": "Last error message (false when no error, string
     /// when error occurred, null if not checked yet)",
-    ///          "readOnly": true,
-    ///          "type": [
-    ///            "string",
-    ///            "null"
-    ///          ]
+    ///          "readOnly": true
     ///        },
     ///        "last_notification_error": {
     ///          "description": "Last notification error message",
@@ -12126,7 +12122,7 @@ pub mod types {
         ///Last error message (false when no error, string when error occurred,
         /// null if not checked yet)
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub last_error: ::std::option::Option<::std::string::String>,
+        pub last_error: ::std::option::Option<::serde_json::Value>,
         ///Last notification error message
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub last_notification_error: ::std::option::Option<::std::string::String>,

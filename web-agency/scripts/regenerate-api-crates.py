@@ -393,9 +393,16 @@ def generate_crate(spec_path, output_dir, crate_name, extra_deps=None, post_gen_
     if os.path.exists(old_backup):
         shutil.rmtree(old_backup)
 
+    # Copy the new trimmed spec so it lands in the final crate dir.
+    new_trimmed = None
+    trimmed_basename = os.path.basename(spec_path)
+    if os.path.abspath(os.path.dirname(spec_path)) == os.path.abspath(output_dir):
+        with open(spec_path, "rb") as f:
+            new_trimmed = f.read()
+
     preserved = {}
     if os.path.exists(output_dir):
-        for fname in ["openapi-trimmed.json", "src/compat.rs"]:
+        for fname in ["src/compat.rs"]:
             fpath = os.path.join(output_dir, fname)
             if os.path.exists(fpath):
                 with open(fpath, "rb") as f:
@@ -416,6 +423,11 @@ def generate_crate(spec_path, output_dir, crate_name, extra_deps=None, post_gen_
             os.makedirs(os.path.dirname(fpath), exist_ok=True)
             with open(fpath, "wb") as f:
                 f.write(data)
+
+    # Restore the new trimmed spec (not the old one from the previous crate)
+    if new_trimmed is not None:
+        with open(os.path.join(output_dir, trimmed_basename), "wb") as f:
+            f.write(new_trimmed)
 
     # Inject `pub mod compat;` into lib.rs if compat.rs was preserved
     compat_path = os.path.join(output_dir, "src", "compat.rs")
@@ -663,24 +675,37 @@ def fix_cd_spec_issues(spec):
       serde_json::Value.
     """
     drop = {"llm_change_summary", "llm_intent"}
-    schemas = spec.get("components", {}).get("schemas", {})
     stripped = 0
-    for name, schema in schemas.items():
-        props = schema.get("properties", {})
-        for field in drop:
-            if field in props:
-                del props[field]
-                stripped += 1
-                req = schema.get("required", [])
-                if field in req:
-                    req.remove(field)
-        # last_error: API returns false (bool) or "error msg" (string).
-        # Remove the string type so progenitor generates serde_json::Value.
-        if "last_error" in props:
-            props["last_error"] = {
-                "description": props["last_error"].get("description", ""),
-                "readOnly": True,
-            }
+
+    def visit_properties(obj):
+        """Walk the schema tree and fix every properties dict we find."""
+        nonlocal stripped
+        if isinstance(obj, dict):
+            props = obj.get("properties")
+            if isinstance(props, dict):
+                for field in drop:
+                    if field in props:
+                        del props[field]
+                        stripped += 1
+                        req = obj.get("required", [])
+                        if field in req:
+                            req.remove(field)
+                # last_error: API returns false (bool) or "error msg" (string).
+                # Remove the string type so progenitor generates serde_json::Value.
+                if "last_error" in props:
+                    props["last_error"] = {
+                        "description": props["last_error"].get("description", ""),
+                        "readOnly": True,
+                    }
+            for v in obj.values():
+                if isinstance(v, (dict, list)):
+                    visit_properties(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                if isinstance(item, (dict, list)):
+                    visit_properties(item)
+
+    visit_properties(spec.get("components", {}).get("schemas", {}))
     if stripped:
         print(f"  Stripped {stripped} unsupported LLM fields from schemas")
     print("  Fixed last_error type (string|bool → untyped)")
