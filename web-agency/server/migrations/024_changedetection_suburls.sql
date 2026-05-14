@@ -21,7 +21,7 @@ CREATE INDEX idx_cd_suburls_secret ON changedetection_suburls(secret);
 -- Migrate existing webspaces: create a "/" sub-URL carrying the old tag_id and secret.
 INSERT INTO changedetection_suburls (webspace_id, path, tag_id, secret)
 SELECT id, '/', changedetection_tag_id,
-       COALESCE(changedetection_secret, encode(gen_random_bytes(32), 'hex'))
+       COALESCE(changedetection_secret, replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''))
 FROM webspaces
 WHERE changedetection_credential_id IS NOT NULL;
 
