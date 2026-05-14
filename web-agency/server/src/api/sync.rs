@@ -472,6 +472,7 @@ async fn sync_changedetection_for_webspace(
     // 1. Find or create the tag/group.
     let tag_uuid = find_or_create_tag(&client, &group_name).await?;
     let tag_uuid_str = tag_uuid.to_string();
+    tracing::debug!(webspace = ws_name, tag = %tag_uuid, group = %group_name, "resolved changedetection tag");
 
     // 2. Get bound hostnames for this webspace.
     let bindings = sqlx::query_as::<_, (String, Option<String>)>(
@@ -485,7 +486,7 @@ async fn sync_changedetection_for_webspace(
     .fetch_all(pool)
     .await?;
 
-    let expected_urls: Vec<String> = bindings
+    let mut expected_urls: Vec<String> = bindings
         .iter()
         .map(|(domain, sub)| {
             let hostname = match sub.as_deref() {
@@ -495,6 +496,8 @@ async fn sync_changedetection_for_webspace(
             format!("https://{hostname}")
         })
         .collect();
+    expected_urls.sort();
+    expected_urls.dedup();
 
     // 3. List existing watches in this group.
     let existing = client
@@ -503,19 +506,52 @@ async fn sync_changedetection_for_webspace(
         .map_err(|e| anyhow::anyhow!("list_watches failed: {e}"))?;
     let watches = existing.into_inner();
 
-    // 4. Create missing watches.
+    tracing::debug!(
+        webspace = ws_name,
+        expected = expected_urls.len(),
+        existing = watches.len(),
+        "changedetection sync state"
+    );
+
+    // 4. Create missing watches or update existing ones.
     for url in &expected_urls {
-        let already_exists = watches.values().any(|w| {
+        let title_str = url.strip_prefix("https://").unwrap_or(url);
+
+        let existing_entry = watches.iter().find(|(_, w)| {
             w.url.as_deref() == Some(url.as_str())
         });
-        if !already_exists {
-            let title_str = url
-                .strip_prefix("https://")
-                .unwrap_or(url);
+
+        if let Some((uuid_str, watch)) = existing_entry {
+            // Check if title or tags need updating.
+            let title_ok = watch
+                .title
+                .as_deref()
+                .map(|t| t.as_str() == title_str)
+                .unwrap_or(false);
+            let tags_ok = watch.tags.iter().any(|t| t == &tag_uuid_str);
+
+            if !title_ok || !tags_ok {
+                let watch_uuid: uuid::Uuid = uuid_str
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("invalid watch UUID {uuid_str}: {e}"))?;
+                let body = serde_json::json!({
+                    "title": title_str,
+                    "tags": [&tag_uuid_str],
+                });
+                let update: changedetection_api::types::UpdateWatch =
+                    serde_json::from_value(body)
+                        .map_err(|e| anyhow::anyhow!("failed to build UpdateWatch: {e}"))?;
+                client
+                    .update_watch(&watch_uuid, &update)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("update_watch for {url} failed: {e}"))?;
+                tracing::info!(webspace = ws_name, url, "updated changedetection watch");
+            }
+        } else {
             let body = serde_json::json!({
                 "url": url,
                 "title": title_str,
-                "tag": &tag_uuid_str,
+                "tags": [&tag_uuid_str],
             });
             let create: changedetection_api::types::CreateWatch =
                 serde_json::from_value(body)
@@ -586,9 +622,11 @@ async fn find_or_create_tag(
         .await
         .map_err(|e| anyhow::anyhow!("create_tag failed: {e}"))?;
     let tag_resp = resp.into_inner();
-    tag_resp
+    let uuid = tag_resp
         .uuid
-        .ok_or_else(|| anyhow::anyhow!("create_tag returned no UUID"))
+        .ok_or_else(|| anyhow::anyhow!("create_tag returned no UUID"))?;
+    tracing::info!(tag = %uuid, group = group_name, "created new changedetection tag");
+    Ok(uuid)
 }
 
 /// Delete a watch only if it belongs to the expected tag/group.
