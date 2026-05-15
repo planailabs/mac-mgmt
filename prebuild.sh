@@ -18,3 +18,11 @@ rm -f result-devshell
 nix build .#image -o result-image
 upload mac-mgmt/image result-image
 rm -f result-image
+
+# ── Build all exposed packages & push to xzar cache ────────────────
+for pkg in default server server-mgmt server-skill-center server-skill-importer \
+           relay runner relay-ssh web-agency web-agency-proxy nix-driver-sync; do
+  nix build ".#${pkg}" -o "result-${pkg}"
+  upload "mac-mgmt/${pkg}" "result-${pkg}"
+  rm -f "result-${pkg}"
+done
