@@ -90,6 +90,15 @@ fn authenticate(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
 // ── Routes ────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
+struct RoutesResponse {
+    routes: Vec<RouteEntry>,
+    /// Seconds until the earliest relay proxy token expires.  The proxy
+    /// should force a route re-fetch before this elapses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token_lifetime_secs: Option<i64>,
+}
+
+#[derive(Serialize)]
 struct RouteEntry {
     host: String,
     upstream: String,
@@ -128,16 +137,17 @@ static PROXY_TOKEN_CACHE: std::sync::LazyLock<
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 /// Get or mint a proxy token for the given mac-mgmt credential.
+/// Returns `(token, expires_at)`.
 async fn get_or_mint_proxy_token(
     pool: &PgPool,
     cred_id: uuid::Uuid,
-) -> Result<String, String> {
+) -> Result<(String, chrono::DateTime<chrono::Utc>), String> {
     // Check cache
     {
         let cache = PROXY_TOKEN_CACHE.lock().unwrap();
         if let Some((token, expires_at)) = cache.get(&cred_id) {
             if *expires_at > chrono::Utc::now() + chrono::Duration::minutes(5) {
-                return Ok(token.clone());
+                return Ok((token.clone(), *expires_at));
             }
         }
     }
@@ -172,15 +182,17 @@ async fn get_or_mint_proxy_token(
         .as_str()
         .ok_or("no proxy_token in mint response")?
         .to_string();
+    let expires_at = body["expires_at"]
+        .as_str()
+        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+        .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(24));
 
-    // Cache for 6 hours (the default proxy token lifetime)
-    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
     {
         let mut cache = PROXY_TOKEN_CACHE.lock().unwrap();
         cache.insert(cred_id, (token.clone(), expires_at));
     }
 
-    Ok(token)
+    Ok((token, expires_at))
 }
 
 /// Build an AuthInfo from webspace fields. Returns None for auth_mode = "none".
@@ -220,11 +232,13 @@ async fn build_auth_info(
 async fn get_routes(
     State(state): State<InternalState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<RouteEntry>>, (StatusCode, String)> {
+) -> Result<Json<RoutesResponse>, (StatusCode, String)> {
     authenticate(&headers)?;
 
     let cfg = config::config();
     let proxy_cfg = cfg.proxy.as_ref().unwrap();
+
+    let mut earliest_token_expiry: Option<chrono::DateTime<chrono::Utc>> = None;
 
     let mut routes = vec![RouteEntry {
         host: proxy_cfg.agency_domain.clone(),
@@ -284,7 +298,7 @@ async fn get_routes(
         })?;
 
         let proxy_token = match get_or_mint_proxy_token(&state.pool, cred_id).await {
-            Ok(t) => {
+            Ok((t, expires_at)) => {
                 super::counters::COUNTERS.relay_mint_success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 {
                     let mut map = super::counters::RELAY_MINT_RESULTS.lock().unwrap();
@@ -293,6 +307,10 @@ async fn get_routes(
                         success: true,
                     });
                 }
+                earliest_token_expiry = Some(match earliest_token_expiry {
+                    Some(prev) => prev.min(expires_at),
+                    None => expires_at,
+                });
                 t
             }
             Err(e) => {
@@ -356,7 +374,14 @@ async fn get_routes(
         });
     }
 
-    Ok(Json(routes))
+    let token_lifetime_secs = earliest_token_expiry.map(|exp| {
+        (exp - chrono::Utc::now()).num_seconds().max(0)
+    });
+
+    Ok(Json(RoutesResponse {
+        routes,
+        token_lifetime_secs,
+    }))
 }
 
 /// Parse a relay URL like `https://host:port/...` into `host:port`.

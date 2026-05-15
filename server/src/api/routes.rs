@@ -3469,7 +3469,7 @@ pub async fn create_proxy_token(
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(24);
     let scopes_json: Option<serde_json::Value> = if body.scopes.is_empty() {
         None
     } else {

@@ -9,6 +9,13 @@ use crate::config::ProxyConfig;
 use crate::proxy::{AuthMode, Route};
 
 #[derive(Debug, Deserialize)]
+struct RoutesResponse {
+    routes: Vec<RouteEntry>,
+    /// Seconds until the earliest relay proxy token expires.
+    token_lifetime_secs: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RouteEntry {
     host: String,
     upstream: String,
@@ -61,19 +68,21 @@ fn build_sse_client(token: &str) -> reqwest::Client {
 }
 
 /// Fetch routes from the server API and update the shared route table.
-/// Returns `true` on success.
+/// Returns `Some(token_lifetime_secs)` on success, `None` on failure.
 async fn reload_routes(
     client: &reqwest::Client,
     server_url: &str,
     routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
-) -> bool {
+) -> Option<Option<i64>> {
     match client
         .get(format!("{server_url}/api/internal/routes"))
         .send()
         .await
     {
-        Ok(resp) => match resp.json::<Vec<RouteEntry>>().await {
-            Ok(entries) => {
+        Ok(resp) => match resp.json::<RoutesResponse>().await {
+            Ok(body) => {
+                let token_lifetime_secs = body.token_lifetime_secs;
+                let entries = body.routes;
                 let mut map = HashMap::new();
                 for entry in entries {
                     let route = if let Some(relay) = entry.relay {
@@ -129,18 +138,18 @@ async fn reload_routes(
                     };
                     tracing::info!(host, route = %route_desc, auth = auth_desc, "route");
                 }
-                tracing::info!(count = map.len(), "loaded routes");
+                tracing::info!(count = map.len(), ?token_lifetime_secs, "loaded routes");
                 routes.store(Arc::new(map));
-                true
+                Some(token_lifetime_secs)
             }
             Err(e) => {
                 tracing::error!("failed to parse routes: {e}");
-                false
+                None
             }
         },
         Err(e) => {
             tracing::error!("failed to fetch routes: {e}");
-            false
+            None
         }
     }
 }
@@ -207,15 +216,19 @@ async fn trigger_missing_certs(
 }
 
 /// Reload routes, certs, and trigger missing cert issuance.
+/// Returns the token lifetime from the routes response (if any).
 async fn reload_all(
     client: &reqwest::Client,
     server_url: &str,
     routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
     cert_store: &CertStore,
-) {
-    let _ = reload_routes(client, server_url, routes).await;
+) -> Option<i64> {
+    let token_lifetime = reload_routes(client, server_url, routes)
+        .await
+        .and_then(|tl| tl);
     let _ = reload_certs(client, server_url, cert_store).await;
     trigger_missing_certs(client, server_url, routes, cert_store).await;
+    token_lifetime
 }
 
 /// Do the initial load (blocking before Pingora starts accepting).
@@ -228,7 +241,7 @@ pub async fn initial_load(
     let token = cfg.internal_token();
     let client = build_client(&token);
     loop {
-        let routes_ok = reload_routes(&client, &cfg.server_url, routes).await;
+        let routes_ok = reload_routes(&client, &cfg.server_url, routes).await.is_some();
         let certs_ok = reload_certs(&client, &cfg.server_url, cert_store).await;
         if routes_ok && certs_ok {
             trigger_missing_certs(&client, &cfg.server_url, routes, cert_store).await;
@@ -269,6 +282,23 @@ impl pingora::services::background::BackgroundService for SyncTask {
         let sse_client = build_sse_client(&token);
         let server_url = &self.cfg.server_url;
 
+        // Token refresh timer — re-fetch routes before proxy tokens expire.
+        // Initialized to far-future; updated after each successful route load.
+        let mut token_refresh = tokio::time::interval(Duration::from_secs(u64::MAX / 2));
+        token_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Consume the first immediate tick.
+        token_refresh.tick().await;
+
+        /// Schedule the next token refresh from a lifetime value.
+        /// Refreshes at 90% of the lifetime (minimum 60s) so there is margin.
+        fn schedule_refresh(interval: &mut tokio::time::Interval, lifetime_secs: Option<i64>) {
+            if let Some(secs) = lifetime_secs {
+                let refresh_in = ((secs as f64) * 0.9).max(60.0) as u64;
+                tracing::info!(refresh_in_secs = refresh_in, "scheduled token refresh");
+                interval.reset_after(Duration::from_secs(refresh_in));
+            }
+        }
+
         loop {
             tracing::info!("connecting to SSE event stream");
 
@@ -297,7 +327,9 @@ impl pingora::services::background::BackgroundService for SyncTask {
                                     Some(Ok(ev)) if ev.event == "reload" => {
                                         tracing::info!("received reload event");
                                         tokio::select! {
-                                            _ = reload_all(&client, server_url, &self.routes, &self.cert_store) => {}
+                                            tl = reload_all(&client, server_url, &self.routes, &self.cert_store) => {
+                                                schedule_refresh(&mut token_refresh, tl);
+                                            }
                                             _ = shutdown.changed() => {
                                                 tracing::info!("shutting down sync task");
                                                 return;
@@ -310,6 +342,19 @@ impl pingora::services::background::BackgroundService for SyncTask {
                                         break;
                                     }
                                     None => break,
+                                }
+                            }
+                            // Token refresh timer fired — re-fetch routes for fresh tokens
+                            _ = token_refresh.tick() => {
+                                tracing::info!("token refresh timer fired, reloading routes");
+                                tokio::select! {
+                                    tl = reload_all(&client, server_url, &self.routes, &self.cert_store) => {
+                                        schedule_refresh(&mut token_refresh, tl);
+                                    }
+                                    _ = shutdown.changed() => {
+                                        tracing::info!("shutting down sync task");
+                                        return;
+                                    }
                                 }
                             }
                             // No SSE event (including keepalive) for 60s → assume dead
@@ -336,7 +381,9 @@ impl pingora::services::background::BackgroundService for SyncTask {
                 }
             }
             tokio::select! {
-                _ = reload_all(&client, server_url, &self.routes, &self.cert_store) => {}
+                tl = reload_all(&client, server_url, &self.routes, &self.cert_store) => {
+                    schedule_refresh(&mut token_refresh, tl);
+                }
                 _ = shutdown.changed() => {
                     tracing::info!("shutting down sync task");
                     return;
