@@ -101,8 +101,8 @@ mod tests {
     use super::*;
     use russh::keys::{Algorithm, PrivateKey, encode_pkcs8_pem};
 
-    fn test_rng() -> russh::keys::rand_core::UnwrapErr<getrandom_04::SysRng> {
-        russh::keys::rand_core::UnwrapErr(getrandom_04::SysRng)
+    fn test_rng() -> getrandom_04::rand_core::UnwrapErr<getrandom_04::SysRng> {
+        getrandom_04::rand_core::UnwrapErr(getrandom_04::SysRng)
     }
 
     #[test]
