@@ -247,7 +247,7 @@
             overmind
             cargo-watch
             xz  # for nixpkgs archive generation
-            xzar  # binary cache client
+            xzar-client  # binary cache client
 
             # web-agency (cargo-progenitor installed via: cargo install cargo-progenitor)
             wrangler
@@ -318,7 +318,7 @@
                   environment.systemPackages = with pkgs; [
                     openssh
                     rsync
-                    pkgs.xzar-client
+                    pkgs.xzar-client 
                     pixz
                   ];
 
