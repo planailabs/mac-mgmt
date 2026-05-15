@@ -101,10 +101,14 @@ mod tests {
     use super::*;
     use russh::keys::{Algorithm, PrivateKey, encode_pkcs8_pem};
 
+    fn test_rng() -> russh::keys::rand_core::UnwrapErr<getrandom_04::SysRng> {
+        russh::keys::rand_core::UnwrapErr(getrandom_04::SysRng)
+    }
+
     #[test]
     fn roundtrip_russh_to_libp2p() {
         let key =
-            PrivateKey::random(&mut rand_core::OsRng, Algorithm::Ed25519)
+            PrivateKey::random(&mut test_rng(), Algorithm::Ed25519)
                 .expect("generate Ed25519 key");
 
         let libp2p_kp = keypair_from_russh(&key).expect("conversion should succeed");
@@ -128,7 +132,7 @@ mod tests {
     #[test]
     fn deterministic_peer_id() {
         let key =
-            PrivateKey::random(&mut rand_core::OsRng, Algorithm::Ed25519)
+            PrivateKey::random(&mut test_rng(), Algorithm::Ed25519)
                 .expect("generate Ed25519 key");
 
         let kp1 = keypair_from_russh(&key).expect("first conversion");
