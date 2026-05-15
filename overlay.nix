@@ -25,7 +25,8 @@ in
     src = ./.;
     cargoLock.lockFile = ./Cargo.lock;
     cargoLock.outputHashes = import ./extra-hashes.nix;
-    nativeBuildInputs = [ prev.cmake ];
+    cargoBuildFlags = [ "-p" "mac-mgmt" ];
+    cargoTestFlags = [ "-p" "mac-mgmt" ];
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
   };
