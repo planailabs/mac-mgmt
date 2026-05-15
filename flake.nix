@@ -71,39 +71,59 @@
         xzarSigningKey = "test-mac-mgmt-server:UhyyW66MgyTdhVQkOgo9Af6d7Pakohkx+rU+SgNYnEyCYSuae0VPG8/DnH0kAFnWI+afmzG1tZS5byWZYCU/cQ==";
         xzarPublicKey = "test-mac-mgmt-server:gmErmntFTxvPw5x9JABZ1iPmn5sxtbWUuW8lmWAlP3E=";
 
-        # Nginx TLS termination module for a service
-        mkTlsModule = { name, upstreamPort, listenPort ? 443 }: { ... }: let
+        # Nginx TLS reverse proxy vhost for a named upstream
+        mkTlsVhost = { name, upstreamPort, locationExtraConfig ? "" }: let
           cert = mkServiceCert name;
         in {
+          listenAddresses = [ "0.0.0.0" ];
+          forceSSL = true;
+          sslCertificate = "${cert}/cert.pem";
+          sslCertificateKey = "${cert}/key.pem";
+          locations."/" = {
+            proxyPass = "http://127.0.0.1:${toString upstreamPort}";
+            proxyWebsockets = true;
+          } // nixpkgs.lib.optionalAttrs (locationExtraConfig != "") {
+            extraConfig = locationExtraConfig;
+          };
+        };
+
+        # Module that enables nginx with one or more TLS vhosts and opens port 443
+        mkTlsModule = vhosts: { ... }: {
           services.nginx = {
             enable = true;
-            virtualHosts.${name} = {
-              listenAddresses = [ "0.0.0.0" ];
-              forceSSL = true;
-              sslCertificate = "${cert}/cert.pem";
-              sslCertificateKey = "${cert}/key.pem";
-              locations."/" = {
-                proxyPass = "http://127.0.0.1:${toString upstreamPort}";
-                proxyWebsockets = true;
-              };
-            };
+            virtualHosts = nixpkgs.lib.listToAttrs (map (v: {
+              name = v.name;
+              value = mkTlsVhost v;
+            }) vhosts);
           };
-          networking.firewall.allowedTCPPorts = [ listenPort ];
+          networking.firewall.allowedTCPPorts = [ 443 ];
         };
-      in {
-        test-mac-mgmt-relay = nixpkgs.lib.nixosSystem {
+
+        # Common base for all NixOS-in-Docker test containers
+        baseModule = name: { ... }: {
+          virtualisation.dockerImage.name = name;
+          virtualisation.dockerImage.tag = "latest";
+          fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
+          boot.loader.grub.enable = false;
+          system.stateVersion = "24.11";
+        };
+
+        mkTestSystem = { name, modules }: nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
             nixos2docker.nixosModules.default
-            self.nixosModules.relay
             sharedCAModule
-            (mkTlsModule { name = "test-mac-mgmt-relay"; upstreamPort = 7380; })
+            (baseModule name)
+          ] ++ modules;
+        };
+      in {
+        test-mac-mgmt-relay = mkTestSystem {
+          name = "test-mac-mgmt-relay";
+          modules = [
+            self.nixosModules.relay
+            (mkTlsModule [{ name = "test-mac-mgmt-relay"; upstreamPort = 7380; }])
             ({ lib, ... }: {
               nixpkgs.overlays = [ self.overlays.default ];
-
-              virtualisation.dockerImage.name = "test-mac-mgmt-relay";
-              virtualisation.dockerImage.tag = "latest";
-
               networking.hostName = "relay";
 
               services.mac-mgmt-relay = {
@@ -121,28 +141,22 @@
               # libp2p QUIC enumerates interfaces via netlink
               systemd.services.mac-mgmt-relay.serviceConfig.RestrictAddressFamilies =
                 lib.mkForce [ "AF_INET" "AF_INET6" "AF_UNIX" "AF_NETLINK" ];
-
-              fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
-              boot.loader.grub.enable = false;
-              system.stateVersion = "24.11";
             })
           ];
         };
 
-        test-mac-mgmt-server = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
+        test-mac-mgmt-server = mkTestSystem {
+          name = "test-mac-mgmt-server";
           modules = [
-            nixos2docker.nixosModules.default
             self.nixosModules.default
             xzar.nixosModules.xzar
-            sharedCAModule
-            (mkTlsModule { name = "test-mac-mgmt-server"; upstreamPort = 7378; })
+            (mkTlsModule [
+              { name = "test-mac-mgmt-server"; upstreamPort = 7378; }
+              { name = "test-mac-mgmt-xzar"; upstreamPort = 17788;
+                locationExtraConfig = "client_max_body_size 10g;\nproxy_request_buffering off;"; }
+            ])
             ({ ... }: {
               nixpkgs.overlays = [ (import rust-overlay) self.overlays.default xzar.overlays.default ];
-
-              virtualisation.dockerImage.name = "test-mac-mgmt-server";
-              virtualisation.dockerImage.tag = "latest";
-
               networking.hostName = "mac-mgmt-server";
 
               services.mac-mgmt-server = {
@@ -166,44 +180,16 @@
                   externalUrl = "https://test-mac-mgmt-xzar";
                 };
               };
-
-              # Separate TLS vhost for xzar binary cache
-              services.nginx.virtualHosts."test-mac-mgmt-xzar" = let
-                cert = mkServiceCert "test-mac-mgmt-xzar";
-              in {
-                listenAddresses = [ "0.0.0.0" ];
-                forceSSL = true;
-                sslCertificate = "${cert}/cert.pem";
-                sslCertificateKey = "${cert}/key.pem";
-                locations."/" = {
-                  proxyPass = "http://127.0.0.1:17788";
-                  proxyWebsockets = true;
-                  extraConfig = ''
-                    client_max_body_size 10g;
-                    proxy_request_buffering off;
-                  '';
-                };
-              };
-
-              fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
-              boot.loader.grub.enable = false;
-              system.stateVersion = "24.11";
             })
           ];
         };
 
-        test-mac-mgmt-daemon = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
+        test-mac-mgmt-daemon = mkTestSystem {
+          name = "test-mac-mgmt-daemon";
           modules = [
-            nixos2docker.nixosModules.default
             self.nixosModules.daemon
-            sharedCAModule
             ({ ... }: {
               nixpkgs.overlays = [ self.overlays.default ];
-
-              virtualisation.dockerImage.name = "test-mac-mgmt-daemon";
-              virtualisation.dockerImage.tag = "latest";
-
               networking.hostName = "daemon";
 
               services.mac-mgmt = {
@@ -221,10 +207,6 @@
                 substituters = [ "https://test-mac-mgmt-xzar" ];
                 trusted-public-keys = [ xzarPublicKey ];
               };
-
-              fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
-              boot.loader.grub.enable = false;
-              system.stateVersion = "24.11";
             })
           ];
         };
