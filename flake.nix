@@ -67,6 +67,10 @@
           environment.etc."mac-mgmt-test-ca/ca-key.pem".source = "${sharedCA}/ca-key.pem";
         };
 
+        # Pregenerated nix binary cache signing keys for the test xzar instance
+        xzarSigningKey = "test-mac-mgmt-server:UhyyW66MgyTdhVQkOgo9Af6d7Pakohkx+rU+SgNYnEyCYSuae0VPG8/DnH0kAFnWI+afmzG1tZS5byWZYCU/cQ==";
+        xzarPublicKey = "test-mac-mgmt-server:gmErmntFTxvPw5x9JABZ1iPmn5sxtbWUuW8lmWAlP3E=";
+
         # Nginx TLS termination module for a service
         mkTlsModule = { name, upstreamPort, listenPort ? 443 }: { ... }: let
           cert = mkServiceCert name;
@@ -130,10 +134,11 @@
           modules = [
             nixos2docker.nixosModules.default
             self.nixosModules.default
+            xzar.nixosModules.xzar
             sharedCAModule
             (mkTlsModule { name = "test-mac-mgmt-server"; upstreamPort = 7378; })
             ({ ... }: {
-              nixpkgs.overlays = [ self.overlays.default ];
+              nixpkgs.overlays = [ (import rust-overlay) self.overlays.default xzar.overlays.default ];
 
               virtualisation.dockerImage.name = "test-mac-mgmt-server";
               virtualisation.dockerImage.tag = "latest";
@@ -145,6 +150,38 @@
                 settings = {
                   api.external_url = "https://test-mac-mgmt-server/";
                   git.state_dir = "/var/lib/mac-mgmt-server";
+                  xzar = {
+                    url = "http://localhost:17788";
+                    token = "test-token";
+                    public_key = xzarPublicKey;
+                  };
+                };
+              };
+
+              services.xzar-server = {
+                enable = true;
+                config = {
+                  signingKey = xzarSigningKey;
+                  signingPubKey = xzarPublicKey;
+                  externalUrl = "https://test-mac-mgmt-xzar";
+                };
+              };
+
+              # Separate TLS vhost for xzar binary cache
+              services.nginx.virtualHosts."test-mac-mgmt-xzar" = let
+                cert = mkServiceCert "test-mac-mgmt-xzar";
+              in {
+                listenAddresses = [ "0.0.0.0" ];
+                forceSSL = true;
+                sslCertificate = "${cert}/cert.pem";
+                sslCertificateKey = "${cert}/key.pem";
+                locations."/" = {
+                  proxyPass = "http://127.0.0.1:17788";
+                  proxyWebsockets = true;
+                  extraConfig = ''
+                    client_max_body_size 10g;
+                    proxy_request_buffering off;
+                  '';
                 };
               };
 
@@ -178,6 +215,11 @@
                 settings = {
                   daemon.log_level = "info";
                 };
+              };
+
+              nix.settings = {
+                substituters = [ "https://test-mac-mgmt-xzar" ];
+                trusted-public-keys = [ xzarPublicKey ];
               };
 
               fileSystems."/" = { device = "none"; fsType = "tmpfs"; };

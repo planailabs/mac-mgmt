@@ -6,9 +6,10 @@ services:
       - /run
       - /run/lock
       - /tmp
-
     networks:
-      - mac-mgmt-test
+      mac-mgmt-test:
+        aliases:
+          - test-mac-mgmt-xzar
 
   test-mac-mgmt-relay:
     image: registry.plan.ai/plan-ai/mac-mgmt/test-mac-mgmt-relay:latest
@@ -30,7 +31,6 @@ services:
       - /run
       - /run/lock
       - /tmp
-
     depends_on:
       - test-mac-mgmt-server
       - test-mac-mgmt-relay
