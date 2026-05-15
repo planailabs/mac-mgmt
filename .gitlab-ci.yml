@@ -10,6 +10,7 @@ build:
   script:
     - bash prebuild.sh
   timeout: 3h
+  resource_group: build-cache
 
 test:
   stage: test
