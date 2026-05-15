@@ -25,6 +25,7 @@ in
     src = ./.;
     cargoLock.lockFile = ./Cargo.lock;
     cargoLock.outputHashes = import ./extra-hashes.nix;
+    nativeBuildInputs = [ prev.cmake ];
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
   };
