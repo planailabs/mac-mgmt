@@ -2,11 +2,11 @@
 
 set -euxo pipefail
 
-# ── Install xzar & configure plan.ai cache ──────────────────────────
-bash xzar-install.sh
+# ── Configure xzar plan.ai cache ────────────────────────────────────
+xzar config add-server planai https://xzar.plan.ai "$XZAR_TOKEN"
 
 upload() {
-  while ! ~/.cargo/bin/xzar --server planai upload --pin "$1" --desc "$(readlink -f "$2")" --leave-after-abandon 1m "$2"; do true; done
+  while ! xzar --server planai upload --pin "$1" --desc "$(readlink -f "$2")" --leave-after-abandon 1m "$2"; do true; done
 }
 
 # ── Build devShell & push to xzar cache ─────────────────────────────

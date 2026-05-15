@@ -6,6 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 export ENVIRONMENT=production
 
+# ── Configure xzar plan.ai cache ────────────────────────────────────
+xzar config add-server planai https://xzar.plan.ai "$XZAR_TOKEN"
+
 # ── Daemon binary build & upload ─────────────────────────────────────
 # Build the daemon for each supported target, drop the binary into a
 # bin/ dir, add it to the local nix store, and upload as
@@ -19,7 +22,7 @@ FEATURES="self-update,services,relay,memvault"
 "$SCRIPT_DIR/build-memvault.sh"
 
 upload() {
-  ~/.cargo/bin/xzar --server planai upload --pin "$1" --desc $(readlink -f "$2") --leave-after-abandon 1m "$2"
+  xzar --server planai upload --pin "$1" --desc "$(readlink -f "$2")" --leave-after-abandon 1m "$2"
 }
 
 # Rust target ↔ nix system identifier

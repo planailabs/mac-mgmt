@@ -8,7 +8,6 @@ build:
   tags:
     - nix-image
   script:
-    - bash xzar-install.sh
     - bash prebuild.sh
   timeout: 3h
 
@@ -29,7 +28,6 @@ deploy:
     - trunk
   script:
     - nix flake check -L
-    - bash xzar-install.sh
     - nix develop -c bash xzar.sh
     - ./docker-push.sh
   timeout: 3h

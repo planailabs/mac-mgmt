@@ -194,6 +194,7 @@
         overlays = [
           (import rust-overlay)
           (import ./overlay.nix { inherit gitSha; })
+          xzar.overlay
         ];
         pkgs = import nixpkgs { inherit system overlays; };
         toolchain = pkgs.rust-bin.stable.latest.default.override {
@@ -246,6 +247,7 @@
             overmind
             cargo-watch
             xz  # for nixpkgs archive generation
+            xzar  # binary cache client
 
             # web-agency (cargo-progenitor installed via: cargo install cargo-progenitor)
             wrangler
