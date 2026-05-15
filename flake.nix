@@ -318,7 +318,7 @@
                   environment.systemPackages = with pkgs; [
                     openssh
                     rsync
-                    pkgs.xzar
+                    pkgs.xzar-client
                     pixz
                   ];
 
