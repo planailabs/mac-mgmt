@@ -194,7 +194,7 @@
         overlays = [
           (import rust-overlay)
           (import ./overlay.nix { inherit gitSha; })
-          xzar.overlay
+          xzar.overlays.default
         ];
         pkgs = import nixpkgs { inherit system overlays; };
         toolchain = pkgs.rust-bin.stable.latest.default.override {
