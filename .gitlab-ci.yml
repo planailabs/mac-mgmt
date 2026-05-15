@@ -21,7 +21,7 @@ test:
     - nix develop -c cargo test --workspace --locked --exclude mac-mgmt-executor
   timeout: 3h
 
-build:
+deploy:
   stage: deploy
   tags:
     - nix-image
