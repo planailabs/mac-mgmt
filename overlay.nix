@@ -27,8 +27,26 @@ in
     cargoLock.outputHashes = import ./extra-hashes.nix;
     cargoBuildFlags = [ "-p" "mac-mgmt" ];
     cargoTestFlags = [ "-p" "mac-mgmt" ];
+    nativeBuildInputs = [
+      prev.nodejs
+      prev.tailwindcss_3
+      prev.dioxus-cli
+      prev.wasm-bindgen-cli_0_2_114
+      prev.binaryen
+      prev.lld
+    ];
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
+
+    preBuild = ''
+      # Tailwind CSS for memvault-web
+      (cd memvault/crates/memvault-web && npm run tailwind:build)
+
+      # Dioxus WASM build for memvault-web
+      dx build --package memvault-web --platform web --no-default-features --features web --release
+      rm -rf daemon/memvault-web-dist
+      cp -r target/dx/memvault-web/release/web/public daemon/memvault-web-dist
+    '';
   };
 
   mac-mgmt-server = prev.callPackage ./server/package.nix { inherit gitSha; };
