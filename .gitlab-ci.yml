@@ -9,6 +9,7 @@ test:
   script:
     - nix develop -c bash build-memvault.sh
     - nix develop -c cargo test --workspace --locked --exclude mac-mgmt-executor
+  timeout: 3h
 
 build:
   stage: build
