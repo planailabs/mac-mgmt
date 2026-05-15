@@ -155,7 +155,9 @@
               { name = "test-mac-mgmt-xzar"; upstreamPort = 17788;
                 locationExtraConfig = "client_max_body_size 10g;\nproxy_request_buffering off;"; }
             ])
-            ({ ... }: {
+            ({ ... }: let
+              pkgs = nixpkgs.legacyPackages.x86_64-linux;
+            in {
               nixpkgs.overlays = [ (import rust-overlay) self.overlays.default xzar.overlays.default ];
               networking.hostName = "mac-mgmt-server";
 
@@ -179,6 +181,40 @@
                   signingPubKey = xzarPublicKey;
                   externalUrl = "https://test-mac-mgmt-xzar";
                 };
+              };
+
+              # Seed admin and federation tokens after the server has started
+              # (migrations run on server startup). Token values are "admin" and
+              # "federation", stored as sha256 hashes.
+              systemd.services.mac-mgmt-seed-tokens = {
+                description = "Seed test API tokens";
+                after = [ "mac-mgmt.service" ];
+                requires = [ "mac-mgmt.service" ];
+                wantedBy = [ "multi-user.target" ];
+                serviceConfig = {
+                  Type = "oneshot";
+                  RemainAfterExit = true;
+                  User = "mac-mgmt";
+                };
+                script = ''
+                  # Wait for the server to be ready
+                  for i in $(seq 1 30); do
+                    ${pkgs.curl}/bin/curl -sf http://localhost:7378/api/health && break
+                    sleep 1
+                  done
+
+                  ${pkgs.postgresql}/bin/psql "postgres:///mac-mgmt?host=/run/postgresql" <<'SQL'
+                    INSERT INTO tokens (id, cluster_id, token_hash, label, kind)
+                    VALUES
+                      (gen_random_uuid(), NULL,
+                       '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918',
+                       'test-admin', 'admin'),
+                      (gen_random_uuid(), NULL,
+                       '8ce333c5811acbdc46a0ba06bc27621a23b2550b1469b3b679a9f4a3c7470772',
+                       'test-federation', 'federation')
+                    ON CONFLICT DO NOTHING;
+                  SQL
+                '';
               };
             })
           ];
