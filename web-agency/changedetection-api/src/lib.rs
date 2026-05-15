@@ -18740,7 +18740,7 @@ impl Client {
     ///This endpoint requires no authentication and returns YAML.
     ///
     ///To load it directly in Swagger UI, paste the URL into the "Explore" box:
-    ///```
+    ///```text
     /// http://localhost:5000/api/v1/full-spec
     /// ```
     ///

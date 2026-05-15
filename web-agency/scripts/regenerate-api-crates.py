@@ -483,6 +483,14 @@ def trim_spaceship():
     return spec
 
 
+def cd_post_gen_fixups(code):
+    """Post-generation fixups for the changedetection crate."""
+    import re
+    # Mark non-Rust code blocks in doc comments as ```text to prevent doctest compilation
+    code = re.sub(r'(///\s*)```\n(///\s*http)', r'\1```text\n\2', code)
+    return code
+
+
 def cf_post_gen_fixups(code):
     """Post-generation fixups for the Cloudflare crate."""
     code = code.replace(
@@ -784,7 +792,8 @@ if __name__ == "__main__":
                    extra_deps=SS_EXTRA_DEPS)
 
     trim_changedetection()
-    generate_crate(CD_TRIMMED, CD_OUTPUT, "changedetection-api")
+    generate_crate(CD_TRIMMED, CD_OUTPUT, "changedetection-api",
+                   post_gen_fixups=cd_post_gen_fixups)
 
     trim_dataforseo()
     generate_crate(DF_TRIMMED, DF_OUTPUT, "dataforseo-api",
