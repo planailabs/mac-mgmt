@@ -1,20 +1,30 @@
 stages:
-  - test
   - build
+  - test
+  - deploy
+
+build:
+  stage: build
+  tags:
+    - nix-image
+  script:
+    - bash xzar-install.sh
+    - bash prebuild.sh
+  timeout: 3h
 
 test:
   stage: test
   tags:
-    - nix
+    - nix-image
   script:
     - nix develop -c bash build-memvault.sh
     - nix develop -c cargo test --workspace --locked --exclude mac-mgmt-executor
   timeout: 3h
 
 build:
-  stage: build
+  stage: deploy
   tags:
-    - nix
+    - nix-image
   only:
     - trunk
   script:

@@ -8,9 +8,13 @@
     flake-utils.url = "github:numtide/flake-utils";
     nixos2docker.url = "git+https://git.plan.ai/plan-ai/nixos2docker";
     nixos2docker.inputs.nixpkgs.follows = "nixpkgs";
+    gitlab-incus-image.url = "git+https://git.mkg20001.io/mkg20001/gitlab-incus-image.git";
+    gitlab-incus-image.inputs.nixpkgs.follows = "nixpkgs";
+    xzar.url = "github:mkg20001/xzar";
+    xzar.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, nixos2docker, ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, nixos2docker, gitlab-incus-image, xzar, ... }:
     {
       overlays.default = import ./overlay.nix { gitSha = self.rev or self.dirtyRev or "unknown"; };
       nixosModules.default = import ./server/module.nix;
@@ -302,6 +306,37 @@
             docker-relay = images.relay;
             docker-runner = images.runner;
             docker-relay-ssh = images.relay-ssh;
+
+            image = (nixpkgs.lib.nixosSystem {
+              system = "x86_64-linux";
+              modules = [
+                "${nixpkgs}/nixos/modules/virtualisation/lxc-container.nix"
+                gitlab-incus-image.nixosModules.gitlab-incus-image
+                ({ pkgs, lib, ... }: {
+                  environment.systemPackages = with pkgs; [
+                    openssh
+                    rsync
+                    pkgs.xzar
+                    pixz
+                  ];
+
+                  nixpkgs.overlays = [
+                    xzar.overlay
+                  ];
+
+                  programs.git.config.advice.detachedHead = false;
+
+                  nix.settings = {
+                    substituters = [
+                      "https://xzar.plan.ai"
+                    ];
+                    trusted-public-keys = [
+                      "xzar.plan.ai:KUE66pjr6UX5HHCn9kedN1DJ2J5nSlBrKmE7tUjXewE="
+                    ];
+                  };
+                })
+              ];
+            }).config.system.build.gitlab-incus-image;
           }
         ) // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
           tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
