@@ -323,7 +323,7 @@
                   ];
 
                   nixpkgs.overlays = [
-                    xzar.overlay
+                    xzar.overlays.default
                   ];
 
                   programs.git.config.advice.detachedHead = false;
