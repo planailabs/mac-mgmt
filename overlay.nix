@@ -42,12 +42,12 @@ in
       # Tailwind CSS for memvault-web
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
-      # Dioxus WASM build: --renderer web prevents dx from auto-adding the
-      # "web" feature (which would re-enable hydration via dioxus/fullstack)
-      dx build --package memvault-web --platform web --renderer web \
-        --no-default-features --features web-embedded --release
+      # Dioxus WASM build for memvault-web
+      dx build --package memvault-web --platform web --no-default-features --features web --release
       rm -rf daemon/memvault-web-dist
       cp -r target/dx/memvault-web/release/web/public daemon/memvault-web-dist
+      # Patch hydrate_node to skip mismatched nodes instead of crashing
+      sed -i 's/hydrate_node(hydrateNode,ids){let split=hydrateNode.getAttribute("data-node-hydration").split(","),id=ids\[parseInt(split\[0\])\];/hydrate_node(hydrateNode,ids){let split=hydrateNode.getAttribute("data-node-hydration").split(","),id=ids[parseInt(split[0])];if(id===undefined)return;/' daemon/memvault-web-dist/wasm/snippets/dioxus-interpreter-js-*/inline0.js
     '';
   };
 
