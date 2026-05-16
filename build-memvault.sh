@@ -27,6 +27,13 @@ echo "▸ Building Tailwind CSS…"
 # (avoiding native deps like tokio/mio) while the server gets all features
 # for a fully functional daemon binary. The server's build.rs blocks until
 # the client output is ready, then embeds it via rust-embed.
+# Remove previous client output so build.rs can detect when the NEW build finishes
+if [ "$RELEASE" = "1" ]; then
+  rm -rf "target/dx/mac-mgmt/release/web/public"
+else
+  rm -rf "target/dx/mac-mgmt/debug/web/public"
+fi
+
 echo "▸ Building Dioxus fullstack (client + server)…"
 dx build --package mac-mgmt $DX_PROFILE \
   @client --platform web --no-default-features --features web \

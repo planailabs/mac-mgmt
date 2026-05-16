@@ -1,3 +1,3 @@
 [application]
-name = "memvault-web"
-asset_dir = "../memvault/crates/memvault-web/public"
+name = "mac-mgmt"
+public_dir = "../memvault/crates/memvault-web/public"

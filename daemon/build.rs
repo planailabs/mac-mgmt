@@ -71,9 +71,9 @@ fn embed_dx_client_assets() {
         .join(&profile)
         .join("web/public");
 
-    // The WASM file is the last thing dx writes for the client build.
+    // The JS loader is one of the last files dx writes for the client build.
     // Its presence means the client output is complete.
-    let wasm_sentinel = dx_public.join("wasm/mac-mgmt_bg.wasm");
+    let wasm_sentinel = dx_public.join("wasm/mac-mgmt.js");
 
     // Check if we're in a dx build by looking for the dx output directory.
     // If the directory doesn't exist at all, this isn't a dx build.
@@ -97,12 +97,17 @@ fn embed_dx_client_assets() {
         std::thread::sleep(Duration::from_millis(500));
     }
 
-    // Small extra delay to ensure all files are flushed (wasm-opt, JS generation)
-    std::thread::sleep(Duration::from_millis(200));
+    // Extra delay to ensure all files are flushed (snippets, wasm-opt)
+    std::thread::sleep(Duration::from_secs(1));
 
     // Remove stale dist and copy fresh client output
     let _ = std::fs::remove_dir_all(&dist_dir);
     copy_dir_recursive(&dx_public, &dist_dir);
+
+    // Compat aliases: the web UI may reference the old package name "memvault-web"
+    let wasm_dir = dist_dir.join("wasm");
+    let _ = std::os::unix::fs::symlink(wasm_dir.join("mac-mgmt.js"), wasm_dir.join("memvault-web.js"));
+    let _ = std::os::unix::fs::symlink(wasm_dir.join("mac-mgmt_bg.wasm"), wasm_dir.join("memvault-web_bg.wasm"));
 
     // Rerun when the dx client output changes
     println!("cargo::rerun-if-changed={}", dx_public.display());
