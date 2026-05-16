@@ -1,11 +1,21 @@
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
 fn main() {
+    // ── Embed memvault-web assets from dx client output ────────────────
+    // Only relevant for the native server build — skip entirely for wasm32
+    // (which IS the client producing those assets).
+    let target = std::env::var("TARGET").unwrap();
+    if !target.contains("wasm32") {
+        embed_dx_client_assets();
+    }
+
     println!("cargo::rerun-if-env-changed=ENVIRONMENT");
     if std::env::var("ENVIRONMENT").is_err() {
         println!("cargo::rustc-env=ENVIRONMENT=dev");
     }
 
     // Expose the build target triple
-    let target = std::env::var("TARGET").unwrap();
     println!("cargo::rustc-env=TARGET={target}");
 
     // Git commit the binary was built from. Prefer GIT_SHA from the
@@ -38,4 +48,76 @@ fn main() {
 
     // Re-embed scripts if any file in the scripts directory changes
     println!("cargo::rerun-if-changed=scripts");
+}
+
+/// Copy dx client output to memvault-web-dist/ for rust-embed.
+///
+/// When invoked via `dx build @client ... @server ...`, both targets build
+/// concurrently. The client usually finishes first but we can't assume that.
+/// This function blocks until the WASM output file appears (indicating the
+/// client build is complete), then copies everything to the embed directory.
+///
+/// For standalone `cargo build` (without dx), the directory must already be
+/// populated by a prior build — this function is a no-op if the dx output
+/// doesn't exist within the timeout.
+fn embed_dx_client_assets() {
+    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let dist_dir = manifest_dir.join("memvault-web-dist");
+
+    // Determine dx output path based on build profile.
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    let dx_public = manifest_dir
+        .join("../target/dx/mac-mgmt")
+        .join(&profile)
+        .join("web/public");
+
+    // The WASM file is the last thing dx writes for the client build.
+    // Its presence means the client output is complete.
+    let wasm_sentinel = dx_public.join("wasm/mac-mgmt_bg.wasm");
+
+    // Check if we're in a dx build by looking for the dx output directory.
+    // If the directory doesn't exist at all, this isn't a dx build.
+    if !dx_public.exists() {
+        println!("cargo::rerun-if-changed=memvault-web-dist");
+        return;
+    }
+
+    // Wait for the client WASM output to appear (dx may still be building it).
+    let timeout = Duration::from_secs(300); // 5 minutes max
+    let start = Instant::now();
+    while !wasm_sentinel.exists() {
+        if start.elapsed() > timeout {
+            eprintln!(
+                "cargo:warning=Timed out waiting for dx client output at {}",
+                wasm_sentinel.display()
+            );
+            println!("cargo::rerun-if-changed=memvault-web-dist");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    // Small extra delay to ensure all files are flushed (wasm-opt, JS generation)
+    std::thread::sleep(Duration::from_millis(200));
+
+    // Remove stale dist and copy fresh client output
+    let _ = std::fs::remove_dir_all(&dist_dir);
+    copy_dir_recursive(&dx_public, &dist_dir);
+
+    // Rerun when the dx client output changes
+    println!("cargo::rerun-if-changed={}", dx_public.display());
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path);
+        } else {
+            std::fs::copy(&src_path, &dst_path).unwrap();
+        }
+    }
 }
