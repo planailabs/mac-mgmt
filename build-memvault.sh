@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Build the memvault-web frontend assets (Tailwind CSS + Dioxus WASM).
-# Does NOT compile the daemon — call this before `cargo build -p mac-mgmt`.
+# Build the memvault-web frontend assets (Tailwind CSS + Dioxus WASM) and
+# the fullstack server binary via dx. Both client and server are compiled
+# from the same crate with the same features, sharing a cache — this
+# guarantees hydration consistency.
 
 set -euo pipefail
 
@@ -21,14 +23,16 @@ fi
 echo "▸ Building Tailwind CSS…"
 (cd "$WEB_DIR" && npm run tailwind:build)
 
-# ── 2. Dioxus WASM client ───────────────────────────────────────────────
-# Build from mac-mgmt with --features web so both server and client compile
-# the same App component from the same crate (correct hydration).
-echo "▸ Building Dioxus WASM client…"
-dx build --package mac-mgmt --platform web \
-  --no-default-features --features web $DX_PROFILE
+# ── 2. Dioxus fullstack build ───────────────────────────────────────────
+# Use @client/@server overrides so the WASM client only gets the web feature
+# (avoiding native deps like tokio/mio) while the server gets all features
+# for a fully functional daemon binary.
+echo "▸ Building Dioxus fullstack (client + server)…"
+dx build --package mac-mgmt $DX_PROFILE \
+  @client --platform web --no-default-features --features web \
+  @server --platform server --features web
 
-# ── 3. Copy to daemon embed directory ────────────────────────────────────
+# ── 3. Copy to daemon embed directory ───────────────────────────────────
 echo "▸ Copying assets to $DIST_DIR"
 rm -rf "$DIST_DIR"
 cp -r "$DX_OUT" "$DIST_DIR"
