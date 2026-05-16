@@ -97,6 +97,11 @@ mod tests {
     #[tokio::test]
     async fn connection_refused_gives_helpful_error() {
         let _ = rustls::crypto::ring::default_provider().install_default();
+        // In sandboxed builds (e.g. Nix), binding to IPv6 loopback may fail
+        // at client construction time — skip if we can't even build the client.
+        if crate::local_client::build().is_err() {
+            return;
+        }
         let result = print_status(Some(19999)).await; // unlikely to be in use
         let err = result.unwrap_err();
         assert!(err.to_string().contains("daemon not running"), "got: {err}");
