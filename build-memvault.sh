@@ -22,10 +22,12 @@ echo "▸ Building Tailwind CSS…"
 (cd "$WEB_DIR" && npm run tailwind:build)
 
 # ── 2. Dioxus WASM client ───────────────────────────────────────────────
-# Use web-embedded feature: pulls dioxus-web WITHOUT hydrate so the WASM
-# does a fresh client render (avoids hydration mismatch from split build).
+# --renderer web tells dx the renderer is known, preventing it from auto-
+# adding the "web" feature (which would re-enable dioxus-web/hydrate via
+# dioxus/fullstack). Only web-embedded is active → no hydration.
 echo "▸ Building Dioxus WASM client…"
-dx build --package memvault-web --platform web --no-default-features --features web-embedded $DX_PROFILE
+dx build --package memvault-web --platform web --renderer web \
+  --no-default-features --features web-embedded $DX_PROFILE
 
 # ── 3. Copy to daemon embed directory ────────────────────────────────────
 echo "▸ Copying assets to $DIST_DIR"

@@ -42,8 +42,10 @@ in
       # Tailwind CSS for memvault-web
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
-      # Dioxus WASM build for memvault-web
-      dx build --package memvault-web --platform web --no-default-features --features web-embedded --release
+      # Dioxus WASM build: --renderer web prevents dx from auto-adding the
+      # "web" feature (which would re-enable hydration via dioxus/fullstack)
+      dx build --package memvault-web --platform web --renderer web \
+        --no-default-features --features web-embedded --release
       rm -rf daemon/memvault-web-dist
       cp -r target/dx/memvault-web/release/web/public daemon/memvault-web-dist
     '';
