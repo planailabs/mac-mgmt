@@ -11,10 +11,10 @@ DIST_DIR="$SCRIPT_DIR/daemon/memvault-web-dist"
 RELEASE="${RELEASE:-1}"
 if [ "$RELEASE" = "1" ]; then
   DX_PROFILE="--release"
-  DX_OUT="$SCRIPT_DIR/target/dx/memvault-web/release/web/public"
+  DX_OUT="$SCRIPT_DIR/target/dx/mac-mgmt/release/web/public"
 else
   DX_PROFILE=""
-  DX_OUT="$SCRIPT_DIR/target/dx/memvault-web/debug/web/public"
+  DX_OUT="$SCRIPT_DIR/target/dx/mac-mgmt/debug/web/public"
 fi
 
 # ── 1. Tailwind CSS ─────────────────────────────────────────────────────
@@ -22,12 +22,11 @@ echo "▸ Building Tailwind CSS…"
 (cd "$WEB_DIR" && npm run tailwind:build)
 
 # ── 2. Dioxus WASM client ───────────────────────────────────────────────
-# --skip-platform-features prevents dx from auto-adding "web" feature,
-# which would enable dioxus-web/hydrate via dioxus/fullstack. Instead we
-# pass web-embedded which includes dioxus-web WITHOUT hydrate.
+# Build from mac-mgmt with --features web so both server and client compile
+# the same App component from the same crate (correct hydration).
 echo "▸ Building Dioxus WASM client…"
-dx build --package memvault-web --platform web --skip-platform-features \
-  --fullstack false --no-default-features --features web-embedded $DX_PROFILE
+dx build --package mac-mgmt --platform web \
+  --no-default-features --features web $DX_PROFILE
 
 # ── 3. Copy to daemon embed directory ────────────────────────────────────
 echo "▸ Copying assets to $DIST_DIR"

@@ -16,11 +16,26 @@ default = ["services", "relay", "memvault"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
 relay = ["dep:libp2p-stream"]
-memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "dep:memvault-query", "dep:axum", "relay"]
+memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "memvault-web/server", "memvault-web/web", "dep:memvault-query", "dep:axum", "relay"]
 healer = ["dep:mac-mgmt-healer", "services", "relay"]
 sim = []
+# WASM client for the memvault web UI — built by dx for embedding.
+# Both `web` and `server` (via memvault) compile the same App component from
+# the same crate, ensuring hydration entry ordering matches perfectly.
+web = ["dep:memvault-web", "memvault-web/web", "dep:dioxus", "getrandom_04/wasm_js"]
 
+# Dependencies needed for both native and WASM builds
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom_04 = { package = "getrandom", version = "0.4" }
+
+# WASM-only dependencies (web feature)
+memvault-web = { path = "../memvault/crates/memvault-web", optional = true, default-features = false }
+dioxus = { version = "0.7.9", features = ["fullstack", "router"], optional = true }
+
+# Native-only dependencies (not compiled for WASM)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap = { version = "4", features = ["derive"] }
 self_update = { version = "0.42", default-features = false, features = ["rustls", "archive-tar", "compression-flate2"], optional = true }
 tokio = { version = "1", features = ["full"] }
@@ -37,9 +52,7 @@ tempfile = "3"
 self-replace = { version = "1", optional = true }
 sha2 = "0.10"
 libc = "0.2"
-serde = { version = "1", features = ["derive"] }
 jsonschema = { version = "0.46", default-features = false }
-serde_json = "1"
 yaml_serde = "0.10"
 toml = "0.8"
 rocket = { version = "0.5", default-features = false, features = ["json"] }
@@ -48,7 +61,6 @@ reqwest = { workspace = true, features = ["blocking", "stream"] }
 rustls = { workspace = true }
 russh = { version = "0.60", default-features = false, features = ["ring", "flate2"] }
 rand = "0.9"
-getrandom_04 = { package = "getrandom", version = "0.4" }
 futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 mac-mgmt-common = { path = "../common", features = ["sentry"] }
@@ -83,6 +95,5 @@ memvault-core = { path = "../memvault/crates/memvault-core", optional = true }
 memvault-auth = { path = "../memvault/crates/memvault-auth", optional = true }
 memvault-store = { path = "../memvault/crates/memvault-store", optional = true }
 memvault-net = { path = "../memvault/crates/memvault-net", optional = true }
-memvault-web = { path = "../memvault/crates/memvault-web", optional = true }
 memvault-query = { path = "../memvault/crates/memvault-query", optional = true }
 axum = { version = "0.8", optional = true }

@@ -1,0 +1,3 @@
+[application]
+name = "memvault-web"
+asset_dir = "../memvault/crates/memvault-web/public"

@@ -1,3 +1,7 @@
+// The lib target is the daemon — it is not compiled for WASM.
+// When dx builds with --features web, only main.rs (the WASM client entry) is needed.
+#![cfg(not(target_arch = "wasm32"))]
+
 #[cfg(feature = "services")]
 pub mod ai_proxy;
 pub mod assessment;
