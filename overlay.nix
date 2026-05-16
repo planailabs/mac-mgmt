@@ -2,6 +2,13 @@
 
 final: prev:
 let
+  # Patched dioxus-cli with --skip-platform-features flag.
+  # This prevents dx from auto-adding "web"/"desktop"/etc. features,
+  # which is needed when building WASM for embedded daemon mode (where
+  # dioxus-web/hydrate must NOT be enabled).
+  dioxus-cli-patched = prev.dioxus-cli.overrideAttrs (old: {
+    patches = (old.patches or []) ++ [ ./patches/dioxus-cli-skip-platform-features.patch ];
+  });
   # Thin wrapper that re-exports the monolith server binary with a
   # MAC_MGMT_SERVER_MODE env var preset, so only the selected API
   # route group is mounted at runtime.  The heavy build happens once
@@ -19,6 +26,8 @@ let
     '';
 in
 {
+  inherit dioxus-cli-patched;
+
   mac-mgmt = prev.rustPlatform.buildRustPackage {
     pname = "mac-mgmt";
     version = "0.1.0";
@@ -30,7 +39,7 @@ in
     nativeBuildInputs = [
       prev.nodejs
       prev.tailwindcss_3
-      prev.dioxus-cli
+      dioxus-cli-patched
       prev.wasm-bindgen-cli_0_2_114
       prev.binaryen
       prev.lld
@@ -42,12 +51,12 @@ in
       # Tailwind CSS for memvault-web
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
-      # Dioxus WASM build for memvault-web
-      dx build --package memvault-web --platform web --no-default-features --features web --release
+      # Dioxus WASM build: --skip-platform-features prevents auto-adding
+      # "web" feature so web-embedded controls dioxus-web features directly
+      dx build --package memvault-web --platform web --skip-platform-features \
+        --fullstack false --no-default-features --features web-embedded --release
       rm -rf daemon/memvault-web-dist
       cp -r target/dx/memvault-web/release/web/public daemon/memvault-web-dist
-      # Patch hydrate_node to skip mismatched nodes instead of crashing
-      sed -i 's/hydrate_node(hydrateNode,ids){let split=hydrateNode.getAttribute("data-node-hydration").split(","),id=ids\[parseInt(split\[0\])\];/hydrate_node(hydrateNode,ids){let split=hydrateNode.getAttribute("data-node-hydration").split(","),id=ids[parseInt(split[0])];if(id===undefined)return;/' daemon/memvault-web-dist/wasm/snippets/dioxus-interpreter-js-*/inline0.js
     '';
   };
 

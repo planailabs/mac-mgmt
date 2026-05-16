@@ -294,8 +294,8 @@
             zig
             rsync
 
-            # Dioxus CLI
-            dioxus-cli
+            # Dioxus CLI (patched with --skip-platform-features)
+            dioxus-cli-patched
 
             # Build dependencies
             pkg-config

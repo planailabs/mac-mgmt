@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-dioxus = "0.7"
+dioxus = "0.7.9"
 # Used by the data_table component for its built-in toolbar copy
 # ("Showing X of Y", "20 per page"). Keeps translation keys in the
 # same Fluent file as the consuming app — `t!` reads from whatever

@@ -1,0 +1,124 @@
+diff --git a/src/build/request.rs b/src/build/request.rs
+index 652ffaa..98257a4 100644
+--- a/src/build/request.rs
++++ b/src/build/request.rs
+@@ -491,6 +491,7 @@ impl BuildRequest {
+         let mut features = args.features.clone();
+         let no_default_features = args.no_default_features;
+         let all_features = args.all_features;
++        let skip_platform_features = args.skip_platform_features;
+         let mut triple = args.target.clone();
+         let mut renderer = args.renderer;
+         let mut bundle_format = args.bundle;
+@@ -584,7 +585,7 @@ impl BuildRequest {
+             Platform::Unknown => {}
+ 
+             Platform::Web => {
+-                if main_package.features.contains_key("web") && renderer.is_none() {
++                if !skip_platform_features && main_package.features.contains_key("web") && renderer.is_none() {
+                     features.push("web".into());
+                 }
+                 renderer = renderer.or(Some(Renderer::Web));
+@@ -592,7 +593,7 @@ impl BuildRequest {
+                 triple = triple.or(Some("wasm32-unknown-unknown".parse()?));
+             }
+             Platform::MacOS => {
+-                if main_package.features.contains_key("desktop") && renderer.is_none() {
++                if !skip_platform_features && main_package.features.contains_key("desktop") && renderer.is_none() {
+                     features.push("desktop".into());
+                 }
+                 renderer = renderer.or(Some(Renderer::Webview));
+@@ -600,7 +601,7 @@ impl BuildRequest {
+                 triple = triple.or(Some(Triple::host()));
+             }
+             Platform::Windows => {
+-                if main_package.features.contains_key("desktop") && renderer.is_none() {
++                if !skip_platform_features && main_package.features.contains_key("desktop") && renderer.is_none() {
+                     features.push("desktop".into());
+                 }
+                 renderer = renderer.or(Some(Renderer::Webview));
+@@ -608,7 +609,7 @@ impl BuildRequest {
+                 triple = triple.or(Some(Triple::host()));
+             }
+             Platform::Linux => {
+-                if main_package.features.contains_key("desktop") && renderer.is_none() {
++                if !skip_platform_features && main_package.features.contains_key("desktop") && renderer.is_none() {
+                     features.push("desktop".into());
+                 }
+                 renderer = renderer.or(Some(Renderer::Webview));
+@@ -616,7 +617,7 @@ impl BuildRequest {
+                 triple = triple.or(Some(Triple::host()));
+             }
+             Platform::Ios => {
+-                if main_package.features.contains_key("mobile") && renderer.is_none() {
++                if !skip_platform_features && main_package.features.contains_key("mobile") && renderer.is_none() {
+                     features.push("mobile".into());
+                 }
+                 renderer = renderer.or(Some(Renderer::Webview));
+@@ -635,7 +636,7 @@ impl BuildRequest {
+                 }
+             }
+             Platform::Android => {
+-                if main_package.features.contains_key("mobile") && renderer.is_none() {
++                if !skip_platform_features && main_package.features.contains_key("mobile") && renderer.is_none() {
+                     features.push("mobile".into());
+                 }
+ 
+@@ -664,7 +665,7 @@ impl BuildRequest {
+                 }
+             }
+             Platform::Server => {
+-                if main_package.features.contains_key("server") && renderer.is_none() {
++                if !skip_platform_features && main_package.features.contains_key("server") && renderer.is_none() {
+                     features.push("server".into());
+                 }
+                 renderer = renderer.or(Some(Renderer::Server));
+@@ -672,7 +673,7 @@ impl BuildRequest {
+                 triple = triple.or(Some(Triple::host()));
+             }
+             Platform::Liveview => {
+-                if main_package.features.contains_key("liveview") && renderer.is_none() {
++                if !skip_platform_features && main_package.features.contains_key("liveview") && renderer.is_none() {
+                     features.push("liveview".into());
+                 }
+                 renderer = renderer.or(Some(Renderer::Liveview));
+@@ -704,12 +705,14 @@ impl BuildRequest {
+         };
+ 
+         // Add any features required to turn on the client
+-        if let Some(renderer) = renderer {
+-            if let Some(feature) =
+-                Self::feature_for_platform_and_renderer(main_package, &triple, renderer)
+-            {
+-                features.push(feature);
+-                features.dedup();
++        if !skip_platform_features {
++            if let Some(renderer) = renderer {
++                if let Some(feature) =
++                    Self::feature_for_platform_and_renderer(main_package, &triple, renderer)
++                {
++                    features.push(feature);
++                    features.dedup();
++                }
+             }
+         }
+ 
+diff --git a/src/cli/target.rs b/src/cli/target.rs
+index ea77d89..0ababd4 100644
+--- a/src/cli/target.rs
++++ b/src/cli/target.rs
+@@ -57,6 +57,14 @@ pub(crate) struct TargetArgs {
+     #[clap(long, help_heading = HELP_HEADING)]
+     pub(crate) no_default_features: bool,
+ 
++    /// Don't auto-add platform renderer features (e.g. "web", "desktop").
++    ///
++    /// By default, dx adds the platform-matching feature to the build. Use this
++    /// flag when your crate has multiple dioxus sub-apps and you want to control
++    /// features explicitly via --features.
++    #[clap(long, help_heading = HELP_HEADING)]
++    pub(crate) skip_platform_features: bool,
++
+     /// Include all features in the build
+     #[clap(long, help_heading = HELP_HEADING)]
+     pub(crate) all_features: bool,
