@@ -56,7 +56,7 @@
             -nodes -subj "/CN=${name}"
           openssl x509 -req -in $out/csr.pem \
             -CA ${sharedCA}/ca-cert.pem -CAkey ${sharedCA}/ca-key.pem \
-            -CAcreateserial -out $out/cert.pem -days 3650 \
+            -CAserial $out/ca.srl -CAcreateserial -out $out/cert.pem -days 3650 \
             -extfile <(printf "subjectAltName=DNS:${name},DNS:localhost\nbasicConstraints=CA:FALSE")
           rm $out/csr.pem
         '';
