@@ -43,7 +43,7 @@ in
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
       # Dioxus WASM build for memvault-web
-      dx build --package memvault-web --platform web --no-default-features --features web --release
+      dx build --package memvault-web --platform web --no-default-features --features web-embedded --release
       rm -rf daemon/memvault-web-dist
       cp -r target/dx/memvault-web/release/web/public daemon/memvault-web-dist
     '';

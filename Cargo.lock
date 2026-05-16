@@ -8813,6 +8813,7 @@ dependencies = [
  "chrono",
  "dioxus",
  "dioxus-i18n",
+ "dioxus-web",
  "dirs 6.0.0",
  "getrandom 0.2.17",
  "gloo-timers",
