@@ -37,6 +37,6 @@ fi
 echo "▸ Building Dioxus fullstack (client + server)…"
 dx build --package mac-mgmt $DX_PROFILE \
   @client --platform web --no-default-features --features web \
-  @server --platform server --features web
+  @server --platform server
 
 echo "✓ memvault-web built (assets embedded in server binary)"

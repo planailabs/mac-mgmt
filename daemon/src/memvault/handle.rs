@@ -20,7 +20,7 @@ pub struct MemvaultHandle {
     client: Arc<memvault_api::LocalClient>,
     config: MemvaultConfig,
     /// Join handle for the web server task (if started).
-    web_handle: Option<tokio::task::JoinHandle<()>>,
+    web_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MemvaultHandle {
@@ -68,24 +68,27 @@ impl MemvaultHandle {
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
             memvault_web::ui::state::set_client(Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>);
-            memvault_web::prepare_public_dir();
-            let router = memvault_web::build_fullstack_router(
-                app_state,
-                super::web_assets::try_serve,
-            );
-            let handle = tokio::spawn(async move {
-                let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-                let listener = match tokio::net::TcpListener::bind(addr).await {
-                    Ok(l) => l,
-                    Err(e) => {
-                        tracing::error!("memvault web: failed to bind port {port}: {e}");
-                        return;
+            super::web_assets::prepare_public_dir();
+            let router = memvault_web::build_fullstack_router(app_state);
+            // Run the web server on a dedicated thread with its own tokio runtime.
+            // dioxus's streaming SSR suspense relies on task scheduling that
+            // requires its own runtime (matching how `dioxus::serve` works).
+            let handle = std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async move {
+                    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+                    let listener = match tokio::net::TcpListener::bind(addr).await {
+                        Ok(l) => l,
+                        Err(e) => {
+                            tracing::error!("memvault web: failed to bind port {port}: {e}");
+                            return;
+                        }
+                    };
+                    info!(port, "memvault web API started");
+                    if let Err(e) = axum::serve(listener, router).await {
+                        tracing::error!("memvault web server error: {e}");
                     }
-                };
-                info!(port, "memvault web API started");
-                if let Err(e) = axum::serve(listener, router).await {
-                    tracing::error!("memvault web server error: {e}");
-                }
+                });
             });
             Some(handle)
         } else {
@@ -141,9 +144,8 @@ impl MemvaultHandle {
     /// Shutdown cleanly — abort web server, flush store.
     pub async fn shutdown(self) {
         info!("memvault shutting down");
-        if let Some(handle) = self.web_handle {
-            handle.abort();
-        }
+        // The web server thread will be dropped when the daemon exits.
+        drop(self.web_handle);
     }
 
     /// Get a reference to the underlying store.

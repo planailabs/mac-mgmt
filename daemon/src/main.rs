@@ -3,7 +3,7 @@
 // crate, ensuring hydration works correctly.
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    dioxus::launch(memvault_web::ui::app::App);
+    memvault_web::launch_client();
 }
 
 // Normal daemon entry point — delegated to a separate module to keep this

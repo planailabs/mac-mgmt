@@ -16,7 +16,7 @@ default = ["services", "relay", "memvault"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
 relay = ["dep:libp2p-stream"]
-memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "memvault-web/server", "memvault-web/web", "dep:memvault-query", "dep:axum", "relay"]
+memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "memvault-web/server", "dep:memvault-query", "dep:axum", "relay"]
 healer = ["dep:mac-mgmt-healer", "services", "relay"]
 sim = []
 # WASM client for the memvault web UI — built by dx for embedding.
