@@ -53,70 +53,50 @@ fn main() {
 
 /// Generate a `WebAssets` struct via rust-embed pointing at the dx client output.
 ///
-/// The folder is resolved in order:
-/// 1. `DX_WEB_PUBLIC` env var — set by patched dioxus-cli before starting
-///    builds, so the path is known even in concurrent @client/@server mode.
-/// 2. Auto-detect `target/dx/mac-mgmt/{release,debug}/web/public` for local
-///    dev with unpatched dx.
-/// 3. Fallback to `memvault-web-dist/` for standalone `cargo build`.
+/// Requires `DX_WEB_PUBLIC` to be set (by patched dioxus-cli or the build script).
+/// Waits in a loop for the sentinel file since the client build may still be running.
 fn embed_dx_client_assets() {
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let generated = out_dir.join("web_assets_generated.rs");
 
-    let sentinel = "wasm/mac-mgmt.js";
-
-    // ── 1. DX_WEB_PUBLIC env var (set by patched dx, or manually) ───────
-    // In a concurrent @client/@server build, dx sets this to the client's
-    // root_dir() before invoking cargo. The client build may still be running,
-    // so we wait for the sentinel file.
-    if let Ok(dir) = std::env::var("DX_WEB_PUBLIC") {
-        let p = PathBuf::from(&dir);
-        let timeout_secs: u64 = std::env::var("DX_CLIENT_TIMEOUT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(300);
-        let timeout = Duration::from_secs(timeout_secs);
-        let start = Instant::now();
-
-        while !p.join(sentinel).exists() {
-            if start.elapsed() > timeout {
-                eprintln!(
-                    "cargo:warning=build.rs: DX_WEB_PUBLIC={dir} — timed out after {}s waiting for sentinel",
-                    timeout.as_secs()
-                );
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-        if p.join(sentinel).exists() {
-            write_generated(&generated, &p);
-            return;
-        }
-    }
-
-    // ── 2. Auto-detect from target/dx/ (local dev without patched dx) ──
-    let dx_base = manifest_dir.join("../target/dx/mac-mgmt");
-    for profile in ["release", "debug"] {
-        let c = dx_base.join(profile).join("web/public");
-        if c.join(sentinel).exists() {
-            write_generated(&generated, &c);
-            return;
-        }
-    }
-
-    // ── 3. Fallback: memvault-web-dist/ ─────────────────────────────────
-    let fallback = manifest_dir.join("memvault-web-dist");
-    if fallback.join(sentinel).exists() {
-        eprintln!("cargo:warning=build.rs: using fallback memvault-web-dist/");
-        println!("cargo::rerun-if-changed=memvault-web-dist");
-        write_generated(&generated, &fallback);
+    let Ok(dir) = std::env::var("DX_WEB_PUBLIC") else {
+        // Not a dx build — generate an empty asset struct so the code compiles.
+        // At runtime prepare_public_dir() will produce an empty directory.
+        let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let empty = manifest_dir.join("src/memvault"); // exists, but has no web assets
+        let empty_str = empty.display().to_string().replace('\\', "/");
+        std::fs::write(
+            &generated,
+            format!(
+                "#[derive(::rust_embed::Embed)]\n#[folder = \"{empty_str}\"]\n#[include = \"__nonexistent__\"]\nstruct WebAssets;\n"
+            ),
+        )
+        .unwrap();
         return;
+    };
+
+    let p = PathBuf::from(&dir);
+    let sentinel = p.join("wasm/mac-mgmt.js");
+
+    let timeout_secs: u64 = std::env::var("DX_CLIENT_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(600);
+    let timeout = Duration::from_secs(timeout_secs);
+    let start = Instant::now();
+
+    while !sentinel.exists() {
+        if start.elapsed() > timeout {
+            panic!(
+                "build.rs: DX_WEB_PUBLIC={dir} — timed out after {}s waiting for {}",
+                timeout.as_secs(),
+                sentinel.display(),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
 
-    eprintln!("cargo:warning=build.rs: no memvault-web assets found anywhere");
-    std::fs::write(&generated, "// memvault-web assets not available\n").unwrap();
-    println!("cargo::rerun-if-changed=memvault-web-dist");
+    write_generated(&generated, &p);
 }
 
 fn write_generated(path: &PathBuf, folder: &PathBuf) {
