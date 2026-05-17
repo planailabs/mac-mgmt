@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 fn main() {
@@ -51,28 +51,25 @@ fn main() {
     println!("cargo::rerun-if-changed=scripts");
 }
 
-/// Copy dx client output to memvault-web-dist/ for rust-embed.
+/// Generate a `WebAssets` struct via rust-embed pointing at the dx client output.
 ///
 /// When invoked via `dx build @client ... @server ...`, both targets build
 /// concurrently. The client usually finishes first but we can't assume that.
 /// This function blocks until the WASM output file appears (indicating the
-/// client build is complete), then copies everything to the embed directory.
+/// client build is complete), then writes a generated source file with
+/// `#[derive(Embed)] #[folder = "<absolute-path>"]` so the proc macro reads
+/// assets directly from the dx output — no copy step needed.
 ///
-/// For standalone `cargo build` (without dx), the directory must already be
-/// populated by a prior build — this function is a no-op if the dx output
-/// doesn't exist within the timeout.
+/// For standalone `cargo build` (without dx), a pre-populated
+/// `memvault-web-dist/` directory is used as fallback.
 fn embed_dx_client_assets() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let dist_dir = manifest_dir.join("memvault-web-dist");
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let generated = out_dir.join("web_assets_generated.rs");
 
-    // dx uses "release" or "debug" in the output path — NOT the cargo profile
-    // name (which can be an adhoc name like "server-release"). We scan target/dx/
-    // to find the client output dynamically.
+    // ── Try to find dx client output ────────────────────────────────────
     let dx_dir = manifest_dir.join("../target/dx");
 
-    // In Nix builds everything compiles from scratch, so the WASM client can
-    // take much longer than a warm incremental build. Allow overriding the
-    // timeout via DX_CLIENT_TIMEOUT (seconds).
     let timeout_secs: u64 = std::env::var("DX_CLIENT_TIMEOUT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -102,65 +99,61 @@ fn embed_dx_client_assets() {
         None
     };
 
-    // In a concurrent @client/@server dx build the directory may not exist
-    // yet when the server build.rs fires — wait for it to appear.
+    // Wait for the dx client output to appear (concurrent build).
     let dx_public = loop {
         if let Some(p) = find_dx_public() {
-            eprintln!("cargo:warning=build.rs: found dx client output at {}", p.display());
-            break p;
+            break Some(p);
+        }
+        // If target/dx/ doesn't even exist, this isn't a dx build — fall through
+        // immediately to the memvault-web-dist fallback.
+        if !dx_dir.exists() {
+            break None;
         }
         if start.elapsed() > timeout {
-            // Dump what we can see for diagnostics.
             eprintln!(
-                "cargo:warning=build.rs: CARGO_MANIFEST_DIR={}",
-                manifest_dir.display()
-            );
-            eprintln!(
-                "cargo:warning=build.rs: dx_dir={} exists={}",
+                "cargo:warning=build.rs: timed out after {}s waiting for dx client sentinel in {}",
+                timeout.as_secs(),
                 dx_dir.display(),
-                dx_dir.exists()
             );
-            if let Ok(entries) = std::fs::read_dir(&dx_dir) {
-                for e in entries.flatten() {
-                    eprintln!("cargo:warning=build.rs:   target/dx/{}", e.file_name().to_string_lossy());
-                }
-            }
-            eprintln!(
-                "cargo:warning=build.rs: timed out after {}s waiting for dx client sentinel",
-                timeout.as_secs()
-            );
-            println!("cargo::rerun-if-changed=memvault-web-dist");
-            return;
+            break None;
         }
         std::thread::sleep(Duration::from_millis(500));
     };
 
-    // Extra delay to ensure all files are flushed (snippets, wasm-opt)
-    std::thread::sleep(Duration::from_secs(1));
+    // Resolve the folder path: dx output if found, otherwise memvault-web-dist/.
+    let folder = if let Some(ref p) = dx_public {
+        // Extra delay to ensure all files are flushed (snippets, wasm-opt).
+        std::thread::sleep(Duration::from_secs(1));
 
-    // Remove stale dist and copy fresh client output
-    let _ = std::fs::remove_dir_all(&dist_dir);
-    copy_dir_recursive(&dx_public, &dist_dir);
-
-    // Compat aliases: the web UI may reference the old package name "memvault-web"
-    let wasm_dir = dist_dir.join("wasm");
-    let _ = std::os::unix::fs::symlink(wasm_dir.join("mac-mgmt.js"), wasm_dir.join("memvault-web.js"));
-    let _ = std::os::unix::fs::symlink(wasm_dir.join("mac-mgmt_bg.wasm"), wasm_dir.join("memvault-web_bg.wasm"));
-
-    // Rerun when the dx client output changes
-    println!("cargo::rerun-if-changed={}", dx_public.display());
-}
-
-fn copy_dir_recursive(src: &Path, dst: &Path) {
-    std::fs::create_dir_all(dst).unwrap();
-    for entry in std::fs::read_dir(src).unwrap() {
-        let entry = entry.unwrap();
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path);
-        } else {
-            std::fs::copy(&src_path, &dst_path).unwrap();
+        let abs = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+        eprintln!("cargo:warning=build.rs: using dx client output at {}", abs.display());
+        println!("cargo::rerun-if-changed={}", abs.display());
+        abs
+    } else {
+        // Fallback: pre-populated memvault-web-dist/ (from a prior build or manual copy).
+        let fallback = manifest_dir.join("memvault-web-dist");
+        if !fallback.exists() {
+            eprintln!(
+                "cargo:warning=build.rs: no dx output found and memvault-web-dist/ does not exist"
+            );
+            // Write an empty generated file so compilation proceeds (the feature
+            // may be gated at a higher level).
+            std::fs::write(&generated, "// memvault-web assets not available\n").unwrap();
+            println!("cargo::rerun-if-changed=memvault-web-dist");
+            return;
         }
-    }
+        eprintln!("cargo:warning=build.rs: using fallback memvault-web-dist/");
+        println!("cargo::rerun-if-changed=memvault-web-dist");
+        std::fs::canonicalize(&fallback).unwrap_or(fallback)
+    };
+
+    // Generate the rust-embed struct pointing at the resolved folder.
+    let folder_str = folder.display().to_string().replace('\\', "/");
+    let code = format!(
+        r#"#[derive(::rust_embed::Embed)]
+#[folder = "{folder_str}"]
+struct WebAssets;
+"#
+    );
+    std::fs::write(&generated, code).unwrap();
 }
