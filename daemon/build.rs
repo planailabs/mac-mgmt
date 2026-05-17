@@ -66,13 +66,9 @@ fn embed_dx_client_assets() {
     let dist_dir = manifest_dir.join("memvault-web-dist");
 
     // dx uses "release" or "debug" in the output path — NOT the cargo profile
-    // name (which can be an adhoc name like "server-release"). We check both
-    // candidate paths and wait for whichever appears first.
-    let dx_base = manifest_dir.join("../target/dx/mac-mgmt");
-    let candidates = [
-        dx_base.join("release/web/public"),
-        dx_base.join("debug/web/public"),
-    ];
+    // name (which can be an adhoc name like "server-release"). We scan target/dx/
+    // to find the client output dynamically.
+    let dx_dir = manifest_dir.join("../target/dx");
 
     // In Nix builds everything compiles from scratch, so the WASM client can
     // take much longer than a warm incremental build. Allow overriding the
@@ -84,41 +80,60 @@ fn embed_dx_client_assets() {
     let timeout = Duration::from_secs(timeout_secs);
     let start = Instant::now();
 
+    // The JS loader is one of the last files dx writes for the client build.
+    let sentinel_name = "wasm/mac-mgmt.js";
+
+    // Scan target/dx/ for the sentinel file — handles any app name or profile.
+    let find_dx_public = || -> Option<PathBuf> {
+        let dx = std::fs::read_dir(&dx_dir).ok()?;
+        for app_entry in dx.flatten() {
+            let app_dir = app_entry.path();
+            if !app_dir.is_dir() {
+                continue;
+            }
+            let profiles = std::fs::read_dir(&app_dir).ok()?;
+            for prof_entry in profiles.flatten() {
+                let public = prof_entry.path().join("web/public");
+                if public.join(sentinel_name).exists() {
+                    return Some(public);
+                }
+            }
+        }
+        None
+    };
+
     // In a concurrent @client/@server dx build the directory may not exist
-    // yet when the server build.rs fires — wait for either candidate to appear.
+    // yet when the server build.rs fires — wait for it to appear.
     let dx_public = loop {
-        if let Some(p) = candidates.iter().find(|p| p.exists()) {
-            break p.clone();
+        if let Some(p) = find_dx_public() {
+            eprintln!("cargo:warning=build.rs: found dx client output at {}", p.display());
+            break p;
         }
         if start.elapsed() > timeout {
+            // Dump what we can see for diagnostics.
             eprintln!(
-                "cargo:warning=dx client output dir not found (waited {}s, checked {} and {}) — not a dx build?",
-                timeout.as_secs(),
-                candidates[0].display(),
-                candidates[1].display(),
+                "cargo:warning=build.rs: CARGO_MANIFEST_DIR={}",
+                manifest_dir.display()
+            );
+            eprintln!(
+                "cargo:warning=build.rs: dx_dir={} exists={}",
+                dx_dir.display(),
+                dx_dir.exists()
+            );
+            if let Ok(entries) = std::fs::read_dir(&dx_dir) {
+                for e in entries.flatten() {
+                    eprintln!("cargo:warning=build.rs:   target/dx/{}", e.file_name().to_string_lossy());
+                }
+            }
+            eprintln!(
+                "cargo:warning=build.rs: timed out after {}s waiting for dx client sentinel",
+                timeout.as_secs()
             );
             println!("cargo::rerun-if-changed=memvault-web-dist");
             return;
         }
         std::thread::sleep(Duration::from_millis(500));
     };
-
-    // The JS loader is one of the last files dx writes for the client build.
-    // Its presence means the client output is complete.
-    let wasm_sentinel = dx_public.join("wasm/mac-mgmt.js");
-
-    // Wait for the sentinel file indicating the client WASM build is complete.
-    while !wasm_sentinel.exists() {
-        if start.elapsed() > timeout {
-            eprintln!(
-                "cargo:warning=Timed out waiting for dx client output at {}",
-                wasm_sentinel.display()
-            );
-            println!("cargo::rerun-if-changed=memvault-web-dist");
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
 
     // Extra delay to ensure all files are flushed (snippets, wasm-opt)
     std::thread::sleep(Duration::from_secs(1));
