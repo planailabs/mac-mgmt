@@ -65,16 +65,14 @@ fn embed_dx_client_assets() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let dist_dir = manifest_dir.join("memvault-web-dist");
 
-    // Determine dx output path based on build profile.
-    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
-    let dx_public = manifest_dir
-        .join("../target/dx/mac-mgmt")
-        .join(&profile)
-        .join("web/public");
-
-    // The JS loader is one of the last files dx writes for the client build.
-    // Its presence means the client output is complete.
-    let wasm_sentinel = dx_public.join("wasm/mac-mgmt.js");
+    // dx uses "release" or "debug" in the output path — NOT the cargo profile
+    // name (which can be an adhoc name like "server-release"). We check both
+    // candidate paths and wait for whichever appears first.
+    let dx_base = manifest_dir.join("../target/dx/mac-mgmt");
+    let candidates = [
+        dx_base.join("release/web/public"),
+        dx_base.join("debug/web/public"),
+    ];
 
     // In Nix builds everything compiles from scratch, so the WASM client can
     // take much longer than a warm incremental build. Allow overriding the
@@ -87,19 +85,27 @@ fn embed_dx_client_assets() {
     let start = Instant::now();
 
     // In a concurrent @client/@server dx build the directory may not exist
-    // yet when the server build.rs fires — wait for it to appear.
-    while !dx_public.exists() {
+    // yet when the server build.rs fires — wait for either candidate to appear.
+    let dx_public = loop {
+        if let Some(p) = candidates.iter().find(|p| p.exists()) {
+            break p.clone();
+        }
         if start.elapsed() > timeout {
             eprintln!(
-                "cargo:warning=dx client output dir not found at {} (waited {}s) — not a dx build?",
-                dx_public.display(),
+                "cargo:warning=dx client output dir not found (waited {}s, checked {} and {}) — not a dx build?",
                 timeout.as_secs(),
+                candidates[0].display(),
+                candidates[1].display(),
             );
             println!("cargo::rerun-if-changed=memvault-web-dist");
             return;
         }
         std::thread::sleep(Duration::from_millis(500));
-    }
+    };
+
+    // The JS loader is one of the last files dx writes for the client build.
+    // Its presence means the client output is complete.
+    let wasm_sentinel = dx_public.join("wasm/mac-mgmt.js");
 
     // Wait for the sentinel file indicating the client WASM build is complete.
     while !wasm_sentinel.exists() {
