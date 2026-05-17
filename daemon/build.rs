@@ -128,6 +128,12 @@ fn embed_dx_client_assets() {
         let abs = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
         eprintln!("cargo:warning=build.rs: using dx client output at {}", abs.display());
         println!("cargo::rerun-if-changed={}", abs.display());
+
+        // Compat symlinks so the web UI can reference the old "memvault-web" name.
+        let wasm_dir = abs.join("wasm");
+        let _ = std::os::unix::fs::symlink(wasm_dir.join("mac-mgmt.js"), wasm_dir.join("memvault-web.js"));
+        let _ = std::os::unix::fs::symlink(wasm_dir.join("mac-mgmt_bg.wasm"), wasm_dir.join("memvault-web_bg.wasm"));
+
         abs
     } else {
         // Fallback: pre-populated memvault-web-dist/ (from a prior build or manual copy).
