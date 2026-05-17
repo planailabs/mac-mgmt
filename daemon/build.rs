@@ -76,7 +76,9 @@ fn embed_dx_client_assets() {
     };
 
     let p = PathBuf::from(&dir);
-    let sentinel = p.join("wasm/mac-mgmt.js");
+    // In release builds dx bundles WASM into assets/ and deletes wasm/.
+    // Use index.html as sentinel — it's always present after a successful build.
+    let sentinel = p.join("index.html");
 
     let timeout_secs: u64 = std::env::var("DX_CLIENT_TIMEOUT")
         .ok()
@@ -85,33 +87,11 @@ fn embed_dx_client_assets() {
     let timeout = Duration::from_secs(timeout_secs);
     let start = Instant::now();
 
-    let mut diagnosed = false;
     while !sentinel.exists() {
-        let elapsed = start.elapsed().as_secs();
-        // After 30s, dump what we can see for diagnostics.
-        if !diagnosed && elapsed >= 30 {
-            diagnosed = true;
-            eprintln!("cargo:warning=build.rs: DX_WEB_PUBLIC={dir}");
-            eprintln!("cargo:warning=build.rs: sentinel={}", sentinel.display());
-            eprintln!("cargo:warning=build.rs: p.exists()={}", p.exists());
-            if p.exists() {
-                if let Ok(entries) = std::fs::read_dir(&p) {
-                    for e in entries.flatten() {
-                        eprintln!("cargo:warning=build.rs:   {}", e.file_name().to_string_lossy());
-                    }
-                }
-                let wasm_dir = p.join("wasm");
-                eprintln!("cargo:warning=build.rs: wasm/ exists={}", wasm_dir.exists());
-                if let Ok(entries) = std::fs::read_dir(&wasm_dir) {
-                    for e in entries.flatten() {
-                        eprintln!("cargo:warning=build.rs:   wasm/{}", e.file_name().to_string_lossy());
-                    }
-                }
-            }
-        }
-        if elapsed > timeout.as_secs() {
+        if start.elapsed() > timeout {
             panic!(
-                "build.rs: DX_WEB_PUBLIC={dir} — timed out after {elapsed}s waiting for {}",
+                "build.rs: DX_WEB_PUBLIC={dir} — timed out after {}s waiting for {}",
+                timeout.as_secs(),
                 sentinel.display(),
             );
         }
@@ -125,17 +105,6 @@ fn write_generated(path: &PathBuf, folder: &PathBuf) {
     let abs = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.clone());
     eprintln!("cargo:warning=build.rs: embedding assets from {}", abs.display());
     println!("cargo::rerun-if-changed={}", abs.display());
-
-    // Compat symlinks so the web UI can reference the old "memvault-web" name.
-    let wasm_dir = abs.join("wasm");
-    let _ = std::os::unix::fs::symlink(wasm_dir.join("mac-mgmt.js"), wasm_dir.join("memvault-web.js"));
-    let _ = std::os::unix::fs::symlink(
-        wasm_dir.join("mac-mgmt_bg.wasm"),
-        wasm_dir.join("memvault-web_bg.wasm"),
-    );
-
-    // Extra delay to ensure all files are flushed (snippets, wasm-opt).
-    std::thread::sleep(Duration::from_secs(1));
 
     let folder_str = abs.display().to_string().replace('\\', "/");
     let code = format!(
