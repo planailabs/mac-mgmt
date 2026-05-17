@@ -207,7 +207,6 @@ pub fn App() -> Element {
         });
     });
 
-    let css_href = format!("/tailwind.css?v={}", env!("BUILD_TIMESTAMP"));
     // Remove the pre-hydration loading banner once WASM has hydrated.
     use_effect(|| {
         document::eval("document.getElementById('wasm-loading')?.remove();");
@@ -216,7 +215,7 @@ pub fn App() -> Element {
     rsx! {
         // Script FIRST: sets .dark class + inline bg before CSS even loads
         script { dangerous_inner_html: THEME_INIT_SCRIPT }
-        document::Link { rel: "stylesheet", href: "{css_href}" }
+        document::Stylesheet { href: asset!("/public/tailwind.css") }
 
         // SSR-rendered loading banner — visible until WASM hydrates, then removed
         // by use_effect above.
