@@ -34,7 +34,6 @@ in
     src = ./.;
     cargoLock.lockFile = ./Cargo.lock;
     cargoLock.outputHashes = import ./extra-hashes.nix;
-    cargoBuildFlags = [ "-p" "mac-mgmt" ];
     cargoTestFlags = [ "-p" "mac-mgmt" ];
     nativeBuildInputs = [
       prev.nodejs
@@ -47,14 +46,29 @@ in
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
 
-    preBuild = ''
+    # Use dx to build both WASM client and native server in one shot.
+    # The server's build.rs waits for the client output, then copies it
+    # into daemon/memvault-web-dist/ for rust-embed.
+    buildPhase = ''
+      runHook preBuild
+
       # Tailwind CSS for memvault-web
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
-      # Build WASM client via dx. build.rs will copy the output to
-      # daemon/memvault-web-dist/ for rust-embed to bake into the binary.
-      dx build --package mac-mgmt --platform web \
-        --no-default-features --features web --release
+      # Fullstack build: @client gets only the web feature (no native deps),
+      # @server gets default features for a fully functional daemon binary.
+      dx build --package mac-mgmt --release \
+        @client --platform web --no-default-features --features web \
+        @server --platform server
+
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/bin
+      cp target/dx/mac-mgmt/release/web/server $out/bin/mac-mgmt
+      runHook postInstall
     '';
   };
 

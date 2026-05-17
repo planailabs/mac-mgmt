@@ -17,12 +17,10 @@ xzar config add-server planai https://xzar.plan.ai "$XZAR_TOKEN"
 
 DAEMON_VERSION="$(grep '^version' "$SCRIPT_DIR/daemon/Cargo.toml" | head -1 | cut -d'"' -f2)"
 
-# ── Build WASM client (shared across all server targets) ────────────────
+# ── Tailwind CSS ────────────────────────────────────────────────────────
 (cd "$SCRIPT_DIR/memvault/crates/memvault-web" && npm run tailwind:build)
-dx build --package mac-mgmt --platform web \
-  --no-default-features --features web --release
 
-# ── Build server for each target ────────────────────────────────────────
+# ── Build daemon for each target ────────────────────────────────────────
 
 upload() {
   xzar --server planai upload --pin "$1" --desc "$(readlink -f "$2")" --leave-after-abandon 1m "$2"
@@ -68,9 +66,11 @@ DL_STUB="$(mktemp -d)"
 ar rcs "$DL_STUB/libdl.a"
 export RUSTFLAGS="${RUSTFLAGS:-} -L $DL_STUB"
 
-dx build --package mac-mgmt --platform server \
-  --target x86_64-unknown-linux-musl \
-  --features self-update,services,relay,memvault --release
+rm -rf target/dx/mac-mgmt/release/web/public
+dx build --package mac-mgmt --release \
+  @client --platform web --no-default-features --features web \
+  @server --platform server --target x86_64-unknown-linux-musl \
+    --features self-update,services,relay,memvault
 
 rm -rf "$DL_STUB"
 unset RUSTFLAGS
@@ -81,8 +81,10 @@ upload_daemon_binary x86_64-unknown-linux-musl
 SDKROOT="$(nix build --no-link --print-out-paths "$SCRIPT_DIR#macosx-sdk")"
 export SDKROOT
 
-dx build --package mac-mgmt --platform server \
-  --target aarch64-apple-darwin \
-  --features self-update,services,relay,memvault --release
+rm -rf target/dx/mac-mgmt/release/web/public
+dx build --package mac-mgmt --release \
+  @client --platform web --no-default-features --features web \
+  @server --platform server --target aarch64-apple-darwin \
+    --features self-update,services,relay,memvault
 
 upload_daemon_binary aarch64-apple-darwin
