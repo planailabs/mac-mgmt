@@ -85,11 +85,33 @@ fn embed_dx_client_assets() {
     let timeout = Duration::from_secs(timeout_secs);
     let start = Instant::now();
 
+    let mut diagnosed = false;
     while !sentinel.exists() {
-        if start.elapsed() > timeout {
+        let elapsed = start.elapsed().as_secs();
+        // After 30s, dump what we can see for diagnostics.
+        if !diagnosed && elapsed >= 30 {
+            diagnosed = true;
+            eprintln!("cargo:warning=build.rs: DX_WEB_PUBLIC={dir}");
+            eprintln!("cargo:warning=build.rs: sentinel={}", sentinel.display());
+            eprintln!("cargo:warning=build.rs: p.exists()={}", p.exists());
+            if p.exists() {
+                if let Ok(entries) = std::fs::read_dir(&p) {
+                    for e in entries.flatten() {
+                        eprintln!("cargo:warning=build.rs:   {}", e.file_name().to_string_lossy());
+                    }
+                }
+                let wasm_dir = p.join("wasm");
+                eprintln!("cargo:warning=build.rs: wasm/ exists={}", wasm_dir.exists());
+                if let Ok(entries) = std::fs::read_dir(&wasm_dir) {
+                    for e in entries.flatten() {
+                        eprintln!("cargo:warning=build.rs:   wasm/{}", e.file_name().to_string_lossy());
+                    }
+                }
+            }
+        }
+        if elapsed > timeout.as_secs() {
             panic!(
-                "build.rs: DX_WEB_PUBLIC={dir} — timed out after {}s waiting for {}",
-                timeout.as_secs(),
+                "build.rs: DX_WEB_PUBLIC={dir} — timed out after {elapsed}s waiting for {}",
                 sentinel.display(),
             );
         }
