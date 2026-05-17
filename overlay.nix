@@ -7,7 +7,10 @@ let
   # which is needed when building WASM for embedded daemon mode (where
   # dioxus-web/hydrate must NOT be enabled).
   dioxus-cli-patched = prev.dioxus-cli.overrideAttrs (old: {
-    patches = (old.patches or []) ++ [ ./patches/dioxus-cli-skip-platform-features.patch ];
+    patches = (old.patches or []) ++ [
+      ./patches/dioxus-cli-skip-platform-features.patch
+      ./patches/dioxus-cli-write-client-public-dir.patch
+    ];
   });
   # Thin wrapper that re-exports the monolith server binary with a
   # MAC_MGMT_SERVER_MODE env var preset, so only the selected API
@@ -45,19 +48,15 @@ in
     ];
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
-    env.DX_CLIENT_TIMEOUT = "900"; # 15 min — client finishes in ~250s, generous margin
-
-    # Use dx to build both WASM client and native server in one shot.
-    # The server's build.rs waits for the client output, then copies it
-    # into daemon/memvault-web-dist/ for rust-embed.
+    # Fullstack build via dx: @client gets only the web feature (no native
+    # deps), @server gets default features. dx writes target/dx/.client-public-dir
+    # so the server's build.rs can find the WASM output without guessing.
     buildPhase = ''
       runHook preBuild
 
       # Tailwind CSS for memvault-web
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
-      # Fullstack build: @client gets only the web feature (no native deps),
-      # @server gets default features for a fully functional daemon binary.
       dx build --package mac-mgmt --release \
         @client --platform web --no-default-features --features web \
         @server --platform server
