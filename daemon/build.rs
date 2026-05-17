@@ -54,10 +54,10 @@ fn main() {
 /// Generate a `WebAssets` struct via rust-embed pointing at the dx client output.
 ///
 /// The folder is resolved in order:
-/// 1. `DX_WEB_PUBLIC` env var — set by the build script (nix, xzar, build-memvault)
-///    after `dx build @client` finishes, so the path is always known.
+/// 1. `DX_WEB_PUBLIC` env var — set by patched dioxus-cli before starting
+///    builds, so the path is known even in concurrent @client/@server mode.
 /// 2. Auto-detect `target/dx/mac-mgmt/{release,debug}/web/public` for local
-///    `dx build @client @server` workflows where build.rs runs concurrently.
+///    dev with unpatched dx.
 /// 3. Fallback to `memvault-web-dist/` for standalone `cargo build`.
 fn embed_dx_client_assets() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -66,51 +66,36 @@ fn embed_dx_client_assets() {
 
     let sentinel = "wasm/mac-mgmt.js";
 
-    // ── 1. Marker file written by patched dx (target/dx/.client-public-dir) ─
-    // dx writes the client's root_dir() here before starting builds, so this
-    // is available even in concurrent @client/@server mode.
-    let marker = manifest_dir.join("../target/dx/.client-public-dir");
-    println!("cargo::rerun-if-changed={}", marker.display());
-
-    let timeout_secs: u64 = std::env::var("DX_CLIENT_TIMEOUT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(300);
-    let timeout = Duration::from_secs(timeout_secs);
-    let start = Instant::now();
-
-    if marker.exists() {
-        if let Ok(dir) = std::fs::read_to_string(&marker) {
-            let p = PathBuf::from(dir.trim());
-            // Wait for the client build to actually finish (sentinel file).
-            while !p.join(sentinel).exists() {
-                if start.elapsed() > timeout {
-                    eprintln!(
-                        "cargo:warning=build.rs: timed out waiting for sentinel in {}",
-                        p.display()
-                    );
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(500));
-            }
-            if p.join(sentinel).exists() {
-                write_generated(&generated, &p);
-                return;
-            }
-        }
-    }
-
-    // ── 2. Explicit path via env var ────────────────────────────────────
+    // ── 1. DX_WEB_PUBLIC env var (set by patched dx, or manually) ───────
+    // In a concurrent @client/@server build, dx sets this to the client's
+    // root_dir() before invoking cargo. The client build may still be running,
+    // so we wait for the sentinel file.
     if let Ok(dir) = std::env::var("DX_WEB_PUBLIC") {
         let p = PathBuf::from(&dir);
+        let timeout_secs: u64 = std::env::var("DX_CLIENT_TIMEOUT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(300);
+        let timeout = Duration::from_secs(timeout_secs);
+        let start = Instant::now();
+
+        while !p.join(sentinel).exists() {
+            if start.elapsed() > timeout {
+                eprintln!(
+                    "cargo:warning=build.rs: DX_WEB_PUBLIC={dir} — timed out after {}s waiting for sentinel",
+                    timeout.as_secs()
+                );
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
         if p.join(sentinel).exists() {
             write_generated(&generated, &p);
             return;
         }
-        eprintln!("cargo:warning=build.rs: DX_WEB_PUBLIC={dir} but sentinel not found");
     }
 
-    // ── 3. Auto-detect from target/dx/ (local dev) ─────────────────────
+    // ── 2. Auto-detect from target/dx/ (local dev without patched dx) ──
     let dx_base = manifest_dir.join("../target/dx/mac-mgmt");
     for profile in ["release", "debug"] {
         let c = dx_base.join(profile).join("web/public");
@@ -120,7 +105,7 @@ fn embed_dx_client_assets() {
         }
     }
 
-    // ── 4. Fallback: memvault-web-dist/ ─────────────────────────────────
+    // ── 3. Fallback: memvault-web-dist/ ─────────────────────────────────
     let fallback = manifest_dir.join("memvault-web-dist");
     if fallback.join(sentinel).exists() {
         eprintln!("cargo:warning=build.rs: using fallback memvault-web-dist/");
