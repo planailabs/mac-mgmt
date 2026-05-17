@@ -51,12 +51,10 @@ in
       # Tailwind CSS for memvault-web
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
-      # Dioxus WASM build: --skip-platform-features prevents auto-adding
-      # "web" feature so web-embedded controls dioxus-web features directly
-      dx build --package memvault-web --platform web --skip-platform-features \
-        --fullstack false --no-default-features --features web-embedded --release
-      rm -rf daemon/memvault-web-dist
-      cp -r target/dx/memvault-web/release/web/public daemon/memvault-web-dist
+      # Build WASM client via dx. build.rs will copy the output to
+      # daemon/memvault-web-dist/ for rust-embed to bake into the binary.
+      dx build --package mac-mgmt --platform web \
+        --no-default-features --features web --release
     '';
   };
 
