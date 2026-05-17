@@ -1,20 +1,17 @@
 diff --git a/src/cli/build.rs b/src/cli/build.rs
-index 2b6f5a7..c1d3e8a 100644
 --- a/src/cli/build.rs
 +++ b/src/cli/build.rs
-@@ -157,6 +157,14 @@ impl BuildArgs {
-         let mode = match self.shared.fat_binary {
-             true => BuildMode::Fat,
+@@ -156,6 +156,13 @@ impl BuildArgs {
              false => BuildMode::Base { run: false },
          };
          let targets = self.into_targets().await?;
-
++
 +        // Write the client's public dir path so the server's build.rs can find
 +        // the WASM output without scanning or guessing — important for Nix builds
 +        // where build.rs can't resolve `../target/dx/` reliably.
 +        let marker = targets.client.target_dir.join("dx/.client-public-dir");
 +        let _ = std::fs::create_dir_all(marker.parent().unwrap());
 +        let _ = std::fs::write(&marker, targets.client.root_dir().display().to_string());
-+
+
          let build_client = Self::build_client_inner(&targets.client, mode.clone());
          let build_server = Self::build_server_inner(&targets.server, mode.clone(), ssg);
