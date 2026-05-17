@@ -45,6 +45,7 @@ in
     ];
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
+    env.DX_CLIENT_TIMEOUT = "1800"; # 30 min — Nix cold-builds all deps from scratch
 
     # Use dx to build both WASM client and native server in one shot.
     # The server's build.rs waits for the client output, then copies it

@@ -11,6 +11,7 @@ fn main() {
     }
 
     println!("cargo::rerun-if-env-changed=ENVIRONMENT");
+    println!("cargo::rerun-if-env-changed=DX_CLIENT_TIMEOUT");
     if std::env::var("ENVIRONMENT").is_err() {
         println!("cargo::rustc-env=ENVIRONMENT=dev");
     }
@@ -75,16 +76,32 @@ fn embed_dx_client_assets() {
     // Its presence means the client output is complete.
     let wasm_sentinel = dx_public.join("wasm/mac-mgmt.js");
 
-    // Check if we're in a dx build by looking for the dx output directory.
-    // If the directory doesn't exist at all, this isn't a dx build.
-    if !dx_public.exists() {
-        println!("cargo::rerun-if-changed=memvault-web-dist");
-        return;
+    // In Nix builds everything compiles from scratch, so the WASM client can
+    // take much longer than a warm incremental build. Allow overriding the
+    // timeout via DX_CLIENT_TIMEOUT (seconds).
+    let timeout_secs: u64 = std::env::var("DX_CLIENT_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+    let timeout = Duration::from_secs(timeout_secs);
+    let start = Instant::now();
+
+    // In a concurrent @client/@server dx build the directory may not exist
+    // yet when the server build.rs fires — wait for it to appear.
+    while !dx_public.exists() {
+        if start.elapsed() > timeout {
+            eprintln!(
+                "cargo:warning=dx client output dir not found at {} (waited {}s) — not a dx build?",
+                dx_public.display(),
+                timeout.as_secs(),
+            );
+            println!("cargo::rerun-if-changed=memvault-web-dist");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
 
-    // Wait for the client WASM output to appear (dx may still be building it).
-    let timeout = Duration::from_secs(300); // 5 minutes max
-    let start = Instant::now();
+    // Wait for the sentinel file indicating the client WASM build is complete.
     while !wasm_sentinel.exists() {
         if start.elapsed() > timeout {
             eprintln!(
