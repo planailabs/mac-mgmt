@@ -1,34 +1,32 @@
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::Command;
 
 fn main() {
-    // Ensure public/tailwind.css exists so the asset!() macro doesn't fail
-    // during `cargo test` or other builds where Tailwind hasn't run yet.
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let css = Path::new(&manifest_dir).join("public/tailwind.css");
-    println!("cargo:rerun-if-changed=public/tailwind.css");
-    if !css.exists() {
-        let _ = fs::create_dir_all(css.parent().unwrap());
-        let _ = fs::write(&css, "/* placeholder — replaced by tailwind build */\n");
-    }
-
-    // Embed build timestamp for CSS cache busting.
-    // The timestamp changes on every build, forcing browsers to fetch fresh CSS.
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    println!("cargo:rustc-env=BUILD_TIMESTAMP={ts}");
+    build_tailwind();
 
     // Guard: views in src/web/ must use the semantic tokens defined in
     // input.css (text-fg-muted, btn-primary, badge-info, …) rather than
     // raw tailwind palette literals. The contract is that re-theming is
     // a CSS-only change; an inline `bg-blue-600` defeats that.
-    //
-    // Rerun whenever any web file changes so the check stays in sync.
-    println!("cargo:rerun-if-changed=src/web");
     check_no_tailwind_palette_literals(Path::new("src/web"));
+}
+
+/// Build tailwind.css from input.css, or fail if tailwindcss is unavailable.
+fn build_tailwind() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let manifest = Path::new(&manifest_dir);
+
+    let status = Command::new("npm")
+        .args(["run", "tailwind:build"])
+        .current_dir(manifest)
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(s) => panic!("npm run tailwind:build exited with {s}"),
+        Err(e) => panic!("failed to run npm: {e}"),
+    }
 }
 
 /// Tailwind palette names that should never appear in views. Any `bg-`,
