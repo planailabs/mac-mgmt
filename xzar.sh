@@ -81,27 +81,33 @@ upload_daemon_binary x86_64-unknown-linux-musl
 SDKROOT="$(nix build --no-link --print-out-paths "$SCRIPT_DIR#macosx-sdk")"
 export SDKROOT
 
-# The cc crate needs a cross-compiler for C deps; system gcc doesn't
-# understand macOS flags like -arch / -mmacosx-version-min.  Use zig cc
-# as the cross-compiler (zig is already in the nix devShell).
-ZIG_WRAPPER="$(mktemp -d)"
-cat > "$ZIG_WRAPPER/aarch64-apple-darwin-cc" <<'ZIGCC'
+# Shim cargo so dx uses cargo-zigbuild for the macOS cross-compile.
+# zigbuild handles cc-rs, assembly, and linking via zig's built-in
+# cross-compilation — no manual CC/AR wrappers needed.
+CARGO_SHIM="$(mktemp -d)"
+REAL_CARGO="$(which cargo)"
+cat > "$CARGO_SHIM/cargo" <<SHIM
 #!/usr/bin/env bash
-# The cc crate injects --target=arm64-apple-macosx but zig uses LLVM
-# naming (aarch64, not arm64).  We already set the correct target via
-# -target aarch64-macos, so strip the conflicting --target flag.
-args=()
-for arg in "$@"; do
-  case "$arg" in
-    --target=*) ;;  # drop cc-rs injected target
-    *) args+=("$arg") ;;
+# Only use zigbuild for apple/darwin targets; pass through for wasm/native.
+use_zig=false
+prev=""
+for arg in "\$@"; do
+  case "\$prev" in
+    --target) [[ "\$arg" == *apple* || "\$arg" == *darwin* ]] && use_zig=true ;;
   esac
+  case "\$arg" in
+    --target=*apple*|--target=*darwin*) use_zig=true ;;
+  esac
+  prev="\$arg"
 done
-exec zig cc -target aarch64-macos "${args[@]}"
-ZIGCC
-chmod +x "$ZIG_WRAPPER/aarch64-apple-darwin-cc"
-export CC_aarch64_apple_darwin="$ZIG_WRAPPER/aarch64-apple-darwin-cc"
-export AR_aarch64_apple_darwin="zig ar"
+if \$use_zig; then
+  exec "$REAL_CARGO" zigbuild "\$@"
+else
+  exec "$REAL_CARGO" "\$@"
+fi
+SHIM
+chmod +x "$CARGO_SHIM/cargo"
+export PATH="$CARGO_SHIM:$PATH"
 
 rm -rf target/dx/mac-mgmt/release/web/public
 dx build --package mac-mgmt --release \
@@ -109,7 +115,7 @@ dx build --package mac-mgmt --release \
   @server --platform server --target aarch64-apple-darwin \
     --features self-update,services,relay,memvault
 
-rm -rf "$ZIG_WRAPPER"
-unset CC_aarch64_apple_darwin AR_aarch64_apple_darwin
+export PATH="${PATH#"$CARGO_SHIM:"}"
+rm -rf "$CARGO_SHIM"
 
 upload_daemon_binary aarch64-apple-darwin
