@@ -81,10 +81,25 @@ upload_daemon_binary x86_64-unknown-linux-musl
 SDKROOT="$(nix build --no-link --print-out-paths "$SCRIPT_DIR#macosx-sdk")"
 export SDKROOT
 
+# The cc crate needs a cross-compiler for C deps; system gcc doesn't
+# understand macOS flags like -arch / -mmacosx-version-min.  Use zig cc
+# as the cross-compiler (zig is already in the nix devShell).
+ZIG_WRAPPER="$(mktemp -d)"
+cat > "$ZIG_WRAPPER/aarch64-apple-darwin-cc" <<'ZIGCC'
+#!/usr/bin/env bash
+exec zig cc -target aarch64-macos "$@"
+ZIGCC
+chmod +x "$ZIG_WRAPPER/aarch64-apple-darwin-cc"
+export CC_aarch64_apple_darwin="$ZIG_WRAPPER/aarch64-apple-darwin-cc"
+export AR_aarch64_apple_darwin="zig ar"
+
 rm -rf target/dx/mac-mgmt/release/web/public
 dx build --package mac-mgmt --release \
   @client --platform web --no-default-features --features web \
   @server --platform server --target aarch64-apple-darwin \
     --features self-update,services,relay,memvault
+
+rm -rf "$ZIG_WRAPPER"
+unset CC_aarch64_apple_darwin AR_aarch64_apple_darwin
 
 upload_daemon_binary aarch64-apple-darwin
