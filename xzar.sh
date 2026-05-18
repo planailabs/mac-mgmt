@@ -87,7 +87,17 @@ export SDKROOT
 ZIG_WRAPPER="$(mktemp -d)"
 cat > "$ZIG_WRAPPER/aarch64-apple-darwin-cc" <<'ZIGCC'
 #!/usr/bin/env bash
-exec zig cc -target aarch64-macos "$@"
+# The cc crate injects --target=arm64-apple-macosx but zig uses LLVM
+# naming (aarch64, not arm64).  We already set the correct target via
+# -target aarch64-macos, so strip the conflicting --target flag.
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --target=*) ;;  # drop cc-rs injected target
+    *) args+=("$arg") ;;
+  esac
+done
+exec zig cc -target aarch64-macos "${args[@]}"
 ZIGCC
 chmod +x "$ZIG_WRAPPER/aarch64-apple-darwin-cc"
 export CC_aarch64_apple_darwin="$ZIG_WRAPPER/aarch64-apple-darwin-cc"
