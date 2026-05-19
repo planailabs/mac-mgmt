@@ -28,7 +28,7 @@
 [global]
 # Default LLM backend: "ollama", "lms", "cloud", or "none"
 default_llm = "none"
-# Default agent provider: "openclaw" or "none"
+# Default agent provider: "openclaw", "opencode", "hermes", or "none"
 default_agent = "none"
 
 # ── Metrics ──────────────────────────────────────────────────────────
@@ -63,6 +63,28 @@ port = 9396
 # Escape hatch: arbitrary key-value pairs merged into openclaw.json
 # AFTER the typed fields above. Use for niche settings not covered above.
 # extra_config = { "some" = { "deep" = { "key" = "value" } } }
+
+# ── Hermes ───────────────────────────────────────────────────────────
+# Hermes AI agent (Nous Research) configuration.
+# Toggle with enabled = true/false. Active when global.default_agent = "hermes".
+# [hermes]
+# enabled = false
+# [hermes.gateway]
+# port = 8642
+# host = "127.0.0.1"
+#
+# Telegram bot integration.
+# [hermes.telegram]
+# bot_token = "123456:ABC-DEF..."          # from @BotFather
+# allowed_chat_ids = [123456789, -100...]  # optional; empty = allow all
+# enabled = true                           # default: true
+#
+# Arbitrary key-value pairs merged into ~/.hermes/config.yaml
+# extra_config = { "agent" = { "max_turns" = 50 } }
+#
+# Extra environment variables written to ~/.hermes/.env
+# [hermes.extra_env]
+# OPENROUTER_API_KEY = "sk-or-..."
 
 # ── OpenCode ─────────────────────────────────────────────────────────
 # OpenCode AI agent configuration.

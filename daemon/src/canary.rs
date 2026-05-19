@@ -42,3 +42,25 @@ pub fn openclaw_canary(cfg: &DaemonConfig) -> String {
         _ => "openclaw/default".to_string(),
     }
 }
+
+/// Resolve the canary model for the Hermes functional probe based on the
+/// active LLM provider. Hermes uses bare model names (no provider/ prefix).
+pub fn hermes_canary(cfg: &DaemonConfig) -> String {
+    match cfg.global.default_llm {
+        LlmProvider::Ollama => OLLAMA_CANARY.to_string(),
+        LlmProvider::Lms => LMS_CANARY.to_string(),
+        LlmProvider::Cloud => cfg
+            .cloud
+            .iter()
+            .find(|c| c.enabled)
+            .map(|c| {
+                if c.default_model.is_empty() {
+                    c.provider.default_model().to_string()
+                } else {
+                    c.default_model.clone()
+                }
+            })
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}

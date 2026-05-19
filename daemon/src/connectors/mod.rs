@@ -1,18 +1,24 @@
 pub mod backup;
+pub mod cloud_hermes;
 pub mod cloud_openclaw;
 pub mod cloud_opencode;
+pub mod litellm_hermes;
 pub mod litellm_openclaw;
 pub mod litellm_opencode;
+pub mod lms_hermes;
 pub mod lms_openclaw;
 #[cfg(feature = "memvault")]
 pub mod memvault_openclaw;
 pub mod lms_opencode;
+pub mod ollama_hermes;
 pub mod ollama_openclaw;
 pub mod ollama_opencode;
+pub mod relay_hermes;
 pub mod relay_ollama;
 pub mod relay_openclaw;
 pub mod relay_opencode;
 pub mod relay_unsloth;
+pub mod unsloth_hermes;
 pub mod unsloth_openclaw;
 pub mod unsloth_opencode;
 
@@ -22,9 +28,9 @@ use anyhow::Result;
 
 use crate::managed_service::ManagedService;
 use crate::services::{
-    ai_proxy_svc::AiProxyService, apprise::Apprise, custom_svc::CustomService, litellm::Litellm,
-    lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama, openclaw::OpenClaw,
-    opencode::Opencode, restic::Restic, rocm_smi::RocmSmi, unsloth::Unsloth,
+    ai_proxy_svc::AiProxyService, apprise::Apprise, custom_svc::CustomService, hermes::Hermes,
+    litellm::Litellm, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama,
+    openclaw::OpenClaw, opencode::Opencode, restic::Restic, rocm_smi::RocmSmi, unsloth::Unsloth,
 };
 #[cfg(feature = "memvault")]
 use crate::services::memvault_svc::MemvaultService;
@@ -74,6 +80,7 @@ pub trait Connector: Send + Sync {
 pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Arc<dyn ManagedService>> {
     let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
     let opencode_cfg = std::mem::take(&mut cfg.opencode);
+    let hermes_cfg = std::mem::take(&mut cfg.hermes);
     let ollama_cfg = std::mem::take(&mut cfg.ollama);
     let lms_cfg = std::mem::take(&mut cfg.lms);
     let unsloth_cfg = std::mem::take(&mut cfg.unsloth);
@@ -97,6 +104,13 @@ pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Arc<dyn ManagedService>> {
         services.push(Arc::new(Opencode::new(opencode_cfg)));
     } else {
         tracing::info!("opencode disabled");
+    }
+
+    if hermes_cfg.enabled {
+        tracing::info!("hermes enabled");
+        services.push(Arc::new(Hermes::new(hermes_cfg)));
+    } else {
+        tracing::info!("hermes disabled");
     }
 
     if ollama_cfg.enabled {
@@ -298,6 +312,46 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 }));
             } else if has_enabled_cloud {
                 connectors.push(Box::new(cloud_opencode::CloudOpencode {
+                    set_default: global.default_llm == LlmProvider::Cloud,
+                }));
+            }
+        }
+        AgentProvider::Hermes => {
+            connectors.push(Box::new(relay_hermes::RelayHermes));
+
+            if ollama_cfg.enabled {
+                connectors.push(Box::new(ollama_hermes::OllamaHermes {
+                    host: ollama_cfg.host.clone(),
+                    port: ollama_cfg.port,
+                    default_model: ollama_cfg.default_model.clone(),
+                    set_default: global.default_llm == LlmProvider::Ollama,
+                }));
+            }
+            if lms_cfg.enabled {
+                connectors.push(Box::new(lms_hermes::LmsHermes {
+                    host: lms_cfg.host.clone(),
+                    port: lms_cfg.port,
+                    default_model: lms_cfg.default_model.clone(),
+                    set_default: global.default_llm == LlmProvider::Lms,
+                }));
+            }
+            if unsloth_cfg.enabled {
+                connectors.push(Box::new(unsloth_hermes::UnslothHermes {
+                    host: unsloth_cfg.host.clone(),
+                    port: unsloth_cfg.port,
+                    default_model: unsloth_cfg.default_model.clone(),
+                    set_default: global.default_llm == LlmProvider::Unsloth,
+                }));
+            }
+            if use_litellm {
+                connectors.push(Box::new(litellm_hermes::LitellmHermes {
+                    host: litellm_cfg.host.clone(),
+                    port: litellm_cfg.port,
+                    set_default: global.default_llm == LlmProvider::Cloud
+                        || global.default_llm == LlmProvider::Litellm,
+                }));
+            } else if has_enabled_cloud {
+                connectors.push(Box::new(cloud_hermes::CloudHermes {
                     set_default: global.default_llm == LlmProvider::Cloud,
                 }));
             }

@@ -4,6 +4,7 @@ pub mod custom_svc;
 #[cfg(feature = "memvault")]
 pub mod memvault_svc;
 pub mod gpu_tool_common;
+pub mod hermes;
 pub mod litellm;
 pub mod lms;
 pub mod mcporter;

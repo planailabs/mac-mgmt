@@ -667,6 +667,7 @@ impl std::fmt::Display for LlmProvider {
 pub enum AgentProvider {
     Openclaw,
     Opencode,
+    Hermes,
     None,
 }
 
@@ -681,6 +682,7 @@ impl AgentProvider {
         match self {
             Self::Openclaw => "openclaw",
             Self::Opencode => "opencode",
+            Self::Hermes => "hermes",
             Self::None => "none",
         }
     }
@@ -1249,6 +1251,70 @@ impl Default for OpencodeConfig {
     }
 }
 
+// ── Hermes ────────────────────────────────────────────────────────────
+
+fn default_hermes_port() -> u16 {
+    8642
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HermesGatewayConfig {
+    #[schemars(description = "Hermes API server listen port")]
+    #[serde(default = "default_hermes_port")]
+    pub port: u16,
+    #[schemars(description = "Hermes API server listen address")]
+    #[serde(default = "default_gateway_host")]
+    pub host: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HermesTelegramConfig {
+    #[schemars(description = "Telegram bot token from @BotFather")]
+    pub bot_token: Secret,
+    #[schemars(description = "Allowed Telegram chat IDs. If empty, all chats are allowed.")]
+    #[serde(default)]
+    pub allowed_chat_ids: Vec<i64>,
+    #[schemars(description = "Enable the Telegram integration")]
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HermesConfig {
+    #[schemars(description = "Whether the Hermes agent is installed and started")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "Gateway/API server settings")]
+    #[serde(default)]
+    pub gateway: Option<HermesGatewayConfig>,
+    #[schemars(description = "Telegram bot integration")]
+    #[serde(default)]
+    pub telegram: Option<HermesTelegramConfig>,
+    #[schemars(
+        description = "Arbitrary key-value pairs merged into ~/.hermes/config.yaml after typed fields"
+    )]
+    #[serde(default)]
+    pub extra_config: Option<serde_json::Value>,
+    #[schemars(description = "Extra environment variables written to ~/.hermes/.env")]
+    #[serde(default)]
+    pub extra_env: Option<std::collections::HashMap<String, Secret>>,
+}
+
+impl Default for HermesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            gateway: None,
+            telegram: None,
+            extra_config: None,
+            extra_env: None,
+        }
+    }
+}
+
 // ── Metrics ─────────────────────────────────────────────────────────────
 
 fn default_metrics_port() -> u16 {
@@ -1628,6 +1694,9 @@ pub struct ClusterConfig {
     #[schemars(extend("x-category" = "agents"))]
     pub opencode: OpencodeConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "agents"))]
+    pub hermes: HermesConfig,
+    #[serde(default)]
     #[schemars(extend("x-category" = "llm-providers"))]
     pub ollama: OllamaConfig,
     #[serde(default)]
@@ -1841,6 +1910,8 @@ pub struct DaemonConfig {
     pub openclaw: OpenClawConfig,
     #[serde(default)]
     pub opencode: OpencodeConfig,
+    #[serde(default)]
+    pub hermes: HermesConfig,
     #[serde(default)]
     pub ollama: OllamaConfig,
     #[serde(default)]

@@ -7,6 +7,7 @@
 pub mod ai_proxy;
 pub mod apprise;
 pub mod custom;
+pub mod hermes;
 pub mod lms;
 pub mod mcporter;
 pub mod ollama;
@@ -217,6 +218,14 @@ pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
     if cfg.opencode.enabled {
         probes.push(Box::new(opencode::OpencodeProbe::from_config(
             &cfg.opencode,
+        )));
+    }
+
+    if cfg.hermes.enabled {
+        probes.push(Box::new(hermes::HermesHealthProbe::new(&cfg.hermes)));
+        probes.push(Box::new(hermes::HermesProbe::new(
+            &cfg.hermes,
+            crate::canary::hermes_canary(cfg),
         )));
     }
 
