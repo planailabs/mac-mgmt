@@ -8,6 +8,16 @@ use crate::backend::Backend;
 use crate::types::*;
 use crate::vfs::Vfs;
 
+/// Ensure a node ID has the `entity:` prefix, without double-prefixing.
+/// Accepts both bare hex IDs and already-prefixed `entity:<hex>` IDs.
+fn ensure_entity_id(id: &str) -> String {
+    if let Some(hex) = id.strip_prefix("entity:") {
+        format!("entity:{hex}")
+    } else {
+        format!("entity:{id}")
+    }
+}
+
 #[derive(Clone)]
 pub struct MemvaultServer {
     client: Arc<dyn Backend>,
@@ -225,7 +235,7 @@ impl MemvaultServer {
         match self.client.add_entity(&params.kind, props, vis).await {
             Ok(resp) => {
                 let raw_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let node_id = if raw_id.contains(':') { raw_id.to_string() } else { format!("entity:{raw_id}") };
+                let node_id = ensure_entity_id(raw_id);
                 let mut result = serde_json::json!({ "node_id": node_id, "status": "created" });
                 if let Some(vfs_path) = &params.vfs_path {
                     let vfs = Vfs::new(self.client.as_ref());
@@ -261,8 +271,8 @@ impl MemvaultServer {
 
     #[tool(name = "memvault_graph_link", description = "Link two entities by hex ID. Use memvault_link for cross-type linking.")]
     async fn graph_link(&self, Parameters(params): Parameters<GraphLinkParams>) -> String {
-        let source = format!("entity:{}", params.source_id);
-        let target = format!("entity:{}", params.target_id);
+        let source = ensure_entity_id(&params.source_id);
+        let target = ensure_entity_id(&params.target_id);
         let props = params.props.into_iter().map(|(k, v)| (k, v)).collect();
         match self.client.add_link(&source, &target, &params.relation, params.weight, props).await {
             Ok(resp) => serde_json::json!({
@@ -275,7 +285,7 @@ impl MemvaultServer {
 
     #[tool(name = "memvault_graph_query", description = "List all edges for an entity.")]
     async fn graph_query(&self, Parameters(params): Parameters<GraphQueryParams>) -> String {
-        ok_or_err!(self.client.edges_of(&format!("entity:{}", params.from_id)).await)
+        ok_or_err!(self.client.edges_of(&ensure_entity_id(&params.from_id)).await)
     }
 
     // ── Links (cross-type) ─────────────────────────────────────────
