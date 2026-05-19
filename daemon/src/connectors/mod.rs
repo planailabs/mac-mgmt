@@ -29,8 +29,9 @@ use anyhow::Result;
 use crate::managed_service::ManagedService;
 use crate::services::{
     ai_proxy_svc::AiProxyService, apprise::Apprise, custom_svc::CustomService, hermes::Hermes,
-    litellm::Litellm, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama,
-    openclaw::OpenClaw, opencode::Opencode, restic::Restic, rocm_smi::RocmSmi, unsloth::Unsloth,
+    hermes_dashboard::HermesDashboard, litellm::Litellm, lms::Lms, mcporter::McPorter,
+    nvidia_smi::NvidiaSmi, ollama::Ollama, openclaw::OpenClaw, opencode::Opencode, restic::Restic,
+    rocm_smi::RocmSmi, unsloth::Unsloth,
 };
 #[cfg(feature = "memvault")]
 use crate::services::memvault_svc::MemvaultService;
@@ -108,7 +109,17 @@ pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Arc<dyn ManagedService>> {
 
     if hermes_cfg.enabled {
         tracing::info!("hermes enabled");
+        let dashboard_cfg = hermes_cfg.dashboard.clone();
         services.push(Arc::new(Hermes::new(hermes_cfg)));
+
+        if let Some(db_cfg) = dashboard_cfg {
+            if db_cfg.enabled {
+                tracing::info!("hermes-dashboard enabled");
+                services.push(Arc::new(HermesDashboard::new(db_cfg)));
+            } else {
+                tracing::info!("hermes-dashboard disabled");
+            }
+        }
     } else {
         tracing::info!("hermes disabled");
     }

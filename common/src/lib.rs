@@ -1301,6 +1301,9 @@ pub struct HermesConfig {
     #[schemars(description = "Extra environment variables written to ~/.hermes/.env")]
     #[serde(default)]
     pub extra_env: Option<std::collections::HashMap<String, Secret>>,
+    #[schemars(description = "Web dashboard settings")]
+    #[serde(default)]
+    pub dashboard: Option<HermesDashboardConfig>,
 }
 
 impl Default for HermesConfig {
@@ -1311,6 +1314,37 @@ impl Default for HermesConfig {
             telegram: None,
             extra_config: None,
             extra_env: None,
+            dashboard: None,
+        }
+    }
+}
+
+// ── Hermes Dashboard ──────────────────────────────────────────────────
+
+fn default_hermes_dashboard_port() -> u16 {
+    9119
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HermesDashboardConfig {
+    #[schemars(description = "Whether the Hermes dashboard is installed and started")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "Dashboard listen port")]
+    #[serde(default = "default_hermes_dashboard_port")]
+    pub port: u16,
+    #[schemars(description = "Dashboard listen address")]
+    #[serde(default = "default_gateway_host")]
+    pub host: String,
+}
+
+impl Default for HermesDashboardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_hermes_dashboard_port(),
+            host: default_gateway_host(),
         }
     }
 }
