@@ -1,13 +1,54 @@
 # Output hashes for git dependencies in Cargo.lock.
 # Used by all package.nix files via cargoLock.outputHashes.
 # All swiftide-* crates come from the same git repo; each needs its own entry.
-let hash = "sha256-zN6IQ+4YzXYTLCKOqSJBnj/V0aIr7031HO+xDBQlgck=";
+let
+  swiftideHash = "sha256-zN6IQ+4YzXYTLCKOqSJBnj/V0aIr7031HO+xDBQlgck=";
+  dioxusHash = "sha256-8GSnLPk2af3lOhazWUlsjCos3Y2/WDunYmzHv57l97k=";
 in {
-  "swiftide-0.32.1" = hash;
-  "swiftide-agents-0.32.1" = hash;
-  "swiftide-core-0.32.1" = hash;
-  "swiftide-indexing-0.32.1" = hash;
-  "swiftide-integrations-0.32.1" = hash;
-  "swiftide-macros-0.32.1" = hash;
-  "swiftide-query-0.32.1" = hash;
+  "swiftide-0.32.1" = swiftideHash;
+  "swiftide-agents-0.32.1" = swiftideHash;
+  "swiftide-core-0.32.1" = swiftideHash;
+  "swiftide-indexing-0.32.1" = swiftideHash;
+  "swiftide-integrations-0.32.1" = swiftideHash;
+  "swiftide-macros-0.32.1" = swiftideHash;
+  "swiftide-query-0.32.1" = swiftideHash;
+  "const-serialize-0.8.0-alpha.0" = dioxusHash;
+  "const-serialize-macro-0.8.0-alpha.0" = dioxusHash;
+  "dioxus-0.7.9" = dioxusHash;
+  "dioxus-asset-resolver-0.7.9" = dioxusHash;
+  "dioxus-cli-config-0.7.9" = dioxusHash;
+  "dioxus-config-macro-0.7.9" = dioxusHash;
+  "dioxus-config-macros-0.7.9" = dioxusHash;
+  "dioxus-core-0.7.9" = dioxusHash;
+  "dioxus-core-macro-0.7.9" = dioxusHash;
+  "dioxus-core-types-0.7.9" = dioxusHash;
+  "dioxus-devtools-0.7.9" = dioxusHash;
+  "dioxus-devtools-types-0.7.9" = dioxusHash;
+  "dioxus-document-0.7.9" = dioxusHash;
+  "dioxus-fullstack-0.7.9" = dioxusHash;
+  "dioxus-fullstack-core-0.7.9" = dioxusHash;
+  "dioxus-fullstack-macro-0.7.9" = dioxusHash;
+  "dioxus-history-0.7.9" = dioxusHash;
+  "dioxus-hooks-0.7.9" = dioxusHash;
+  "dioxus-html-0.7.9" = dioxusHash;
+  "dioxus-html-internal-macro-0.7.9" = dioxusHash;
+  "dioxus-interpreter-js-0.7.9" = dioxusHash;
+  "dioxus-liveview-0.7.9" = dioxusHash;
+  "dioxus-logger-0.7.9" = dioxusHash;
+  "dioxus-router-0.7.9" = dioxusHash;
+  "dioxus-router-macro-0.7.9" = dioxusHash;
+  "dioxus-rsx-0.7.9" = dioxusHash;
+  "dioxus-server-0.7.9" = dioxusHash;
+  "dioxus-signals-0.7.9" = dioxusHash;
+  "dioxus-ssr-0.7.9" = dioxusHash;
+  "dioxus-stores-0.7.9" = dioxusHash;
+  "dioxus-stores-macro-0.7.9" = dioxusHash;
+  "dioxus-web-0.7.9" = dioxusHash;
+  "generational-box-0.7.9" = dioxusHash;
+  "lazy-js-bundle-0.7.9" = dioxusHash;
+  "manganis-0.7.9" = dioxusHash;
+  "manganis-core-0.7.9" = dioxusHash;
+  "manganis-macro-0.7.9" = dioxusHash;
+  "subsecond-0.7.9" = dioxusHash;
+  "subsecond-types-0.7.9" = dioxusHash;
 }
