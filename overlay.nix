@@ -2,15 +2,13 @@
 
 final: prev:
 let
-  # Patched dioxus-cli with --skip-platform-features flag.
-  # This prevents dx from auto-adding "web"/"desktop"/etc. features,
-  # which is needed when building WASM for embedded daemon mode (where
-  # dioxus-web/hydrate must NOT be enabled).
+  # Patched dioxus-cli with:
+  # - --skip-platform-features: prevents dx from auto-adding "web"/"desktop"/etc.
+  # - --embed: embeds public assets into the server binary via rust-embed
+  # - optional codesign: falls back to rcodesign for cross-compilation
   dioxus-cli-patched = prev.dioxus-cli.overrideAttrs (old: {
     patches = (old.patches or []) ++ [
-      ./patches/dioxus-cli-skip-platform-features.patch
-      ./patches/dioxus-cli-write-client-public-dir.patch
-      ./patches/dioxus-cli-optional-codesign.patch
+      ./patches/dioxus-cli-all.patch
     ];
   });
   # Thin wrapper that re-exports the monolith server binary with a
@@ -51,15 +49,15 @@ in
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
     # Fullstack build via dx: @client gets only the web feature (no native
-    # deps), @server gets default features. dx writes target/dx/.client-public-dir
-    # so the server's build.rs can find the WASM output without guessing.
+    # deps), @server gets default features. --embed bakes the client's
+    # public assets into the server binary via rust-embed.
     buildPhase = ''
       runHook preBuild
 
       # Tailwind CSS for memvault-web
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
-      dx build --package mac-mgmt --release \
+      dx build --package mac-mgmt --release --embed \
         @client --platform web --no-default-features --features web \
         @server --platform server
 

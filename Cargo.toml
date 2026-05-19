@@ -9,6 +9,8 @@ sentry = { version = "0.47", default-features = false, features = ["reqwest", "p
 which = "7"
 
 [patch.crates-io]
+dioxus = { git = "https://github.com/mkg20001/dioxus.git", branch = "feat/embed" }
+dioxus-server = { git = "https://github.com/mkg20001/dioxus.git", branch = "feat/embed" }
 swiftide = { git = "https://github.com/mkg20001/swiftide.git", branch = "mac-mgmt-patches" }
 swiftide-agents = { git = "https://github.com/mkg20001/swiftide.git", branch = "mac-mgmt-patches" }
 swiftide-core = { git = "https://github.com/mkg20001/swiftide.git", branch = "mac-mgmt-patches" }

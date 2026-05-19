@@ -5,7 +5,6 @@
 
 mod blockstore_bridge;
 mod handle;
-pub mod web_assets;
 
 pub use blockstore_bridge::BlockstoreBridge;
 pub use handle::MemvaultHandle;

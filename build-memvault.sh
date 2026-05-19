@@ -3,8 +3,8 @@
 # (native daemon) are compiled from the same crate, sharing a cache —
 # this guarantees hydration consistency.
 #
-# The server's build.rs waits for the client output to appear, then copies
-# it into the rust-embed directory so assets are baked into the server binary.
+# The --embed flag tells dx to bake the client's public assets into the
+# server binary via dioxus-server's rust-embed integration.
 
 set -euo pipefail
 
@@ -25,17 +25,9 @@ echo "▸ Building Tailwind CSS…"
 # ── 2. Dioxus fullstack build ───────────────────────────────────────────
 # Use @client/@server overrides so the WASM client only gets the web feature
 # (avoiding native deps like tokio/mio) while the server gets all features
-# for a fully functional daemon binary. The server's build.rs blocks until
-# the client output is ready, then embeds it via rust-embed.
-# Remove previous client output so build.rs can detect when the NEW build finishes
-if [ "$RELEASE" = "1" ]; then
-  rm -rf "target/dx/mac-mgmt/release/web/public"
-else
-  rm -rf "target/dx/mac-mgmt/debug/web/public"
-fi
-
+# for a fully functional daemon binary.
 echo "▸ Building Dioxus fullstack (client + server)…"
-dx build --package mac-mgmt $DX_PROFILE \
+dx build --package mac-mgmt $DX_PROFILE --embed \
   @client --platform web --no-default-features --features web \
   @server --platform server
 
