@@ -18,6 +18,7 @@ self-update = ["dep:self_update", "dep:self-replace"]
 relay = ["dep:libp2p-stream"]
 memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "memvault-web/server", "dep:memvault-query", "dep:axum", "relay"]
 healer = ["dep:mac-mgmt-healer", "services", "relay"]
+embed = ["memvault-web/embed"]
 sim = []
 # WASM client for the memvault web UI — built by dx for embedding.
 # Both `web` and `server` (via memvault) compile the same App component from
