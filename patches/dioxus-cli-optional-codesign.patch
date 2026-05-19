@@ -1,0 +1,58 @@
+--- a/src/build/assets.rs	2026-05-19 16:01:11.009580015 +0200
++++ b/src/build/assets.rs	2026-05-19 16:14:49.768811535 +0200
+@@ -844,22 +844,45 @@
+     file.sync_all()
+         .context("Failed to sync file after writing assets")?;
+ 
+-    // If the file is a macos binary, we need to re-sign the modified binary
++    // If the file is a macos binary, we need to re-sign the modified binary.
++    // Try Apple's native codesign first, then fall back to rcodesign for
++    // cross-compilation from non-macOS hosts.
+     if obj_format == object::BinaryFormat::MachO && !assets.is_empty() {
+-        // Spawn the codesign command to re-sign the binary
+-        let output = tokio::process::Command::new("codesign")
++        match tokio::process::Command::new("codesign")
+             .arg("--force")
+             .arg("--sign")
+-            .arg("-") // Sign with an empty identity
++            .arg("-")
+             .arg(path)
+             .output()
+             .await
+-            .context("Failed to run codesign - is `codesign` in your path?")?;
+-        if !output.status.success() {
+-            bail!(
+-                "Failed to re-sign the binary with codesign after finalizing the assets: {}",
+-                String::from_utf8_lossy(&output.stderr)
+-            );
++        {
++            Ok(output) if output.status.success() => {}
++            Ok(output) => {
++                bail!(
++                    "Failed to re-sign the binary with codesign after finalizing the assets: {}",
++                    String::from_utf8_lossy(&output.stderr)
++                );
++            }
++            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
++                // codesign not available — try rcodesign (cross-platform ad-hoc signing)
++                let output = tokio::process::Command::new("rcodesign")
++                    .arg("sign")
++                    .arg(path)
++                    .output()
++                    .await
++                    .context("Neither `codesign` nor `rcodesign` found — cannot ad-hoc re-sign MachO binary. \
++                              Install `rcodesign` (apple-codesign) for cross-platform signing.")?;
++                if !output.status.success() {
++                    bail!(
++                        "Failed to re-sign the binary with rcodesign after finalizing the assets: {}",
++                        String::from_utf8_lossy(&output.stderr)
++                    );
++                }
++            }
++            Err(e) => {
++                return Err(anyhow::anyhow!(e)
++                    .context("Failed to run codesign - is `codesign` in your path?"));
++            }
+         }
+     }
+ 

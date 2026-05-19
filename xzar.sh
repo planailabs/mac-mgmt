@@ -86,22 +86,29 @@ export SDKROOT
 # cross-compilation — no manual CC/AR wrappers needed.
 CARGO_SHIM="$(mktemp -d)"
 REAL_CARGO="$(which cargo)"
+ZIGBUILD="$(which cargo-zigbuild)"
 cat > "$CARGO_SHIM/cargo" <<SHIM
 #!/usr/bin/env bash
 # Only use zigbuild for apple/darwin targets; pass through for wasm/native.
+# dx calls "cargo rustc ..." so we invoke cargo-zigbuild directly (it
+# accepts build/rustc/test/run subcommands natively).
 use_zig=false
 prev=""
+# Strip +toolchain args (e.g. +nightly) — cargo-zigbuild doesn't support them.
+args=()
 for arg in "\$@"; do
   case "\$prev" in
     --target) [[ "\$arg" == *apple* || "\$arg" == *darwin* ]] && use_zig=true ;;
   esac
   case "\$arg" in
     --target=*apple*|--target=*darwin*) use_zig=true ;;
+    +*) prev="\$arg"; continue ;;
   esac
   prev="\$arg"
+  args+=("\$arg")
 done
 if \$use_zig; then
-  exec "$REAL_CARGO" zigbuild "\$@"
+  CARGO="$REAL_CARGO" exec "$ZIGBUILD" "\${args[@]}"
 else
   exec "$REAL_CARGO" "\$@"
 fi

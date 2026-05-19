@@ -10,6 +10,7 @@ let
     patches = (old.patches or []) ++ [
       ./patches/dioxus-cli-skip-platform-features.patch
       ./patches/dioxus-cli-write-client-public-dir.patch
+      ./patches/dioxus-cli-optional-codesign.patch
     ];
   });
   # Thin wrapper that re-exports the monolith server binary with a
@@ -45,6 +46,7 @@ in
       prev.wasm-bindgen-cli_0_2_114
       prev.binaryen
       prev.lld
+      prev.rcodesign
     ];
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;

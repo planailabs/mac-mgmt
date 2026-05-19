@@ -296,6 +296,7 @@
 
             # Dioxus CLI (patched with --skip-platform-features)
             dioxus-cli-patched
+            rcodesign  # ad-hoc MachO signing when cross-compiling from Linux
 
             # Build dependencies
             pkg-config
@@ -357,6 +358,7 @@
           web-agency-proxy = web-agency-proxy;
           macosx-sdk = macosx-sdk;
           nix-driver-sync = nix-driver-sync;
+          dioxus-cli-patched = pkgs.dioxus-cli-patched;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux (
           let images = import ./docker.nix {
             inherit pkgs mac-mgmt-server mac-mgmt-relay mac-mgmt-runner;
