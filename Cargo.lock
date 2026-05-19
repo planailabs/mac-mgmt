@@ -3823,8 +3823,10 @@ dependencies = [
  "hyper-util",
  "inventory",
  "lru 0.16.4",
+ "mime_guess",
  "parking_lot",
  "pin-project",
+ "rust-embed",
  "rustc-hash 2.1.2",
  "serde",
  "serde_json",
@@ -12584,6 +12586,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rust-embed-utils",
+ "shellexpand",
  "syn 2.0.117",
  "walkdir",
 ]
@@ -13597,6 +13600,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
+]
+
+[[package]]
+name = "shellexpand"
+version = "3.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32824fab5e16e6c4d86dc1ba84489390419a39f97699852b66480bb87d297ed8"
+dependencies = [
+ "dirs 5.0.1",
 ]
 
 [[package]]
