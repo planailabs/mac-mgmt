@@ -4,7 +4,7 @@
   rustPlatform,
   pkg-config,
   openssl,
-  dioxus-cli,
+  dioxus-cli-patched,
   nodejs,
   wasm-bindgen-cli_0_2_114,
   binaryen,
@@ -31,7 +31,7 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = [
     pkg-config
-    dioxus-cli
+    dioxus-cli-patched
     nodejs
     wasm-bindgen-cli_0_2_114
     binaryen

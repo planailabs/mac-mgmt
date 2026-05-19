@@ -66,8 +66,7 @@ DL_STUB="$(mktemp -d)"
 ar rcs "$DL_STUB/libdl.a"
 export RUSTFLAGS="${RUSTFLAGS:-} -L $DL_STUB"
 
-rm -rf target/dx/mac-mgmt/release/web/public
-dx build --package mac-mgmt --release \
+dx build --package mac-mgmt --release --embed \
   @client --platform web --no-default-features --features web \
   @server --platform server --target x86_64-unknown-linux-musl \
     --features self-update,services,relay,memvault
@@ -116,8 +115,7 @@ SHIM
 chmod +x "$CARGO_SHIM/cargo"
 export PATH="$CARGO_SHIM:$PATH"
 
-rm -rf target/dx/mac-mgmt/release/web/public
-dx build --package mac-mgmt --release \
+dx build --package mac-mgmt --release --embed \
   @client --platform web --no-default-features --features web \
   @server --platform server --target aarch64-apple-darwin \
     --features self-update,services,relay,memvault
