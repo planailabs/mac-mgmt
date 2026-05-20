@@ -38,7 +38,7 @@ use crate::services::{
 #[cfg(feature = "memvault")]
 use crate::services::memvault_svc::MemvaultService;
 use mac_mgmt_common::{
-    AgentProvider, CloudConfig, DaemonConfig, LlmProvider,
+    CloudConfig, DaemonConfig, LlmProvider,
 };
 
 /// When a connector runs relative to service startup.
@@ -219,10 +219,6 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
     let opencode_enabled = cfg.opencode.enabled;
     let hermes_enabled = cfg.hermes.enabled;
 
-    let is_default_openclaw = global.default_agent == AgentProvider::Openclaw;
-    let is_default_opencode = global.default_agent == AgentProvider::Opencode;
-    let is_default_hermes = global.default_agent == AgentProvider::Hermes;
-
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
 
     // ── Relay connectors: based purely on service enablement ─────────
@@ -260,7 +256,7 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 host: ollama_cfg.host.clone(),
                 port: ollama_cfg.port,
                 default_model: ollama_cfg.default_model.clone(),
-                set_default: is_default_openclaw && global.default_llm == LlmProvider::Ollama,
+                set_default: global.default_llm == LlmProvider::Ollama,
             }));
         }
         if lms_cfg.enabled {
@@ -268,7 +264,7 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 host: lms_cfg.host.clone(),
                 port: lms_cfg.port,
                 default_model: lms_cfg.default_model.clone(),
-                set_default: is_default_openclaw && global.default_llm == LlmProvider::Lms,
+                set_default: global.default_llm == LlmProvider::Lms,
             }));
         }
         if unsloth_cfg.enabled {
@@ -276,20 +272,19 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 host: unsloth_cfg.host.clone(),
                 port: unsloth_cfg.port,
                 default_model: unsloth_cfg.default_model.clone(),
-                set_default: is_default_openclaw && global.default_llm == LlmProvider::Unsloth,
+                set_default: global.default_llm == LlmProvider::Unsloth,
             }));
         }
         if use_litellm {
             connectors.push(Box::new(litellm_openclaw::LitellmOpenClaw {
                 host: litellm_cfg.host.clone(),
                 port: litellm_cfg.port,
-                set_default: is_default_openclaw
-                    && (global.default_llm == LlmProvider::Cloud
-                        || global.default_llm == LlmProvider::Litellm),
+                set_default: global.default_llm == LlmProvider::Cloud
+                    || global.default_llm == LlmProvider::Litellm,
             }));
         } else if has_enabled_cloud {
             connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
-                set_default: is_default_openclaw && global.default_llm == LlmProvider::Cloud,
+                set_default: global.default_llm == LlmProvider::Cloud,
             }));
         }
 
@@ -311,7 +306,7 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
         if ollama_cfg.enabled {
             connectors.push(Box::new(ollama_opencode::OllamaOpencode {
                 default_model: ollama_cfg.default_model.clone(),
-                set_default: is_default_opencode && global.default_llm == LlmProvider::Ollama,
+                set_default: global.default_llm == LlmProvider::Ollama,
             }));
         }
         if lms_cfg.enabled {
@@ -319,7 +314,7 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 host: lms_cfg.host.clone(),
                 port: lms_cfg.port,
                 default_model: lms_cfg.default_model.clone(),
-                set_default: is_default_opencode && global.default_llm == LlmProvider::Lms,
+                set_default: global.default_llm == LlmProvider::Lms,
             }));
         }
         if unsloth_cfg.enabled {
@@ -327,20 +322,19 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 host: unsloth_cfg.host.clone(),
                 port: unsloth_cfg.port,
                 default_model: unsloth_cfg.default_model.clone(),
-                set_default: is_default_opencode && global.default_llm == LlmProvider::Unsloth,
+                set_default: global.default_llm == LlmProvider::Unsloth,
             }));
         }
         if use_litellm {
             connectors.push(Box::new(litellm_opencode::LitellmOpencode {
                 host: litellm_cfg.host.clone(),
                 port: litellm_cfg.port,
-                set_default: is_default_opencode
-                    && (global.default_llm == LlmProvider::Cloud
-                        || global.default_llm == LlmProvider::Litellm),
+                set_default: global.default_llm == LlmProvider::Cloud
+                    || global.default_llm == LlmProvider::Litellm,
             }));
         } else if has_enabled_cloud {
             connectors.push(Box::new(cloud_opencode::CloudOpencode {
-                set_default: is_default_opencode && global.default_llm == LlmProvider::Cloud,
+                set_default: global.default_llm == LlmProvider::Cloud,
             }));
         }
     }
@@ -353,7 +347,7 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 host: ollama_cfg.host.clone(),
                 port: ollama_cfg.port,
                 default_model: ollama_cfg.default_model.clone(),
-                set_default: is_default_hermes && global.default_llm == LlmProvider::Ollama,
+                set_default: global.default_llm == LlmProvider::Ollama,
             }));
         }
         if lms_cfg.enabled {
@@ -361,7 +355,7 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 host: lms_cfg.host.clone(),
                 port: lms_cfg.port,
                 default_model: lms_cfg.default_model.clone(),
-                set_default: is_default_hermes && global.default_llm == LlmProvider::Lms,
+                set_default: global.default_llm == LlmProvider::Lms,
             }));
         }
         if unsloth_cfg.enabled {
@@ -369,20 +363,19 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 host: unsloth_cfg.host.clone(),
                 port: unsloth_cfg.port,
                 default_model: unsloth_cfg.default_model.clone(),
-                set_default: is_default_hermes && global.default_llm == LlmProvider::Unsloth,
+                set_default: global.default_llm == LlmProvider::Unsloth,
             }));
         }
         if use_litellm {
             connectors.push(Box::new(litellm_hermes::LitellmHermes {
                 host: litellm_cfg.host.clone(),
                 port: litellm_cfg.port,
-                set_default: is_default_hermes
-                    && (global.default_llm == LlmProvider::Cloud
-                        || global.default_llm == LlmProvider::Litellm),
+                set_default: global.default_llm == LlmProvider::Cloud
+                    || global.default_llm == LlmProvider::Litellm,
             }));
         } else if has_enabled_cloud {
             connectors.push(Box::new(cloud_hermes::CloudHermes {
-                set_default: is_default_hermes && global.default_llm == LlmProvider::Cloud,
+                set_default: global.default_llm == LlmProvider::Cloud,
             }));
         }
 
