@@ -202,8 +202,9 @@ pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Arc<dyn ManagedService>> {
 
 /// Build connectors that wire services together.
 /// Connectors are run after all managed services have had their post_start.
-/// Uses `default_llm` / `default_agent` to decide which LLM↔agent wiring
-/// to apply, and the first enabled cloud entry when the default is `Cloud`.
+/// Registers connectors for **all enabled** agents and LLM providers.
+/// Only the combination matching `default_agent` + `default_llm` gets
+/// `set_default=true`, which controls which model is the primary default.
 pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
     let global = &cfg.global;
     let ollama_cfg = &cfg.ollama;
@@ -214,17 +215,32 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
     let backup_cfg = &cfg.backup;
     let memvault_cfg = &cfg.memvault;
 
+    let openclaw_enabled = cfg.openclaw.enabled;
+    let opencode_enabled = cfg.opencode.enabled;
+    let hermes_enabled = cfg.hermes.enabled;
+
+    let is_default_openclaw = global.default_agent == AgentProvider::Openclaw;
+    let is_default_opencode = global.default_agent == AgentProvider::Opencode;
+    let is_default_hermes = global.default_agent == AgentProvider::Hermes;
+
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
 
-    // Relay→ollama connector: sets OLLAMA_ORIGINS for the tunnel proxy.
-    // Always enabled when ollama is enabled (regardless of default_llm).
+    // ── Relay connectors: based purely on service enablement ─────────
+
     if ollama_cfg.enabled {
         connectors.push(Box::new(relay_ollama::RelayOllama));
     }
-
-    // Relay→unsloth connector: wires the relay tunnel for Unsloth Studio.
     if unsloth_cfg.enabled {
         connectors.push(Box::new(relay_unsloth::RelayUnsloth));
+    }
+    if openclaw_enabled {
+        connectors.push(Box::new(relay_openclaw::RelayOpenClaw));
+    }
+    if opencode_enabled {
+        connectors.push(Box::new(relay_opencode::RelayOpencode));
+    }
+    if hermes_enabled {
+        connectors.push(Box::new(relay_hermes::RelayHermes));
     }
 
     tracing::info!(
@@ -234,154 +250,151 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
     );
 
     let has_enabled_cloud = cloud_cfgs.iter().any(|c| c.enabled);
-    // When litellm is enabled, it replaces direct cloud→agent connectors.
     let use_litellm = litellm_cfg.enabled;
 
-    // Register ALL enabled LLM providers with each enabled agent.
-    // Only the provider matching default_llm gets set_default=true.
-    match global.default_agent {
-        AgentProvider::Openclaw => {
-            connectors.push(Box::new(relay_openclaw::RelayOpenClaw));
+    // ── OpenClaw LLM connectors ─────────────────────────────────────
 
-            if ollama_cfg.enabled {
-                connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
-                    host: ollama_cfg.host.clone(),
-                    port: ollama_cfg.port,
-                    default_model: ollama_cfg.default_model.clone(),
-                    set_default: global.default_llm == LlmProvider::Ollama,
-                }));
-            }
-            if lms_cfg.enabled {
-                connectors.push(Box::new(lms_openclaw::LmsOpenClaw {
-                    host: lms_cfg.host.clone(),
-                    port: lms_cfg.port,
-                    default_model: lms_cfg.default_model.clone(),
-                    set_default: global.default_llm == LlmProvider::Lms,
-                }));
-            }
-            if unsloth_cfg.enabled {
-                connectors.push(Box::new(unsloth_openclaw::UnslothOpenClaw {
-                    host: unsloth_cfg.host.clone(),
-                    port: unsloth_cfg.port,
-                    default_model: unsloth_cfg.default_model.clone(),
-                    set_default: global.default_llm == LlmProvider::Unsloth,
-                }));
-            }
-            if use_litellm {
-                connectors.push(Box::new(litellm_openclaw::LitellmOpenClaw {
-                    host: litellm_cfg.host.clone(),
-                    port: litellm_cfg.port,
-                    set_default: global.default_llm == LlmProvider::Cloud
-                        || global.default_llm == LlmProvider::Litellm,
-                }));
-            } else if has_enabled_cloud {
-                connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
-                    set_default: global.default_llm == LlmProvider::Cloud,
-                }));
-            }
+    if openclaw_enabled {
+        if ollama_cfg.enabled {
+            connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
+                host: ollama_cfg.host.clone(),
+                port: ollama_cfg.port,
+                default_model: ollama_cfg.default_model.clone(),
+                set_default: is_default_openclaw && global.default_llm == LlmProvider::Ollama,
+            }));
+        }
+        if lms_cfg.enabled {
+            connectors.push(Box::new(lms_openclaw::LmsOpenClaw {
+                host: lms_cfg.host.clone(),
+                port: lms_cfg.port,
+                default_model: lms_cfg.default_model.clone(),
+                set_default: is_default_openclaw && global.default_llm == LlmProvider::Lms,
+            }));
+        }
+        if unsloth_cfg.enabled {
+            connectors.push(Box::new(unsloth_openclaw::UnslothOpenClaw {
+                host: unsloth_cfg.host.clone(),
+                port: unsloth_cfg.port,
+                default_model: unsloth_cfg.default_model.clone(),
+                set_default: is_default_openclaw && global.default_llm == LlmProvider::Unsloth,
+            }));
+        }
+        if use_litellm {
+            connectors.push(Box::new(litellm_openclaw::LitellmOpenClaw {
+                host: litellm_cfg.host.clone(),
+                port: litellm_cfg.port,
+                set_default: is_default_openclaw
+                    && (global.default_llm == LlmProvider::Cloud
+                        || global.default_llm == LlmProvider::Litellm),
+            }));
+        } else if has_enabled_cloud {
+            connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
+                set_default: is_default_openclaw && global.default_llm == LlmProvider::Cloud,
+            }));
+        }
 
-            #[cfg(feature = "memvault")]
-            {
-                if memvault_cfg.enabled {
-                    connectors.push(Box::new(memvault_openclaw::MemvaultOpenClaw {
-                        port: memvault_cfg.port,
-                    }));
-                } else {
-                    connectors.push(Box::new(memvault_openclaw::MemvaultOpenClawCleanup));
-                }
+        #[cfg(feature = "memvault")]
+        {
+            if memvault_cfg.enabled {
+                connectors.push(Box::new(memvault_openclaw::MemvaultOpenClaw {
+                    port: memvault_cfg.port,
+                }));
+            } else {
+                connectors.push(Box::new(memvault_openclaw::MemvaultOpenClawCleanup));
             }
         }
-        AgentProvider::Opencode => {
-            connectors.push(Box::new(relay_opencode::RelayOpencode));
+    }
 
-            if ollama_cfg.enabled {
-                connectors.push(Box::new(ollama_opencode::OllamaOpencode {
-                    default_model: ollama_cfg.default_model.clone(),
-                    set_default: global.default_llm == LlmProvider::Ollama,
-                }));
-            }
-            if lms_cfg.enabled {
-                connectors.push(Box::new(lms_opencode::LmsOpencode {
-                    host: lms_cfg.host.clone(),
-                    port: lms_cfg.port,
-                    default_model: lms_cfg.default_model.clone(),
-                    set_default: global.default_llm == LlmProvider::Lms,
-                }));
-            }
-            if unsloth_cfg.enabled {
-                connectors.push(Box::new(unsloth_opencode::UnslothOpencode {
-                    host: unsloth_cfg.host.clone(),
-                    port: unsloth_cfg.port,
-                    default_model: unsloth_cfg.default_model.clone(),
-                    set_default: global.default_llm == LlmProvider::Unsloth,
-                }));
-            }
-            if use_litellm {
-                connectors.push(Box::new(litellm_opencode::LitellmOpencode {
-                    host: litellm_cfg.host.clone(),
-                    port: litellm_cfg.port,
-                    set_default: global.default_llm == LlmProvider::Cloud
-                        || global.default_llm == LlmProvider::Litellm,
-                }));
-            } else if has_enabled_cloud {
-                connectors.push(Box::new(cloud_opencode::CloudOpencode {
-                    set_default: global.default_llm == LlmProvider::Cloud,
-                }));
-            }
+    // ── OpenCode LLM connectors ─────────────────────────────────────
+
+    if opencode_enabled {
+        if ollama_cfg.enabled {
+            connectors.push(Box::new(ollama_opencode::OllamaOpencode {
+                default_model: ollama_cfg.default_model.clone(),
+                set_default: is_default_opencode && global.default_llm == LlmProvider::Ollama,
+            }));
         }
-        AgentProvider::Hermes => {
-            connectors.push(Box::new(relay_hermes::RelayHermes));
-
-            if ollama_cfg.enabled {
-                connectors.push(Box::new(ollama_hermes::OllamaHermes {
-                    host: ollama_cfg.host.clone(),
-                    port: ollama_cfg.port,
-                    default_model: ollama_cfg.default_model.clone(),
-                    set_default: global.default_llm == LlmProvider::Ollama,
-                }));
-            }
-            if lms_cfg.enabled {
-                connectors.push(Box::new(lms_hermes::LmsHermes {
-                    host: lms_cfg.host.clone(),
-                    port: lms_cfg.port,
-                    default_model: lms_cfg.default_model.clone(),
-                    set_default: global.default_llm == LlmProvider::Lms,
-                }));
-            }
-            if unsloth_cfg.enabled {
-                connectors.push(Box::new(unsloth_hermes::UnslothHermes {
-                    host: unsloth_cfg.host.clone(),
-                    port: unsloth_cfg.port,
-                    default_model: unsloth_cfg.default_model.clone(),
-                    set_default: global.default_llm == LlmProvider::Unsloth,
-                }));
-            }
-            if use_litellm {
-                connectors.push(Box::new(litellm_hermes::LitellmHermes {
-                    host: litellm_cfg.host.clone(),
-                    port: litellm_cfg.port,
-                    set_default: global.default_llm == LlmProvider::Cloud
-                        || global.default_llm == LlmProvider::Litellm,
-                }));
-            } else if has_enabled_cloud {
-                connectors.push(Box::new(cloud_hermes::CloudHermes {
-                    set_default: global.default_llm == LlmProvider::Cloud,
-                }));
-            }
-
-            #[cfg(feature = "memvault")]
-            {
-                if memvault_cfg.enabled {
-                    connectors.push(Box::new(memvault_hermes::MemvaultHermes {
-                        port: memvault_cfg.port,
-                    }));
-                } else {
-                    connectors.push(Box::new(memvault_hermes::MemvaultHermesCleanup));
-                }
-            }
+        if lms_cfg.enabled {
+            connectors.push(Box::new(lms_opencode::LmsOpencode {
+                host: lms_cfg.host.clone(),
+                port: lms_cfg.port,
+                default_model: lms_cfg.default_model.clone(),
+                set_default: is_default_opencode && global.default_llm == LlmProvider::Lms,
+            }));
         }
-        AgentProvider::None => {
-            tracing::debug!("default_agent=none, no agent connectors");
+        if unsloth_cfg.enabled {
+            connectors.push(Box::new(unsloth_opencode::UnslothOpencode {
+                host: unsloth_cfg.host.clone(),
+                port: unsloth_cfg.port,
+                default_model: unsloth_cfg.default_model.clone(),
+                set_default: is_default_opencode && global.default_llm == LlmProvider::Unsloth,
+            }));
+        }
+        if use_litellm {
+            connectors.push(Box::new(litellm_opencode::LitellmOpencode {
+                host: litellm_cfg.host.clone(),
+                port: litellm_cfg.port,
+                set_default: is_default_opencode
+                    && (global.default_llm == LlmProvider::Cloud
+                        || global.default_llm == LlmProvider::Litellm),
+            }));
+        } else if has_enabled_cloud {
+            connectors.push(Box::new(cloud_opencode::CloudOpencode {
+                set_default: is_default_opencode && global.default_llm == LlmProvider::Cloud,
+            }));
+        }
+    }
+
+    // ── Hermes LLM connectors ───────────────────────────────────────
+
+    if hermes_enabled {
+        if ollama_cfg.enabled {
+            connectors.push(Box::new(ollama_hermes::OllamaHermes {
+                host: ollama_cfg.host.clone(),
+                port: ollama_cfg.port,
+                default_model: ollama_cfg.default_model.clone(),
+                set_default: is_default_hermes && global.default_llm == LlmProvider::Ollama,
+            }));
+        }
+        if lms_cfg.enabled {
+            connectors.push(Box::new(lms_hermes::LmsHermes {
+                host: lms_cfg.host.clone(),
+                port: lms_cfg.port,
+                default_model: lms_cfg.default_model.clone(),
+                set_default: is_default_hermes && global.default_llm == LlmProvider::Lms,
+            }));
+        }
+        if unsloth_cfg.enabled {
+            connectors.push(Box::new(unsloth_hermes::UnslothHermes {
+                host: unsloth_cfg.host.clone(),
+                port: unsloth_cfg.port,
+                default_model: unsloth_cfg.default_model.clone(),
+                set_default: is_default_hermes && global.default_llm == LlmProvider::Unsloth,
+            }));
+        }
+        if use_litellm {
+            connectors.push(Box::new(litellm_hermes::LitellmHermes {
+                host: litellm_cfg.host.clone(),
+                port: litellm_cfg.port,
+                set_default: is_default_hermes
+                    && (global.default_llm == LlmProvider::Cloud
+                        || global.default_llm == LlmProvider::Litellm),
+            }));
+        } else if has_enabled_cloud {
+            connectors.push(Box::new(cloud_hermes::CloudHermes {
+                set_default: is_default_hermes && global.default_llm == LlmProvider::Cloud,
+            }));
+        }
+
+        #[cfg(feature = "memvault")]
+        {
+            if memvault_cfg.enabled {
+                connectors.push(Box::new(memvault_hermes::MemvaultHermes {
+                    port: memvault_cfg.port,
+                }));
+            } else {
+                connectors.push(Box::new(memvault_hermes::MemvaultHermesCleanup));
+            }
         }
     }
 
