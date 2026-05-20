@@ -1293,6 +1293,9 @@ pub struct HermesConfig {
     #[schemars(description = "Telegram bot integration")]
     #[serde(default)]
     pub telegram: Option<HermesTelegramConfig>,
+    #[schemars(description = "Working directory for agent terminal sessions (maps to terminal.cwd in config.yaml)")]
+    #[serde(default)]
+    pub cwd: Option<String>,
     #[schemars(
         description = "Arbitrary key-value pairs merged into ~/.hermes/config.yaml after typed fields"
     )]
@@ -1312,6 +1315,7 @@ impl Default for HermesConfig {
             enabled: false,
             gateway: None,
             telegram: None,
+            cwd: None,
             extra_config: None,
             extra_env: None,
             dashboard: None,

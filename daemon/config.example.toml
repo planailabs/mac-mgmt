@@ -69,6 +69,7 @@ port = 9396
 # Toggle with enabled = true/false. Active when global.default_agent = "hermes".
 # [hermes]
 # enabled = false
+# cwd = "/var/lib/mac-mgmt/.hermes-workspace"  # working directory for agent sessions
 # [hermes.gateway]
 # port = 8642
 # host = "127.0.0.1"

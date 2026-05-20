@@ -65,6 +65,20 @@ pub fn read_env_var(key: &str) -> Option<String> {
     None
 }
 
+/// Remove a key from ~/.hermes/.env if present.
+fn remove_env_var(key: &str) -> Result<()> {
+    let path = env_path()?;
+    let contents = std::fs::read_to_string(&path).unwrap_or_default();
+    let needle = format!("{key}=");
+    let lines: Vec<&str> = contents
+        .lines()
+        .filter(|line| !line.starts_with(&needle))
+        .collect();
+    let output = lines.join("\n") + "\n";
+    std::fs::write(&path, output).context("failed to write ~/.hermes/.env")?;
+    Ok(())
+}
+
 /// Write (or upsert) a key=value pair in ~/.hermes/.env.
 fn write_env_var(key: &str, val: &str) -> Result<()> {
     let path = env_path()?;
@@ -153,14 +167,50 @@ impl Hermes {
         if let Some(tg) = &self.config.telegram {
             if tg.enabled && !tg.bot_token.expose().is_empty() {
                 write_env_var("TELEGRAM_BOT_TOKEN", tg.bot_token.expose())?;
+                if !tg.allowed_chat_ids.is_empty() {
+                    let ids: Vec<String> =
+                        tg.allowed_chat_ids.iter().map(|id| id.to_string()).collect();
+                    write_env_var("TELEGRAM_ALLOWED_USERS", &ids.join(","))?;
+                }
             }
         }
+
+        // Set GATEWAY_ALLOW_ALL_USERS when no platform-level allowlist is configured.
+        let has_allowlist = self
+            .config
+            .telegram
+            .as_ref()
+            .is_some_and(|tg| !tg.allowed_chat_ids.is_empty());
+        if !has_allowlist {
+            write_env_var("GATEWAY_ALLOW_ALL_USERS", "true")?;
+        }
+
+        // Remove deprecated MESSAGING_CWD from .env if present
+        remove_env_var("MESSAGING_CWD")?;
 
         // Write extra_env vars
         if let Some(extra_env) = &self.config.extra_env {
             for (k, v) in extra_env {
                 write_env_var(k, v.expose())?;
             }
+        }
+
+        // Set terminal.cwd in config.yaml so hermes knows the workspace directory.
+        // Uses the configured cwd, falling back to ~/.hermes-workspace.
+        let cwd = self.config.cwd.clone().unwrap_or_else(|| {
+            hermes_home()
+                .parent()
+                .unwrap_or(Path::new("/root"))
+                .join(".hermes-workspace")
+                .to_string_lossy()
+                .into_owned()
+        });
+        let cwd_patch = serde_json::json!({
+            "terminal": { "cwd": cwd }
+        });
+        match merge_and_validate(&cfg_path, &cwd_patch) {
+            Ok(()) => {}
+            Err(e) => tracing::warn!("failed to set terminal.cwd in config.yaml: {e}"),
         }
 
         // Merge extra_config into config.yaml
@@ -306,18 +356,10 @@ impl ManagedService for Hermes {
 
     fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
         let hh = hermes_home();
-        let workspace = hh
-            .parent()
-            .unwrap_or(Path::new("/root"))
-            .join(".hermes-workspace");
 
         let mut env = std::collections::HashMap::new();
         env.insert("HERMES_MANAGED".into(), "1".into());
         env.insert("HERMES_HOME".into(), hh.to_string_lossy().into_owned());
-        env.insert(
-            "MESSAGING_CWD".into(),
-            workspace.to_string_lossy().into_owned(),
-        );
 
         // Inject API_SERVER_KEY so the HTTP API is enabled
         if let Some(key) = read_env_var("API_SERVER_KEY") {
