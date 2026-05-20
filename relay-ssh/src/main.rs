@@ -38,12 +38,29 @@ struct Config {
 }
 
 #[derive(Deserialize)]
+struct ServiceTunnel {
+    name: String,
+    tcp_port: u16,
+}
+
+#[derive(Deserialize)]
 struct TunnelInfo {
     instance_id: String,
     cluster_name: Option<String>,
     agent_name: Option<String>,
     hostname: Option<String>,
-    ssh_port: u16,
+    #[serde(default)]
+    tunnels: Vec<ServiceTunnel>,
+}
+
+impl TunnelInfo {
+    /// Find the SSH tunnel port from the service tunnels list.
+    fn ssh_port(&self) -> Option<u16> {
+        self.tunnels
+            .iter()
+            .find(|t| t.name == "ssh" || t.name == "sshd")
+            .map(|t| t.tcp_port)
+    }
 }
 
 fn config_path() -> PathBuf {
@@ -135,6 +152,10 @@ async fn main() -> Result<()> {
         }
     };
 
+    let ssh_port = tunnel
+        .ssh_port()
+        .context("no SSH tunnel found for this instance")?;
+
     let host = relay_url
         .strip_prefix("https://")
         .or_else(|| relay_url.strip_prefix("http://"))
@@ -151,11 +172,11 @@ async fn main() -> Result<()> {
         tunnel.agent_name.as_deref().unwrap_or("-"),
         &tunnel.instance_id[..12.min(tunnel.instance_id.len())],
         host,
-        tunnel.ssh_port,
+        ssh_port,
     );
 
     let mut cmd = Command::new("ssh");
-    cmd.arg("-p").arg(tunnel.ssh_port.to_string());
+    cmd.arg("-p").arg(ssh_port.to_string());
 
     if let Some(user) = &cli.user {
         cmd.arg(format!("{user}@{host}"));
@@ -186,16 +207,20 @@ async fn fetch_tunnels(relay_url: &str, token: &str) -> Result<Vec<TunnelInfo>> 
 fn print_tunnels(tunnels: &[TunnelInfo]) {
     println!(
         "{:<14} {:<24} {:<24} {:<16} {}",
-        "INSTANCE", "AGENT", "HOSTNAME", "CLUSTER", "PORT"
+        "INSTANCE", "AGENT", "HOSTNAME", "CLUSTER", "SSH PORT"
     );
     for t in tunnels {
+        let port = t
+            .ssh_port()
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".into());
         println!(
             "{:<14} {:<24} {:<24} {:<16} {}",
             &t.instance_id[..12.min(t.instance_id.len())],
             t.agent_name.as_deref().unwrap_or("-"),
             t.hostname.as_deref().unwrap_or("-"),
             t.cluster_name.as_deref().unwrap_or("-"),
-            t.ssh_port,
+            port,
         );
     }
 }
