@@ -175,16 +175,6 @@ impl Hermes {
             }
         }
 
-        // Set GATEWAY_ALLOW_ALL_USERS when no platform-level allowlist is configured.
-        let has_allowlist = self
-            .config
-            .telegram
-            .as_ref()
-            .is_some_and(|tg| !tg.allowed_chat_ids.is_empty());
-        if !has_allowlist {
-            write_env_var("GATEWAY_ALLOW_ALL_USERS", "true")?;
-        }
-
         // Remove deprecated MESSAGING_CWD from .env if present
         remove_env_var("MESSAGING_CWD")?;
 
