@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 
 use crate::managed_service::{DataPath, ManagedService, TunnelDef};
 use crate::sentry_ext;
+use crate::services::hermes::{gateway_api_port, hermes_home, read_env_var};
 pub use mac_mgmt_common::HermesDashboardConfig;
 
 pub struct HermesDashboard {
@@ -36,13 +37,10 @@ impl ManagedService for HermesDashboard {
     }
 
     fn binary_name(&self) -> &str {
-        // The dashboard is launched via the `hermes` binary (same as the gateway).
-        // Store-path drift detection uses this to check the nix profile.
         "hermes"
     }
 
     fn ensure_installed(&self) -> Result<()> {
-        // The dashboard ships inside the hermes-agent package — same binary.
         if crate::nix::is_installed("hermes-agent")? {
             tracing::info!("hermes-agent (dashboard) is already installed");
             return Ok(());
@@ -59,31 +57,43 @@ impl ManagedService for HermesDashboard {
     }
 
     fn ensure_setup(&self) -> Result<()> {
-        // The dashboard reads from ~/.hermes — ensure directory exists.
-        let home = dirs::home_dir().context("HOME not set")?;
-        let hermes_home = home.join(".hermes");
-        if !hermes_home.exists() {
-            std::fs::create_dir_all(&hermes_home)
-                .context("failed to create ~/.hermes directory")?;
+        // The dashboard reads config.yaml, .env, state.db, gateway.pid,
+        // sessions, and plugins from HERMES_HOME. It writes to logs/.
+        let hh = hermes_home();
+        for subdir in &["", "logs"] {
+            let dir = hh.join(subdir);
+            if !dir.exists() {
+                std::fs::create_dir_all(&dir)
+                    .with_context(|| format!("failed to create {}", dir.display()))?;
+            }
         }
         Ok(())
     }
 
     fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
-        let host = self.host();
-        let port = self.port();
+        let hh = hermes_home();
 
         let mut env = std::collections::HashMap::new();
+        env.insert("HERMES_HOME".into(), hh.to_string_lossy().into_owned());
         env.insert("HERMES_MANAGED".into(), "1".into());
+
+        // Tell the dashboard where the gateway API lives so it can probe
+        // /health/detailed for cross-process status (unauthenticated).
+        if read_env_var("API_SERVER_KEY").is_some() {
+            env.insert(
+                "GATEWAY_HEALTH_URL".into(),
+                format!("http://127.0.0.1:{}", gateway_api_port()),
+            );
+        }
 
         crate::managed_service::SpawnSpec {
             program: "hermes".into(),
             args: vec![
                 "dashboard".into(),
                 "--host".into(),
-                host,
+                self.host(),
                 "--port".into(),
-                port.to_string(),
+                self.port().to_string(),
                 "--no-open".into(),
             ],
             env,
@@ -91,39 +101,35 @@ impl ManagedService for HermesDashboard {
     }
 
     fn check_health(&self) -> Result<bool> {
-        let host = self.host();
-        let port = self.port();
-        let url = format!("http://{host}:{port}/");
+        // /api/status is a public endpoint (no session token required)
+        let url = format!("http://{}:{}/api/status", self.host(), self.port());
 
         let mut cmd = std::process::Command::new("curl");
-        cmd.args(["-sf", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}", &url]);
+        cmd.args(["-sf", "--max-time", "10", &url]);
 
         let output = crate::cmd::output_with_timeout(&mut cmd, crate::cmd::DEFAULT_TIMEOUT)
             .context("failed to check hermes-dashboard health")?;
 
         if !output.status.success() {
-            tracing::warn!("hermes-dashboard health check failed with status {}", output.status);
+            tracing::warn!(
+                "hermes-dashboard health check failed with status {}",
+                output.status
+            );
             return Ok(false);
         }
 
-        let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let ok = code.starts_with('2') || code.starts_with('3');
-        if !ok {
-            tracing::warn!("hermes-dashboard returned HTTP {code}");
-        }
-        Ok(ok)
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        tracing::debug!("hermes-dashboard status: {stdout}");
+        Ok(true)
     }
 
     fn repair(&self) -> Result<()> {
-        // No specific repair — the dashboard is stateless.
         tracing::info!("hermes-dashboard: no specific repair steps");
         Ok(())
     }
 
     fn check_and_upgrade(&self) -> Result<bool> {
-        // Shares the hermes-agent nix package with the gateway.
         let upgradable = crate::nix::packages_with_upgrades(&["hermes-agent"])?;
-
         if !upgradable.iter().any(|name| name == "hermes-agent") {
             return Ok(false);
         }
@@ -135,7 +141,6 @@ impl ManagedService for HermesDashboard {
             &[("service", "hermes-dashboard")],
         );
         crate::nix::profile_install("hermes-agent", true)?;
-        tracing::info!("hermes-agent upgraded (dashboard), restart pending");
         Ok(true)
     }
 
@@ -144,8 +149,6 @@ impl ManagedService for HermesDashboard {
     }
 
     fn data_paths(&self, _home: &std::path::Path) -> Vec<DataPath> {
-        // The dashboard is stateless — it reads ~/.hermes which the gateway
-        // service already backs up.
         Vec::new()
     }
 

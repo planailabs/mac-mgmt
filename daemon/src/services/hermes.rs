@@ -11,11 +11,25 @@ pub use mac_mgmt_common::HermesConfig;
 /// Validator for hermes YAML config files (syntax only, no schema command).
 pub static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| Validator::yaml("config.yaml"));
 
+/// Returns ~/.hermes
+pub fn hermes_home() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/root"))
+        .join(".hermes")
+}
+
 /// Returns the path to ~/.hermes/config.yaml
 pub fn config_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .context("HOME not set")?
         .join(".hermes/config.yaml"))
+}
+
+/// Returns the gateway API port from .env (API_SERVER_PORT) or the default 8642.
+pub fn gateway_api_port() -> u16 {
+    read_env_var("API_SERVER_PORT")
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8642)
 }
 
 /// Returns the path to ~/.hermes/.env
@@ -229,14 +243,13 @@ impl ManagedService for Hermes {
     }
 
     fn ensure_setup(&self) -> Result<()> {
-        let home = dirs::home_dir().context("HOME not set")?;
-        let hermes_home = home.join(".hermes");
-        let cfg_path = hermes_home.join("config.yaml");
+        let hh = hermes_home();
+        let cfg_path = hh.join("config.yaml");
 
         // Create ~/.hermes directory and expected subdirectories.
         // Matches the NixOS module's native-mode directory structure.
         for subdir in &["", "cron", "sessions", "logs", "memories", "plugins"] {
-            let dir = hermes_home.join(subdir);
+            let dir = hh.join(subdir);
             if !dir.exists() {
                 std::fs::create_dir_all(&dir)
                     .with_context(|| format!("failed to create {}", dir.display()))?;
@@ -245,14 +258,14 @@ impl ManagedService for Hermes {
 
         // Touch .managed marker so hermes CLI knows it's managed
         // and won't run interactive setup wizards.
-        let managed_marker = hermes_home.join(".managed");
+        let managed_marker = hh.join(".managed");
         if !managed_marker.exists() {
             std::fs::write(&managed_marker, "mac-mgmt")
                 .context("failed to write .managed marker")?;
         }
 
         // Create workspace directory for agent execution
-        let workspace = home.join(".hermes-workspace");
+        let workspace = hh.parent().unwrap_or(Path::new("/root")).join(".hermes-workspace");
         if !workspace.exists() {
             std::fs::create_dir_all(&workspace)
                 .context("failed to create workspace directory")?;
@@ -276,7 +289,7 @@ impl ManagedService for Hermes {
         }
 
         // Ensure .env exists
-        let env = hermes_home.join(".env");
+        let env = hh.join(".env");
         if !env.exists() {
             std::fs::write(&env, "").context("failed to create ~/.hermes/.env")?;
         }
@@ -300,16 +313,15 @@ impl ManagedService for Hermes {
     }
 
     fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
-        let hermes_home = home.join(".hermes");
-        let workspace = home.join(".hermes-workspace");
+        let hh = hermes_home();
+        let workspace = hh
+            .parent()
+            .unwrap_or(Path::new("/root"))
+            .join(".hermes-workspace");
 
         let mut env = std::collections::HashMap::new();
         env.insert("HERMES_MANAGED".into(), "1".into());
-        env.insert(
-            "HERMES_HOME".into(),
-            hermes_home.to_string_lossy().into_owned(),
-        );
+        env.insert("HERMES_HOME".into(), hh.to_string_lossy().into_owned());
         env.insert(
             "MESSAGING_CWD".into(),
             workspace.to_string_lossy().into_owned(),
