@@ -256,14 +256,6 @@ impl ManagedService for Hermes {
             }
         }
 
-        // Touch .managed marker so hermes CLI knows it's managed
-        // and won't run interactive setup wizards.
-        let managed_marker = hh.join(".managed");
-        if !managed_marker.exists() {
-            std::fs::write(&managed_marker, "mac-mgmt")
-                .context("failed to write .managed marker")?;
-        }
-
         // Create workspace directory for agent execution
         let workspace = hh.parent().unwrap_or(Path::new("/root")).join(".hermes-workspace");
         if !workspace.exists() {
