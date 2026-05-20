@@ -8,6 +8,8 @@ pub mod litellm_opencode;
 pub mod lms_hermes;
 pub mod lms_openclaw;
 #[cfg(feature = "memvault")]
+pub mod memvault_hermes;
+#[cfg(feature = "memvault")]
 pub mod memvault_openclaw;
 pub mod lms_opencode;
 pub mod ollama_hermes;
@@ -365,6 +367,17 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
                 connectors.push(Box::new(cloud_hermes::CloudHermes {
                     set_default: global.default_llm == LlmProvider::Cloud,
                 }));
+            }
+
+            #[cfg(feature = "memvault")]
+            {
+                if memvault_cfg.enabled {
+                    connectors.push(Box::new(memvault_hermes::MemvaultHermes {
+                        port: memvault_cfg.port,
+                    }));
+                } else {
+                    connectors.push(Box::new(memvault_hermes::MemvaultHermesCleanup));
+                }
             }
         }
         AgentProvider::None => {

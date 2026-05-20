@@ -132,7 +132,7 @@ impl Validator {
     }
 
     /// Serialize a JSON Value back to the configured format.
-    fn serialize(&self, value: &serde_json::Value) -> Result<String, String> {
+    pub fn serialize(&self, value: &serde_json::Value) -> Result<String, String> {
         match self.format {
             ConfigFormat::Json => serde_json::to_string_pretty(value)
                 .map_err(|e| format!("JSON serialization failed: {e}")),
