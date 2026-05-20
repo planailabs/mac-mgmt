@@ -15,8 +15,9 @@ pub mod probes;
 pub mod sample;
 pub mod security;
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use tokio::sync::RwLock;
@@ -46,6 +47,9 @@ pub struct Assessor {
     config: Arc<RwLock<Option<DaemonConfig>>>,
     /// Prometheus metrics surface. Optional so tests can skip wiring.
     metrics: Arc<RwLock<Option<Arc<Metrics>>>>,
+    /// Per-probe last-run timestamps. Probes with a custom `interval()` are
+    /// skipped if less time has elapsed since their last run.
+    last_probe_runs: Arc<RwLock<HashMap<String, Instant>>>,
 }
 
 impl Assessor {
@@ -55,6 +59,7 @@ impl Assessor {
             latest_probes: Arc::new(RwLock::new(Vec::new())),
             config: Arc::new(RwLock::new(None)),
             metrics: Arc::new(RwLock::new(None)),
+            last_probe_runs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -185,10 +190,27 @@ impl Assessor {
         };
         let mut summaries: Vec<ServiceExtState> = Vec::with_capacity(probes.len());
 
+        let now = Instant::now();
+        let last_runs = self.last_probe_runs.read().await.clone();
+
         let metrics = self.metrics.read().await.clone();
         for probe in probes {
             let name = probe.name();
             let kind = probe.kind();
+
+            // Skip probes with a custom interval that hasn't elapsed yet.
+            if let Some(interval) = probe.interval() {
+                if let Some(last) = last_runs.get(name) {
+                    if now.duration_since(*last) < interval {
+                        tracing::debug!(
+                            "probe {name}: skipping, custom interval {:.0}h not elapsed",
+                            interval.as_secs_f64() / 3600.0,
+                        );
+                        continue;
+                    }
+                }
+            }
+
             let result = probe.run(&ctx).await;
             let collected_at = chrono::Utc::now().timestamp();
 
@@ -220,6 +242,14 @@ impl Assessor {
                 }
             };
             post_probe(server_url, server_token, body).await;
+
+            // Record last-run time for probes with custom intervals.
+            if probe.interval().is_some() {
+                self.last_probe_runs
+                    .write()
+                    .await
+                    .insert(name.to_string(), now);
+            }
         }
 
         *self.latest_probes.write().await = summaries;

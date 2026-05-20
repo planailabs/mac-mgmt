@@ -82,6 +82,14 @@ pub trait Probe: Send + Sync {
     fn name(&self) -> &'static str;
     fn kind(&self) -> ProbeKind;
     async fn run(&self, ctx: &ProbeCtx) -> ProbeResult;
+
+    /// Minimum interval between runs. `None` (default) means use the
+    /// standard tick cadence for this probe kind.  Probes that are more
+    /// expensive (e.g. cloud LLM round-trips) can return a longer duration
+    /// so they run less frequently than the default functional tick.
+    fn interval(&self) -> Option<Duration> {
+        None
+    }
 }
 
 /// Run a fallible probe body and fill in `duration_ms` / error fields.

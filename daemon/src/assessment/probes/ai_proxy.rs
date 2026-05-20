@@ -3,6 +3,8 @@
 //! - **Functional** (`AiProxyFunctionalProbe`): sends the canary model through
 //!   `/v1/chat/completions` using the ollama canary (`qwen3:0.6b`).
 
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use mac_mgmt_common::AiProxyConfig;
@@ -163,6 +165,10 @@ impl Probe for AiProxyFunctionalProbe {
 
     fn kind(&self) -> ProbeKind {
         ProbeKind::Functional
+    }
+
+    fn interval(&self) -> Option<Duration> {
+        Some(Duration::from_secs(24 * 60 * 60))
     }
 
     async fn run(&self, ctx: &ProbeCtx) -> ProbeResult {
