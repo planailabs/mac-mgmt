@@ -233,17 +233,29 @@ impl ManagedService for Hermes {
         let hermes_home = home.join(".hermes");
         let cfg_path = hermes_home.join("config.yaml");
 
-        // Create ~/.hermes directory if missing
-        if !hermes_home.exists() {
-            std::fs::create_dir_all(&hermes_home)
-                .context("failed to create ~/.hermes directory")?;
+        // Create ~/.hermes directory and expected subdirectories.
+        // Matches the NixOS module's native-mode directory structure.
+        for subdir in &["", "cron", "sessions", "logs", "memories", "plugins"] {
+            let dir = hermes_home.join(subdir);
+            if !dir.exists() {
+                std::fs::create_dir_all(&dir)
+                    .with_context(|| format!("failed to create {}", dir.display()))?;
+            }
         }
 
         // Touch .managed marker so hermes CLI knows it's managed
+        // and won't run interactive setup wizards.
         let managed_marker = hermes_home.join(".managed");
         if !managed_marker.exists() {
             std::fs::write(&managed_marker, "mac-mgmt")
                 .context("failed to write .managed marker")?;
+        }
+
+        // Create workspace directory for agent execution
+        let workspace = home.join(".hermes-workspace");
+        if !workspace.exists() {
+            std::fs::create_dir_all(&workspace)
+                .context("failed to create workspace directory")?;
         }
 
         if !cfg_path.exists() {
@@ -253,9 +265,12 @@ impl ManagedService for Hermes {
                 "writing default hermes config.yaml",
                 &[("service", "hermes")],
             );
-            // Write a minimal default config
-            std::fs::write(&cfg_path, "model: \"\"\ntoolsets:\n  - hermes-cli\n")
-                .context("failed to write default config.yaml")?;
+            // Write a minimal default config matching hermes DEFAULT_CONFIG
+            std::fs::write(
+                &cfg_path,
+                "model: ''\ntoolsets:\n  - hermes-cli\nagent:\n  max_turns: 90\n",
+            )
+            .context("failed to write default config.yaml")?;
         } else {
             tracing::info!("hermes config found at {}", cfg_path.display());
         }
@@ -285,8 +300,20 @@ impl ManagedService for Hermes {
     }
 
     fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
+        let hermes_home = home.join(".hermes");
+        let workspace = home.join(".hermes-workspace");
+
         let mut env = std::collections::HashMap::new();
         env.insert("HERMES_MANAGED".into(), "1".into());
+        env.insert(
+            "HERMES_HOME".into(),
+            hermes_home.to_string_lossy().into_owned(),
+        );
+        env.insert(
+            "MESSAGING_CWD".into(),
+            workspace.to_string_lossy().into_owned(),
+        );
 
         // Inject API_SERVER_KEY so the HTTP API is enabled
         if let Some(key) = read_env_var("API_SERVER_KEY") {
@@ -295,7 +322,8 @@ impl ManagedService for Hermes {
 
         crate::managed_service::SpawnSpec {
             program: "hermes".into(),
-            args: vec!["gateway".into(), "run".into()],
+            // --replace kills any existing gateway on the same port
+            args: vec!["gateway".into(), "run".into(), "--replace".into()],
             env,
         }
     }
