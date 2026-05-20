@@ -16,6 +16,17 @@ const VFS_DIR_KIND: &str = "vfs:dir";
 const VFS_CHILD_REL: &str = "vfs:child";
 const VFS_ROOT_TAG: (&str, &str) = ("vfs", "root");
 
+/// Ensure a node ID has the `entity:` prefix exactly once.
+fn ensure_entity_id(id: &str) -> String {
+    let bare = id.strip_prefix("entity:").unwrap_or(id);
+    format!("entity:{bare}")
+}
+
+/// Strip any type prefix, returning the bare hex ID.
+fn bare_hex(id: &str) -> &str {
+    id.strip_prefix("entity:").unwrap_or(id)
+}
+
 /// A single entry in a directory listing.
 #[derive(Debug, Serialize)]
 pub struct VfsEntry {
@@ -80,7 +91,7 @@ impl<'a> Vfs<'a> {
             let is_root = if let Some(tags) = e.get("tags").and_then(|v| v.as_array()) {
                 has_tag_inline(tags, VFS_ROOT_TAG.0, VFS_ROOT_TAG.1)
             } else {
-                let node_id = format!("entity:{id}");
+                let node_id = ensure_entity_id(id);
                 let tags_val = self.backend.get_tags(&node_id).await?;
                 has_tag(&tags_val, VFS_ROOT_TAG.0, VFS_ROOT_TAG.1)
             };
@@ -103,7 +114,7 @@ impl<'a> Vfs<'a> {
         if !fallback_candidates.is_empty() {
             fallback_candidates.sort();
             let id = fallback_candidates.into_iter().next().unwrap();
-            let node_id = format!("entity:{id}");
+            let node_id = ensure_entity_id(&id);
             let _ = self.backend.add_tags(&node_id, vec![
                 (VFS_ROOT_TAG.0.to_string(), VFS_ROOT_TAG.1.to_string()),
             ]).await;
@@ -115,12 +126,13 @@ impl<'a> Vfs<'a> {
             .backend
             .add_entity(VFS_DIR_KIND, serde_json::json!({ "name": "/" }), None)
             .await?;
-        let id = resp
+        let raw = resp
             .get("id")
             .and_then(|v| v.as_str())
-            .context("add_entity did not return id")?
-            .to_string();
-        let node_id = format!("entity:{id}");
+            .context("add_entity did not return id")?;
+        // Strip prefix if present (HTTP backend returns "entity:<hex>")
+        let id = bare_hex(raw).to_string();
+        let node_id = ensure_entity_id(&id);
         self.backend
             .add_tags(
                 &node_id,
@@ -145,10 +157,10 @@ impl<'a> Vfs<'a> {
         let components = Self::split_path(path)?;
         if components.is_empty() {
             let root = self.ensure_root().await?;
-            return Ok(Some((format!("entity:{root}"), String::new())));
+            return Ok(Some((ensure_entity_id(&root), String::new())));
         }
         let root = self.ensure_root().await?;
-        let mut current = format!("entity:{root}");
+        let mut current = ensure_entity_id(&root);
         let mut last_edge_id = String::new();
         for component in &components {
             match self.find_child(&current, component).await? {
@@ -211,20 +223,20 @@ impl<'a> Vfs<'a> {
             return self.ensure_root().await;
         }
         let root = self.ensure_root().await?;
-        let mut current = format!("entity:{root}");
+        let mut current = ensure_entity_id(&root);
         for component in &components {
             match self.find_child(&current, component).await? {
                 Some((child, _)) => current = child,
                 None => {
                     let new_dir = self.create_dir(component).await?;
-                    let new_node = format!("entity:{new_dir}");
+                    let new_node = ensure_entity_id(&new_dir);
                     self.create_child_edge(&current, &new_node, component)
                         .await?;
                     current = new_node;
                 }
             }
         }
-        Ok(strip_prefix(&current))
+        Ok(bare_hex(&current).to_string())
     }
 
     async fn create_dir(&self, name: &str) -> Result<String> {
@@ -236,8 +248,8 @@ impl<'a> Vfs<'a> {
             .get("id")
             .and_then(|v| v.as_str())
             .context("add_entity did not return id")?;
-        // Strip prefix if present (HTTP backend may include it)
-        Ok(raw.strip_prefix("entity:").unwrap_or(raw).to_string())
+        // Strip prefix if present (HTTP backend returns "entity:<hex>")
+        Ok(bare_hex(raw).to_string())
     }
 
     async fn create_child_edge(
@@ -274,13 +286,13 @@ impl<'a> Vfs<'a> {
         let file_name = file_name[0];
 
         let root = self.ensure_root().await?;
-        let mut current = format!("entity:{root}");
+        let mut current = ensure_entity_id(&root);
         for component in parent_components {
             match self.find_child(&current, component).await? {
                 Some((child, _)) => current = child,
                 None => {
                     let new_dir = self.create_dir(component).await?;
-                    let new_node = format!("entity:{new_dir}");
+                    let new_node = ensure_entity_id(&new_dir);
                     self.create_child_edge(&current, &new_node, component)
                         .await?;
                     current = new_node;
@@ -301,7 +313,7 @@ impl<'a> Vfs<'a> {
         let file_name = file_name[0];
 
         let root = self.ensure_root().await?;
-        let mut current = format!("entity:{root}");
+        let mut current = ensure_entity_id(&root);
         for component in parent_components {
             match self.find_child(&current, component).await? {
                 Some((child, _)) => current = child,
@@ -394,7 +406,7 @@ impl<'a> Vfs<'a> {
     async fn resolve_node_type(&self, node_id: &str) -> &'static str {
         match node_type_prefix(node_id) {
             "entity" => {
-                let hex_id = node_id.strip_prefix("entity:").unwrap_or(node_id);
+                let hex_id = bare_hex(node_id);
                 if let Ok(Some(entity)) = self.backend.get_entity(hex_id).await {
                     if entity.get("kind").and_then(|v| v.as_str()) == Some(VFS_DIR_KIND) {
                         return "dir";
@@ -458,7 +470,7 @@ impl<'a> Vfs<'a> {
     /// Find all VFS paths that lead to a given node.
     pub async fn find_paths(&self, target_node: &str) -> Result<Vec<String>> {
         let root = self.ensure_root().await?;
-        let root_id = format!("entity:{root}");
+        let root_id = ensure_entity_id(&root);
         let mut paths = Vec::new();
         self.find_paths_recurse(&root_id, target_node, "", &mut paths, 20)
             .await?;
@@ -548,9 +560,3 @@ fn has_tag_inline(tags: &[serde_json::Value], scope: &str, label: &str) -> bool 
     false
 }
 
-fn strip_prefix(node_id: &str) -> String {
-    node_id
-        .split_once(':')
-        .map(|(_, id)| id.to_string())
-        .unwrap_or_else(|| node_id.to_string())
-}
