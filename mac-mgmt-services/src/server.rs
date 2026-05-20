@@ -271,12 +271,16 @@ struct SupervisorState {
 
 struct Entry {
     spec: SpawnSpec,
-    supervisor: JoinHandle<()>,
-    stop_tx: mpsc::Sender<()>,
+    /// `None` when the service is stopped-but-registered.
+    supervisor: Option<JoinHandle<()>>,
+    /// `None` when the service is stopped-but-registered.
+    stop_tx: Option<mpsc::Sender<()>>,
     /// Live PID of the currently running child (0 when none).
     pid: Arc<AtomicU32>,
     /// Canonical path of `spec.program` resolved at spawn time.
     resolved_program: Option<String>,
+    /// True when the service was explicitly stopped (not crashed).
+    stopped: bool,
 }
 
 impl SupervisorState {
@@ -301,6 +305,10 @@ impl SupervisorState {
                 self.unregister(&name).await;
                 Response::Ok
             }
+            Request::Stop { name } => self.stop_svc(&name).await,
+            Request::Start { name } => self.start_svc(&name, notif_tx.clone()).await,
+            Request::Restart { name } => self.restart_svc(&name, notif_tx.clone()).await,
+            Request::Kill { name, signal } => self.kill_svc(&name, signal).await,
             Request::List => {
                 let map = self.services.lock().await;
                 let statuses: Vec<ServiceStatus> = map
@@ -315,6 +323,7 @@ impl SupervisorState {
                             exe,
                             resolved_program: entry.resolved_program.clone(),
                             spec: Some(entry.spec.clone()),
+                            stopped: entry.stopped,
                         }
                     })
                     .collect();
@@ -332,13 +341,19 @@ impl SupervisorState {
         spec: SpawnSpec,
         notif_tx: broadcast::Sender<Notification>,
     ) {
-        // Stop any existing entry whose spec doesn't match.
+        // Check for an existing entry.
         let existing = {
             let map = self.services.lock().await;
-            map.get(&name).map(|e| e.spec.clone())
+            map.get(&name).map(|e| (e.spec.clone(), e.stopped))
         };
-        if let Some(old) = existing {
-            if old == spec {
+        if let Some((old_spec, was_stopped)) = existing {
+            if old_spec == spec {
+                if was_stopped {
+                    // Same spec but stopped — just start it.
+                    tracing::info!("supervisor: {name} stopped with matching spec, starting");
+                    self.start_svc(&name, notif_tx).await;
+                    return;
+                }
                 tracing::debug!("supervisor: {name} already registered with matching spec");
                 return;
             }
@@ -360,10 +375,11 @@ impl SupervisorState {
             name,
             Entry {
                 spec,
-                supervisor: task,
-                stop_tx,
+                supervisor: Some(task),
+                stop_tx: Some(stop_tx),
                 pid,
                 resolved_program,
+                stopped: false,
             },
         );
     }
@@ -397,10 +413,11 @@ impl SupervisorState {
             name,
             Entry {
                 spec,
-                supervisor: task,
-                stop_tx,
+                supervisor: Some(task),
+                stop_tx: Some(stop_tx),
                 pid: pid_arc,
                 resolved_program,
+                stopped: false,
             },
         );
     }
@@ -409,8 +426,122 @@ impl SupervisorState {
         let existing = self.services.lock().await.remove(name);
         if let Some(entry) = existing {
             tracing::info!("supervisor: unregistering {name}");
-            let _ = entry.stop_tx.send(()).await;
-            let _ = entry.supervisor.await;
+            if let Some(stop_tx) = entry.stop_tx {
+                let _ = stop_tx.send(()).await;
+            }
+            if let Some(supervisor) = entry.supervisor {
+                let _ = supervisor.await;
+            }
+        }
+    }
+
+    /// Stop a service but keep it registered so it can be started again.
+    async fn stop_svc(self: &Arc<Self>, name: &str) -> Response {
+        let mut map = self.services.lock().await;
+        let Some(entry) = map.get_mut(name) else {
+            return Response::Error {
+                message: format!("unknown service '{name}'"),
+            };
+        };
+        if entry.stopped {
+            return Response::Ok; // already stopped
+        }
+        if let Some(stop_tx) = entry.stop_tx.take() {
+            let _ = stop_tx.send(()).await;
+        }
+        if let Some(supervisor) = entry.supervisor.take() {
+            // Drop the lock before awaiting the task to avoid deadlock.
+            drop(map);
+            let _ = supervisor.await;
+            let mut map = self.services.lock().await;
+            if let Some(entry) = map.get_mut(name) {
+                entry.stopped = true;
+            }
+        } else {
+            entry.stopped = true;
+        }
+        Response::Ok
+    }
+
+    /// Start a previously stopped service using its stored spec.
+    async fn start_svc(
+        self: &Arc<Self>,
+        name: &str,
+        notif_tx: broadcast::Sender<Notification>,
+    ) -> Response {
+        let mut map = self.services.lock().await;
+        let Some(entry) = map.get_mut(name) else {
+            return Response::Error {
+                message: format!("unknown service '{name}'"),
+            };
+        };
+        if !entry.stopped {
+            return Response::Ok; // already running
+        }
+
+        tracing::info!("supervisor: starting stopped service {name}");
+        let resolved_program = resolve_program(&entry.spec.program);
+        let (stop_tx, stop_rx) = mpsc::channel(1);
+        let pid = Arc::new(AtomicU32::new(0));
+        let task = tokio::spawn(run_service(
+            name.to_string(),
+            entry.spec.clone(),
+            notif_tx,
+            stop_rx,
+            pid.clone(),
+            self.socket_path.clone(),
+        ));
+        entry.supervisor = Some(task);
+        entry.stop_tx = Some(stop_tx);
+        entry.pid = pid;
+        entry.resolved_program = resolved_program;
+        entry.stopped = false;
+        Response::Ok
+    }
+
+    /// Stop then immediately re-start a named service.
+    async fn restart_svc(
+        self: &Arc<Self>,
+        name: &str,
+        notif_tx: broadcast::Sender<Notification>,
+    ) -> Response {
+        {
+            let map = self.services.lock().await;
+            if !map.contains_key(name) {
+                return Response::Error {
+                    message: format!("unknown service '{name}'"),
+                };
+            }
+        }
+        let resp = self.stop_svc(name).await;
+        if !matches!(resp, Response::Ok) {
+            return resp;
+        }
+        self.start_svc(name, notif_tx).await
+    }
+
+    /// Send a signal to the service's main process.
+    async fn kill_svc(self: &Arc<Self>, name: &str, signal: i32) -> Response {
+        let map = self.services.lock().await;
+        let Some(entry) = map.get(name) else {
+            return Response::Error {
+                message: format!("unknown service '{name}'"),
+            };
+        };
+        let pid = entry.pid.load(Ordering::Relaxed);
+        if pid == 0 {
+            return Response::Error {
+                message: format!("service '{name}' has no running process"),
+            };
+        }
+        let ret = unsafe { libc::kill(pid as i32, signal) };
+        if ret == 0 {
+            Response::Ok
+        } else {
+            let err = std::io::Error::last_os_error();
+            Response::Error {
+                message: format!("kill({pid}, {signal}): {err}"),
+            }
         }
     }
 
@@ -463,7 +594,9 @@ impl SupervisorState {
         let mut map = self.services.lock().await;
         // Abort tasks first so they can't react to the stop_tx being dropped.
         for entry in map.values() {
-            entry.supervisor.abort();
+            if let Some(ref supervisor) = entry.supervisor {
+                supervisor.abort();
+            }
         }
         map.clear();
     }
@@ -472,8 +605,12 @@ impl SupervisorState {
         let drained: Vec<(String, Entry)> = self.services.lock().await.drain().collect();
         for (name, entry) in drained {
             tracing::info!("supervisor: stopping {name}");
-            let _ = entry.stop_tx.send(()).await;
-            let _ = entry.supervisor.await;
+            if let Some(stop_tx) = entry.stop_tx {
+                let _ = stop_tx.send(()).await;
+            }
+            if let Some(supervisor) = entry.supervisor {
+                let _ = supervisor.await;
+            }
         }
     }
 }
@@ -755,6 +892,19 @@ fn resolve_program(program: &str) -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Start the supervisor on a temporary socket, returning the socket path.
+/// Used by tests to exercise the full supervisor ↔ client round-trip.
+#[cfg(test)]
+async fn start_test_supervisor() -> (std::path::PathBuf, tokio::task::JoinHandle<bool>) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sock = dir.keep().join("test.sock");
+    let sock2 = sock.clone();
+    let handle = tokio::spawn(async move { run(&sock2).await.unwrap() });
+    // Wait briefly for the listener to bind.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    (sock, handle)
+}
+
 /// Strip common ANSI escape sequences without pulling in an extra dep.
 fn strip_ansi(input: &str) -> String {
     let bytes = input.as_bytes();
@@ -797,4 +947,177 @@ fn strip_ansi(input: &str) -> String {
         }
     }
     String::from_utf8(out).unwrap_or_else(|_| input.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Client;
+
+    async fn setup() -> (std::path::PathBuf, tokio::task::JoinHandle<bool>) {
+        start_test_supervisor().await
+    }
+
+    async fn client(sock: &Path) -> Client {
+        Client::connect(sock, Duration::from_secs(5)).await.unwrap()
+    }
+
+    fn sleep_spec() -> SpawnSpec {
+        SpawnSpec {
+            program: "sleep".into(),
+            args: vec!["3600".into()],
+            env: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_and_list() {
+        let (sock, _sup) = setup().await;
+        let mut c = client(&sock).await;
+
+        c.register("test-svc", sleep_spec()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let list = c.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "test-svc");
+        assert!(list[0].pid.is_some(), "should have a PID");
+        assert!(!list[0].stopped);
+
+        c.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_stop_keeps_registration() {
+        let (sock, _sup) = setup().await;
+        let mut c = client(&sock).await;
+
+        c.register("test-svc", sleep_spec()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        c.stop_service("test-svc").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let list = c.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "test-svc");
+        assert!(list[0].stopped, "should be stopped");
+        assert!(list[0].pid.is_none() || list[0].pid == Some(0));
+
+        c.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_start_stopped_service() {
+        let (sock, _sup) = setup().await;
+        let mut c = client(&sock).await;
+
+        c.register("test-svc", sleep_spec()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        c.stop_service("test-svc").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        c.start_service("test-svc").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let list = c.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(!list[0].stopped, "should not be stopped");
+        assert!(list[0].pid.is_some() && list[0].pid != Some(0), "should have a PID");
+
+        c.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_restart_service() {
+        let (sock, _sup) = setup().await;
+        let mut c = client(&sock).await;
+
+        c.register("test-svc", sleep_spec()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let list1 = c.list().await.unwrap();
+        let pid1 = list1[0].pid;
+
+        c.restart_service("test-svc").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let list2 = c.list().await.unwrap();
+        assert_eq!(list2.len(), 1);
+        assert!(!list2[0].stopped);
+        assert!(list2[0].pid.is_some() && list2[0].pid != Some(0));
+        // PID should have changed after restart.
+        assert_ne!(list2[0].pid, pid1, "PID should change after restart");
+
+        c.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_kill_service() {
+        let (sock, _sup) = setup().await;
+        let mut c = client(&sock).await;
+
+        c.register("test-svc", sleep_spec()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // SIGTERM — supervisor will respawn.
+        c.kill_service("test-svc", libc::SIGTERM).await.unwrap();
+        // Give supervisor time to detect exit and respawn.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        let list = c.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].pid.is_some() && list[0].pid != Some(0), "should be respawned");
+
+        c.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_stop_unknown_service() {
+        let (sock, _sup) = setup().await;
+        let mut c = client(&sock).await;
+
+        let result = c.stop_service("nonexistent").await;
+        assert!(result.is_err());
+
+        c.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_start_already_running() {
+        let (sock, _sup) = setup().await;
+        let mut c = client(&sock).await;
+
+        c.register("test-svc", sleep_spec()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Starting an already running service should be a no-op.
+        c.start_service("test-svc").await.unwrap();
+
+        let list = c.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(!list[0].stopped);
+
+        c.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_unregister_stopped_service() {
+        let (sock, _sup) = setup().await;
+        let mut c = client(&sock).await;
+
+        c.register("test-svc", sleep_spec()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        c.stop_service("test-svc").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        c.unregister("test-svc").await.unwrap();
+
+        let list = c.list().await.unwrap();
+        assert!(list.is_empty());
+
+        c.shutdown().await.ok();
+    }
 }

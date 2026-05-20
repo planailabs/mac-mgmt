@@ -23,6 +23,20 @@ pub enum Request {
     Unregister { name: String },
     /// Return the list of currently registered service names.
     List,
+    /// Stop a named service but keep its spec registered (can be
+    /// re-started later without re-supplying the spec).
+    // compat: added 2026-05-20, old supervisors will ignore (unknown type)
+    Stop { name: String },
+    /// Start a previously stopped-but-registered service using its
+    /// stored spec.
+    // compat: added 2026-05-20, old supervisors will ignore (unknown type)
+    Start { name: String },
+    /// Stop then immediately re-start a named service.
+    // compat: added 2026-05-20, old supervisors will ignore (unknown type)
+    Restart { name: String },
+    /// Send a signal to the service's main process.
+    // compat: added 2026-05-20, old supervisors will ignore (unknown type)
+    Kill { name: String, signal: i32 },
     /// Kill all children and exit the supervisor.
     Shutdown,
     /// Re-exec the supervisor binary (used when the mac-mgmt binary was
@@ -53,6 +67,11 @@ pub struct ServiceStatus {
     // compat: added 2026-04-24, readers tolerate absence via serde(default)
     #[serde(default)]
     pub spec: Option<SpawnSpec>,
+    /// Whether the service is stopped-but-registered (not running, but spec
+    /// is retained so it can be started again without re-registering).
+    // compat: added 2026-05-20, readers tolerate absence via serde(default)
+    #[serde(default)]
+    pub stopped: bool,
 }
 
 /// Supervisor → daemon reply.

@@ -150,6 +150,7 @@ impl Client {
                             exe: None,
                             resolved_program: None,
                             spec: None,
+                            stopped: false,
                         })
                         .collect())
                 }
@@ -172,6 +173,59 @@ impl Client {
             Response::Ok => Ok(()),
             Response::Error { message } => anyhow::bail!("shutdown: {message}"),
             other => anyhow::bail!("shutdown: unexpected response {other:?}"),
+        }
+    }
+
+    pub async fn stop_service(&mut self, name: &str) -> Result<()> {
+        match self
+            .send(Request::Stop {
+                name: name.to_string(),
+            })
+            .await?
+        {
+            Response::Ok => Ok(()),
+            Response::Error { message } => anyhow::bail!("stop {name}: {message}"),
+            other => anyhow::bail!("stop {name}: unexpected response {other:?}"),
+        }
+    }
+
+    pub async fn start_service(&mut self, name: &str) -> Result<()> {
+        match self
+            .send(Request::Start {
+                name: name.to_string(),
+            })
+            .await?
+        {
+            Response::Ok => Ok(()),
+            Response::Error { message } => anyhow::bail!("start {name}: {message}"),
+            other => anyhow::bail!("start {name}: unexpected response {other:?}"),
+        }
+    }
+
+    pub async fn restart_service(&mut self, name: &str) -> Result<()> {
+        match self
+            .send(Request::Restart {
+                name: name.to_string(),
+            })
+            .await?
+        {
+            Response::Ok => Ok(()),
+            Response::Error { message } => anyhow::bail!("restart {name}: {message}"),
+            other => anyhow::bail!("restart {name}: unexpected response {other:?}"),
+        }
+    }
+
+    pub async fn kill_service(&mut self, name: &str, signal: i32) -> Result<()> {
+        match self
+            .send(Request::Kill {
+                name: name.to_string(),
+                signal,
+            })
+            .await?
+        {
+            Response::Ok => Ok(()),
+            Response::Error { message } => anyhow::bail!("kill {name}: {message}"),
+            other => anyhow::bail!("kill {name}: unexpected response {other:?}"),
         }
     }
 

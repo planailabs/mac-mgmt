@@ -122,6 +122,12 @@ enum Commands {
     McpMemvault(plan_ai_memvault::Cli),
     /// Memvault management CLI (memctl)
     Memctl(memvault_api::memctl::Cli),
+    /// systemctl compatibility shim for managed services
+    Systemctl {
+        /// systemctl arguments (e.g. "start ollama.service")
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -150,6 +156,21 @@ fn write_ssh_fifo(command: &str) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to write to {}: {e}", path.display()))?;
     println!("remote SSH {command}d");
     Ok(())
+}
+
+/// Lightweight entry point for argv0=systemctl mode. Skips sentry, ring,
+/// and full CLI parsing for fast passthrough.
+#[tokio::main]
+pub async fn systemctl_main() -> ! {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let code = match mac_mgmt_daemon::systemctl::run(args, true).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            1
+        }
+    };
+    std::process::exit(code);
 }
 
 #[tokio::main]
@@ -515,6 +536,10 @@ async fn run(
         }
         Commands::Memctl(cli) => {
             memvault_api::memctl::run(cli).await?;
+        }
+        Commands::Systemctl { args } => {
+            let code = mac_mgmt_daemon::systemctl::run(args, false).await?;
+            std::process::exit(code);
         }
     }
 

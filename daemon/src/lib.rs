@@ -58,6 +58,7 @@ pub mod services;
 pub mod shell_tunnels;
 pub mod skills;
 pub mod status;
+pub mod systemctl;
 pub mod validator;
 #[cfg(feature = "services")]
 pub mod unmanaged;
