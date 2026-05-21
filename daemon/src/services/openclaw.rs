@@ -443,6 +443,36 @@ impl ManagedService for OpenClaw {
         }]
     }
 
+    fn tunnel_overrides(
+        &self,
+    ) -> std::collections::HashMap<String, Vec<crate::p2p::proxy_helpers::TunnelOverride>> {
+        use crate::p2p::proxy_helpers::{OverrideResponse, TunnelOverride};
+        use std::sync::Arc;
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "openclaw".to_string(),
+            vec![TunnelOverride {
+                path: regex::Regex::new(r"^/$").unwrap(),
+                override_fn: Arc::new(|_path, _headers| {
+                    let cfg_path = config_path().ok()?;
+                    let contents = std::fs::read_to_string(&cfg_path).ok()?;
+                    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+                    let auth = json.pointer("/gateway/auth").and_then(|v| v.as_str())?;
+                    if auth.eq_ignore_ascii_case("token") {
+                        let token = json
+                            .pointer("/gateway/auth/token")
+                            .and_then(|v| v.as_str())?;
+                        Some(OverrideResponse::redirect(&format!("/chat?token={token}")))
+                    } else {
+                        None
+                    }
+                }),
+            }],
+        );
+        map
+    }
+
     fn expose_shell_commands(&self) -> Vec<crate::managed_service::ShellCommandDef> {
         use crate::managed_service::ShellCommandDef;
         vec![

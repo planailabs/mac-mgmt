@@ -287,6 +287,17 @@ pub trait ManagedService: Send + Sync {
         Vec::new()
     }
 
+    /// Return overrides for this service's tunnels. Keyed by tunnel name
+    /// (must match a name from `expose_tunnels()`). When a request path
+    /// matches an override's regex, the override function is called; if it
+    /// returns `Some(path)` the daemon sends a 302 redirect instead of
+    /// proxying.
+    fn tunnel_overrides(
+        &self,
+    ) -> std::collections::HashMap<String, Vec<crate::p2p::proxy_helpers::TunnelOverride>> {
+        std::collections::HashMap::new()
+    }
+
     /// Return the files/directories this service exposes for remote editing
     /// through the relay. Override to advertise config files.
     fn expose_files(&self) -> Vec<FileTunnelDef> {

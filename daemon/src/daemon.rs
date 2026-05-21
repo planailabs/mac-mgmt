@@ -812,10 +812,13 @@ impl Daemon {
     fn update_relay_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::RemoteSshState) {
         if !self.current_cfg.relay.tunnels_enabled {
             relay_mgr.update_tunnel_defs(vec![]);
+            relay_mgr.update_tunnel_overrides(std::collections::HashMap::new());
             return;
         }
         let td = self.svc_mgr.collect_tunnels();
         relay_mgr.update_tunnel_defs(td);
+        let overrides = self.svc_mgr.collect_tunnel_overrides();
+        relay_mgr.update_tunnel_overrides(overrides);
     }
 
     #[cfg(all(feature = "services", feature = "relay"))]
@@ -1198,6 +1201,7 @@ pub async fn run(
         let handler_state = std::sync::Arc::new(crate::p2p::handler::HandlerState {
             ssh_allowed: relay_mgr.ssh_allowed.clone(),
             tunnel_defs: relay_mgr.tunnel_defs.clone(),
+            tunnel_overrides: relay_mgr.tunnel_overrides.clone(),
             file_tunnel_registry: relay_mgr.file_tunnel_registry(),
             shell_tunnel_registry: relay_mgr.shell_tunnel_registry(),
             metrics_port,

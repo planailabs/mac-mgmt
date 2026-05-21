@@ -2,11 +2,47 @@
 //!
 //! Extracted from relay_client.rs for reuse across WS and libp2p transports.
 
+use std::sync::Arc;
+
 /// A tunnel definition mapping a name to a local host:port.
 #[derive(Debug, Clone)]
 pub struct TunnelTarget {
     pub host: String,
     pub port: u16,
+}
+
+/// A synthetic HTTP response returned by a tunnel override.
+#[derive(Debug, Clone)]
+pub struct OverrideResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl OverrideResponse {
+    /// Convenience: build a 302 redirect.
+    pub fn redirect(location: &str) -> Self {
+        Self {
+            status: 302,
+            headers: vec![("location".into(), location.into())],
+            body: Vec::new(),
+        }
+    }
+}
+
+/// A closure that inspects the request path and headers, optionally returning
+/// a synthetic response. `Some(response)` short-circuits proxying; `None`
+/// passes through to the normal proxy.
+pub type OverrideFn = Arc<dyn Fn(&str, &[(String, String)]) -> Option<OverrideResponse> + Send + Sync>;
+
+/// An override that can intercept requests before proxying.
+pub struct TunnelOverride {
+    /// Regex pattern to match the request path against.
+    pub path: regex::Regex,
+    /// Called with the full request path when `path` matches. Returns
+    /// `Some(OverrideResponse)` to short-circuit, or `None` to pass
+    /// through to the normal proxy.
+    pub override_fn: OverrideFn,
 }
 
 /// Headers stripped when `fake_origin_local` is true to prevent

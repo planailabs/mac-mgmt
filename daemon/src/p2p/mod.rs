@@ -922,6 +922,34 @@ async fn handle_streamed_proxy(
     };
     drop(tunnel_defs);
 
+    // Check tunnel overrides before proxying.
+    {
+        let overrides = handler_state.tunnel_overrides.read().await;
+        if let Some(ovrs) = overrides.get(tunnel_name) {
+            for ovr in ovrs {
+                if ovr.path.is_match(path) {
+                    if let Some(resp) = (ovr.override_fn)(path, &headers) {
+                        let resp_headers: Vec<[&str; 2]> = resp
+                            .headers
+                            .iter()
+                            .map(|(k, v)| [k.as_str(), v.as_str()])
+                            .collect();
+                        let header = serde_json::json!({
+                            "status": resp.status,
+                            "headers": resp_headers,
+                        });
+                        let _ = stream_framing::write_json(stream, &header).await;
+                        if !resp.body.is_empty() {
+                            let _ = stream_framing::write_binary(stream, &resp.body).await;
+                        }
+                        let _ = stream_framing::write_end(stream).await;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     let req = proxy_helpers::build_proxy_request(
         &handler_state.client,
         &target,

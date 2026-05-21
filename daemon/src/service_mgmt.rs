@@ -1226,6 +1226,18 @@ impl ServiceManager {
             .collect()
     }
 
+    pub fn collect_tunnel_overrides(
+        &self,
+    ) -> std::collections::HashMap<String, Vec<crate::p2p::proxy_helpers::TunnelOverride>> {
+        let mut all = std::collections::HashMap::new();
+        for s in &self.services {
+            for (name, overrides) in s.service.tunnel_overrides() {
+                all.entry(name).or_insert_with(Vec::new).extend(overrides);
+            }
+        }
+        all
+    }
+
     pub fn collect_shell_tunnels(&self) -> Vec<ShellTunnel> {
         let mut shell_tunnels: Vec<ShellTunnel> = self
             .services

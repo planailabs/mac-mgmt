@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicBool;
 
 use tokio::sync::RwLock;
 
-use super::proxy_helpers::TunnelTarget;
+use super::proxy_helpers::{TunnelOverride, TunnelTarget};
 use crate::file_tunnels::FileTunnelRegistry;
 use crate::shell_tunnels::ShellTunnelRegistry;
 
@@ -14,6 +14,7 @@ use crate::shell_tunnels::ShellTunnelRegistry;
 pub struct HandlerState {
     pub ssh_allowed: Arc<AtomicBool>,
     pub tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
+    pub tunnel_overrides: Arc<RwLock<HashMap<String, Vec<TunnelOverride>>>>,
     pub file_tunnel_registry: Arc<RwLock<FileTunnelRegistry>>,
     pub shell_tunnel_registry: Arc<RwLock<ShellTunnelRegistry>>,
     pub metrics_port: u16,

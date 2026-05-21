@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use crate::file_tunnels::FileTunnelRegistry;
 use crate::shell_tunnels::ShellTunnelRegistry;
 
-pub use crate::p2p::proxy_helpers::TunnelTarget;
+pub use crate::p2p::proxy_helpers::{TunnelOverride, TunnelTarget};
 
 // Re-export for backwards compatibility with daemon.rs references.
 pub type TunnelTargetCompat = TunnelTarget;
@@ -36,6 +36,7 @@ pub struct RemoteSshState {
     server_url: Option<String>,
     server_token: Option<String>,
     pub tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
+    pub tunnel_overrides: Arc<RwLock<HashMap<String, Vec<TunnelOverride>>>>,
     pub file_tunnel_registry: Arc<RwLock<FileTunnelRegistry>>,
     pub shell_tunnel_registry: Arc<RwLock<ShellTunnelRegistry>>,
     heartbeat_tx: tokio::sync::mpsc::Sender<()>,
@@ -50,6 +51,7 @@ impl RemoteSshState {
         let ssh_allowed = Arc::new(AtomicBool::new(remote_ssh_enabled));
         let server_ssh_keys = Arc::new(RwLock::new(Vec::new()));
         let tunnel_defs = Arc::new(RwLock::new(HashMap::new()));
+        let tunnel_overrides = Arc::new(RwLock::new(HashMap::new()));
         let (heartbeat_tx, heartbeat_rx) = tokio::sync::mpsc::channel(4);
         let file_tunnel_registry = Arc::new(RwLock::new(FileTunnelRegistry::new()));
         let shell_tunnel_registry = Arc::new(RwLock::new(ShellTunnelRegistry::new()));
@@ -72,6 +74,7 @@ impl RemoteSshState {
                 server_url,
                 server_token,
                 tunnel_defs,
+                tunnel_overrides,
                 file_tunnel_registry,
                 shell_tunnel_registry,
                 heartbeat_tx,
@@ -135,6 +138,19 @@ impl RemoteSshState {
         if self.heartbeat_tx.try_send(()).is_err() {
             tracing::debug!("heartbeat signal channel full, heartbeat will fire on next tick");
         }
+    }
+
+    /// Update the tunnel override map. Non-blocking.
+    #[cfg(feature = "services")]
+    pub fn update_tunnel_overrides(
+        &self,
+        overrides: std::collections::HashMap<String, Vec<TunnelOverride>>,
+    ) {
+        let Ok(mut map) = self.tunnel_overrides.try_write() else {
+            tracing::warn!("tunnel_overrides lock contention, skipping update");
+            return;
+        };
+        *map = overrides;
     }
 
     /// Update the file tunnel registry. Non-blocking.
