@@ -319,6 +319,10 @@ async fn sync_loop(
     token_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     token_refresh.tick().await; // consume the first immediate tick
 
+    // Prime the token refresh timer from the initial route data.
+    let tl = reload_all(&client, server_url, &routes, &cert_store).await;
+    schedule_refresh(&mut token_refresh, tl);
+
     loop {
         tracing::info!("connecting to SSE event stream");
 
@@ -363,6 +367,7 @@ async fn sync_loop(
         tracing::info!("SSE disconnected, reconnecting in 5s");
         tokio::time::sleep(Duration::from_secs(5)).await;
 
+        // Reload before reconnecting so we have fresh data even if SSE takes a while.
         let tl = reload_all(&client, server_url, &routes, &cert_store).await;
         schedule_refresh(&mut token_refresh, tl);
     }
