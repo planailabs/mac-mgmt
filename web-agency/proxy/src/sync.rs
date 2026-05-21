@@ -59,10 +59,12 @@ fn build_client(token: &str) -> reqwest::Client {
         .expect("failed to build HTTP client")
 }
 
-/// Separate client for SSE — no response timeout (the connection is long-lived).
+/// Separate client for SSE — no response timeout (the connection is long-lived),
+/// but a connect timeout prevents hanging if the server is unreachable.
 fn build_sse_client(token: &str) -> reqwest::Client {
     reqwest::Client::builder()
         .default_headers(auth_headers(token))
+        .connect_timeout(Duration::from_secs(10))
         .build()
         .expect("failed to build SSE client")
 }
@@ -300,6 +302,12 @@ impl pingora::services::background::BackgroundService for SyncTask {
         }
 
         loop {
+            // Check shutdown before starting any work in this iteration.
+            if *shutdown.borrow() {
+                tracing::info!("shutting down sync task");
+                return;
+            }
+
             tracing::info!("connecting to SSE event stream");
 
             let connect = sse_client
@@ -307,11 +315,12 @@ impl pingora::services::background::BackgroundService for SyncTask {
                 .send();
 
             let resp = tokio::select! {
-                result = connect => result,
+                biased;
                 _ = shutdown.changed() => {
                     tracing::info!("shutting down sync task");
                     return;
                 }
+                result = connect => result,
             };
 
             match resp {
@@ -322,17 +331,37 @@ impl pingora::services::background::BackgroundService for SyncTask {
                     let mut stream = resp.bytes_stream().eventsource();
                     loop {
                         tokio::select! {
+                            biased;
+                            _ = shutdown.changed() => {
+                                tracing::info!("shutting down sync task");
+                                return;
+                            }
+                            // Token refresh timer fired — re-fetch routes for fresh tokens
+                            _ = token_refresh.tick() => {
+                                tracing::info!("token refresh timer fired, reloading routes");
+                                tokio::select! {
+                                    biased;
+                                    _ = shutdown.changed() => {
+                                        tracing::info!("shutting down sync task");
+                                        return;
+                                    }
+                                    tl = reload_all(&client, server_url, &self.routes, &self.cert_store) => {
+                                        schedule_refresh(&mut token_refresh, tl);
+                                    }
+                                }
+                            }
                             event = stream.next() => {
                                 match event {
                                     Some(Ok(ev)) if ev.event == "reload" => {
                                         tracing::info!("received reload event");
                                         tokio::select! {
-                                            tl = reload_all(&client, server_url, &self.routes, &self.cert_store) => {
-                                                schedule_refresh(&mut token_refresh, tl);
-                                            }
+                                            biased;
                                             _ = shutdown.changed() => {
                                                 tracing::info!("shutting down sync task");
                                                 return;
+                                            }
+                                            tl = reload_all(&client, server_url, &self.routes, &self.cert_store) => {
+                                                schedule_refresh(&mut token_refresh, tl);
                                             }
                                         }
                                     }
@@ -344,27 +373,10 @@ impl pingora::services::background::BackgroundService for SyncTask {
                                     None => break,
                                 }
                             }
-                            // Token refresh timer fired — re-fetch routes for fresh tokens
-                            _ = token_refresh.tick() => {
-                                tracing::info!("token refresh timer fired, reloading routes");
-                                tokio::select! {
-                                    tl = reload_all(&client, server_url, &self.routes, &self.cert_store) => {
-                                        schedule_refresh(&mut token_refresh, tl);
-                                    }
-                                    _ = shutdown.changed() => {
-                                        tracing::info!("shutting down sync task");
-                                        return;
-                                    }
-                                }
-                            }
                             // No SSE event (including keepalive) for 60s → assume dead
                             _ = tokio::time::sleep(Duration::from_secs(60)) => {
                                 tracing::warn!("SSE inactivity timeout, reconnecting");
                                 break;
-                            }
-                            _ = shutdown.changed() => {
-                                tracing::info!("shutting down sync task");
-                                return;
                             }
                         }
                     }
@@ -374,19 +386,21 @@ impl pingora::services::background::BackgroundService for SyncTask {
 
             tracing::info!("SSE disconnected, reconnecting in 5s");
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+                biased;
                 _ = shutdown.changed() => {
                     tracing::info!("shutting down sync task");
                     return;
                 }
+                _ = tokio::time::sleep(Duration::from_secs(5)) => {}
             }
             tokio::select! {
-                tl = reload_all(&client, server_url, &self.routes, &self.cert_store) => {
-                    schedule_refresh(&mut token_refresh, tl);
-                }
+                biased;
                 _ = shutdown.changed() => {
                     tracing::info!("shutting down sync task");
                     return;
+                }
+                tl = reload_all(&client, server_url, &self.routes, &self.cert_store) => {
+                    schedule_refresh(&mut token_refresh, tl);
                 }
             }
         }
