@@ -11,6 +11,8 @@ which = "7"
 [patch.crates-io]
 dioxus = { git = "https://github.com/mkg20001/dioxus.git", branch = "feat/embed" }
 dioxus-server = { git = "https://github.com/mkg20001/dioxus.git", branch = "feat/embed" }
+dioxus-i18n = { git = "https://github.com/mkg20001/dioxus-i18n.git", branch = "feat/dioxus-0.8" }
+dioxus-tabular = { git = "https://github.com/mkg20001/dioxus-tabular.git", branch = "feat/dioxus-0.8" }
 swiftide = { git = "https://github.com/mkg20001/swiftide.git", branch = "mac-mgmt-patches" }
 swiftide-agents = { git = "https://github.com/mkg20001/swiftide.git", branch = "mac-mgmt-patches" }
 swiftide-core = { git = "https://github.com/mkg20001/swiftide.git", branch = "mac-mgmt-patches" }

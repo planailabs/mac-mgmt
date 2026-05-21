@@ -4,6 +4,8 @@
 let
   swiftideHash = "sha256-zN6IQ+4YzXYTLCKOqSJBnj/V0aIr7031HO+xDBQlgck=";
   dioxusHash = "sha256-asz/Sm7BHGBNYvPXZS/rx+tlZrTbrmNNCoHal16LKzk=";
+  dioxusI18nHash = "sha256-Y05EJtoJMw07aonrkIXp1gcDZKrhm30Aok7mClxAL78=";
+  dioxusTabularHash = "sha256-XxBGEm0gq3zgBhkNsU0FiXNfjYSM+c666EbVAxR16Xg=";
 in {
   "swiftide-0.32.1" = swiftideHash;
   "swiftide-agents-0.32.1" = swiftideHash;
@@ -51,4 +53,6 @@ in {
   "manganis-macro-0.8.0-alpha.0" = dioxusHash;
   "subsecond-0.8.0-alpha.0" = dioxusHash;
   "subsecond-types-0.8.0-alpha.0" = dioxusHash;
+  "dioxus-i18n-0.5.1" = dioxusI18nHash;
+  "dioxus-tabular-0.3.0" = dioxusTabularHash;
 }
