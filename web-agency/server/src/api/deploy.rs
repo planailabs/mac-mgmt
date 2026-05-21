@@ -219,12 +219,12 @@ async fn upload_deploy(
     let cf_token = get_cf_token(&state.pool, cred_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let account_id = get_cf_account_id(&state.pool, cred_id).await.unwrap_or_default();
 
     // If no branch specified, fetch the production branch from the CF Pages project
     let branch = if query.branch.is_some() {
         query.branch
     } else {
-        let account_id = get_cf_account_id(&state.pool, cred_id).await.unwrap_or_default();
         if !account_id.is_empty() {
             let client = cloudflare_api::compat::SimpleClient::new(&cf_token);
             match client.get_pages_project(&account_id, &project_name).await {
@@ -248,7 +248,7 @@ async fn upload_deploy(
     let active = state.active_deploys.clone();
     active.fetch_add(1, Ordering::Relaxed);
     tokio::spawn(async move {
-        run_wrangler_deploy(pool, deployment_id, project_name, cf_token, branch, body).await;
+        run_wrangler_deploy(pool, deployment_id, project_name, cf_token, account_id, branch, body).await;
         active.fetch_sub(1, Ordering::Relaxed);
     });
 
@@ -306,6 +306,7 @@ async fn run_wrangler_deploy(
     deployment_id: Uuid,
     project_name: String,
     cf_token: String,
+    account_id: String,
     branch: Option<String>,
     tarball: Bytes,
 ) {
@@ -404,6 +405,7 @@ async fn run_wrangler_deploy(
         .args(&wrangler_args)
         .current_dir(&extract_dir)
         .env("CLOUDFLARE_API_TOKEN", &cf_token)
+        .env("CLOUDFLARE_ACCOUNT_ID", &account_id)
         .output()
         .await;
 
