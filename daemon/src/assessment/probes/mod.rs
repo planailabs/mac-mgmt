@@ -17,7 +17,7 @@ pub mod opencode;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use mac_mgmt_common::DaemonConfig;
+use mac_mgmt_common::{DaemonConfig, LlmProvider};
 use serde::{Deserialize, Serialize};
 
 /// Classification used both for scheduling and for rollout gate configuration.
@@ -207,6 +207,10 @@ pub struct Usage {
 /// probe tick so config reloads take effect on the next run.
 pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
     let mut probes: Vec<Box<dyn Probe>> = Vec::new();
+    let cloud_llm = matches!(
+        cfg.global.default_llm,
+        LlmProvider::Cloud | LlmProvider::Litellm | LlmProvider::None
+    );
 
     if cfg.ollama.enabled {
         probes.push(Box::new(ollama::OllamaProbe::from_config(&cfg.ollama)));
@@ -220,6 +224,7 @@ pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
         probes.push(Box::new(openclaw::OpenClawProbe::new(
             &cfg.openclaw,
             crate::canary::openclaw_canary(cfg),
+            cloud_llm,
         )));
     }
 
@@ -234,6 +239,7 @@ pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
         probes.push(Box::new(hermes::HermesProbe::new(
             &cfg.hermes,
             crate::canary::hermes_canary(cfg),
+            cloud_llm,
         )));
     }
 

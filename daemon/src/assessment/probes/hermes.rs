@@ -5,6 +5,8 @@
 //! - **Functional** (`hermes`): sends a canary prompt through the gateway's
 //!   `/v1/chat/completions` endpoint for a full agent round-trip.
 
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use mac_mgmt_common::HermesConfig;
@@ -118,10 +120,11 @@ pub struct HermesProbe {
     gateway_url: String,
     auth_token: Option<String>,
     canary_model: String,
+    cloud_llm: bool,
 }
 
 impl HermesProbe {
-    pub fn new(cfg: &HermesConfig, canary_model: String) -> Self {
+    pub fn new(cfg: &HermesConfig, canary_model: String, cloud_llm: bool) -> Self {
         let (host, port) = match &cfg.gateway {
             Some(g) => {
                 let h = if g.host.is_empty() { "127.0.0.1" } else { &g.host };
@@ -133,6 +136,7 @@ impl HermesProbe {
             gateway_url: format!("http://{host}:{port}"),
             auth_token: read_hermes_env_var("API_SERVER_KEY"),
             canary_model,
+            cloud_llm,
         }
     }
 }
@@ -145,6 +149,10 @@ impl Probe for HermesProbe {
 
     fn kind(&self) -> ProbeKind {
         ProbeKind::Functional
+    }
+
+    fn interval(&self) -> Option<Duration> {
+        self.cloud_llm.then_some(Duration::from_secs(24 * 60 * 60))
     }
 
     async fn run(&self, ctx: &ProbeCtx) -> ProbeResult {

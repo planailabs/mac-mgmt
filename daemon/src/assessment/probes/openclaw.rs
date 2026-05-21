@@ -7,7 +7,7 @@
 //!   `/v1/chat/completions` endpoint for a full agent round-trip.
 
 use std::process::Stdio;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -123,10 +123,11 @@ pub struct OpenClawProbe {
     gateway_url: String,
     auth_token: Option<String>,
     canary_model: String,
+    cloud_llm: bool,
 }
 
 impl OpenClawProbe {
-    pub fn new(cfg: &OpenClawConfig, canary_model: String) -> Self {
+    pub fn new(cfg: &OpenClawConfig, canary_model: String, cloud_llm: bool) -> Self {
         let (host, port) = match &cfg.gateway {
             Some(g) => {
                 let h = if g.host.is_empty() { "127.0.0.1" } else { &g.host };
@@ -138,6 +139,7 @@ impl OpenClawProbe {
             gateway_url: format!("http://{host}:{port}"),
             auth_token: read_gateway_token(),
             canary_model,
+            cloud_llm,
         }
     }
 }
@@ -161,6 +163,10 @@ impl Probe for OpenClawProbe {
 
     fn kind(&self) -> ProbeKind {
         ProbeKind::Functional
+    }
+
+    fn interval(&self) -> Option<Duration> {
+        self.cloud_llm.then_some(Duration::from_secs(24 * 60 * 60))
     }
 
     async fn run(&self, ctx: &ProbeCtx) -> ProbeResult {
