@@ -41,7 +41,7 @@ in
       prev.nodejs
       prev.tailwindcss_3
       dioxus-cli-patched
-      prev.wasm-bindgen-cli_0_2_114
+      prev.wasm-bindgen-cli_0_2_121
       prev.binaryen
       prev.lld
       prev.rcodesign

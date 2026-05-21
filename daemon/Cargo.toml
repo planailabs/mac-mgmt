@@ -33,7 +33,7 @@ getrandom_04 = { package = "getrandom", version = "0.4" }
 
 # WASM-only dependencies (web feature)
 memvault-web = { path = "../memvault/crates/memvault-web", optional = true, default-features = false }
-dioxus = { version = "0.7.9", features = ["fullstack", "router"], optional = true }
+dioxus = { version = "0.8.0-alpha.0", features = ["fullstack", "router"], optional = true }
 
 # Native-only dependencies (not compiled for WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

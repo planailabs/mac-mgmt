@@ -11,9 +11,9 @@ server = ["webui", "dioxus/server", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:
 server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "dep:fs2", "dep:aes-gcm", "mac-mgmt-common/observability"]
 
 [dependencies]
-dioxus = { version = "0.7", features = ["fullstack", "router"], optional = true }
+dioxus = { version = "0.8.0-alpha.0", features = ["fullstack", "router"], optional = true }
 plan-ai-design = { path = "../plan-ai-design", optional = true }
-wasm-bindgen = { version = "=0.2.114", optional = true }
+wasm-bindgen = { version = "=0.2.121", optional = true }
 web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
 rocket = { version = "0.5", default-features = false, features = ["json"], optional = true }
 utoipa = { version = "5", features = ["rocket_extras", "uuid", "chrono"], optional = true }

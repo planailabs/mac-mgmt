@@ -6,7 +6,7 @@
   openssl,
   dioxus-cli-patched,
   nodejs,
-  wasm-bindgen-cli_0_2_114,
+  wasm-bindgen-cli_0_2_121,
   binaryen,
   tailwindcss_3,
   lld,
@@ -33,7 +33,7 @@ rustPlatform.buildRustPackage {
     pkg-config
     dioxus-cli-patched
     nodejs
-    wasm-bindgen-cli_0_2_114
+    wasm-bindgen-cli_0_2_121
     binaryen
     tailwindcss_3
     lld

@@ -336,7 +336,7 @@
 
             # For WASM
             wasm-pack
-            wasm-bindgen-cli_0_2_114
+            wasm-bindgen-cli_0_2_121
             binaryen  # wasm-opt
 
           ] ++ darwinDeps;

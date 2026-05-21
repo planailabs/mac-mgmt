@@ -10,9 +10,9 @@ webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-i18n", "de
 server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:percent-encoding", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hmac", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:aes-gcm", "dep:thiserror", "dep:cloudflare-api", "dep:spaceship-api", "dep:changedetection-api", "dep:async-trait", "dep:tempfile", "dep:rust-embed", "dep:instant-acme", "dep:rcgen", "dep:async-stream", "dep:futures-core", "dep:tar", "dep:flate2", "dep:prometheus", "plan-ai-auth/server"]
 
 [dependencies]
-dioxus = { version = "0.7", features = ["fullstack", "router"], optional = true }
+dioxus = { version = "0.8.0-alpha.0", features = ["fullstack", "router"], optional = true }
 plan-ai-design = { path = "../../plan-ai-design", optional = true }
-wasm-bindgen = { version = "=0.2.114", optional = true }
+wasm-bindgen = { version = "=0.2.121", optional = true }
 web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"], optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
