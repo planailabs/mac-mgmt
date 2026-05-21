@@ -31,7 +31,7 @@ use anyhow::Result;
 use crate::managed_service::ManagedService;
 use crate::services::{
     ai_proxy_svc::AiProxyService, apprise::Apprise, custom_svc::CustomService, hermes::Hermes,
-    hermes_dashboard::HermesDashboard, litellm::Litellm, lms::Lms, mcporter::McPorter,
+    hermes_dashboard::HermesDashboard, hermes_webui::HermesWebui, litellm::Litellm, lms::Lms, mcporter::McPorter,
     nvidia_smi::NvidiaSmi, ollama::Ollama, openclaw::OpenClaw, opencode::Opencode, restic::Restic,
     rocm_smi::RocmSmi, unsloth::Unsloth,
 };
@@ -112,6 +112,7 @@ pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Arc<dyn ManagedService>> {
     if hermes_cfg.enabled {
         tracing::info!("hermes enabled");
         let dashboard_cfg = hermes_cfg.dashboard.clone();
+        let webui_cfg = hermes_cfg.webui.clone();
         services.push(Arc::new(Hermes::new(hermes_cfg)));
 
         if let Some(db_cfg) = dashboard_cfg {
@@ -120,6 +121,15 @@ pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Arc<dyn ManagedService>> {
                 services.push(Arc::new(HermesDashboard::new(db_cfg)));
             } else {
                 tracing::info!("hermes-dashboard disabled");
+            }
+        }
+
+        if let Some(wu_cfg) = webui_cfg {
+            if wu_cfg.enabled {
+                tracing::info!("hermes-webui enabled");
+                services.push(Arc::new(HermesWebui::new(wu_cfg)));
+            } else {
+                tracing::info!("hermes-webui disabled");
             }
         }
     } else {

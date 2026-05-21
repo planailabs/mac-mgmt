@@ -1307,6 +1307,9 @@ pub struct HermesConfig {
     #[schemars(description = "Web dashboard settings")]
     #[serde(default)]
     pub dashboard: Option<HermesDashboardConfig>,
+    #[schemars(description = "Hermes WebUI (nesquena/hermes-webui) settings")]
+    #[serde(default)]
+    pub webui: Option<HermesWebuiConfig>,
 }
 
 impl Default for HermesConfig {
@@ -1319,6 +1322,7 @@ impl Default for HermesConfig {
             extra_config: None,
             extra_env: None,
             dashboard: None,
+            webui: None,
         }
     }
 }
@@ -1349,6 +1353,51 @@ impl Default for HermesDashboardConfig {
             enabled: false,
             port: default_hermes_dashboard_port(),
             host: default_gateway_host(),
+        }
+    }
+}
+
+// ── Hermes WebUI ──────────────────────────────────────────────────────
+
+fn default_hermes_webui_port() -> u16 {
+    8787
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HermesWebuiConfig {
+    #[schemars(description = "Whether the Hermes WebUI is installed and started")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "WebUI listen port")]
+    #[serde(default = "default_hermes_webui_port")]
+    pub port: u16,
+    #[schemars(description = "WebUI listen address")]
+    #[serde(default = "default_gateway_host")]
+    pub host: String,
+    #[schemars(
+        description = "Optional password for the WebUI. When set, written to \
+                       $HERMES_HOME/webui/.env as HERMES_WEBUI_PASSWORD so the \
+                       login flow gates browser access."
+    )]
+    #[serde(default)]
+    pub password: Option<Secret>,
+    #[schemars(
+        description = "Default workspace directory shown in the UI on first launch \
+                       (HERMES_WEBUI_DEFAULT_WORKSPACE)."
+    )]
+    #[serde(default)]
+    pub default_workspace: Option<String>,
+}
+
+impl Default for HermesWebuiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_hermes_webui_port(),
+            host: default_gateway_host(),
+            password: None,
+            default_workspace: None,
         }
     }
 }

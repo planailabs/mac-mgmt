@@ -6,6 +6,7 @@ pub mod memvault_svc;
 pub mod gpu_tool_common;
 pub mod hermes;
 pub mod hermes_dashboard;
+pub mod hermes_webui;
 pub mod litellm;
 pub mod lms;
 pub mod mcporter;
