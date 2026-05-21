@@ -254,7 +254,12 @@ pub async fn initial_load(
     }
 }
 
-/// Build a Pingora background service that listens to SSE events and reloads.
+/// Build a Pingora background service that spawns the sync loop.
+///
+/// The sync task carries no important state — it only writes into shared
+/// `ArcSwap`/`CertStore` atomics.  Rather than carefully coordinating
+/// shutdown, we spawn the loop as a detached tokio task and return from
+/// `start()` immediately so Pingora never blocks on us during shutdown.
 pub fn build_service(
     cfg: ProxyConfig,
     routes: Arc<ArcSwap<HashMap<String, (Route, AuthMode)>>>,
@@ -278,102 +283,87 @@ pub struct SyncTask {
 
 #[async_trait::async_trait]
 impl pingora::services::background::BackgroundService for SyncTask {
-    async fn start(&self, mut shutdown: pingora::server::ShutdownWatch) {
-        let token = self.cfg.internal_token();
-        let client = build_client(&token);
-        let sse_client = build_sse_client(&token);
-        let server_url = &self.cfg.server_url;
+    async fn start(&self, _shutdown: pingora::server::ShutdownWatch) {
+        let cfg = self.cfg.clone();
+        let routes = self.routes.clone();
+        let cert_store = self.cert_store.clone();
+        tokio::spawn(async move {
+            sync_loop(cfg, routes, cert_store).await;
+        });
+    }
+}
 
-        // Token refresh timer — re-fetch routes before proxy tokens expire.
-        // Initialized to far-future; updated after each successful route load.
-        let mut token_refresh = tokio::time::interval(Duration::from_secs(u64::MAX / 2));
-        token_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        // Consume the first immediate tick.
-        token_refresh.tick().await;
+/// Schedule the next token refresh from a lifetime value.
+/// Refreshes at 90% of the lifetime (minimum 60s) so there is margin.
+fn schedule_refresh(interval: &mut tokio::time::Interval, lifetime_secs: Option<i64>) {
+    if let Some(secs) = lifetime_secs {
+        let refresh_in = ((secs as f64) * 0.9).max(60.0) as u64;
+        tracing::info!(refresh_in_secs = refresh_in, "scheduled token refresh");
+        interval.reset_after(Duration::from_secs(refresh_in));
+    }
+}
 
-        /// Schedule the next token refresh from a lifetime value.
-        /// Refreshes at 90% of the lifetime (minimum 60s) so there is margin.
-        fn schedule_refresh(interval: &mut tokio::time::Interval, lifetime_secs: Option<i64>) {
-            if let Some(secs) = lifetime_secs {
-                let refresh_in = ((secs as f64) * 0.9).max(60.0) as u64;
-                tracing::info!(refresh_in_secs = refresh_in, "scheduled token refresh");
-                interval.reset_after(Duration::from_secs(refresh_in));
-            }
-        }
+async fn sync_loop(
+    cfg: ProxyConfig,
+    routes: Arc<ArcSwap<HashMap<String, (Route, AuthMode)>>>,
+    cert_store: Arc<CertStore>,
+) {
+    let token = cfg.internal_token();
+    let client = build_client(&token);
+    let sse_client = build_sse_client(&token);
+    let server_url = &cfg.server_url;
 
-        /// Run a future, returning immediately if shutdown is signalled.
-        macro_rules! or_shutdown {
-            ($shutdown:expr, $fut:expr) => {
-                tokio::select! {
-                    biased;
-                    _ = $shutdown.changed() => {
-                        tracing::info!("shutting down sync task");
-                        return;
-                    }
-                    v = $fut => v,
-                }
-            };
-        }
+    // Token refresh timer — re-fetch routes before proxy tokens expire.
+    // Initialized to far-future; updated after each successful route load.
+    let mut token_refresh = tokio::time::interval(Duration::from_secs(u64::MAX / 2));
+    token_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    token_refresh.tick().await; // consume the first immediate tick
 
-        loop {
-            if *shutdown.borrow() {
-                tracing::info!("shutting down sync task");
-                return;
-            }
+    loop {
+        tracing::info!("connecting to SSE event stream");
 
-            tracing::info!("connecting to SSE event stream");
+        let resp = sse_client
+            .get(format!("{server_url}/api/internal/events"))
+            .send()
+            .await;
 
-            let resp = or_shutdown!(shutdown,
-                sse_client.get(format!("{server_url}/api/internal/events")).send()
-            );
+        match resp {
+            Ok(resp) => {
+                use eventsource_stream::Eventsource;
+                use futures::StreamExt;
 
-            match resp {
-                Ok(resp) => {
-                    use eventsource_stream::Eventsource;
-                    use futures::StreamExt;
-
-                    let mut stream = resp.bytes_stream().eventsource();
-                    loop {
-                        tokio::select! {
-                            biased;
-                            _ = shutdown.changed() => {
-                                tracing::info!("shutting down sync task");
-                                return;
-                            }
-                            _ = token_refresh.tick() => {
-                                tracing::info!("token refresh timer fired, reloading");
-                            }
-                            event = stream.next() => match event {
-                                Some(Ok(ev)) if ev.event == "reload" => {
-                                    tracing::info!("received reload event");
-                                }
-                                Some(Ok(_)) => continue,
-                                Some(Err(e)) => { tracing::warn!("SSE error: {e}"); break; }
-                                None => break,
-                            },
-                            _ = tokio::time::sleep(Duration::from_secs(60)) => {
-                                tracing::warn!("SSE inactivity timeout, reconnecting");
-                                break;
-                            }
+                let mut stream = resp.bytes_stream().eventsource();
+                loop {
+                    tokio::select! {
+                        _ = token_refresh.tick() => {
+                            tracing::info!("token refresh timer fired, reloading");
                         }
-
-                        // Both token_refresh and reload events fall through here.
-                        let tl = or_shutdown!(shutdown,
-                            reload_all(&client, server_url, &self.routes, &self.cert_store)
-                        );
-                        schedule_refresh(&mut token_refresh, tl);
+                        event = stream.next() => match event {
+                            Some(Ok(ev)) if ev.event == "reload" => {
+                                tracing::info!("received reload event");
+                            }
+                            Some(Ok(_)) => continue,
+                            Some(Err(e)) => { tracing::warn!("SSE error: {e}"); break; }
+                            None => break,
+                        },
+                        _ = tokio::time::sleep(Duration::from_secs(60)) => {
+                            tracing::warn!("SSE inactivity timeout, reconnecting");
+                            break;
+                        }
                     }
+
+                    // Both token_refresh and reload events fall through here.
+                    let tl = reload_all(&client, server_url, &routes, &cert_store).await;
+                    schedule_refresh(&mut token_refresh, tl);
                 }
-                Err(e) => tracing::error!("failed to connect to SSE: {e}"),
             }
-
-            tracing::info!("SSE disconnected, reconnecting in 5s");
-            or_shutdown!(shutdown, tokio::time::sleep(Duration::from_secs(5)));
-
-            let tl = or_shutdown!(shutdown,
-                reload_all(&client, server_url, &self.routes, &self.cert_store)
-            );
-            schedule_refresh(&mut token_refresh, tl);
+            Err(e) => tracing::error!("failed to connect to SSE: {e}"),
         }
+
+        tracing::info!("SSE disconnected, reconnecting in 5s");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        let tl = reload_all(&client, server_url, &routes, &cert_store).await;
+        schedule_refresh(&mut token_refresh, tl);
     }
 }
