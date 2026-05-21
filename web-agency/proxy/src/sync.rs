@@ -293,13 +293,19 @@ impl pingora::services::background::BackgroundService for SyncTask {
     }
 }
 
-/// Schedule the next token refresh from a lifetime value.
-/// Refreshes at 90% of the lifetime (minimum 60s) so there is margin.
+/// Schedule the next token refresh.  On success uses 90% of the token
+/// lifetime (minimum 60s).  On failure (`None`) retries in 5s.
 fn schedule_refresh(interval: &mut tokio::time::Interval, lifetime_secs: Option<i64>) {
-    if let Some(secs) = lifetime_secs {
-        let refresh_in = ((secs as f64) * 0.9).max(60.0) as u64;
-        tracing::info!(refresh_in_secs = refresh_in, "scheduled token refresh");
-        interval.reset_after(Duration::from_secs(refresh_in));
+    match lifetime_secs {
+        Some(secs) => {
+            let refresh_in = ((secs as f64) * 0.9).max(60.0) as u64;
+            tracing::info!(refresh_in_secs = refresh_in, "scheduled token refresh");
+            interval.reset_after(Duration::from_secs(refresh_in));
+        }
+        None => {
+            tracing::warn!("reload failed, retrying in 5s");
+            interval.reset_after(Duration::from_secs(5));
+        }
     }
 }
 
@@ -313,15 +319,15 @@ async fn sync_loop(
     let sse_client = build_sse_client(&token);
     let server_url = &cfg.server_url;
 
-    // Token refresh timer — re-fetch routes before proxy tokens expire.
-    // Initialized to far-future; updated after each successful route load.
-    let mut token_refresh = tokio::time::interval(Duration::from_secs(u64::MAX / 2));
-    token_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    token_refresh.tick().await; // consume the first immediate tick
+    // Reload timer — drives both token refresh and failure retries.
+    // Initialized to far-future; updated after each reload attempt.
+    let mut reload_timer = tokio::time::interval(Duration::from_secs(u64::MAX / 2));
+    reload_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    reload_timer.tick().await; // consume the first immediate tick
 
-    // Prime the token refresh timer from the initial route data.
+    // Prime the reload timer from the initial route data.
     let tl = reload_all(&client, server_url, &routes, &cert_store).await;
-    schedule_refresh(&mut token_refresh, tl);
+    schedule_refresh(&mut reload_timer, tl);
 
     loop {
         tracing::info!("connecting to SSE event stream");
@@ -339,8 +345,8 @@ async fn sync_loop(
                 let mut stream = resp.bytes_stream().eventsource();
                 loop {
                     tokio::select! {
-                        _ = token_refresh.tick() => {
-                            tracing::info!("token refresh timer fired, reloading");
+                        _ = reload_timer.tick() => {
+                            tracing::info!("reload timer fired");
                         }
                         event = stream.next() => match event {
                             Some(Ok(ev)) if ev.event == "reload" => {
@@ -356,9 +362,10 @@ async fn sync_loop(
                         }
                     }
 
-                    // Both token_refresh and reload events fall through here.
+                    // Both reload_timer and SSE reload events fall through here.
+                    // On failure, schedule_refresh sets a 5s retry via reload_timer.
                     let tl = reload_all(&client, server_url, &routes, &cert_store).await;
-                    schedule_refresh(&mut token_refresh, tl);
+                    schedule_refresh(&mut reload_timer, tl);
                 }
             }
             Err(e) => tracing::error!("failed to connect to SSE: {e}"),
@@ -369,6 +376,6 @@ async fn sync_loop(
 
         // Reload before reconnecting so we have fresh data even if SSE takes a while.
         let tl = reload_all(&client, server_url, &routes, &cert_store).await;
-        schedule_refresh(&mut token_refresh, tl);
+        schedule_refresh(&mut reload_timer, tl);
     }
 }
