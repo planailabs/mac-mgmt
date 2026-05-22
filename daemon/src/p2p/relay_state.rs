@@ -105,8 +105,9 @@ impl RelayState {
 
     pub fn proxy_url(&self) -> Option<&str> {
         match self {
-            RelayState::Identified { proxy_url, .. }
-            | RelayState::Registered { proxy_url, .. } => proxy_url.as_deref(),
+            RelayState::Identified { proxy_url, .. } | RelayState::Registered { proxy_url, .. } => {
+                proxy_url.as_deref()
+            }
             _ => None,
         }
     }
@@ -129,12 +130,12 @@ impl RelayState {
 
         match event {
             RelayEvent::ConnectionEstablished { peer_id } => {
-                if let RelayState::Disconnected { relay_addr, .. } = self {
-                    let addr = relay_addr.clone();
-                    *self = RelayState::Connected {
-                        relay_addr: addr,
-                        peer_id,
-                    };
+                // A daemon can discover and connect to non-relay peers via mDNS
+                // while it is still trying to dial the configured relay. Do not
+                // claim the first arbitrary connection as the relay; wait for
+                // Identify and only transition when the peer advertises the
+                // `mac-mgmt-relay/` agent string.
+                if self.peer_id() == Some(peer_id) {
                     actions.push(RelayAction::Log(
                         tracing::Level::INFO,
                         format!("relay connected: {peer_id}"),
@@ -240,9 +241,7 @@ impl RelayState {
                         *next_dial = Instant::now() + RECONNECT_INTERVAL;
                     }
                 }
-                RelayState::Identified {
-                    peer_id, ..
-                } => {
+                RelayState::Identified { peer_id, .. } => {
                     // Retry opening the RPC stream.
                     actions.push(RelayAction::OpenRpcStream(*peer_id));
                 }
@@ -267,5 +266,49 @@ impl RelayState {
         if let RelayState::Registered { last_register, .. } = self {
             *last_register = Instant::now();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn relay_addr() -> Multiaddr {
+        "/dns4/relay.plan.ai/tcp/443/wss".parse().unwrap()
+    }
+
+    #[test]
+    fn non_relay_connection_does_not_capture_relay_state() {
+        let non_relay_peer = PeerId::random();
+        let relay_peer = PeerId::random();
+        let mut state = RelayState::new(Some(relay_addr()));
+
+        let actions = state.handle_event(RelayEvent::ConnectionEstablished {
+            peer_id: non_relay_peer,
+        });
+        assert!(actions.is_empty());
+        assert!(matches!(state, RelayState::Disconnected { .. }));
+
+        let actions = state.handle_event(RelayEvent::Identified {
+            peer_id: non_relay_peer,
+            agent_version: "mac-mgmt/0.1.5/some-instance".to_string(),
+        });
+        assert!(actions.is_empty());
+        assert!(matches!(state, RelayState::Disconnected { .. }));
+
+        let actions = state.handle_event(RelayEvent::Identified {
+            peer_id: relay_peer,
+            agent_version: "mac-mgmt-relay/0.1.5".to_string(),
+        });
+        assert!(matches!(state.peer_id(), Some(pid) if pid == relay_peer));
+        assert!(matches!(state, RelayState::Identified { .. }));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            RelayAction::AuthorizePeer(pid) if *pid == relay_peer
+        )));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            RelayAction::OpenRpcStream(pid) if *pid == relay_peer
+        )));
     }
 }
