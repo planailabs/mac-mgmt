@@ -78,6 +78,12 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::setting_list_ssh_keys,
         routes::setting_add_ssh_key,
         routes::setting_remove_ssh_key,
+        // Setting — Client certs
+        routes::setting_list_client_certs,
+        routes::setting_add_client_cert,
+        routes::setting_remove_client_cert,
+        // Relay — Cert auth validation
+        routes::cert_auth,
         // Sync — Heartbeat
         routes::post_heartbeat,
         // Sync — System assessment
@@ -227,6 +233,12 @@ pub fn build_rocket(
         routes::setting_list_ssh_keys,
         routes::setting_add_ssh_key,
         routes::setting_remove_ssh_key,
+        // Setting — Client certs
+        routes::setting_list_client_certs,
+        routes::setting_add_client_cert,
+        routes::setting_remove_client_cert,
+        // Relay — Cert auth validation
+        routes::cert_auth,
         // Public server info (unauthenticated)
         routes::get_server_info,
         // Daemon binary download (public)

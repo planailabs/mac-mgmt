@@ -191,6 +191,13 @@ cluster-skills-no-bundle-assign = Keine Bundle-Zuweisungen.
 ssh-keys-placeholder = ssh-ed25519 AAAA... user@host
 ssh-keys-no-keys = Keine SSH Keys.
 
+## ── Client-Zertifikate ─────────────────────────────────────────
+
+cluster-detail-tab-client-certs = Client-Zertifikate
+client-certs-fingerprint-placeholder = sha256:ab12cd34...
+client-certs-label-placeholder = Bezeichnung (optional)
+client-certs-no-certs = Keine Client-Zertifikate.
+
 ## ── Flotten-Dashboard ──────────────────────────────────────────
 
 fleet-title = Flotten-Dashboard

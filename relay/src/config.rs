@@ -51,6 +51,21 @@ pub struct RelayConfig {
     /// Path to Ed25519 private key file for libp2p identity (PEM format).
     /// If not set, a new key is generated and stored at `{data_dir}/relay_ed25519_key`.
     pub p2p_key_file: Option<String>,
+
+    /// Path to the relay's TLS server certificate (PEM).
+    /// Required in release builds; in debug builds a self-signed cert is
+    /// generated automatically when omitted.
+    pub tls_cert_path: Option<String>,
+
+    /// Path to the relay's TLS server private key (PEM).
+    /// Required in release builds; in debug builds a self-signed key is
+    /// generated automatically when omitted.
+    pub tls_key_path: Option<String>,
+
+    /// Path to a CA certificate (PEM) for client certificate validation.
+    /// When omitted, any client certificate is accepted at the TLS layer
+    /// (authorization is by fingerprint allowlist, not CA trust).
+    pub client_ca_path: Option<String>,
 }
 
 fn default_cors_origins() -> Vec<String> {

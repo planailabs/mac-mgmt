@@ -3893,6 +3893,195 @@ pub async fn setting_remove_ssh_key(
     Ok(Status::NoContent)
 }
 
+// ── Client Certificates (setting + admin + relay validation) ────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+pub struct ClientCertRow {
+    pub id: Uuid,
+    pub fingerprint: String,
+    pub label: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AddClientCertBody {
+    pub fingerprint: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/setting/client-certs",
+    tag = "Setting — Client Certificates",
+    summary = "List cluster client certificates",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Client certs", body = Vec<ClientCertRow>),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[rocket::get("/setting/client-certs")]
+pub async fn setting_list_client_certs(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<ClientCertRow>>, Status> {
+    let rows = sqlx::query_as::<_, ClientCertRow>(
+        "SELECT id, fingerprint, label, created_at \
+         FROM cluster_client_certs WHERE cluster_id = $1 ORDER BY created_at",
+    )
+    .bind(auth.cluster_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/setting/client-certs",
+    tag = "Setting — Client Certificates",
+    summary = "Add a client certificate fingerprint",
+    security(("bearer" = [])),
+    request_body = AddClientCertBody,
+    responses(
+        (status = 201, description = "Client cert added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "Certificate already exists"),
+    ),
+)]
+#[rocket::post("/setting/client-certs", data = "<body>")]
+pub async fn setting_add_client_cert(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    body: Json<AddClientCertBody>,
+) -> Result<Status, Status> {
+    let fingerprint = body.fingerprint.trim().to_lowercase();
+    let label = body.label.trim().to_string();
+
+    sqlx::query(
+        "INSERT INTO cluster_client_certs (cluster_id, fingerprint, label) \
+         VALUES ($1, $2, $3)",
+    )
+    .bind(auth.cluster_id)
+    .bind(&fingerprint)
+    .bind(&label)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("unique constraint") || e.to_string().contains("duplicate key") {
+            Status::Conflict
+        } else {
+            Status::InternalServerError
+        }
+    })?;
+
+    Ok(Status::Created)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/setting/client-certs/{id}",
+    tag = "Setting — Client Certificates",
+    summary = "Remove a client certificate",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Client cert ID")),
+    responses(
+        (status = 204, description = "Client cert removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[rocket::delete("/setting/client-certs/<id>")]
+pub async fn setting_remove_client_cert(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    id: &str,
+) -> Result<Status, Status> {
+    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query("DELETE FROM cluster_client_certs WHERE id = $1 AND cluster_id = $2")
+        .bind(uuid)
+        .bind(auth.cluster_id)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::NoContent)
+}
+
+/// Cert validation endpoint for the relay — looks up a fingerprint and
+/// returns the associated permissions (like `/api/self` for tokens).
+#[derive(Deserialize)]
+pub struct CertAuthQuery {
+    fingerprint: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct CertAuthResponse {
+    pub cluster_id: Option<Uuid>,
+    pub cluster_ids: Vec<Uuid>,
+    pub token_kind: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/cert-auth",
+    tag = "Relay — Certificate Auth",
+    summary = "Validate a client certificate fingerprint",
+    params(("fingerprint" = String, Query, description = "SHA-256 fingerprint")),
+    responses(
+        (status = 200, description = "Certificate found", body = CertAuthResponse),
+        (status = 404, description = "Certificate not found"),
+    ),
+)]
+#[rocket::get("/cert-auth?<fingerprint>")]
+pub async fn cert_auth(
+    pool: &State<PgPool>,
+    fingerprint: &str,
+) -> Result<Json<CertAuthResponse>, Status> {
+    let fp = fingerprint.trim().to_lowercase();
+
+    // Check admin certs first.
+    let is_admin = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM admin_client_certs WHERE fingerprint = $1)",
+    )
+    .bind(&fp)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if is_admin {
+        // Return all cluster_ids for admin certs.
+        let all_ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM clusters")
+            .fetch_all(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+        return Ok(Json(CertAuthResponse {
+            cluster_id: None,
+            cluster_ids: all_ids,
+            token_kind: "cert_admin".to_string(),
+        }));
+    }
+
+    // Check cluster certs.
+    let cluster_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT cluster_id FROM cluster_client_certs WHERE fingerprint = $1",
+    )
+    .bind(&fp)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if cluster_ids.is_empty() {
+        return Err(Status::NotFound);
+    }
+
+    Ok(Json(CertAuthResponse {
+        cluster_id: cluster_ids.first().copied(),
+        cluster_ids,
+        token_kind: "cert_cluster".to_string(),
+    }))
+}
+
 // ── Rollout Groups (admin) ──────────────────────────────────────────
 
 #[derive(Deserialize, ToSchema)]

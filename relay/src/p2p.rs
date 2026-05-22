@@ -152,6 +152,7 @@ impl RelaySwarm {
         registry: Arc<DaemonRegistry>,
         proxy_url: Option<&str>,
         server_api_url: &str,
+        ssh_identity: Arc<crate::ssh_identity::RelaySshIdentity>,
     ) -> Result<Self> {
         let keypair = load_or_generate_key(key_path)?;
         let local_peer_id = keypair.public().to_peer_id();
@@ -264,6 +265,7 @@ impl RelaySwarm {
         let server_api_url_for_rpc = server_api_url.to_string();
         let gossip_tx_for_rpc = gossip_tx.clone();
         let ssh_bridge_for_rpc = Arc::clone(&ssh_bridge_cell);
+        let ssh_identity_for_rpc = Arc::clone(&ssh_identity);
         tokio::spawn(async move {
             while let Some((peer_id, stream)) = incoming_streams.next().await {
                 tracing::info!(%peer_id, "daemon opened RPC stream");
@@ -272,13 +274,14 @@ impl RelaySwarm {
                 let server_url = server_api_url_for_rpc.clone();
                 let gtx = gossip_tx_for_rpc.clone();
                 let ssh_bridge = ssh_bridge_for_rpc.get().cloned();
+                let ssh_id = Arc::clone(&ssh_identity_for_rpc);
 
                 let (req_tx, req_rx) = tokio::sync::mpsc::channel(64);
                 rpc_map.write().await.insert(peer_id, req_tx);
 
                 let rpc_map_cleanup = Arc::clone(&rpc_map);
                 tokio::spawn(async move {
-                    handle_daemon_rpc(peer_id, stream, registry, req_rx, server_url, gtx, ssh_bridge).await;
+                    handle_daemon_rpc(peer_id, stream, registry, req_rx, server_url, gtx, ssh_bridge, ssh_id).await;
                     rpc_map_cleanup.write().await.remove(&peer_id);
                 });
             }
@@ -418,6 +421,7 @@ async fn handle_daemon_rpc(
     server_api_url: String,
     gossip_tx: tokio::sync::mpsc::Sender<GossipCmd>,
     ssh_bridge: Option<Arc<SshBridge>>,
+    ssh_identity: Arc<crate::ssh_identity::RelaySshIdentity>,
 ) {
     use futures_util::{AsyncReadExt, AsyncWriteExt};
     let (mut reader, mut writer) = stream.split();
@@ -529,6 +533,7 @@ async fn handle_daemon_rpc(
                                 "id": req_id,
                                 "cluster_id": cid.map(|c| c.to_string()),
                                 "ssh_port": ssh_port,
+                                "relay_ssh_pubkey": ssh_identity.public_key_openssh,
                             })
                         }
                         Ok(_) => {

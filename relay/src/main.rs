@@ -15,10 +15,13 @@ mod auth;
 mod config;
 mod daemon_registry;
 mod metrics_federation;
+mod mtls;
 mod p2p;
 mod proxy_handler;
 mod ssh_bridge;
+mod ssh_identity;
 mod tunnel_io;
+mod web_ssh;
 mod ws_bridge;
 
 #[derive(Parser)]
@@ -46,14 +49,14 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut cfg = config::load(&cli.config)?;
 
-    // Default proxy_url to http://{listen_addr} if not explicitly set.
+    // Default proxy_url to https://{listen_addr} if not explicitly set.
     // This ensures the healer gets a working URL in dev/localhost setups.
     if cfg.proxy_url.is_none() {
         let addr = &cfg.listen_addr;
         let url = if addr.starts_with("0.0.0.0:") || addr.starts_with("[::]:") {
-            format!("http://localhost:{}", addr.rsplit(':').next().unwrap_or("8080"))
+            format!("https://localhost:{}", addr.rsplit(':').next().unwrap_or("8080"))
         } else {
-            format!("http://{addr}")
+            format!("https://{addr}")
         };
         tracing::info!("proxy_url not configured, defaulting to {url}");
         cfg.proxy_url = Some(url);
@@ -62,6 +65,9 @@ async fn main() -> Result<()> {
         "relay starting, listen: {}",
         cfg.listen_addr,
     );
+
+    // Generate ephemeral SSH identity (rotated on every restart).
+    let ssh_identity = Arc::new(ssh_identity::RelaySshIdentity::generate());
 
     let data_dir = std::path::Path::new(&cfg.data_dir);
     let registry = Arc::new(daemon_registry::DaemonRegistry::new(
@@ -85,6 +91,7 @@ async fn main() -> Result<()> {
             Arc::clone(&registry),
             cfg.proxy_url.as_deref(),
             &cfg.server_api_url,
+            Arc::clone(&ssh_identity),
         )
         .await?,
     );
@@ -112,6 +119,14 @@ async fn main() -> Result<()> {
         Arc::clone(&relay_swarm),
         batch_token,
     );
+
+    // Web SSH terminal routes (/ssh/{instance_id} and /ssh/{instance_id}/ws).
+    let web_ssh_router = web_ssh::router(web_ssh::WebSshState {
+        registry: Arc::clone(&registry),
+        relay_swarm: Arc::clone(&relay_swarm),
+        ssh_identity: Arc::clone(&ssh_identity),
+    });
+    let api_router = api_router.merge(web_ssh_router);
 
     // Try to fetch the server's external web URL eagerly. If it fails, the
     // OnceCell stays empty and will be lazily initialised on the first
@@ -232,13 +247,39 @@ async fn main() -> Result<()> {
         }
     }));
 
-    let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
-    tracing::info!("relay listening on {}", cfg.listen_addr);
+    // Build TLS config: load from files or generate self-signed in debug mode.
+    let (cert_chain, private_key) =
+        match (&cfg.tls_cert_path, &cfg.tls_key_path) {
+            (Some(cert_path), Some(key_path)) => {
+                tracing::info!("loading TLS cert from {cert_path}");
+                mtls::load_certs_and_key(cert_path, key_path)?
+            }
+            _ => {
+                if cfg!(debug_assertions) {
+                    tracing::warn!(
+                        "TLS cert/key not configured — generating self-signed certificate \
+                         (development only)"
+                    );
+                    mtls::generate_self_signed()?
+                } else {
+                    anyhow::bail!(
+                        "tls_cert_path and tls_key_path are required in release builds"
+                    );
+                }
+            }
+        };
 
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    let tls_config = mtls::build_tls_config(
+        cert_chain,
+        private_key,
+        cfg.client_ca_path.as_deref(),
     )
-    .await?;
+    .map_err(|e| anyhow::anyhow!("failed to build TLS config: {e}"))?;
+    let tls_acceptor = mtls::make_acceptor(tls_config);
+
+    let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
+    tracing::info!("relay listening on {} (HTTPS)", cfg.listen_addr);
+
+    mtls::serve_tls(listener, tls_acceptor, app).await?;
     Ok(())
 }

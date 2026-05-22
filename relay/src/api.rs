@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::auth::{SelfInfo, validate_token};
+use crate::auth::{SelfInfo, validate_cert, validate_token};
+use crate::mtls::ClientCertInfo;
 use crate::daemon_registry::DaemonRegistry;
 use crate::metrics_federation::{
     PROMETHEUS_CONTENT_TYPE, encode_families, parse_and_relabel, push_gauge_strs,
@@ -104,21 +105,62 @@ fn extract_bearer(headers: &HeaderMap) -> Option<String> {
         .map(String::from)
 }
 
-async fn require_auth(
+/// Authenticate via Bearer token or client certificate.
+/// When `cert_info` is provided and no Bearer token is present, falls back
+/// to certificate-based auth via the server's /api/cert-auth endpoint.
+async fn require_auth_ext(
     headers: &HeaderMap,
     server_api_url: &str,
     allowed_kinds: &[&str],
+    cert_info: Option<&ClientCertInfo>,
 ) -> Result<SelfInfo, axum::response::Response> {
-    let Some(token) = extract_bearer(headers) else {
-        return Err(StatusCode::UNAUTHORIZED.into_response());
-    };
-    let self_info = validate_token(server_api_url, &token)
-        .await
-        .map_err(|s| s.into_response())?;
-    if !allowed_kinds.contains(&self_info.token_kind.as_str()) {
-        return Err(StatusCode::FORBIDDEN.into_response());
+    // Try Bearer token first.
+    if let Some(token) = extract_bearer(headers) {
+        let self_info = validate_token(server_api_url, &token)
+            .await
+            .map_err(|s| s.into_response())?;
+        if !allowed_kinds.contains(&self_info.token_kind.as_str()) {
+            return Err(StatusCode::FORBIDDEN.into_response());
+        }
+        return Ok(self_info);
     }
-    Ok(self_info)
+
+    // Fall back to client certificate auth.
+    if let Some(cert) = cert_info {
+        let cert_auth = validate_cert(server_api_url, &cert.fingerprint_sha256)
+            .await
+            .map_err(|s| {
+                if s == StatusCode::FORBIDDEN {
+                    // Return the fingerprint so the user can add it.
+                    Json(serde_json::json!({
+                        "error": "certificate not authorized",
+                        "cert_fingerprint": cert.fingerprint_sha256,
+                        "hint": "Add this fingerprint to cluster or admin certificate settings"
+                    }))
+                    .into_response()
+                } else {
+                    s.into_response()
+                }
+            })?;
+        // Convert CertAuthInfo to SelfInfo for compatibility.
+        let self_info = SelfInfo {
+            cluster_id: cert_auth.cluster_id,
+            cluster_name: None,
+            organization_id: None,
+            token_kind: cert_auth.token_kind,
+            cluster_ids: cert_auth.cluster_ids,
+            scopes: vec![],
+        };
+        if !allowed_kinds.contains(&self_info.token_kind.as_str())
+            && !(allowed_kinds.contains(&"admin") && self_info.token_kind == "cert_admin")
+            && !(allowed_kinds.contains(&"setting") && self_info.token_kind == "cert_cluster")
+        {
+            return Err(StatusCode::FORBIDDEN.into_response());
+        }
+        return Ok(self_info);
+    }
+
+    Err(StatusCode::UNAUTHORIZED.into_response())
 }
 
 fn is_safe_path(path: &str) -> bool {
@@ -129,11 +171,13 @@ fn is_safe_path(path: &str) -> bool {
 
 async fn proxy_metrics(
     headers: HeaderMap,
+    cert: Option<axum::Extension<ClientCertInfo>>,
     Path((instance_id, path)): Path<(String, String)>,
     Query(query): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await {
+    let cert_ref = cert.as_ref().map(|c| &c.0);
+    if let Err(resp) = require_auth_ext(&headers, &state.server_api_url, &["admin", "setting"], cert_ref).await {
         return resp;
     }
 
@@ -178,16 +222,18 @@ async fn proxy_metrics(
 
 async fn list_tunnels(
     headers: HeaderMap,
+    cert: Option<axum::Extension<ClientCertInfo>>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    let self_info = match require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await
+    let cert_ref = cert.as_ref().map(|c| &c.0);
+    let self_info = match require_auth_ext(&headers, &state.server_api_url, &["admin", "setting"], cert_ref).await
     {
         Ok(info) => info,
         Err(resp) => return resp,
     };
 
     let mut tunnels = state.registry.list_tunnels();
-    if self_info.token_kind != "admin" {
+    if !self_info.token_kind.contains("admin") {
         let allowed = &self_info.cluster_ids;
         tunnels.retain(|t| t.cluster_id.is_some_and(|c| allowed.contains(&c)));
     }
@@ -198,16 +244,18 @@ async fn list_tunnels(
 
 async fn list_ssh_targets(
     headers: HeaderMap,
+    cert: Option<axum::Extension<ClientCertInfo>>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    let self_info = match require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await
+    let cert_ref = cert.as_ref().map(|c| &c.0);
+    let self_info = match require_auth_ext(&headers, &state.server_api_url, &["admin", "setting"], cert_ref).await
     {
         Ok(info) => info,
         Err(resp) => return resp,
     };
 
     let mut targets = state.registry.list_ssh_targets();
-    if self_info.token_kind != "admin" {
+    if !self_info.token_kind.contains("admin") {
         let allowed = &self_info.cluster_ids;
         targets.retain(|t| t.cluster_id.is_some_and(|c| allowed.contains(&c)));
     }
@@ -232,9 +280,11 @@ struct ScrapeOutcome {
 
 async fn federated_metrics(
     headers: HeaderMap,
+    cert: Option<axum::Extension<ClientCertInfo>>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    let self_info = match require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await
+    let cert_ref = cert.as_ref().map(|c| &c.0);
+    let self_info = match require_auth_ext(&headers, &state.server_api_url, &["admin", "setting"], cert_ref).await
     {
         Ok(info) => info,
         Err(resp) => return resp,

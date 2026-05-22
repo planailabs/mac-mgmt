@@ -1213,6 +1213,8 @@ pub async fn run(
             metrics_port,
             fake_origin_local: cfg.relay.fake_origin_local,
             client: reqwest::Client::new(),
+            server_ssh_keys: relay_mgr.server_ssh_keys.clone(),
+            relay_ssh_key: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
         });
         // Fetch cluster_id from server before p2p init so gossipsub subscribes immediately.
         let cluster_id = match (&server_url, &server_token) {

@@ -533,6 +533,22 @@ async fn swarm_loop(
                                             cluster_topic = Some(new_topic);
                                         }
                                     }
+                                    // Parse relay's ephemeral SSH public key (if provided).
+                                    if let Some(pubkey_str) = resp["relay_ssh_pubkey"].as_str() {
+                                        if let Some(b64) = pubkey_str.split_whitespace().nth(1) {
+                                            match russh::keys::parse_public_key_base64(b64) {
+                                                Ok(key) => {
+                                                    tracing::info!("received relay SSH public key");
+                                                    if let Some(hs) = &config.handler_state {
+                                                        *hs.relay_ssh_key.write().await = Some(key);
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("failed to parse relay SSH key: {e}");
+                                                }
+                                            }
+                                        }
+                                    }
                                     send_tunnel_advertisement_rpc(rpc, &config.handler_state).await;
                                     relay.mark_registered();
                                     relay_registered.store(true, Ordering::Relaxed);
@@ -1345,14 +1361,21 @@ async fn handle_ssh_session(
 ) {
     use tokio_util::compat::FuturesAsyncReadCompatExt;
 
-    // Load authorized SSH keys.
+    // Load authorized SSH keys from all sources.
     let authorized_keys = {
-        let keys = handler_state.ssh_allowed.load(Ordering::Relaxed);
-        if !keys {
+        if !handler_state.ssh_allowed.load(Ordering::Relaxed) {
             tracing::warn!("SSH session rejected: SSH access disabled");
             return;
         }
-        crate::remote_ssh::ssh_server::load_authorized_keys()
+        // 1. File-based authorized_keys
+        let mut keys = crate::remote_ssh::ssh_server::load_authorized_keys();
+        // 2. Server-synced SSH keys (cluster_ssh_keys table)
+        keys.extend(handler_state.server_ssh_keys.read().await.iter().cloned());
+        // 3. Relay's ephemeral SSH key
+        if let Some(relay_key) = handler_state.relay_ssh_key.read().await.as_ref() {
+            keys.push(relay_key.clone());
+        }
+        keys
     };
 
     let config = std::sync::Arc::new(russh::server::Config {

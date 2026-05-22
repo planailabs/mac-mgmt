@@ -45,3 +45,43 @@ pub async fn validate_token(server_api_url: &str, token: &str) -> Result<SelfInf
         StatusCode::BAD_GATEWAY
     })
 }
+
+/// Response from the server's /api/cert-auth endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CertAuthInfo {
+    pub cluster_id: Option<Uuid>,
+    #[serde(default)]
+    pub cluster_ids: Vec<Uuid>,
+    pub token_kind: String,
+}
+
+/// Validate a client certificate fingerprint against the server's
+/// /api/cert-auth endpoint. Returns the associated permissions.
+pub async fn validate_cert(
+    server_api_url: &str,
+    fingerprint: &str,
+) -> Result<CertAuthInfo, StatusCode> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{server_api_url}/api/cert-auth"))
+        .query(&[("fingerprint", fingerprint)])
+        .send()
+        .await
+        .map_err(|e| {
+            tracing::error!("cert-auth request failed: {e}");
+            StatusCode::BAD_GATEWAY
+        })?;
+
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if !resp.status().is_success() {
+        tracing::error!("cert-auth API returned {}", resp.status());
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+
+    resp.json::<CertAuthInfo>().await.map_err(|e| {
+        tracing::error!("failed to parse cert-auth response: {e}");
+        StatusCode::BAD_GATEWAY
+    })
+}

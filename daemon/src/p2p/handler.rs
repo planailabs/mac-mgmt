@@ -20,4 +20,8 @@ pub struct HandlerState {
     pub metrics_port: u16,
     pub fake_origin_local: bool,
     pub client: reqwest::Client,
+    /// SSH keys synced from the server (cluster_ssh_keys table).
+    pub server_ssh_keys: Arc<RwLock<Vec<russh::keys::PublicKey>>>,
+    /// Ephemeral SSH public key provided by the relay during registration.
+    pub relay_ssh_key: Arc<RwLock<Option<russh::keys::PublicKey>>>,
 }
