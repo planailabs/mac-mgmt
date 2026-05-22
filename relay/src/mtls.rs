@@ -185,7 +185,7 @@ pub async fn serve_tls(
             if let Err(e) = hyper_util::server::conn::auto::Builder::new(
                 hyper_util::rt::TokioExecutor::new(),
             )
-            .serve_connection(io, hyper_service)
+            .serve_connection_with_upgrades(io, hyper_service)
             .await
             {
                 tracing::debug!("connection error from {peer_addr}: {e}");
