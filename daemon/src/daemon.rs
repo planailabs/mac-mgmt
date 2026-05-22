@@ -1289,7 +1289,7 @@ pub async fn run(
             context7_api_key: None,
             validator_provider: None,
             validator_model: None,
-            fine_tuned_model: cfg.healer.as_ref().and_then(|h| h.fine_tuned_model.clone()),
+            fine_tuned_model: cfg.healer.fine_tuned_model.clone(),
         };
         let session_factory = std::sync::Arc::new(
             crate::healer_bridge::LocalSessionFactory::new(
