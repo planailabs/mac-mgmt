@@ -288,17 +288,22 @@ async fn main() -> Result<()> {
     .map_err(|e| anyhow::anyhow!("failed to build TLS config: {e}"))?;
     let tls_acceptor = mtls::make_acceptor(tls_config);
 
-    // Middleware: extract client cert from ConnectInfo and inject as Extension
-    // so handlers can use `Option<Extension<ClientCertInfo>>`.
+    // Middleware: bridge TlsConnectInfo → Extension<ClientCertInfo> + ConnectInfo<SocketAddr>
+    // so handlers can use `Option<Extension<ClientCertInfo>>` for cert access and
+    // `ConnectInfo<SocketAddr>` for peer address (backwards compat).
     let app = app.layer(axum::middleware::map_request(
         |mut req: axum::extract::Request| async move {
-            // ConnectInfo<TlsConnectInfo> is inserted by into_make_service_with_connect_info.
-            let cert = req
+            if let Some(tls_info) = req
                 .extensions()
                 .get::<axum::extract::ConnectInfo<mtls::TlsConnectInfo>>()
-                .and_then(|ci| ci.0.cert_info.clone());
-            if let Some(cert) = cert {
-                req.extensions_mut().insert(cert);
+                .cloned()
+            {
+                if let Some(cert) = tls_info.0.cert_info {
+                    req.extensions_mut().insert(cert);
+                }
+                req.extensions_mut().insert(
+                    axum::extract::ConnectInfo(tls_info.0.remote_addr),
+                );
             }
             req
         },
