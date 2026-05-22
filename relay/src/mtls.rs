@@ -47,6 +47,7 @@ pub async fn serve_tls(
         let app = app.clone();
 
         tokio::spawn(async move {
+            tracing::debug!("TCP accepted from {peer_addr}, starting TLS handshake");
             let tls_stream = match acceptor.accept(tcp_stream).await {
                 Ok(s) => s,
                 Err(e) => {
@@ -58,6 +59,15 @@ pub async fn serve_tls(
             // Extract client cert info before handing off to hyper/axum.
             let (_, server_conn) = tls_stream.get_ref();
             let cert_info = extract_client_cert(server_conn);
+            let alpn = server_conn
+                .alpn_protocol()
+                .map(|p| String::from_utf8_lossy(p).to_string());
+            tracing::debug!(
+                %peer_addr,
+                has_client_cert = cert_info.is_some(),
+                ?alpn,
+                "TLS handshake complete"
+            );
 
             let io = TokioIo::new(tls_stream);
 
@@ -84,6 +94,7 @@ pub async fn serve_tls(
                 },
             );
 
+            tracing::debug!(%peer_addr, "starting hyper connection handler");
             if let Err(e) = hyper_util::server::conn::auto::Builder::new(
                 hyper_util::rt::TokioExecutor::new(),
             )
@@ -92,6 +103,7 @@ pub async fn serve_tls(
             {
                 tracing::debug!("connection error from {peer_addr}: {e}");
             }
+            tracing::debug!(%peer_addr, "hyper connection handler finished");
         });
     }
 }
