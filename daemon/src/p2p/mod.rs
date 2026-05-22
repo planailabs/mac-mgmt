@@ -1157,12 +1157,12 @@ async fn handle_file_write_stream(
 
     match crate::file_tunnels::write_file(tunnel, path, &content, expected_mtime) {
         Ok(mtime) => {
-            let resp = serde_json::json!({ "status": 200, "mtime": mtime });
+            let resp = serde_json::json!({ "status": 200, "body": { "mtime": mtime } });
             let _ = stream_framing::write_json(stream, &resp).await;
             let _ = stream_framing::write_end(stream).await;
         }
         Err((status, error)) => {
-            let resp = serde_json::json!({ "status": status, "error": error });
+            let resp = serde_json::json!({ "status": status, "body": { "error": error } });
             let _ = stream_framing::write_json(stream, &resp).await;
             let _ = stream_framing::write_end(stream).await;
         }

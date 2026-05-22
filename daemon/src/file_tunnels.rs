@@ -487,7 +487,7 @@ pub async fn handle_write_session<S>(
             Ok(Some(TaggedFrame::Binary(data))) => {
                 content.extend_from_slice(&data);
                 if content.len() as u64 > MAX_FILE_SIZE {
-                    send_result!(serde_json::json!({ "status": 413, "error": "file too large" }));
+                    send_result!(serde_json::json!({ "status": 413, "body": { "error": "file too large" } }));
                 }
             }
             Ok(Some(TaggedFrame::End)) | Ok(None) => break,
@@ -504,13 +504,13 @@ pub async fn handle_write_session<S>(
         Ok(mtime) => {
             let _ = stream_framing::write_json(
                 stream,
-                &serde_json::json!({ "status": 200, "mtime": mtime }),
+                &serde_json::json!({ "status": 200, "body": { "mtime": mtime } }),
             )
             .await;
             let _ = stream_framing::write_end(stream).await;
         }
         Err((status, error)) => {
-            send_result!(serde_json::json!({ "status": status, "error": error }));
+            send_result!(serde_json::json!({ "status": status, "body": { "error": error } }));
         }
     }
 }
