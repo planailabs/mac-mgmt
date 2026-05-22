@@ -348,8 +348,12 @@ impl ManagedService for Hermes {
         let hh = hermes_home();
 
         let mut env = std::collections::HashMap::new();
-        env.insert("HERMES_MANAGED".into(), "1".into());
         env.insert("HERMES_HOME".into(), hh.to_string_lossy().into_owned());
+
+        // Do not set HERMES_MANAGED for the gateway process. The gateway owns
+        // runtime state such as /sethome, which persists home-channel routing
+        // into HERMES_HOME/.env; managed mode intentionally blocks .env writes.
+        // Package-managed companion processes still receive HERMES_MANAGED.
 
         // Inject API_SERVER_KEY so the HTTP API is enabled
         if let Some(key) = read_env_var("API_SERVER_KEY") {
