@@ -519,10 +519,16 @@ async fn handle_daemon_rpc(
                                 registered_cluster_id = Some(cid);
                                 let _ = gossip_tx.send(GossipCmd::Subscribe(cid)).await;
                             }
+                            // Read back the allocated SSH port (set by SshBridge).
+                            let ssh_port = {
+                                let daemons = registry.list_ssh_targets();
+                                daemons.iter().find(|t| t.instance_id == iid).and_then(|t| t.ssh_port)
+                            };
                             serde_json::json!({
                                 "type": "ok",
                                 "id": req_id,
                                 "cluster_id": cid.map(|c| c.to_string()),
+                                "ssh_port": ssh_port,
                             })
                         }
                         Ok(_) => {

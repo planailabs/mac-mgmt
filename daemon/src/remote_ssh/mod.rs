@@ -236,6 +236,7 @@ impl RemoteSshState {
     }
 
     /// Handle a remote SSH command (toggle allow/deny).
+    /// Triggers a heartbeat so the relay is notified of the state change.
     pub fn handle_cmd(&mut self, cmd: RemoteSshCommand) {
         match cmd {
             RemoteSshCommand::Enable => {
@@ -246,6 +247,11 @@ impl RemoteSshState {
                 tracing::info!("remote SSH denied");
                 self.ssh_allowed.store(false, Ordering::Relaxed);
             }
+        }
+        // Signal a heartbeat so the relay learns the new SSH state via
+        // tunnel_advertisement.
+        if self.heartbeat_tx.try_send(()).is_err() {
+            tracing::debug!("heartbeat signal channel full, heartbeat will fire on next tick");
         }
     }
 }
