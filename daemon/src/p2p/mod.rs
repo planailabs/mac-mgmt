@@ -144,7 +144,15 @@ impl P2pManager {
                 );
                 let dns_tcp = libp2p::dns::tokio::Transport::system(tcp)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                let ws = libp2p::websocket::Config::new(dns_tcp)
+                let mut ws = libp2p::websocket::Config::new(dns_tcp);
+                // In debug builds, skip TLS certificate verification for WSS
+                // so the daemon can connect to relays with self-signed certs.
+                #[cfg(debug_assertions)]
+                {
+                    let tls_config = build_insecure_ws_tls_config();
+                    ws.set_tls_config(tls_config);
+                }
+                let ws = ws
                     .upgrade(libp2p::core::upgrade::Version::V1)
                     .authenticate(libp2p::noise::Config::new(key)?)
                     .multiplex(libp2p::yamux::Config::default())
@@ -1402,6 +1410,77 @@ async fn handle_ssh_session(
             tracing::warn!("SSH session failed: {e}");
         }
     }
+}
+
+/// Build a `libp2p_websocket::tls::Config` that skips certificate verification.
+/// Debug builds only — allows connecting to relays with self-signed certs.
+///
+/// SAFETY: `libp2p_websocket::tls::Config` has `pub(crate)` fields so we can't
+/// construct it directly. We use transmute since the struct layout is:
+///   { client: futures_rustls::TlsConnector, server: Option<futures_rustls::TlsAcceptor> }
+#[cfg(debug_assertions)]
+fn build_insecure_ws_tls_config() -> libp2p::websocket::tls::Config {
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct AcceptAnyCert;
+
+    impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
+        fn verify_server_cert(
+            &self, _: &rustls::pki_types::CertificateDer<'_>,
+            _: &[rustls::pki_types::CertificateDer<'_>],
+            _: &rustls::pki_types::ServerName<'_>, _: &[u8],
+            _: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
+    }
+
+    let provider = rustls::crypto::ring::default_provider();
+    let client_config = rustls::ClientConfig::builder_with_provider(provider.into())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
+        .with_no_client_auth();
+
+    let connector = futures_rustls::TlsConnector::from(Arc::new(client_config));
+
+    // Transmute a struct with identical layout to libp2p_websocket::tls::Config.
+    // The struct has two fields: client (TlsConnector), server (Option<TlsAcceptor>).
+    #[repr(C)]
+    struct TlsConfigRepr {
+        client: futures_rustls::TlsConnector,
+        server: Option<futures_rustls::TlsAcceptor>,
+    }
+
+    let repr = TlsConfigRepr {
+        client: connector,
+        server: None,
+    };
+
+    tracing::warn!("using insecure TLS config for WSS (debug build)");
+    // SAFETY: TlsConfigRepr has the same fields and types as
+    // libp2p_websocket::tls::Config. Both are non-repr(C) Rust structs
+    // with the same field types in the same order.
+    unsafe { std::mem::transmute(repr) }
 }
 
 /// Parse the relay's proxy_url from its Identify agent version string.

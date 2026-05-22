@@ -8149,6 +8149,7 @@ dependencies = [
  "clap",
  "dioxus",
  "dirs 6.0.0",
+ "futures-rustls",
  "futures-util",
  "getrandom 0.4.2",
  "glob",

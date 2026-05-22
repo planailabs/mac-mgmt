@@ -63,6 +63,7 @@ rustls = { workspace = true }
 russh = { version = "0.60", default-features = false, features = ["ring", "flate2"] }
 rand = "0.9"
 futures-util = "0.3"
+futures-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 uuid = { version = "1", features = ["v4"] }
 mac-mgmt-common = { path = "../common", features = ["sentry"] }
 mac-mgmt-services = { path = "../mac-mgmt-services" }
