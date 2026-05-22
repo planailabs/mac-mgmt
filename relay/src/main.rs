@@ -288,9 +288,30 @@ async fn main() -> Result<()> {
     .map_err(|e| anyhow::anyhow!("failed to build TLS config: {e}"))?;
     let tls_acceptor = mtls::make_acceptor(tls_config);
 
+    // Middleware: extract client cert from ConnectInfo and inject as Extension
+    // so handlers can use `Option<Extension<ClientCertInfo>>`.
+    let app = app.layer(axum::middleware::map_request(
+        |mut req: axum::extract::Request| async move {
+            // ConnectInfo<TlsConnectInfo> is inserted by into_make_service_with_connect_info.
+            let cert = req
+                .extensions()
+                .get::<axum::extract::ConnectInfo<mtls::TlsConnectInfo>>()
+                .and_then(|ci| ci.0.cert_info.clone());
+            if let Some(cert) = cert {
+                req.extensions_mut().insert(cert);
+            }
+            req
+        },
+    ));
+
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
     tracing::info!("relay listening on {} (HTTPS)", cfg.listen_addr);
 
-    mtls::serve_tls(listener, tls_acceptor, app).await?;
+    let tls_listener = mtls::TlsListener::new(listener, tls_acceptor);
+    axum::serve(
+        tls_listener,
+        app.into_make_service_with_connect_info::<mtls::TlsConnectInfo>(),
+    )
+    .await?;
     Ok(())
 }

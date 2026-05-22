@@ -1,10 +1,12 @@
 //! TLS listener with optional client certificate extraction.
 //!
-//! The relay serves HTTPS directly using rustls. Client certificates are
-//! requested but not required at the TLS layer — authorization is by
-//! fingerprint allowlist checked per-route.
+//! Implements axum's `Listener` trait so `axum::serve()` works directly
+//! with TLS — no manual hyper plumbing needed. Client certificates are
+//! requested but not required; cert info is extracted during accept and
+//! made available via `ConnectInfo<TlsConnectInfo>`.
 
 use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -20,6 +22,96 @@ pub struct ClientCertInfo {
     pub subject: String,
 }
 
+// ── TLS Listener (implements axum::serve::Listener) ─────────────────
+
+/// A TLS listener that wraps a `TcpListener` + `TlsAcceptor`.
+/// Implements axum's `Listener` trait so it plugs directly into `axum::serve()`.
+pub struct TlsListener {
+    tcp: TcpListener,
+    acceptor: TlsAcceptor,
+}
+
+impl TlsListener {
+    pub fn new(tcp: TcpListener, acceptor: TlsAcceptor) -> Self {
+        Self { tcp, acceptor }
+    }
+}
+
+/// Address info returned by `TlsListener::accept()`, carrying both the
+/// remote socket address and any extracted client certificate info.
+#[derive(Debug, Clone)]
+pub struct TlsAddr {
+    pub remote_addr: SocketAddr,
+    pub cert_info: Option<ClientCertInfo>,
+}
+
+impl axum::serve::Listener for TlsListener {
+    type Io = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+    type Addr = TlsAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            let (tcp, addr) = match self.tcp.accept().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    tracing::warn!("TCP accept error: {e}");
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    continue;
+                }
+            };
+
+            match self.acceptor.accept(tcp).await {
+                Ok(tls) => {
+                    let (_, server_conn) = tls.get_ref();
+                    let cert_info = extract_client_cert(server_conn);
+                    return (
+                        tls,
+                        TlsAddr {
+                            remote_addr: addr,
+                            cert_info,
+                        },
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!("TLS handshake failed from {addr}: {e}");
+                    continue;
+                }
+            }
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<Self::Addr> {
+        self.tcp.local_addr().map(|a| TlsAddr {
+            remote_addr: a,
+            cert_info: None,
+        })
+    }
+}
+
+// ── ConnectInfo for cert extraction ─────────────────────────────────
+
+/// Connection info extracted from a TLS connection, available via
+/// `ConnectInfo<TlsConnectInfo>` in axum handlers.
+#[derive(Debug, Clone)]
+pub struct TlsConnectInfo {
+    pub remote_addr: SocketAddr,
+    pub cert_info: Option<ClientCertInfo>,
+}
+
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TlsListener>>
+    for TlsConnectInfo
+{
+    fn connect_info(stream: axum::serve::IncomingStream<'_, TlsListener>) -> Self {
+        let addr = stream.remote_addr();
+        TlsConnectInfo {
+            remote_addr: addr.remote_addr,
+            cert_info: addr.cert_info.clone(),
+        }
+    }
+}
+
+// ── TLS config builders ─────────────────────────────────────────────
+
 /// Build a `rustls::ServerConfig` that requests (but does not require)
 /// client certificates.
 pub fn build_tls_config(
@@ -27,8 +119,6 @@ pub fn build_tls_config(
     private_key: rustls::pki_types::PrivateKeyDer<'static>,
     _client_ca_path: Option<&str>,
 ) -> Result<rustls::ServerConfig, rustls::Error> {
-    // Accept any client certificate (including self-signed) at the TLS
-    // layer. Authorization is done later by fingerprint lookup.
     let client_verifier = Arc::new(AcceptAnyClientCert);
 
     let mut config = rustls::ServerConfig::builder()
@@ -83,17 +173,21 @@ pub fn generate_self_signed() -> anyhow::Result<(
         .map_err(|e| anyhow::anyhow!("failed to generate self-signed cert: {e}"))?;
 
     let cert_der = rustls::pki_types::CertificateDer::from(cert.der().to_vec());
-    let key_der =
-        rustls::pki_types::PrivateKeyDer::try_from(key_pair.serialize_der())
-            .map_err(|e| anyhow::anyhow!("failed to convert key: {e}"))?;
+    let key_der = rustls::pki_types::PrivateKeyDer::try_from(key_pair.serialize_der())
+        .map_err(|e| anyhow::anyhow!("failed to convert key: {e}"))?;
 
     Ok((vec![cert_der], key_der))
 }
 
+/// Create a `TlsAcceptor` from the server config.
+pub fn make_acceptor(config: rustls::ServerConfig) -> TlsAcceptor {
+    TlsAcceptor::from(Arc::new(config))
+}
+
+// ── Cert extraction ─────────────────────────────────────────────────
+
 /// Extract `ClientCertInfo` from a rustls server connection.
-pub fn extract_client_cert(
-    conn: &rustls::ServerConnection,
-) -> Option<ClientCertInfo> {
+fn extract_client_cert(conn: &rustls::ServerConnection) -> Option<ClientCertInfo> {
     let certs = conn.peer_certificates()?;
     let cert_der = certs.first()?;
 
@@ -119,85 +213,8 @@ pub fn extract_client_cert(
     })
 }
 
-/// Create a `TlsAcceptor` from the server config.
-pub fn make_acceptor(config: rustls::ServerConfig) -> TlsAcceptor {
-    TlsAcceptor::from(Arc::new(config))
-}
-
-/// Accept TLS connections and serve them with the given axum service.
-/// This replaces `axum::serve()` with a custom TLS accept loop that
-/// extracts client certificate info before passing to axum.
-pub async fn serve_tls(
-    listener: TcpListener,
-    acceptor: TlsAcceptor,
-    app: axum::Router,
-) -> io::Result<()> {
-    use hyper_util::rt::TokioIo;
-    use tower::ServiceExt;
-
-    loop {
-        let (tcp_stream, peer_addr) = listener.accept().await?;
-
-        let acceptor = acceptor.clone();
-        let app = app.clone();
-
-        tokio::spawn(async move {
-            let tls_stream = match acceptor.accept(tcp_stream).await {
-                Ok(s) => s,
-                Err(e) => {
-                    // TLS handshake failures are common (health checks, port
-                    // scanners, clients without certs when we request them).
-                    tracing::debug!("TLS handshake failed from {peer_addr}: {e}");
-                    return;
-                }
-            };
-
-            // Extract client cert info before handing off to hyper/axum.
-            let (_, server_conn) = tls_stream.get_ref();
-            let cert_info = extract_client_cert(server_conn);
-
-            let io = TokioIo::new(tls_stream);
-
-            // Build a service that injects the client cert info + peer addr
-            // into request extensions, then delegates to the axum router.
-            let hyper_service = hyper::service::service_fn(
-                move |req: hyper::Request<hyper::body::Incoming>| {
-                    let app = app.clone();
-                    let info = cert_info.clone();
-                    async move {
-                        // Convert Incoming → axum Body.
-                        let (parts, body) = req.into_parts();
-                        let body = axum::body::Body::new(body);
-                        let mut req = axum::http::Request::from_parts(parts, body);
-
-                        if let Some(info) = info {
-                            req.extensions_mut().insert(info);
-                        }
-                        req.extensions_mut()
-                            .insert(axum::extract::ConnectInfo(peer_addr));
-
-                        let resp = app.oneshot(req).await;
-                        resp.map_err(|e| match e {})
-                    }
-                },
-            );
-
-            if let Err(e) = hyper_util::server::conn::auto::Builder::new(
-                hyper_util::rt::TokioExecutor::new(),
-            )
-            .serve_connection_with_upgrades(io, hyper_service)
-            .await
-            {
-                tracing::debug!("connection error from {peer_addr}: {e}");
-            }
-        });
-    }
-}
-
 // ── Client cert verifier that accepts anything ──────────────────────
 
-/// A client certificate verifier that accepts any certificate (including
-/// self-signed). Authorization is by fingerprint allowlist, not CA trust.
 #[derive(Debug)]
 struct AcceptAnyClientCert;
 
@@ -212,7 +229,6 @@ impl rustls::server::danger::ClientCertVerifier for AcceptAnyClientCert {
         _intermediates: &[rustls::pki_types::CertificateDer<'_>],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
-        // Accept any certificate — fingerprint-based authorization happens later.
         Ok(rustls::server::danger::ClientCertVerified::assertion())
     }
 
