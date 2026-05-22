@@ -1133,6 +1133,12 @@ pub async fn run(
     };
     let mut backup_tick = time::interval(backup_interval);
 
+    let nix_gc_interval = humantime::parse_duration(&cfg.nix_gc.interval)
+        .unwrap_or(std::time::Duration::from_secs(86400));
+    let mut nix_gc_tick = time::interval(nix_gc_interval);
+    // Track whether a disk-pressure GC is already running to avoid piling up.
+    let nix_gc_running = Arc::new(AtomicBool::new(false));
+
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("failed to register SIGTERM handler")?;
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
@@ -1459,6 +1465,22 @@ pub async fn run(
                 #[cfg(feature = "services")]
                 daemon.update_relay_config(relay_proxy_hostname!());
                 daemon.refresh_assessment_sample().await;
+                // Check disk pressure and trigger GC if needed.
+                if !nix_gc_running.load(Ordering::Relaxed)
+                    && disk_threshold_exceeded(
+                        &daemon.assessor,
+                        daemon.current_cfg.nix_gc.disk_threshold_percent,
+                    )
+                {
+                    nix_gc_running.store(true, Ordering::Relaxed);
+                    let flag = Arc::clone(&nix_gc_running);
+                    let assessor = Arc::clone(&daemon.assessor);
+                    let threshold = daemon.current_cfg.nix_gc.disk_threshold_percent;
+                    tokio::spawn(async move {
+                        run_nix_gc("disk pressure", &assessor, threshold).await;
+                        flag.store(false, Ordering::Relaxed);
+                    });
+                }
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
                 #[cfg(feature = "memvault")]
                 if let Some(ref mv) = daemon.memvault {
@@ -1515,6 +1537,19 @@ pub async fn run(
             _ = backup_tick.tick() => {
                 #[cfg(feature = "services")]
                 daemon.handle_backup().await;
+            }
+
+            _ = nix_gc_tick.tick() => {
+                if !nix_gc_running.swap(true, Ordering::Relaxed) {
+                    let flag = Arc::clone(&nix_gc_running);
+                    let assessor = Arc::clone(&daemon.assessor);
+                    let threshold = daemon.current_cfg.nix_gc.disk_threshold_percent;
+                    tokio::spawn(async move {
+                        // Build a temporary helper to call handle_nix_gc-style logic.
+                        run_nix_gc("scheduled", &assessor, threshold).await;
+                        flag.store(false, Ordering::Relaxed);
+                    });
+                }
             }
 
             _ = crate::config_watch::recv_debounced(&mut config_rx) => {
@@ -2320,4 +2355,110 @@ pub async fn run_sim_with_services(
     daemon.shutdown().await;
     tracing::info!("sim daemon (with supervisor) shutdown complete");
     Ok(())
+}
+
+// ── Nix garbage collection (free functions, usable from spawned tasks) ───
+
+/// Resolve which mount point backs `/nix/store` by stat'ing the path and
+/// matching its device ID against the tracked mounts.  Falls back to `/`
+/// if `/nix/store` doesn't exist or can't be matched.
+fn nix_store_mount() -> String {
+    use std::os::unix::fs::MetadataExt;
+    let nix_dev = std::fs::metadata("/nix/store")
+        .ok()
+        .map(|m| m.dev());
+    if let Some(dev) = nix_dev {
+        // Walk the tracked mounts and pick the longest prefix whose dev matches.
+        for candidate in &["/nix/store", "/nix", "/"] {
+            if let Ok(m) = std::fs::metadata(candidate) {
+                if m.dev() == dev {
+                    return candidate.to_string();
+                }
+            }
+        }
+    }
+    "/".to_string()
+}
+
+/// Check whether the mount backing `/nix/store` exceeds the disk usage threshold.
+fn disk_threshold_exceeded(assessor: &Assessor, threshold: u8) -> bool {
+    if threshold == 0 {
+        return false;
+    }
+    let Some(sample) = assessor.latest_sample_snapshot() else {
+        return false;
+    };
+    let target_mount = nix_store_mount();
+    // Find the sample entry for the target mount, falling back to "/" if the
+    // exact mount isn't in the sample (e.g. /nix/store on the root partition
+    // is reported as "/" by sysinfo).
+    let df = sample
+        .disk_free
+        .iter()
+        .find(|df| df.mount == target_mount)
+        .or_else(|| sample.disk_free.iter().find(|df| df.mount == "/"));
+    let Some(df) = df else {
+        return false;
+    };
+    if df.total_bytes == 0 {
+        return false;
+    }
+    let used_pct = ((df.total_bytes - df.free_bytes) * 100) / df.total_bytes;
+    if used_pct >= threshold as u64 {
+        tracing::info!(
+            "nix_gc: mount {} at {}% usage (threshold {}%)",
+            df.mount,
+            used_pct,
+            threshold,
+        );
+        return true;
+    }
+    false
+}
+
+/// Run `nix-collect-garbage --delete-old` and log the results.
+async fn run_nix_gc(reason: &str, _assessor: &Assessor, _threshold: u8) {
+    tracing::info!("nix_gc: starting garbage collection ({reason})");
+    let start = std::time::Instant::now();
+
+    let result = tokio::task::spawn_blocking(|| -> anyhow::Result<String> {
+        use std::process::Command;
+
+        let output = crate::cmd::output_with_timeout(
+            Command::new("nix-collect-garbage").arg("--delete-old"),
+            std::time::Duration::from_secs(600),
+        )?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if !output.status.success() {
+            anyhow::bail!("exit {}: {}", output.status, stderr.trim());
+        }
+
+        // nix-collect-garbage prints freed-space info to stderr
+        let summary = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else if !stdout.trim().is_empty() {
+            stdout.trim().to_string()
+        } else {
+            "completed (no output)".to_string()
+        };
+        Ok(summary)
+    })
+    .await;
+
+    let elapsed = start.elapsed().as_secs();
+
+    match result {
+        Ok(Ok(summary)) => {
+            tracing::info!("nix_gc: finished in {elapsed}s — {summary}");
+        }
+        Ok(Err(e)) => {
+            tracing::error!("nix_gc: failed in {elapsed}s — {e:#}");
+        }
+        Err(e) => {
+            tracing::error!("nix_gc: task panicked — {e}");
+        }
+    }
 }

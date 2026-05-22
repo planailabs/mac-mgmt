@@ -238,6 +238,18 @@ flavour = "cpu"
 # budget_window = "24h"               # sliding window (humantime format)
 # enabled = true
 
+# ── Nix garbage collection ───────────────────────────────────────────
+# Periodically runs `nix-collect-garbage --delete-old` to reclaim disk space.
+# Also triggers immediately when the mount backing /nix/store exceeds the
+# configured usage threshold (checked every health tick, ~1 min).
+# [nix_gc]
+# How often to run scheduled garbage collection. Default: "1d"
+# interval = "1d"
+#
+# Disk usage percent (0–100) that triggers an immediate GC run.
+# 0 disables the threshold check. Default: 90
+# disk_threshold_percent = 90
+
 # ── Backup (restic) ─────────────────────────────────────────────────
 # Periodic backups of service data using restic.
 # Automatically discovers paths from managed services (config, data dirs).

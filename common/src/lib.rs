@@ -1731,6 +1731,50 @@ impl BackupConfig {
     }
 }
 
+// ── Nix GC Config ─────────────────────────────────────────────────────
+
+fn default_nix_gc_interval() -> String {
+    "1d".into()
+}
+fn default_nix_gc_disk_threshold() -> u8 {
+    90
+}
+
+/// Periodic nix garbage collection settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NixGcConfig {
+    #[schemars(description = "How often to run nix-collect-garbage --delete-old (e.g. \"1d\", \"12h\")")]
+    #[serde(default = "default_nix_gc_interval")]
+    pub interval: String,
+    #[schemars(description = "Run GC immediately when any tracked mount exceeds this usage percent (0–100). 0 disables the threshold check.")]
+    #[serde(default = "default_nix_gc_disk_threshold")]
+    pub disk_threshold_percent: u8,
+}
+
+impl Default for NixGcConfig {
+    fn default() -> Self {
+        Self {
+            interval: default_nix_gc_interval(),
+            disk_threshold_percent: default_nix_gc_disk_threshold(),
+        }
+    }
+}
+
+impl NixGcConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        humantime::parse_duration(&self.interval).map_err(|e| {
+            ValidationError(format!("invalid nix_gc.interval '{}': {e}", self.interval))
+        })?;
+        if self.disk_threshold_percent > 100 {
+            return Err(ValidationError(
+                "nix_gc.disk_threshold_percent must be 0–100".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 // ── Memvault Config ────────────────────────────────────────────────────
 
 fn default_memvault_port() -> u16 {
@@ -2022,6 +2066,8 @@ pub struct DaemonConfig {
     #[serde(default)]
     pub backup: BackupConfig,
     #[serde(default)]
+    pub nix_gc: NixGcConfig,
+    #[serde(default)]
     pub memvault: MemvaultConfig,
     #[serde(default, rename = "custom-service")]
     pub custom_services: Vec<custom_service::CustomServiceConfig>,
@@ -2066,6 +2112,7 @@ impl DaemonConfig {
         config.ollama.validate().map_err(|e| e.to_string())?;
         config.litellm.validate().map_err(|e| e.to_string())?;
         config.relay.validate().map_err(|e| e.to_string())?;
+        config.nix_gc.validate().map_err(|e| e.to_string())?;
         // Validate custom services and check for duplicate names.
         let mut seen_names = std::collections::HashSet::new();
         for cs in &config.custom_services {
