@@ -16,6 +16,7 @@ use libp2p::{Multiaddr, PeerId, Swarm, Transport, gossipsub, identify};
 use tokio::sync::RwLock;
 
 use crate::daemon_registry::DaemonRegistry;
+use crate::ssh_bridge::SshBridge;
 
 // ── Behaviour ────────────────────────────────────────────────────────
 
@@ -84,6 +85,8 @@ pub struct RelaySwarm {
     registry: Arc<DaemonRegistry>,
     /// Server API URL for token validation during daemon registration.
     server_api_url: String,
+    /// SSH bridge (set after construction via `set_ssh_bridge`).
+    ssh_bridge: Arc<std::sync::OnceLock<Arc<SshBridge>>>,
 }
 
 /// Protocol for tunnel data substreams.
@@ -249,6 +252,10 @@ impl RelaySwarm {
         // Channel for RPC handlers to request gossipsub subscribe/unsubscribe.
         let (gossip_tx, gossip_rx) = tokio::sync::mpsc::channel::<GossipCmd>(64);
 
+        // Shared cell for the SSH bridge — set after RelaySwarm construction.
+        let ssh_bridge_cell: Arc<std::sync::OnceLock<Arc<SshBridge>>> =
+            Arc::new(std::sync::OnceLock::new());
+
         // Accept incoming RPC streams from daemons.
         let rpc_protocol = libp2p::StreamProtocol::new("/mac-mgmt/rpc/1.0.0");
         let mut incoming_streams = stream_control.clone().accept(rpc_protocol).unwrap();
@@ -256,6 +263,7 @@ impl RelaySwarm {
         let rpc_map_for_accept = Arc::clone(&daemon_rpc_map);
         let server_api_url_for_rpc = server_api_url.to_string();
         let gossip_tx_for_rpc = gossip_tx.clone();
+        let ssh_bridge_for_rpc = Arc::clone(&ssh_bridge_cell);
         tokio::spawn(async move {
             while let Some((peer_id, stream)) = incoming_streams.next().await {
                 tracing::info!(%peer_id, "daemon opened RPC stream");
@@ -263,13 +271,14 @@ impl RelaySwarm {
                 let rpc_map = Arc::clone(&rpc_map_for_accept);
                 let server_url = server_api_url_for_rpc.clone();
                 let gtx = gossip_tx_for_rpc.clone();
+                let ssh_bridge = ssh_bridge_for_rpc.get().cloned();
 
                 let (req_tx, req_rx) = tokio::sync::mpsc::channel(64);
                 rpc_map.write().await.insert(peer_id, req_tx);
 
                 let rpc_map_cleanup = Arc::clone(&rpc_map);
                 tokio::spawn(async move {
-                    handle_daemon_rpc(peer_id, stream, registry, req_rx, server_url, gtx).await;
+                    handle_daemon_rpc(peer_id, stream, registry, req_rx, server_url, gtx, ssh_bridge).await;
                     rpc_map_cleanup.write().await.remove(&peer_id);
                 });
             }
@@ -289,7 +298,19 @@ impl RelaySwarm {
             local_peer_id,
             peer_metadata,
             server_api_url: server_api_url.to_string(),
+            ssh_bridge: ssh_bridge_cell,
         })
+    }
+
+    /// Set the SSH bridge after construction. Must be called before any
+    /// daemon registers with ssh_enabled.
+    pub fn set_ssh_bridge(&self, bridge: Arc<SshBridge>) {
+        let _ = self.ssh_bridge.set(bridge);
+    }
+
+    /// Get the SSH bridge, if set.
+    pub fn ssh_bridge(&self) -> Option<&Arc<SshBridge>> {
+        self.ssh_bridge.get()
     }
 }
 
@@ -396,6 +417,7 @@ async fn handle_daemon_rpc(
     mut req_rx: tokio::sync::mpsc::Receiver<DaemonRpcRequest>,
     server_api_url: String,
     gossip_tx: tokio::sync::mpsc::Sender<GossipCmd>,
+    ssh_bridge: Option<Arc<SshBridge>>,
 ) {
     use futures_util::{AsyncReadExt, AsyncWriteExt};
     let (mut reader, mut writer) = stream.split();
@@ -469,6 +491,7 @@ async fn handle_daemon_rpc(
                             tracing::info!(%peer_id, %iid, cluster_id = ?info.cluster_id, "daemon registered via RPC stream");
                             let cid = info.cluster_id;
                             let cname = info.cluster_name;
+                            let ssh_enabled = frame["ssh_enabled"].as_bool().unwrap_or(false);
                             registry.register(crate::daemon_registry::DaemonConn {
                                 instance_id: iid.clone(),
                                 cluster_id: cid,
@@ -480,9 +503,17 @@ async fn handle_daemon_rpc(
                                 file_tunnels: serde_json::Value::Array(vec![]),
                                 shell_tunnels: serde_json::Value::Array(vec![]),
                                 peer_id: Some(peer_id),
+                                ssh_enabled,
+                                ssh_port: None,
                             });
-                            instance_id = Some(iid);
+                            instance_id = Some(iid.clone());
                             connected_at = Some(now);
+                            // Start SSH bridge listener if enabled.
+                            if ssh_enabled {
+                                if let Some(bridge) = &ssh_bridge {
+                                    bridge.on_ssh_enabled(&iid);
+                                }
+                            }
                             // Subscribe to cluster gossipsub topic.
                             if let Some(cid) = cid {
                                 registered_cluster_id = Some(cid);
@@ -522,6 +553,18 @@ async fn handle_daemon_rpc(
                     let file_tunnels = frame["file_tunnels"].clone();
                     let shell_tunnels = frame["shell_tunnels"].clone();
                     registry.update_all_tunnels(iid, tunnels, file_tunnels, shell_tunnels);
+
+                    // Handle SSH state changes.
+                    let ssh_enabled = frame["ssh_enabled"].as_bool().unwrap_or(false);
+                    let prev = registry.update_ssh_enabled(iid, ssh_enabled);
+                    if let Some(bridge) = &ssh_bridge {
+                        if ssh_enabled && !prev {
+                            bridge.on_ssh_enabled(iid);
+                        } else if !ssh_enabled && prev {
+                            bridge.on_ssh_disabled(iid);
+                        }
+                    }
+
                     tracing::debug!(%peer_id, %iid, "tunnel advertisement via RPC");
                 }
                 serde_json::json!({ "type": "ok", "id": req_id })
@@ -540,9 +583,14 @@ async fn handle_daemon_rpc(
     }
 
     tracing::info!(%peer_id, "RPC stream closed");
-    // Clean up registration and gossipsub subscription.
+    // Clean up registration, SSH bridge, and gossipsub subscription.
     if let (Some(iid), Some(cat)) = (instance_id, connected_at) {
-        registry.unregister(&iid, cat);
+        let had_ssh_port = registry.unregister(&iid, cat);
+        if had_ssh_port.is_some() {
+            if let Some(bridge) = &ssh_bridge {
+                bridge.on_daemon_disconnect(&iid);
+            }
+        }
     }
     if let Some(cid) = registered_cluster_id {
         let _ = gossip_tx.send(GossipCmd::Unsubscribe(cid)).await;

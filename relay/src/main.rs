@@ -17,6 +17,7 @@ mod daemon_registry;
 mod metrics_federation;
 mod p2p;
 mod proxy_handler;
+mod ssh_bridge;
 mod tunnel_io;
 mod ws_bridge;
 
@@ -62,10 +63,15 @@ async fn main() -> Result<()> {
         cfg.listen_addr,
     );
 
-    let registry = Arc::new(daemon_registry::DaemonRegistry::new(cfg.max_daemons));
+    let data_dir = std::path::Path::new(&cfg.data_dir);
+    let registry = Arc::new(daemon_registry::DaemonRegistry::new(
+        cfg.max_daemons,
+        cfg.ssh_port_min,
+        cfg.ssh_port_max,
+        data_dir,
+    ));
 
     // Start the libp2p swarm (circuit relay server + control protocol)
-    let data_dir = std::path::Path::new(&cfg.data_dir);
     let key_path = cfg.p2p_key_file.as_deref().unwrap_or("relay_ed25519_key");
     let key_path = if std::path::Path::new(key_path).is_absolute() {
         std::path::PathBuf::from(key_path)
@@ -83,6 +89,13 @@ async fn main() -> Result<()> {
         .await?,
     );
     tracing::info!(peer_id = %relay_swarm.local_peer_id, "p2p relay swarm started");
+
+    // SSH TCP bridge: per-daemon port listeners
+    let ssh_bridge = Arc::new(ssh_bridge::SshBridge::new(
+        Arc::clone(&relay_swarm),
+        Arc::clone(&registry),
+    ));
+    relay_swarm.set_ssh_bridge(Arc::clone(&ssh_bridge));
 
     // API router: health, metrics, tunnel listing
     // Generate an in-memory token for the batch instances endpoint.

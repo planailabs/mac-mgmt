@@ -14,7 +14,7 @@ struct Cli {
     /// Instance ID or prefix to connect to
     instance_id: Option<String>,
 
-    /// List active tunnels
+    /// List active SSH targets
     #[arg(long)]
     list: bool,
 
@@ -37,30 +37,14 @@ struct Config {
     token: Option<String>,
 }
 
+/// An SSH-capable daemon returned by the relay's `/api/ssh` endpoint.
 #[derive(Deserialize)]
-struct ServiceTunnel {
-    name: String,
-    tcp_port: u16,
-}
-
-#[derive(Deserialize)]
-struct TunnelInfo {
+struct SshTarget {
     instance_id: String,
     cluster_name: Option<String>,
     agent_name: Option<String>,
     hostname: Option<String>,
-    #[serde(default)]
-    tunnels: Vec<ServiceTunnel>,
-}
-
-impl TunnelInfo {
-    /// Find the SSH tunnel port from the service tunnels list.
-    fn ssh_port(&self) -> Option<u16> {
-        self.tunnels
-            .iter()
-            .find(|t| t.name == "ssh" || t.name == "sshd")
-            .map(|t| t.tcp_port)
-    }
+    ssh_port: Option<u16>,
 }
 
 fn config_path() -> PathBuf {
@@ -110,24 +94,24 @@ async fn main() -> Result<()> {
         .or(config.token)
         .context("token not configured (use --token, RELAY_TOKEN env, or config file)")?;
 
-    let tunnels = fetch_tunnels(&relay_url, &token).await?;
+    let targets = fetch_ssh_targets(&relay_url, &token).await?;
 
     if cli.list {
-        print_tunnels(&tunnels);
+        print_targets(&targets);
         return Ok(());
     }
 
-    let tunnel = match &cli.instance_id {
+    let target = match &cli.instance_id {
         Some(prefix) => {
-            let matches: Vec<_> = tunnels
+            let matches: Vec<_> = targets
                 .iter()
                 .filter(|t| t.instance_id.starts_with(prefix.as_str()))
                 .collect();
             match matches.len() {
-                0 => bail!("no tunnel matching prefix '{prefix}'"),
+                0 => bail!("no SSH target matching prefix '{prefix}'"),
                 1 => matches[0],
                 n => {
-                    eprintln!("ambiguous prefix '{prefix}', matches {n} tunnels:");
+                    eprintln!("ambiguous prefix '{prefix}', matches {n} targets:");
                     for t in &matches {
                         eprintln!(
                             "  {}  {}",
@@ -140,21 +124,21 @@ async fn main() -> Result<()> {
             }
         }
         None => {
-            if tunnels.len() == 1 {
-                &tunnels[0]
-            } else if tunnels.is_empty() {
-                bail!("no active tunnels");
+            if targets.len() == 1 {
+                &targets[0]
+            } else if targets.is_empty() {
+                bail!("no active SSH targets");
             } else {
-                eprintln!("multiple tunnels active, specify an instance ID:");
-                print_tunnels(&tunnels);
+                eprintln!("multiple SSH targets active, specify an instance ID:");
+                print_targets(&targets);
                 bail!("specify an instance ID or prefix");
             }
         }
     };
 
-    let ssh_port = tunnel
-        .ssh_port()
-        .context("no SSH tunnel found for this instance")?;
+    let ssh_port = target
+        .ssh_port
+        .context("SSH port not yet allocated for this instance")?;
 
     let host = relay_url
         .strip_prefix("https://")
@@ -169,8 +153,8 @@ async fn main() -> Result<()> {
 
     eprintln!(
         "Connecting to {} ({}) on {}:{}...",
-        tunnel.agent_name.as_deref().unwrap_or("-"),
-        &tunnel.instance_id[..12.min(tunnel.instance_id.len())],
+        target.agent_name.as_deref().unwrap_or("-"),
+        &target.instance_id[..12.min(target.instance_id.len())],
         host,
         ssh_port,
     );
@@ -188,10 +172,10 @@ async fn main() -> Result<()> {
     std::process::exit(status.code().unwrap_or(1));
 }
 
-async fn fetch_tunnels(relay_url: &str, token: &str) -> Result<Vec<TunnelInfo>> {
+async fn fetch_ssh_targets(relay_url: &str, token: &str) -> Result<Vec<SshTarget>> {
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{relay_url}/api/tunnels"))
+        .get(format!("{relay_url}/api/ssh"))
         .bearer_auth(token)
         .send()
         .await
@@ -201,17 +185,17 @@ async fn fetch_tunnels(relay_url: &str, token: &str) -> Result<Vec<TunnelInfo>> 
         bail!("relay returned {}", resp.status());
     }
 
-    resp.json().await.context("failed to parse tunnel list")
+    resp.json().await.context("failed to parse SSH target list")
 }
 
-fn print_tunnels(tunnels: &[TunnelInfo]) {
+fn print_targets(targets: &[SshTarget]) {
     println!(
         "{:<14} {:<24} {:<24} {:<16} {}",
         "INSTANCE", "AGENT", "HOSTNAME", "CLUSTER", "SSH PORT"
     );
-    for t in tunnels {
+    for t in targets {
         let port = t
-            .ssh_port()
+            .ssh_port
             .map(|p| p.to_string())
             .unwrap_or_else(|| "-".into());
         println!(

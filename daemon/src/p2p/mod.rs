@@ -501,11 +501,14 @@ async fn swarm_loop(
                 // Re-register via RPC if needed.
                 if relay.needs_reregister() {
                     if let Some(rpc) = relay.rpc() {
+                        let ssh_enabled = config.handler_state.as_ref()
+                            .is_some_and(|hs| hs.ssh_allowed.load(Ordering::Relaxed));
                         let reg = serde_json::json!({
                             "type": "register",
                             "instance_id": config.instance_id,
                             "hostname": hostname::get().ok().map(|h| h.to_string_lossy().to_string()),
                             "token": config.server_token,
+                            "ssh_enabled": ssh_enabled,
                         });
                         match rpc.call(reg).await {
                             Ok(resp) => {
@@ -699,11 +702,14 @@ async fn send_tunnel_advertisement_rpc(
     #[cfg(not(feature = "services"))]
     let shell_tunnels = serde_json::Value::Array(vec![]);
 
+    let ssh_enabled = hs.ssh_allowed.load(Ordering::Relaxed);
+
     let req = serde_json::json!({
         "type": "tunnel_advertisement",
         "tunnels": tunnels,
         "file_tunnels": file_tunnels,
         "shell_tunnels": shell_tunnels,
+        "ssh_enabled": ssh_enabled,
     });
     if let Err(e) = rpc.send(req).await {
         tracing::warn!("failed to send tunnel advertisement via RPC: {e}");

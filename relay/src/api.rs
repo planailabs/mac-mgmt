@@ -47,6 +47,7 @@ pub fn router(
             get(proxy_metrics),
         )
         .route("/api/tunnels", get(list_tunnels))
+        .route("/api/ssh", get(list_ssh_targets))
         .route("/api/batch/instances", get(batch_instances))
         .route("/metrics", get(federated_metrics))
         .route("/health", get(health))
@@ -191,6 +192,26 @@ async fn list_tunnels(
         tunnels.retain(|t| t.cluster_id.is_some_and(|c| allowed.contains(&c)));
     }
     Json(tunnels).into_response()
+}
+
+// ── SSH target listing ───────────────────────────────────────────────
+
+async fn list_ssh_targets(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let self_info = match require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await
+    {
+        Ok(info) => info,
+        Err(resp) => return resp,
+    };
+
+    let mut targets = state.registry.list_ssh_targets();
+    if self_info.token_kind != "admin" {
+        let allowed = &self_info.cluster_ids;
+        targets.retain(|t| t.cluster_id.is_some_and(|c| allowed.contains(&c)));
+    }
+    Json(targets).into_response()
 }
 
 // ── Federated metrics ────────────────────────────────────────────────

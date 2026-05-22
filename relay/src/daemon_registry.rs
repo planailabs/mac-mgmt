@@ -1,8 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 use uuid::Uuid;
+
+const RESERVATION_TTL_DAYS: i64 = 30;
 
 /// A TCP tunnel exposed by a managed service on a daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +29,10 @@ pub struct DaemonConn {
     pub shell_tunnels: serde_json::Value,
     /// libp2p PeerId if the daemon is connected via p2p.
     pub peer_id: Option<libp2p::PeerId>,
+    /// Whether the daemon accepts SSH sessions via libp2p.
+    pub ssh_enabled: bool,
+    /// Allocated SSH port on the relay (set by SshBridge).
+    pub ssh_port: Option<u16>,
 }
 
 /// Full instance info returned by the batch endpoint.
@@ -40,6 +46,8 @@ pub struct InstanceInfo {
     pub tunnels: Vec<ServiceTunnel>,
     pub file_tunnels: serde_json::Value,
     pub shell_tunnels: serde_json::Value,
+    pub ssh_enabled: bool,
+    pub ssh_port: Option<u16>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,20 +61,274 @@ pub struct TunnelInfo {
     pub tunnels: Vec<ServiceTunnel>,
 }
 
-#[allow(dead_code)]
+/// An SSH-capable daemon returned by the `/api/ssh` endpoint.
+#[derive(Debug, Serialize)]
+pub struct SshTarget {
+    pub instance_id: String,
+    pub cluster_id: Option<Uuid>,
+    pub cluster_name: Option<String>,
+    pub agent_name: Option<String>,
+    pub hostname: Option<String>,
+    pub ssh_port: Option<u16>,
+}
+
+/// A port reserved for a disconnected machine so it gets the same port back.
+#[derive(Serialize, Deserialize)]
+struct PortReservation {
+    port: u16,
+    reserved_at: DateTime<Utc>,
+}
+
+/// On-disk format for port reservations.
+#[derive(Serialize, Deserialize, Default)]
+struct ReservationsFile {
+    reservations: HashMap<String, PortReservation>,
+}
+
 pub struct DaemonRegistry {
     daemons: RwLock<HashMap<String, DaemonConn>>,
     max_daemons: usize,
+    port_min: u16,
+    port_max: u16,
+    used_ports: RwLock<HashSet<u16>>,
+    /// instance_id → reserved port (kept for up to 30 days after disconnect).
+    reservations: RwLock<HashMap<String, PortReservation>>,
+    /// Path to the reservations file on disk.
+    reservations_path: std::path::PathBuf,
 }
 
-#[allow(dead_code)]
 impl DaemonRegistry {
-    pub fn new(max_daemons: usize) -> Self {
+    pub fn new(
+        max_daemons: usize,
+        port_min: u16,
+        port_max: u16,
+        data_dir: &std::path::Path,
+    ) -> Self {
+        let reservations_path = data_dir.join("port_reservations.json");
+
+        // Load existing reservations from disk.
+        let (reservations, used_ports) = match std::fs::read_to_string(&reservations_path) {
+            Ok(contents) => {
+                let file: ReservationsFile = serde_json::from_str(&contents).unwrap_or_default();
+                let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
+                let valid: HashMap<String, PortReservation> = file
+                    .reservations
+                    .into_iter()
+                    .filter(|(_, r)| r.reserved_at >= cutoff)
+                    .collect();
+                let ports: HashSet<u16> = valid.values().map(|r| r.port).collect();
+                tracing::info!(
+                    "loaded {} port reservation(s) from {}",
+                    valid.len(),
+                    reservations_path.display()
+                );
+                (valid, ports)
+            }
+            Err(_) => (HashMap::new(), HashSet::new()),
+        };
+
         Self {
             daemons: RwLock::new(HashMap::new()),
             max_daemons,
+            port_min,
+            port_max,
+            used_ports: RwLock::new(used_ports),
+            reservations: RwLock::new(reservations),
+            reservations_path,
         }
     }
+
+    // ── Port allocation ─────────────────────────────────────────────────
+
+    /// Allocate a port for `instance_id`. Reuses a reserved port if one
+    /// exists, otherwise finds the next free port in the range.
+    pub fn allocate_port(&self, instance_id: &str) -> Option<u16> {
+        // Check for an existing reservation first.
+        if let Some(reserved) = self.claim_reservation(instance_id) {
+            tracing::info!("reusing reserved port {reserved} for {instance_id}");
+            return Some(reserved);
+        }
+
+        let port = {
+            let used = self.used_ports.read().unwrap();
+            (self.port_min..=self.port_max).find(|p| !used.contains(p))
+        };
+        match port {
+            Some(p) => {
+                self.used_ports.write().unwrap().insert(p);
+                tracing::debug!("allocated port {p} for {instance_id}");
+                Some(p)
+            }
+            None => {
+                // Try reclaiming an expired reservation.
+                self.expire_reservations();
+                let port = {
+                    let used = self.used_ports.read().unwrap();
+                    (self.port_min..=self.port_max).find(|p| !used.contains(p))
+                };
+                match port {
+                    Some(p) => {
+                        self.used_ports.write().unwrap().insert(p);
+                        tracing::info!("allocated port {p} after expiring reservations");
+                        Some(p)
+                    }
+                    None => {
+                        tracing::error!(
+                            "no free ports in range {}-{}",
+                            self.port_min,
+                            self.port_max
+                        );
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    fn release_port(&self, port: u16) {
+        self.used_ports.write().unwrap().remove(&port);
+        tracing::debug!("released port {port}");
+    }
+
+    /// Claim a reserved port: refresh its timestamp and return it.
+    /// The port stays in `used_ports` and the reservation is kept (with
+    /// updated timestamp) so it survives the next disconnect too.
+    fn claim_reservation(&self, instance_id: &str) -> Option<u16> {
+        let mut reservations = self.reservations.write().unwrap();
+        let res = reservations.get_mut(instance_id)?;
+        let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
+        if res.reserved_at < cutoff {
+            let port = res.port;
+            reservations.remove(instance_id);
+            self.used_ports.write().unwrap().remove(&port);
+            tracing::debug!("reservation for {instance_id} port {port} expired");
+            None
+        } else {
+            res.reserved_at = Utc::now();
+            let port = res.port;
+            tracing::debug!("claimed reservation for {instance_id} port {port}");
+            Some(port)
+        }
+    }
+
+    /// Reserve a port for a daemon so it gets the same port back when it
+    /// reconnects. The port stays in `used_ports`.
+    pub fn reserve_port(&self, instance_id: &str, port: u16) {
+        self.used_ports.write().unwrap().insert(port);
+        self.reservations.write().unwrap().insert(
+            instance_id.to_string(),
+            PortReservation {
+                port,
+                reserved_at: Utc::now(),
+            },
+        );
+        tracing::info!(
+            "reserved port {port} for {instance_id} (up to {RESERVATION_TTL_DAYS} days)"
+        );
+        self.save_reservations();
+    }
+
+    /// Persist reservations to disk (best-effort).
+    fn save_reservations(&self) {
+        let path = &self.reservations_path;
+        let reservations = self.reservations.read().unwrap();
+        let file = ReservationsFile {
+            reservations: reservations
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        PortReservation {
+                            port: v.port,
+                            reserved_at: v.reserved_at,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        match serde_json::to_string_pretty(&file) {
+            Ok(json) => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(path, json) {
+                    tracing::warn!("failed to save reservations to {}: {e}", path.display());
+                }
+            }
+            Err(e) => tracing::warn!("failed to serialize reservations: {e}"),
+        }
+    }
+
+    /// Remove expired reservations and free their ports.
+    pub fn expire_reservations(&self) {
+        let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
+        let mut reservations = self.reservations.write().unwrap();
+        let mut used = self.used_ports.write().unwrap();
+        let before = reservations.len();
+        reservations.retain(|id, res| {
+            if res.reserved_at < cutoff {
+                used.remove(&res.port);
+                tracing::info!("reservation expired for {id} port {}", res.port);
+                false
+            } else {
+                true
+            }
+        });
+        drop(used);
+        drop(reservations);
+        if before != self.reservations.read().unwrap().len() {
+            self.save_reservations();
+        }
+    }
+
+    // ── SSH state ───────────────────────────────────────────────────────
+
+    /// Set the allocated SSH port for a daemon.
+    pub fn set_ssh_port(&self, instance_id: &str, port: u16) {
+        let mut daemons = self.daemons.write().unwrap();
+        if let Some(d) = daemons.get_mut(instance_id) {
+            d.ssh_port = Some(port);
+        }
+    }
+
+    /// Clear the SSH port for a daemon.
+    pub fn clear_ssh_port(&self, instance_id: &str) {
+        let mut daemons = self.daemons.write().unwrap();
+        if let Some(d) = daemons.get_mut(instance_id) {
+            d.ssh_port = None;
+        }
+    }
+
+    /// Update ssh_enabled for a daemon. Returns the previous value.
+    pub fn update_ssh_enabled(&self, instance_id: &str, enabled: bool) -> bool {
+        let mut daemons = self.daemons.write().unwrap();
+        if let Some(d) = daemons.get_mut(instance_id) {
+            let prev = d.ssh_enabled;
+            d.ssh_enabled = enabled;
+            prev
+        } else {
+            false
+        }
+    }
+
+    /// List all SSH-capable daemons.
+    pub fn list_ssh_targets(&self) -> Vec<SshTarget> {
+        let daemons = self.daemons.read().unwrap();
+        daemons
+            .values()
+            .filter(|d| d.ssh_enabled)
+            .map(|d| SshTarget {
+                instance_id: d.instance_id.clone(),
+                cluster_id: d.cluster_id,
+                cluster_name: d.cluster_name.clone(),
+                agent_name: d.agent_name.clone(),
+                hostname: d.hostname.clone(),
+                ssh_port: d.ssh_port,
+            })
+            .collect()
+    }
+
+    // ── Daemon registration ─────────────────────────────────────────────
 
     pub fn is_full(&self) -> bool {
         self.daemons.read().unwrap().len() >= self.max_daemons
@@ -75,8 +337,14 @@ impl DaemonRegistry {
     pub fn register(&self, conn: DaemonConn) {
         let id = conn.instance_id.clone();
         let mut daemons = self.daemons.write().unwrap();
-        if daemons.contains_key(&id) {
+        if let Some(old) = daemons.get(&id) {
             tracing::info!("replacing existing registration for {id}");
+            // Release old SSH port if it differs from what the new conn will get.
+            if let Some(old_port) = old.ssh_port {
+                if conn.ssh_port != Some(old_port) {
+                    self.release_port(old_port);
+                }
+            }
         }
         daemons.insert(id.clone(), conn);
         tracing::info!(
@@ -88,7 +356,8 @@ impl DaemonRegistry {
     /// Unregister a daemon, but only if its `connected_at` matches.
     /// This prevents a stale cleanup from deleting a newer
     /// registration that replaced it during a rapid reconnect.
-    pub fn unregister(&self, instance_id: &str, connected_at: DateTime<Utc>) {
+    /// Returns the SSH port the daemon had, if any (for bridge cleanup).
+    pub fn unregister(&self, instance_id: &str, connected_at: DateTime<Utc>) -> Option<u16> {
         let mut daemons = self.daemons.write().unwrap();
         let dominated = daemons
             .get(instance_id)
@@ -97,17 +366,26 @@ impl DaemonRegistry {
             tracing::info!(
                 "skipping unregister for {instance_id}: newer connection exists"
             );
-            return;
+            return None;
         }
-        if let Some(_conn) = daemons.remove(instance_id) {
+        if let Some(conn) = daemons.remove(instance_id) {
+            let ssh_port = conn.ssh_port;
+            // Reserve the SSH port so the daemon gets it back on reconnect.
+            if let Some(port) = ssh_port {
+                self.reserve_port(instance_id, port);
+            }
             tracing::info!(
                 "unregistered daemon {instance_id} (remaining: {})",
                 daemons.len()
             );
+            ssh_port
         } else {
             tracing::debug!("unregister called for unknown daemon {instance_id}");
+            None
         }
     }
+
+    // ── Tunnel queries ──────────────────────────────────────────────────
 
     pub fn list_tunnels(&self) -> Vec<TunnelInfo> {
         let daemons = self.daemons.read().unwrap();
@@ -139,6 +417,8 @@ impl DaemonRegistry {
                 tunnels: d.tunnels.clone(),
                 file_tunnels: d.file_tunnels.clone(),
                 shell_tunnels: d.shell_tunnels.clone(),
+                ssh_enabled: d.ssh_enabled,
+                ssh_port: d.ssh_port,
             })
             .collect()
     }
