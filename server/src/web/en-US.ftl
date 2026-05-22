@@ -194,6 +194,9 @@ ssh-keys-no-keys = No SSH keys.
 ## ── Cluster Client Certificates ────────────────────────────────
 
 cluster-detail-tab-client-certs = Client Certificates
+admin-client-certs-title = Admin Client Certificates
+admin-client-certs-description = Client certificates with admin-level access. These certificates can access all clusters via the relay.
+nav-admin-client-certs = Client Certificates
 client-certs-fingerprint-placeholder = sha256:ab12cd34...
 client-certs-label-placeholder = Label (optional)
 client-certs-no-certs = No client certificates.

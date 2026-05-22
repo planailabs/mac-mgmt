@@ -315,6 +315,48 @@ pub fn EasyAccess() -> Element {
                                         }
                                     }
                                 }
+
+                                // SSH button (opens web terminal on relay)
+                                {
+                                    let iid = node.instance_id.clone();
+                                    let ssh_url = node.relay_proxy_url.as_ref()
+                                        .map(|pu| format!("{pu}/ssh/{iid}"));
+                                    let has_proxy = ssh_url.is_some();
+                                    // SSH terminal icon (monitor with cursor)
+                                    let ssh_icon = "M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25A2.25 2.25 0 0 1 5.25 3h13.5A2.25 2.25 0 0 1 21 5.25Z";
+                                    rsx! {
+                                        if has_proxy {
+                                            a {
+                                                class: "tile group",
+                                                href: "{ssh_url.as_deref().unwrap_or(\"\")}",
+                                                target: "_blank",
+                                                svg { class: "tile-icon",
+                                                    fill: "none",
+                                                    stroke: "currentColor",
+                                                    stroke_width: "1.5",
+                                                    stroke_linecap: "round",
+                                                    stroke_linejoin: "round",
+                                                    view_box: "0 0 24 24",
+                                                    path { d: "{ssh_icon}" }
+                                                }
+                                                span { class: "tile-label", "SSH" }
+                                            }
+                                        } else {
+                                            div { class: "tile-disabled group",
+                                                svg { class: "tile-icon",
+                                                    fill: "none",
+                                                    stroke: "currentColor",
+                                                    stroke_width: "1.5",
+                                                    stroke_linecap: "round",
+                                                    stroke_linejoin: "round",
+                                                    view_box: "0 0 24 24",
+                                                    path { d: "{ssh_icon}" }
+                                                }
+                                                span { class: "tile-label", "SSH" }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

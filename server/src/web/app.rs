@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_i18n::{prelude::*, unic_langid::langid};
 
+use super::components::admin_client_certs_page::AdminClientCerts;
 use super::components::admin_tokens_page::AdminTokens;
 use super::components::bundle_detail::BundleDetail;
 use super::components::bundle_form::BundleForm;
@@ -86,6 +87,8 @@ pub enum Route {
     McpBundleDetail { id: String },
     #[route("/admin-tokens")]
     AdminTokens {},
+    #[route("/admin-client-certs")]
+    AdminClientCerts {},
     #[route("/rollouts")]
     RolloutList {},
     #[route("/rollouts/new")]

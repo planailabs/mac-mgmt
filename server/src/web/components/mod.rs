@@ -10,6 +10,7 @@ pub mod cluster_healer_settings;
 pub mod cluster_list;
 pub mod cluster_mcp_servers;
 pub mod cluster_packages;
+pub mod admin_client_certs_page;
 pub mod cluster_client_certs;
 pub mod cluster_skills;
 pub mod cluster_ssh_keys;
