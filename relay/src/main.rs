@@ -165,11 +165,21 @@ async fn main() -> Result<()> {
     // Non-WS requests → axum via oneshot (API or proxy).
     let app = Router::new().fallback(any(move |
         Host(hostname): Host,
-        req: Request<Body>,
+        mut req: Request<Body>,
     | {
         let api = api_router.clone();
         let proxy = proxy_router.clone();
         async move {
+            // Ensure the `host` header is set for HTTP/2 compatibility.
+            // HTTP/2 uses the `:authority` pseudo-header instead of `Host`,
+            // but downstream handlers (proxy_handler::parse_subdomain etc.)
+            // read `headers.get("host")`. Inject it if missing.
+            if !req.headers().contains_key("host") {
+                if let Ok(val) = axum::http::HeaderValue::from_str(&hostname) {
+                    req.headers_mut().insert("host", val);
+                }
+            }
+
             let host_no_port: String = hostname.split(':').next().unwrap_or(&hostname).to_string();
 
             // Proxy subdomain.
