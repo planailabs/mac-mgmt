@@ -28,6 +28,7 @@ pub struct WebSshState {
     pub registry: Arc<DaemonRegistry>,
     pub relay_swarm: Arc<RelaySwarm>,
     pub ssh_identity: Arc<RelaySshIdentity>,
+    pub server_api_url: String,
 }
 
 pub fn router(state: WebSshState) -> Router {
@@ -37,22 +38,46 @@ pub fn router(state: WebSshState) -> Router {
         .with_state(state)
 }
 
-/// Serve the xterm.js terminal page.
-async fn ssh_page(
-    Path(instance_id): Path<String>,
-    cert_info: Option<axum::Extension<ClientCertInfo>>,
-) -> Response {
-    // Require client certificate.
-    let Some(_cert) = cert_info else {
-        return (
+/// Verify client certificate: must be present and authorized.
+async fn verify_cert(
+    cert_info: &Option<axum::Extension<ClientCertInfo>>,
+    server_api_url: &str,
+) -> Result<(), Response> {
+    let Some(cert) = cert_info else {
+        return Err((
             axum::http::StatusCode::UNAUTHORIZED,
             axum::Json(serde_json::json!({
                 "error": "client certificate required"
             })),
         )
-            .into_response();
+            .into_response());
     };
 
+    if let Err(_status) = crate::auth::validate_cert(server_api_url, &cert.fingerprint_sha256).await
+    {
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({
+                "error": "certificate not authorized",
+                "cert_fingerprint": cert.fingerprint_sha256,
+                "hint": "Add this fingerprint to cluster or admin certificate settings"
+            })),
+        )
+            .into_response());
+    }
+
+    Ok(())
+}
+
+/// Serve the xterm.js terminal page.
+async fn ssh_page(
+    Path(instance_id): Path<String>,
+    State(state): State<WebSshState>,
+    cert_info: Option<axum::Extension<ClientCertInfo>>,
+) -> Response {
+    if let Err(resp) = verify_cert(&cert_info, &state.server_api_url).await {
+        return resp;
+    }
     Html(terminal_html(&instance_id)).into_response()
 }
 
@@ -63,17 +88,9 @@ async fn ssh_ws(
     State(state): State<WebSshState>,
     cert_info: Option<axum::Extension<ClientCertInfo>>,
 ) -> Response {
-    // Require client certificate.
-    let Some(_cert) = cert_info else {
-        return (
-            axum::http::StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({
-                "error": "client certificate required"
-            })),
-        )
-            .into_response();
-    };
-
+    if let Err(resp) = verify_cert(&cert_info, &state.server_api_url).await {
+        return resp;
+    }
     ws.on_upgrade(move |socket| handle_ssh_ws(socket, instance_id, state))
 }
 

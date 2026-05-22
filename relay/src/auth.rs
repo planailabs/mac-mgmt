@@ -55,12 +55,41 @@ pub struct CertAuthInfo {
     pub token_kind: String,
 }
 
+/// Cache for cert-auth results (fingerprint -> (result, timestamp)).
+/// 5-minute TTL, same as token cache in proxy_handler.
+static CERT_CACHE: std::sync::LazyLock<
+    tokio::sync::RwLock<std::collections::HashMap<String, (CertAuthResult, std::time::Instant)>>,
+> = std::sync::LazyLock::new(Default::default);
+
+const CERT_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Cached result: either a successful CertAuthInfo or a "not found" marker.
+#[derive(Debug, Clone)]
+enum CertAuthResult {
+    Ok(CertAuthInfo),
+    NotFound,
+}
+
 /// Validate a client certificate fingerprint against the server's
-/// /api/cert-auth endpoint. Returns the associated permissions.
+/// /api/cert-auth endpoint. Results are cached for 5 minutes.
 pub async fn validate_cert(
     server_api_url: &str,
     fingerprint: &str,
 ) -> Result<CertAuthInfo, StatusCode> {
+    // Check cache first.
+    {
+        let cache = CERT_CACHE.read().await;
+        if let Some((result, created)) = cache.get(fingerprint) {
+            if created.elapsed() < CERT_CACHE_TTL {
+                return match result {
+                    CertAuthResult::Ok(info) => Ok(info.clone()),
+                    CertAuthResult::NotFound => Err(StatusCode::FORBIDDEN),
+                };
+            }
+        }
+    }
+
+    // Cache miss — validate against server.
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{server_api_url}/api/cert-auth"))
@@ -73,6 +102,11 @@ pub async fn validate_cert(
         })?;
 
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        let mut cache = CERT_CACHE.write().await;
+        cache.insert(
+            fingerprint.to_string(),
+            (CertAuthResult::NotFound, std::time::Instant::now()),
+        );
         return Err(StatusCode::FORBIDDEN);
     }
     if !resp.status().is_success() {
@@ -80,8 +114,21 @@ pub async fn validate_cert(
         return Err(StatusCode::BAD_GATEWAY);
     }
 
-    resp.json::<CertAuthInfo>().await.map_err(|e| {
+    let info: CertAuthInfo = resp.json().await.map_err(|e| {
         tracing::error!("failed to parse cert-auth response: {e}");
         StatusCode::BAD_GATEWAY
-    })
+    })?;
+
+    {
+        let mut cache = CERT_CACHE.write().await;
+        cache.insert(
+            fingerprint.to_string(),
+            (CertAuthResult::Ok(info.clone()), std::time::Instant::now()),
+        );
+        if cache.len() > 1000 {
+            cache.retain(|_, (_, t)| t.elapsed() < CERT_CACHE_TTL);
+        }
+    }
+
+    Ok(info)
 }

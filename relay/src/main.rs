@@ -125,6 +125,7 @@ async fn main() -> Result<()> {
         registry: Arc::clone(&registry),
         relay_swarm: Arc::clone(&relay_swarm),
         ssh_identity: Arc::clone(&ssh_identity),
+        server_api_url: cfg.server_api_url.clone(),
     });
     let api_router = api_router.merge(web_ssh_router);
 

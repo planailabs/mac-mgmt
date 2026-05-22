@@ -29,6 +29,14 @@ struct Cli {
     /// SSH user (default: current user)
     #[arg(short, long)]
     user: Option<String>,
+
+    /// TLS client certificate (PEM) for cert-based auth via WebSocket
+    #[arg(long)]
+    cert: Option<String>,
+
+    /// TLS client key (PEM) for cert-based auth via WebSocket
+    #[arg(long)]
+    key: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +95,16 @@ async fn main() -> Result<()> {
         .or_else(|| std::env::var("RELAY_URL").ok())
         .or(config.relay_url)
         .context("relay URL not configured (use --relay, RELAY_URL env, or config file)")?;
+
+    // Cert-based mode: connect via WebSocket instead of SSH over TCP port.
+    if let (Some(cert_path), Some(key_path)) = (&cli.cert, &cli.key) {
+        let instance_id = cli
+            .instance_id
+            .as_deref()
+            .context("instance ID required with --cert/--key")?;
+
+        return connect_via_websocket(&relay_url, cert_path, key_path, instance_id).await;
+    }
 
     let token = cli
         .token
@@ -186,6 +204,188 @@ async fn fetch_ssh_targets(relay_url: &str, token: &str) -> Result<Vec<SshTarget
     }
 
     resp.json().await.context("failed to parse SSH target list")
+}
+
+/// Connect via WebSocket with TLS client certificate.
+/// Binds a local TCP socket and bridges it to the WS, then spawns `ssh`
+/// pointing at localhost.
+async fn connect_via_websocket(
+    relay_url: &str,
+    cert_path: &str,
+    key_path: &str,
+    instance_id: &str,
+) -> Result<()> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Load client cert + key.
+    let cert_pem = std::fs::read(cert_path)
+        .with_context(|| format!("failed to read cert from {cert_path}"))?;
+    let key_pem = std::fs::read(key_path)
+        .with_context(|| format!("failed to read key from {key_path}"))?;
+
+    let certs: Vec<_> = rustls_pemfile::certs(&mut &cert_pem[..])
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to parse client cert")?;
+    let key = rustls_pemfile::private_key(&mut &key_pem[..])
+        .context("failed to parse client key")?
+        .context("no private key found")?;
+
+    // Build TLS config with client cert.
+    let mut tls_config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyCert))
+        .with_client_auth_cert(certs, key)
+        .context("failed to configure client cert")?;
+    tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+
+    let connector = tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(tls_config));
+
+    // Build WS URL.
+    let ws_url = relay_url
+        .replace("https://", "wss://")
+        .replace("http://", "ws://");
+    let ws_url = format!("{ws_url}/ssh/{instance_id}/ws");
+
+    eprintln!("Connecting to {ws_url} with client certificate...");
+
+    let (ws_stream, _resp) =
+        tokio_tungstenite::connect_async_tls_with_config(
+            &ws_url,
+            None,
+            false,
+            Some(connector),
+        )
+        .await
+        .context("WebSocket connection failed")?;
+
+    eprintln!("Connected. Bridging to local SSH...");
+
+    // Bind a local TCP socket for `ssh` to connect to.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let local_addr = listener.local_addr()?;
+    let local_port = local_addr.port();
+
+    let (ws_tx, ws_rx) = ws_stream.split();
+    let ws_tx = std::sync::Arc::new(tokio::sync::Mutex::new(ws_tx));
+
+    // Spawn bridge: local TCP <-> WebSocket.
+    let ws_tx_bridge = std::sync::Arc::clone(&ws_tx);
+    tokio::spawn(async move {
+        if let Ok((tcp_stream, _)) = listener.accept().await {
+            let (mut tcp_read, mut tcp_write) = tokio::io::split(tcp_stream);
+
+            // TCP -> WS
+            let ws_tx_for_tcp = std::sync::Arc::clone(&ws_tx_bridge);
+            let tcp_to_ws = tokio::spawn(async move {
+                let mut buf = [0u8; 8192];
+                loop {
+                    match tcp_read.read(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let mut tx = ws_tx_for_tcp.lock().await;
+                            if tx
+                                .send(tokio_tungstenite::tungstenite::Message::Binary(
+                                    buf[..n].to_vec().into(),
+                                ))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+
+            // WS -> TCP
+            let mut ws_rx = ws_rx;
+            let ws_to_tcp = tokio::spawn(async move {
+                while let Some(Ok(msg)) = ws_rx.next().await {
+                    match msg {
+                        tokio_tungstenite::tungstenite::Message::Binary(data) => {
+                            if tcp_write.write_all(&data).await.is_err() {
+                                break;
+                            }
+                        }
+                        tokio_tungstenite::tungstenite::Message::Close(_) => break,
+                        _ => {}
+                    }
+                }
+            });
+
+            tokio::select! {
+                _ = tcp_to_ws => {}
+                _ = ws_to_tcp => {}
+            }
+        }
+    });
+
+    // Spawn ssh connecting to local port.
+    let status = Command::new("ssh")
+        .arg("-p")
+        .arg(local_port.to_string())
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg("127.0.0.1")
+        .status()
+        .context("failed to exec ssh")?;
+
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+/// Accept any server certificate (the relay's cert may be self-signed in dev).
+#[derive(Debug)]
+struct AcceptAnyCert;
+
+impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::ED448,
+        ]
+    }
 }
 
 fn print_targets(targets: &[SshTarget]) {

@@ -4008,6 +4008,105 @@ pub async fn setting_remove_client_cert(
     Ok(Status::NoContent)
 }
 
+// ── Admin Client Certificates ───────────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/client-certs",
+    tag = "Admin — Client Certificates",
+    summary = "List admin client certificates",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Admin client certs", body = Vec<ClientCertRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+    ),
+)]
+#[rocket::get("/admin/client-certs")]
+pub async fn admin_list_client_certs(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<ClientCertRow>>, Status> {
+    let rows = sqlx::query_as::<_, ClientCertRow>(
+        "SELECT id, fingerprint, label, created_at \
+         FROM admin_client_certs ORDER BY created_at",
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/client-certs",
+    tag = "Admin — Client Certificates",
+    summary = "Add an admin client certificate fingerprint",
+    security(("bearer" = [])),
+    request_body = AddClientCertBody,
+    responses(
+        (status = 201, description = "Admin client cert added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+        (status = 409, description = "Certificate already exists"),
+    ),
+)]
+#[rocket::post("/admin/client-certs", data = "<body>")]
+pub async fn admin_add_client_cert(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    body: Json<AddClientCertBody>,
+) -> Result<Status, Status> {
+    let fingerprint = body.fingerprint.trim().to_lowercase();
+    let label = body.label.trim().to_string();
+
+    sqlx::query(
+        "INSERT INTO admin_client_certs (fingerprint, label) VALUES ($1, $2)",
+    )
+    .bind(&fingerprint)
+    .bind(&label)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("unique constraint") || e.to_string().contains("duplicate key") {
+            Status::Conflict
+        } else {
+            Status::InternalServerError
+        }
+    })?;
+
+    Ok(Status::Created)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/client-certs/{id}",
+    tag = "Admin — Client Certificates",
+    summary = "Remove an admin client certificate",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Admin client cert ID")),
+    responses(
+        (status = 204, description = "Admin client cert removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+    ),
+)]
+#[rocket::delete("/admin/client-certs/<id>")]
+pub async fn admin_remove_client_cert(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    id: &str,
+) -> Result<Status, Status> {
+    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query("DELETE FROM admin_client_certs WHERE id = $1")
+        .bind(uuid)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::NoContent)
+}
+
 /// Cert validation endpoint for the relay — looks up a fingerprint and
 /// returns the associated permissions (like `/api/self` for tokens).
 #[derive(Deserialize)]

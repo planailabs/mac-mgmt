@@ -96,6 +96,10 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::admin_list_cluster_machines,
         routes::admin_create_token,
         routes::admin_create_org_token,
+        // Admin — Client certs
+        routes::admin_list_client_certs,
+        routes::admin_add_client_cert,
+        routes::admin_remove_client_cert,
         // Setting — cloud-init
         routes::setting_cloud_init,
         // Admin — Rollouts
@@ -332,6 +336,10 @@ pub fn build_rocket(
         routes::admin_list_cluster_machines,
         routes::admin_create_token,
         routes::admin_create_org_token,
+        // Admin — Client certs
+        routes::admin_list_client_certs,
+        routes::admin_add_client_cert,
+        routes::admin_remove_client_cert,
         // Setting — cloud-init
         routes::setting_cloud_init,
         // Proxy token
