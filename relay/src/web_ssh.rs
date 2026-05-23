@@ -38,23 +38,43 @@ pub fn router(state: WebSshState) -> Router {
         .with_state(state)
 }
 
-/// Verify client certificate: must be present and authorized.
-async fn verify_cert(
+/// Verify access via client certificate OR Bearer token.
+async fn verify_access(
+    headers: &axum::http::HeaderMap,
     cert_info: &Option<axum::Extension<ClientCertInfo>>,
     server_api_url: &str,
 ) -> Result<(), Response> {
-    let Some(cert) = cert_info else {
-        return Err((
-            axum::http::StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({
-                "error": "client certificate required"
-            })),
-        )
-            .into_response());
-    };
+    // Try client certificate first.
+    if let Some(cert) = cert_info {
+        if crate::auth::validate_cert(server_api_url, &cert.fingerprint_sha256)
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
 
-    if let Err(_status) = crate::auth::validate_cert(server_api_url, &cert.fingerprint_sha256).await
+    // Fall back to Bearer token.
+    if let Some(token) = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
     {
+        match crate::auth::validate_token(server_api_url, token).await {
+            Ok(info)
+                if matches!(
+                    info.token_kind.as_str(),
+                    "admin" | "setting" | "cert_admin" | "cert_cluster"
+                ) =>
+            {
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
+    // Neither worked — return appropriate error.
+    if let Some(cert) = cert_info {
         return Err((
             axum::http::StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({
@@ -66,16 +86,23 @@ async fn verify_cert(
             .into_response());
     }
 
-    Ok(())
+    Err((
+        axum::http::StatusCode::UNAUTHORIZED,
+        axum::Json(serde_json::json!({
+            "error": "authentication required (client certificate or Bearer token)"
+        })),
+    )
+        .into_response())
 }
 
 /// Serve the xterm.js terminal page.
 async fn ssh_page(
     Path(instance_id): Path<String>,
     State(state): State<WebSshState>,
+    headers: axum::http::HeaderMap,
     cert_info: Option<axum::Extension<ClientCertInfo>>,
 ) -> Response {
-    if let Err(resp) = verify_cert(&cert_info, &state.server_api_url).await {
+    if let Err(resp) = verify_access(&headers, &cert_info, &state.server_api_url).await {
         return resp;
     }
     Html(terminal_html(&instance_id)).into_response()
@@ -86,9 +113,10 @@ async fn ssh_ws(
     ws: WebSocketUpgrade,
     Path(instance_id): Path<String>,
     State(state): State<WebSshState>,
+    headers: axum::http::HeaderMap,
     cert_info: Option<axum::Extension<ClientCertInfo>>,
 ) -> Response {
-    if let Err(resp) = verify_cert(&cert_info, &state.server_api_url).await {
+    if let Err(resp) = verify_access(&headers, &cert_info, &state.server_api_url).await {
         return resp;
     }
     ws.on_upgrade(move |socket| handle_ssh_ws(socket, instance_id, state))

@@ -570,6 +570,12 @@ async fn handle_daemon_rpc(
                     let prev = registry.update_ssh_enabled(iid, ssh_enabled);
                     if let Some(bridge) = &ssh_bridge {
                         if ssh_enabled && !prev {
+                            // SSH just enabled.
+                            bridge.on_ssh_enabled(iid);
+                        } else if ssh_enabled && !registry.has_ssh_port(iid) {
+                            // SSH was already enabled but port not yet allocated
+                            // (can happen when ssh_bridge wasn't ready during
+                            // initial registration).
                             bridge.on_ssh_enabled(iid);
                         } else if !ssh_enabled && prev {
                             bridge.on_ssh_disabled(iid);

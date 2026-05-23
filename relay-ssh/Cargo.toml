@@ -14,6 +14,7 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 tokio-rustls = "0.26"
 rustls-pemfile = "2"
 futures-util = "0.3"
+http = "1"
 anyhow = "1"
 toml = "0.8"
 uuid = "1"

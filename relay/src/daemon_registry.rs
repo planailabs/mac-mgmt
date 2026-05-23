@@ -291,6 +291,14 @@ impl DaemonRegistry {
         }
     }
 
+    /// Check if a daemon has an SSH port allocated.
+    pub fn has_ssh_port(&self, instance_id: &str) -> bool {
+        let daemons = self.daemons.read().unwrap();
+        daemons
+            .get(instance_id)
+            .is_some_and(|d| d.ssh_port.is_some())
+    }
+
     /// Clear the SSH port for a daemon.
     pub fn clear_ssh_port(&self, instance_id: &str) {
         let mut daemons = self.daemons.write().unwrap();

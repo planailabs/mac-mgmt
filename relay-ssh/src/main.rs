@@ -154,9 +154,20 @@ async fn main() -> Result<()> {
         }
     };
 
-    let ssh_port = target
-        .ssh_port
-        .context("SSH port not yet allocated for this instance")?;
+    // If no TCP SSH port allocated, use WebSocket path via relay's /ssh endpoint.
+    let Some(ssh_port) = target.ssh_port else {
+        eprintln!(
+            "No TCP SSH port allocated — connecting via WebSocket to {} ({})...",
+            target.agent_name.as_deref().unwrap_or("-"),
+            &target.instance_id[..12.min(target.instance_id.len())],
+        );
+        return connect_via_websocket_with_token(
+            &relay_url,
+            &token,
+            &target.instance_id,
+        )
+        .await;
+    };
 
     let host = relay_url
         .strip_prefix("https://")
@@ -187,6 +198,123 @@ async fn main() -> Result<()> {
     }
 
     let status = cmd.status().context("failed to exec ssh")?;
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+/// Connect via WebSocket using a Bearer token (no client cert needed).
+/// The relay's /ssh endpoint accepts Bearer tokens as an auth alternative.
+async fn connect_via_websocket_with_token(
+    relay_url: &str,
+    token: &str,
+    instance_id: &str,
+) -> Result<()> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let ws_url = relay_url
+        .replace("https://", "wss://")
+        .replace("http://", "ws://");
+    let ws_url = format!("{ws_url}/ssh/{instance_id}/ws");
+
+    // Build WS request with Bearer token in header.
+    let request = http::Request::builder()
+        .uri(&ws_url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+        )
+        .header("Host", http::Uri::try_from(&ws_url)
+            .ok()
+            .and_then(|u| u.host().map(String::from))
+            .unwrap_or_default())
+        .body(())
+        .context("failed to build WS request")?;
+
+    // TLS config that accepts any cert (relay may use self-signed in dev).
+    let tls_config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyCert))
+        .with_no_client_auth();
+    let connector = tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(tls_config));
+
+    let (ws_stream, _resp) =
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector))
+            .await
+            .context("WebSocket connection failed")?;
+
+    // Bind a local TCP socket for ssh to connect to.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let local_port = listener.local_addr()?.port();
+
+    let (ws_tx, ws_rx) = ws_stream.split();
+    let ws_tx = std::sync::Arc::new(tokio::sync::Mutex::new(ws_tx));
+
+    // Spawn bridge: local TCP <-> WebSocket.
+    let ws_tx_bridge = std::sync::Arc::clone(&ws_tx);
+    tokio::spawn(async move {
+        if let Ok((tcp_stream, _)) = listener.accept().await {
+            let (mut tcp_read, mut tcp_write) = tokio::io::split(tcp_stream);
+
+            let ws_tx_for_tcp = std::sync::Arc::clone(&ws_tx_bridge);
+            let tcp_to_ws = tokio::spawn(async move {
+                let mut buf = [0u8; 8192];
+                loop {
+                    match tcp_read.read(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let mut tx = ws_tx_for_tcp.lock().await;
+                            if tx
+                                .send(tokio_tungstenite::tungstenite::Message::Binary(
+                                    buf[..n].to_vec().into(),
+                                ))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+
+            let mut ws_rx = ws_rx;
+            let ws_to_tcp = tokio::spawn(async move {
+                while let Some(Ok(msg)) = ws_rx.next().await {
+                    match msg {
+                        tokio_tungstenite::tungstenite::Message::Binary(data) => {
+                            if tcp_write.write_all(&data).await.is_err() {
+                                break;
+                            }
+                        }
+                        tokio_tungstenite::tungstenite::Message::Close(_) => break,
+                        _ => {}
+                    }
+                }
+            });
+
+            tokio::select! {
+                _ = tcp_to_ws => {}
+                _ = ws_to_tcp => {}
+            }
+        }
+    });
+
+    let status = Command::new("ssh")
+        .arg("-p")
+        .arg(local_port.to_string())
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg("127.0.0.1")
+        .status()
+        .context("failed to exec ssh")?;
+
     std::process::exit(status.code().unwrap_or(1));
 }
 
