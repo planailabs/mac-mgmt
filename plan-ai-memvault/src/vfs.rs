@@ -230,9 +230,16 @@ impl<'a> Vfs<'a> {
                 None => {
                     let new_dir = self.create_dir(component).await?;
                     let new_node = ensure_entity_id(&new_dir);
-                    self.create_child_edge(&current, &new_node, component)
-                        .await?;
-                    current = new_node;
+                    match self.create_child_edge(&current, &new_node, component).await {
+                        Ok(_) => current = new_node,
+                        Err(_) => {
+                            // Race: another writer created this entry concurrently.
+                            match self.find_child(&current, component).await? {
+                                Some((existing, _)) => current = existing,
+                                None => bail!("failed to create directory component '{component}'"),
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -293,9 +300,16 @@ impl<'a> Vfs<'a> {
                 None => {
                     let new_dir = self.create_dir(component).await?;
                     let new_node = ensure_entity_id(&new_dir);
-                    self.create_child_edge(&current, &new_node, component)
-                        .await?;
-                    current = new_node;
+                    match self.create_child_edge(&current, &new_node, component).await {
+                        Ok(_) => current = new_node,
+                        Err(_) => {
+                            // Race: another writer created this entry concurrently.
+                            match self.find_child(&current, component).await? {
+                                Some((existing, _)) => current = existing,
+                                None => bail!("failed to create directory component '{component}'"),
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -359,7 +373,8 @@ impl<'a> Vfs<'a> {
             let edges = self.backend.edges_of(node_id).await?;
             let empty = vec![];
             let arr = edges.as_array().unwrap_or(&empty);
-            let mut entries = Vec::new();
+            // Deduplicate by name — keep smallest edge_id on conflict (CRDT tiebreaker).
+            let mut seen: BTreeMap<String, (String, String)> = BTreeMap::new();
             for edge in arr {
                 if edge.get("source").and_then(|v| v.as_str()) != Some(node_id) {
                     continue;
@@ -383,15 +398,22 @@ impl<'a> Vfs<'a> {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string();
-                let node_type = self.resolve_node_type(&target).await;
+                match seen.get(&name) {
+                    Some((_, existing_eid)) if *existing_eid <= edge_id => {}
+                    _ => { seen.insert(name, (target, edge_id)); }
+                }
+            }
+            let mut entries = Vec::new();
+            for (name, (target, edge_id)) in &seen {
+                let node_type = self.resolve_node_type(target).await;
                 entries.push(VfsEntry {
                     name: name.clone(),
                     node_id: target.clone(),
                     node_type,
-                    edge_id,
+                    edge_id: edge_id.clone(),
                 });
                 if recursive && node_type == "dir" {
-                    let sub = self.ls_node(&target, true).await?;
+                    let sub = self.ls_node(target, true).await?;
                     for mut child in sub {
                         child.name = format!("{name}/{}", child.name);
                         entries.push(child);
