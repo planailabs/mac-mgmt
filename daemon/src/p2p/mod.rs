@@ -454,6 +454,13 @@ async fn swarm_loop(
                     }
                     Err(e) => {
                         tracing::warn!("RPC stream error: {e}, relay will reconnect");
+                        // Actually disconnect the libp2p connection so the stale
+                        // transport is cleaned up before we redial. Without this,
+                        // the old connection stays alive and the new connection's
+                        // noise handshake times out as a duplicate.
+                        if let Some(peer_id) = relay.peer_id() {
+                            let _ = swarm.disconnect_peer_id(peer_id);
+                        }
                         let actions = relay.handle_event(RelayEvent::ConnectionClosed {
                             peer_id: relay.peer_id().unwrap_or(PeerId::random()),
                         });
