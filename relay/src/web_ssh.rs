@@ -123,13 +123,29 @@ async fn ssh_ws(
 }
 
 async fn handle_ssh_ws(socket: WebSocket, instance_id: String, state: WebSshState) {
-    if let Err(e) = do_ssh_bridge(socket, &instance_id, &state).await {
+    let (ws_tx, ws_rx) = socket.split();
+    let ws_tx = Arc::new(Mutex::new(ws_tx));
+
+    if let Err(e) = do_ssh_bridge(Arc::clone(&ws_tx), ws_rx, &instance_id, &state).await {
         tracing::warn!("SSH WS bridge for {instance_id} failed: {e}");
+        // Send error to client so they see WHY the connection failed.
+        let msg = serde_json::json!({ "type": "error", "message": format!("{e:#}") });
+        let mut tx = ws_tx.lock().await;
+        let _ = tx.send(Message::Text(msg.to_string().into())).await;
+        let _ = tx.close().await;
     }
 }
 
+/// Send a status update to the client overlay.
+async fn send_status(ws_tx: &Mutex<futures_util::stream::SplitSink<WebSocket, Message>>, msg: &str) {
+    let json = serde_json::json!({ "type": "status", "message": msg });
+    let mut tx = ws_tx.lock().await;
+    let _ = tx.send(Message::Text(json.to_string().into())).await;
+}
+
 async fn do_ssh_bridge(
-    socket: WebSocket,
+    ws_tx: Arc<Mutex<futures_util::stream::SplitSink<WebSocket, Message>>>,
+    ws_rx: futures_util::stream::SplitStream<WebSocket>,
     instance_id: &str,
     state: &WebSshState,
 ) -> anyhow::Result<()> {
@@ -137,23 +153,25 @@ async fn do_ssh_bridge(
     use tokio_util::compat::FuturesAsyncReadCompatExt;
 
     // Resolve instance to a connected daemon.
+    send_status(&ws_tx, "Resolving instance...").await;
     let full_id = state
         .registry
         .resolve_prefix(instance_id)
-        .ok_or_else(|| anyhow::anyhow!("instance {instance_id} not found"))?;
+        .ok_or_else(|| anyhow::anyhow!("instance '{instance_id}' not found — daemon may be offline"))?;
 
     let peer_id = state
         .registry
         .get_peer_id(&full_id)
-        .ok_or_else(|| anyhow::anyhow!("no peer_id for {full_id}"))?;
+        .ok_or_else(|| anyhow::anyhow!("daemon '{full_id}' has no p2p connection to relay"))?;
 
     // Open libp2p tunnel with SSH handshake.
+    send_status(&ws_tx, "Opening tunnel...").await;
     let mut tunnel = tokio::time::timeout(
         OPEN_STREAM_TIMEOUT,
         state.relay_swarm.open_tunnel_stream(peer_id),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("timeout opening tunnel to {full_id}"))??;
+    .map_err(|_| anyhow::anyhow!("tunnel to '{full_id}' timed out — daemon may be unreachable"))??;
 
     let handshake = serde_json::json!({ "type": "ssh" });
     let data = serde_json::to_vec(&handshake)?;
@@ -164,6 +182,7 @@ async fn do_ssh_bridge(
     tunnel.flush().await?;
 
     // Run russh client over the tunnel, authenticating with the relay's SSH key.
+    send_status(&ws_tx, "SSH handshake...").await;
     let compat_stream = tunnel.compat();
 
     let config = Arc::new(russh::client::Config {
@@ -177,6 +196,7 @@ async fn do_ssh_bridge(
 
     // Authenticate as "root" (the daemon doesn't care about the username,
     // only the public key).
+    send_status(&ws_tx, "Authenticating...").await;
     let key_with_alg = russh::keys::PrivateKeyWithHashAlg::new(
         Arc::new(state.ssh_identity.private_key.clone()),
         None,
@@ -185,10 +205,11 @@ async fn do_ssh_bridge(
         .authenticate_publickey("root", key_with_alg)
         .await?;
     if !matches!(auth_result, russh::client::AuthResult::Success) {
-        anyhow::bail!("SSH public key auth rejected by daemon");
+        anyhow::bail!("SSH key auth rejected — relay key may not be authorized on daemon");
     }
 
     // Open a session channel.
+    send_status(&ws_tx, "Starting shell...").await;
     let channel = session.channel_open_session().await?;
 
     // Request PTY + shell (want_reply=true so we know they succeeded).
@@ -196,10 +217,6 @@ async fn do_ssh_bridge(
         .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
         .await?;
     channel.request_shell(true).await?;
-
-    // Bridge WebSocket <-> SSH channel.
-    let (ws_tx, ws_rx) = socket.split();
-    let ws_tx = Arc::new(Mutex::new(ws_tx));
 
     // Split the channel into read/write halves.
     let (channel_read, channel_write) = channel.split();
@@ -392,18 +409,41 @@ function connect() {{
     ws.send(JSON.stringify({{ type: 'resize', cols: term.cols, rows: term.rows }}));
   }};
 
+  let gotError = false;
+
   ws.onmessage = (ev) => {{
     if (ev.data instanceof ArrayBuffer) {{
+      hideOverlay();
       term.write(new Uint8Array(ev.data));
     }} else {{
+      // Text frame — check for JSON control messages from relay.
+      try {{
+        const ctrl = JSON.parse(ev.data);
+        if (ctrl.type === 'error') {{
+          gotError = true;
+          showOverlay('Error: ' + ctrl.message);
+          return;
+        }}
+        if (ctrl.type === 'status') {{
+          showOverlay(ctrl.message);
+          return;
+        }}
+      }} catch (e) {{}}
+      // Plain text terminal data.
+      hideOverlay();
       term.write(ev.data);
     }}
   }};
 
   ws.onclose = () => {{
     if (currentWs === ws) currentWs = null;
-    showOverlay('Disconnected. Reconnecting in 3s...');
-    setTimeout(connect, 3000);
+    if (gotError) {{
+      // Error already shown in overlay — retry with longer delay.
+      setTimeout(connect, 10000);
+    }} else {{
+      showOverlay('Disconnected. Reconnecting in 3s...');
+      setTimeout(connect, 3000);
+    }}
   }};
 
   ws.onerror = () => ws.close();
