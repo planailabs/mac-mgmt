@@ -405,15 +405,16 @@ function connect() {{
   currentWs = ws;
 
   ws.onopen = () => {{
-    hideOverlay();
+    // Don't hide overlay here — keep showing status until first terminal data.
     ws.send(JSON.stringify({{ type: 'resize', cols: term.cols, rows: term.rows }}));
   }};
 
   let gotError = false;
+  let connected = false;
 
   ws.onmessage = (ev) => {{
     if (ev.data instanceof ArrayBuffer) {{
-      hideOverlay();
+      if (!connected) {{ connected = true; hideOverlay(); }}
       term.write(new Uint8Array(ev.data));
     }} else {{
       // Text frame — check for JSON control messages from relay.
@@ -421,7 +422,7 @@ function connect() {{
         const ctrl = JSON.parse(ev.data);
         if (ctrl.type === 'error') {{
           gotError = true;
-          showOverlay('Error: ' + ctrl.message);
+          showOverlay(ctrl.message);
           return;
         }}
         if (ctrl.type === 'status') {{
@@ -430,19 +431,24 @@ function connect() {{
         }}
       }} catch (e) {{}}
       // Plain text terminal data.
-      hideOverlay();
+      if (!connected) {{ connected = true; hideOverlay(); }}
       term.write(ev.data);
     }}
   }};
 
-  ws.onclose = () => {{
+  ws.onclose = (ev) => {{
     if (currentWs === ws) currentWs = null;
     if (gotError) {{
-      // Error already shown in overlay — retry with longer delay.
+      // Error already shown — append retry notice and use longer delay.
+      const current = overlayMsg.textContent;
+      overlayMsg.textContent = current + '\\nRetrying in 10s...';
       setTimeout(connect, 10000);
-    }} else {{
-      showOverlay('Disconnected. Reconnecting in 3s...');
+    }} else if (connected) {{
+      showOverlay('Connection lost. Reconnecting in 3s...');
       setTimeout(connect, 3000);
+    }} else {{
+      showOverlay('Connection failed (code ' + ev.code + '). Retrying in 5s...');
+      setTimeout(connect, 5000);
     }}
   }};
 
