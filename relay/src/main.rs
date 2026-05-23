@@ -231,11 +231,14 @@ async fn main() -> Result<()> {
             }
 
             // Main host: check if this is a WS upgrade → bridge to libp2p.
+            // Only intercept WS connections that are NOT for named routes
+            // (e.g. /ssh/* is handled by the API router's WebSocket handler).
             let is_ws = req.headers().get("upgrade")
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+            let is_p2p_ws = is_ws && !req.uri().path().starts_with("/ssh/");
 
-            if is_ws {
+            if is_p2p_ws {
                 use axum::extract::FromRequestParts;
                 let (mut parts, _body) = req.into_parts();
                 match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await {

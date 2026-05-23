@@ -82,6 +82,16 @@ nix-shell -p python3 python3Packages.requests yq-go --run "python3 web-agency/sc
 
 Do not run partial Python snippets to regenerate individual crates — the full script ensures consistent spec downloads, trimming, and generation across all API crates. Partial runs are only acceptable for quickly testing a new fixup before integrating it into the script.
 
+## Local development: checking logs
+
+When debugging locally (Procfile-based or manual runs), runtime logs are written to:
+
+- `/tmp/mac-mgmt-relay.log` — relay (p2p, TLS, WS bridge, SSH terminal)
+- `/tmp/mac-mgmt-daemon.log` — daemon (event loop, SSH server, services)
+- `/tmp/mac-mgmt-server.log` — server (API, web UI)
+
+Check these logs when diagnosing connection issues, TLS handshake failures, or WebSocket problems.
+
 ## Chaos testing: run `/chaos-test` after significant daemon changes
 
 After making non-trivial changes to the daemon (event loop, heartbeat logic, SSE handling, config reload, service management, relay integration), run `/chaos-test` to check for regressions under fault injection. The chaos test suite exercises the daemon with randomized endpoint failures, rapid SSE pushes, multi-daemon coordination, and supervisor lifecycle — catching race conditions and error handling bugs that unit tests miss. A quick run (`/chaos-test 5`) takes under two minutes; a thorough sweep (`/chaos-test 30`) takes about ten.
