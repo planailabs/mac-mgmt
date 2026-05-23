@@ -53,6 +53,7 @@ tempfile = "3"
 self-replace = { version = "1", optional = true }
 sha2 = "0.10"
 libc = "0.2"
+pty-process = { version = "0.5", features = ["async"] }
 jsonschema = { version = "0.46", default-features = false }
 yaml_serde = "0.10"
 toml = "0.8"

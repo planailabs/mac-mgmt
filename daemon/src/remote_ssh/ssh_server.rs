@@ -3,7 +3,6 @@ use russh::keys::{PublicKey, parse_public_key_base64};
 use russh::server::{Auth, Handler, Msg, Session};
 use russh::{Channel, ChannelId, MethodKind, MethodSet};
 use std::collections::HashMap;
-use std::os::unix::io::FromRawFd;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
@@ -82,20 +81,20 @@ impl Handler for SshSession {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         tracing::info!("PTY request: {term} {col_width}x{row_height}");
-        let pty_pair = pty::spawn_shell(col_width, row_height, term)?;
+        let (reader, pty_pair) = pty::spawn_shell(col_width, row_height, term)?;
 
-        let master_fd = pty_pair.master_fd;
         let channels = Arc::clone(&self.channels);
         channels
             .lock()
             .await
             .insert(channel_id, ChannelState { pty_pair });
 
-        // Spawn PTY → SSH channel reader
+        // Spawn PTY → SSH channel reader.
+        // The OwnedReadPty owns the read half of the PTY fd — it is closed
+        // when this task exits, leaving the write half (in ChannelState) intact.
         let handle = session.handle();
         tokio::spawn(async move {
-            let master_file = unsafe { tokio::fs::File::from_raw_fd(master_fd) };
-            let mut reader = tokio::io::BufReader::new(master_file);
+            let mut reader = tokio::io::BufReader::new(reader);
             let mut buf = [0u8; 8192];
             loop {
                 match reader.read(&mut buf).await {
@@ -184,16 +183,9 @@ impl Handler for SshSession {
         data: &[u8],
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        let channels = self.channels.lock().await;
-        if let Some(state) = channels.get(&channel_id) {
-            let master_fd = state.pty_pair.master_fd;
-            // dup the fd so dropping this file doesn't close the master
-            let dup_fd = unsafe { libc::dup(master_fd) };
-            if dup_fd >= 0 {
-                let mut master_file = unsafe { tokio::fs::File::from_raw_fd(dup_fd) };
-                let _ = master_file.write_all(data).await;
-                // Don't let drop close the fd — we'll let the dup handle it naturally
-            }
+        let mut channels = self.channels.lock().await;
+        if let Some(state) = channels.get_mut(&channel_id) {
+            let _ = state.pty_pair.writer.write_all(data).await;
         }
         Ok(())
     }
@@ -209,7 +201,7 @@ impl Handler for SshSession {
     ) -> Result<(), Self::Error> {
         let channels = self.channels.lock().await;
         if let Some(state) = channels.get(&channel_id) {
-            pty::resize(state.pty_pair.master_fd, col_width, row_height);
+            pty::resize(&state.pty_pair.writer, col_width, row_height);
         }
         Ok(())
     }
