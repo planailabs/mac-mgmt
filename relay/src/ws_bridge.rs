@@ -115,14 +115,20 @@ pub async fn bridge_ws_to_libp2p_listener(ws: WebSocket, p2p_port: u16) {
                 Ok(Message::Pong(data)) => tungstenite::Message::Pong(data.to_vec().into()),
                 Ok(Message::Close(_)) => {
                     let _ = up_sink.send(tungstenite::Message::Close(None)).await;
+                    tracing::debug!("p2p WS bridge: client sent close");
                     break;
                 }
-                Err(_) => break,
+                Err(e) => {
+                    tracing::debug!("p2p WS bridge: client read error: {e}");
+                    break;
+                }
             };
             if up_sink.send(tung_msg).await.is_err() {
+                tracing::debug!("p2p WS bridge: upstream send failed");
                 break;
             }
         }
+        "client→upstream"
     };
 
     let upstream_to_client = async {
@@ -136,18 +142,26 @@ pub async fn bridge_ws_to_libp2p_listener(ws: WebSocket, p2p_port: u16) {
                 Ok(tungstenite::Message::Pong(data)) => Message::Pong(data.to_vec().into()),
                 Ok(tungstenite::Message::Close(_)) => {
                     let _ = ws_sink.send(Message::Close(None)).await;
+                    tracing::debug!("p2p WS bridge: upstream sent close");
+                    break;
+                }
+                Err(e) => {
+                    tracing::debug!("p2p WS bridge: upstream read error: {e}");
                     break;
                 }
                 _ => continue,
             };
             if ws_sink.send(axum_msg).await.is_err() {
+                tracing::debug!("p2p WS bridge: client send failed");
                 break;
             }
         }
+        "upstream→client"
     };
 
-    tokio::select! {
-        _ = client_to_upstream => {}
-        _ = upstream_to_client => {}
-    }
+    let finished_first = tokio::select! {
+        dir = client_to_upstream => dir,
+        dir = upstream_to_client => dir,
+    };
+    tracing::debug!("p2p WS bridge: {finished_first} finished first");
 }
