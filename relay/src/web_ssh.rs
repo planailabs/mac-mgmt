@@ -212,11 +212,15 @@ async fn do_ssh_bridge(
     send_status(&ws_tx, "Starting shell...").await;
     let channel = session.channel_open_session().await?;
 
-    // Request PTY + shell (want_reply=true so we know they succeeded).
+    // Request PTY + shell.
+    // Note: want_reply=false because the daemon's SSH server uses
+    // session.request_success() (global) instead of session.channel_success()
+    // (per-channel). With want_reply=true the client would hang waiting for
+    // a CHANNEL_SUCCESS that never comes.
     channel
-        .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
+        .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
         .await?;
-    channel.request_shell(true).await?;
+    channel.request_shell(false).await?;
 
     // Split the channel into read/write halves.
     let (channel_read, channel_write) = channel.split();

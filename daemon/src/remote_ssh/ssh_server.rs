@@ -114,7 +114,9 @@ impl Handler for SshSession {
             let _ = handle.close(channel_id).await;
         });
 
-        session.request_success();
+        // Use channel_success (not request_success) for channel requests —
+        // request_success is for global requests and won't send CHANNEL_SUCCESS.
+        let _ = session.channel_success(channel_id);
         Ok(())
     }
 
@@ -124,7 +126,7 @@ impl Handler for SshSession {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         tracing::info!("shell request on channel {channel_id:?}");
-        session.request_success();
+        let _ = session.channel_success(channel_id);
         Ok(())
     }
 
@@ -173,7 +175,7 @@ impl Handler for SshSession {
             }
         });
 
-        session.request_success();
+        let _ = session.channel_success(channel_id);
         Ok(())
     }
 
