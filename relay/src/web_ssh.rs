@@ -166,7 +166,11 @@ async fn do_ssh_bridge(
     // Run russh client over the tunnel, authenticating with the relay's SSH key.
     let compat_stream = tunnel.compat();
 
-    let config = Arc::new(russh::client::Config::default());
+    let config = Arc::new(russh::client::Config {
+        // No inactivity timeout — the WebSocket layer handles keepalives.
+        inactivity_timeout: None,
+        ..Default::default()
+    });
     let client_handler = SshClientHandler;
     let mut session =
         russh::client::connect_stream(config, compat_stream, client_handler).await?;
@@ -187,11 +191,11 @@ async fn do_ssh_bridge(
     // Open a session channel.
     let channel = session.channel_open_session().await?;
 
-    // Request PTY + shell.
+    // Request PTY + shell (want_reply=true so we know they succeeded).
     channel
-        .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
+        .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
         .await?;
-    channel.request_shell(false).await?;
+    channel.request_shell(true).await?;
 
     // Bridge WebSocket <-> SSH channel.
     let (ws_tx, ws_rx) = socket.split();
@@ -202,36 +206,52 @@ async fn do_ssh_bridge(
 
     // SSH channel data -> WebSocket (binary)
     let ws_tx_for_ssh = Arc::clone(&ws_tx);
+    let instance_tag = full_id.clone();
     let mut channel_read = channel_read;
-    let ssh_to_ws = tokio::spawn(async move {
+    let mut ssh_to_ws = tokio::spawn(async move {
         while let Some(msg) = channel_read.wait().await {
             match msg {
                 russh::ChannelMsg::Data { data } => {
                     let mut tx = ws_tx_for_ssh.lock().await;
                     if tx.send(Message::Binary(data.to_vec().into())).await.is_err() {
+                        tracing::debug!("[{instance_tag}] ssh→ws: WebSocket send failed");
                         break;
                     }
                 }
                 russh::ChannelMsg::ExtendedData { data, .. } => {
                     let mut tx = ws_tx_for_ssh.lock().await;
                     if tx.send(Message::Binary(data.to_vec().into())).await.is_err() {
+                        tracing::debug!("[{instance_tag}] ssh→ws: WebSocket send failed");
                         break;
                     }
                 }
-                russh::ChannelMsg::Eof | russh::ChannelMsg::Close => break,
-                russh::ChannelMsg::ExitStatus { .. } => break,
+                russh::ChannelMsg::Eof => {
+                    tracing::debug!("[{instance_tag}] ssh→ws: channel EOF");
+                    break;
+                }
+                russh::ChannelMsg::Close => {
+                    tracing::debug!("[{instance_tag}] ssh→ws: channel closed");
+                    break;
+                }
+                russh::ChannelMsg::ExitStatus { exit_status } => {
+                    tracing::debug!("[{instance_tag}] ssh→ws: exit status {exit_status}");
+                    break;
+                }
                 _ => {}
             }
         }
+        tracing::debug!("[{instance_tag}] ssh→ws task finished");
     });
 
     // WebSocket -> SSH channel
+    let instance_tag2 = full_id.clone();
     let mut ws_rx = ws_rx;
-    let ws_to_ssh = tokio::spawn(async move {
+    let mut ws_to_ssh = tokio::spawn(async move {
         while let Some(Ok(msg)) = ws_rx.next().await {
             match msg {
                 Message::Binary(data) => {
                     if channel_write.data(&data[..]).await.is_err() {
+                        tracing::debug!("[{instance_tag2}] ws→ssh: channel write failed");
                         break;
                     }
                 }
@@ -241,9 +261,12 @@ async fn do_ssh_bridge(
                         if ctrl["type"].as_str() == Some("resize") {
                             let cols = ctrl["cols"].as_u64().unwrap_or(80) as u32;
                             let rows = ctrl["rows"].as_u64().unwrap_or(24) as u32;
-                            let _ = channel_write
+                            if let Err(e) = channel_write
                                 .window_change(cols, rows, 0, 0)
-                                .await;
+                                .await
+                            {
+                                tracing::warn!("[{instance_tag2}] ws→ssh: window_change failed: {e}");
+                            }
                         }
                     } else {
                         // Treat plain text as terminal input.
@@ -252,20 +275,31 @@ async fn do_ssh_bridge(
                             .await
                             .is_err()
                         {
+                            tracing::debug!("[{instance_tag2}] ws→ssh: channel write failed");
                             break;
                         }
                     }
                 }
-                Message::Close(_) => break,
+                Message::Close(_) => {
+                    tracing::debug!("[{instance_tag2}] ws→ssh: WebSocket close frame");
+                    break;
+                }
                 _ => {}
             }
         }
+        tracing::debug!("[{instance_tag2}] ws→ssh task finished");
     });
 
-    // Wait for either direction to finish.
+    // Wait for either direction to finish, then abort the other.
     tokio::select! {
-        _ = ssh_to_ws => {}
-        _ = ws_to_ssh => {}
+        _ = &mut ssh_to_ws => {
+            tracing::debug!("[{full_id}] ssh→ws finished first, aborting ws→ssh");
+            ws_to_ssh.abort();
+        }
+        _ = &mut ws_to_ssh => {
+            tracing::debug!("[{full_id}] ws→ssh finished first, aborting ssh→ws");
+            ssh_to_ws.abort();
+        }
     }
 
     let _ = session.disconnect(russh::Disconnect::ByApplication, "", "en").await;
@@ -332,13 +366,29 @@ showOverlay('Connecting...');
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = proto + '//' + location.host + '/ssh/{instance_id}/ws';
 
+let currentWs = null;
+
+// Register input/resize handlers once (not per connection).
+term.onData((data) => {{
+  if (currentWs && currentWs.readyState === WebSocket.OPEN) {{
+    currentWs.send(new TextEncoder().encode(data));
+  }}
+}});
+
+window.addEventListener('resize', () => {{
+  fit.fit();
+  if (currentWs && currentWs.readyState === WebSocket.OPEN) {{
+    currentWs.send(JSON.stringify({{ type: 'resize', cols: term.cols, rows: term.rows }}));
+  }}
+}});
+
 function connect() {{
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
+  currentWs = ws;
 
   ws.onopen = () => {{
     hideOverlay();
-    // Send initial size.
     ws.send(JSON.stringify({{ type: 'resize', cols: term.cols, rows: term.rows }}));
   }};
 
@@ -351,25 +401,12 @@ function connect() {{
   }};
 
   ws.onclose = () => {{
+    if (currentWs === ws) currentWs = null;
     showOverlay('Disconnected. Reconnecting in 3s...');
     setTimeout(connect, 3000);
   }};
 
   ws.onerror = () => ws.close();
-
-  term.onData((data) => {{
-    if (ws.readyState === WebSocket.OPEN) {{
-      // Send terminal input as binary.
-      ws.send(new TextEncoder().encode(data));
-    }}
-  }});
-
-  window.addEventListener('resize', () => {{
-    fit.fit();
-    if (ws.readyState === WebSocket.OPEN) {{
-      ws.send(JSON.stringify({{ type: 'resize', cols: term.cols, rows: term.rows }}));
-    }}
-  }});
 }}
 
 connect();
