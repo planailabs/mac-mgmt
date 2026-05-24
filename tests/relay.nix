@@ -44,18 +44,39 @@ let
     ${pkgs.openssh}/bin/ssh-keygen -t ed25519 -f $out/id_ed25519 -N "" -q
   '';
 
-  # Release relay builds require TLS material. Generate a local self-signed
-  # certificate for the VM test and talk to the relay with curl -k.
+  # Release relay builds require TLS material. Generate a local test CA and a
+  # relay server certificate signed by that CA so test clients can verify TLS
+  # normally, without disabling certificate validation.
   testTlsDir = pkgs.runCommand "test-relay-tls" {} ''
     mkdir -p $out
     ${pkgs.openssl}/bin/openssl req -x509 -newkey rsa:2048 \
-      -keyout $out/key.pem \
-      -out $out/cert.pem \
+      -keyout $out/ca-key.pem \
+      -out $out/ca-cert.pem \
       -days 1 \
+      -nodes \
+      -subj "/CN=mac-mgmt relay integration test CA" \
+      -addext "basicConstraints=critical,CA:TRUE" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign"
+    ${pkgs.openssl}/bin/openssl req -newkey rsa:2048 \
+      -keyout $out/key.pem \
+      -out $out/cert.csr \
       -nodes \
       -subj "/CN=127.0.0.1" \
       -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+    ${pkgs.openssl}/bin/openssl x509 -req \
+      -in $out/cert.csr \
+      -CA $out/ca-cert.pem \
+      -CAkey $out/ca-key.pem \
+      -CAcreateserial \
+      -out $out/cert.pem \
+      -days 1 \
+      -copy_extensions copyall
+    rm $out/cert.csr
   '';
+
+  testCaModule = { ... }: {
+    security.pki.certificateFiles = [ "${testTlsDir}/ca-cert.pem" ];
+  };
 
   relayConfig = pkgs.writeText "relay.toml" ''
     listen_addr = "127.0.0.1:8080"
@@ -112,7 +133,10 @@ pkgs.testers.nixosTest {
   name = "relay-integration";
 
   nodes.machine = { lib, ... }: {
-    imports = [ ../server/module.nix ];
+    imports = [
+      ../server/module.nix
+      testCaModule
+    ];
 
     nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
@@ -170,7 +194,7 @@ pkgs.testers.nixosTest {
     )
     attempts = 0
     while attempts < 120:
-        if machine.execute("curl -skf https://127.0.0.1:8080/health >/dev/null")[0] == 0:
+        if machine.execute("curl -sf https://127.0.0.1:8080/health >/dev/null")[0] == 0:
             break
         if machine.execute("kill -0 $(cat /tmp/relay.pid) 2>/dev/null")[0] != 0:
             relay_log = machine.succeed("cat /tmp/relay.log || true")
@@ -206,7 +230,7 @@ pkgs.testers.nixosTest {
     while attempts < 120:
         try:
             tunnels_json = machine.succeed(
-                "curl -skf -H 'Authorization: Bearer ${settingToken}' "
+                "curl -sf -H 'Authorization: Bearer ${settingToken}' "
                 "https://127.0.0.1:8080/api/tunnels"
             )
             tunnels = json.loads(tunnels_json)
