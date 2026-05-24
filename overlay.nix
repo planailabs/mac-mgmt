@@ -54,6 +54,12 @@ in
     buildPhase = ''
       runHook preBuild
 
+      # Preflight Cargo metadata before invoking dx.  dx has a short
+      # cargo-metadata watchdog; on busy CI runners it can time out without
+      # exposing the underlying Cargo failure.  Running metadata first warms
+      # Cargo's cache and makes lock/network errors self-diagnosing.
+      timeout 180 cargo metadata --format-version=1 --locked --no-deps >/dev/null
+
       # Tailwind CSS for memvault-web
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
