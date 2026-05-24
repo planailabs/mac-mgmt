@@ -406,27 +406,12 @@ pub struct VfsFindParams {
 // -- Export tools --
 
 #[derive(Deserialize, JsonSchema)]
-pub struct ExportDocParams {
-    /// Hex-encoded doc ID to export.
-    pub doc_id: String,
-    /// Include historical versions.
+pub struct ExportNodeParams {
+    /// Node ID to export — "doc:<hex>", "entity:<hex>", or "file:<hex>".
+    pub node_id: String,
+    /// Include historical versions (applies to documents).
     #[serde(default)]
     pub history: Option<bool>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct ExportFileParams {
-    /// Hex-encoded manifest CID of the file to export.
-    pub manifest_cid: String,
-    /// Whether to include file content (default true). Set false for metadata only.
-    #[serde(default)]
-    pub include_content: Option<bool>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct ExportEntityParams {
-    /// Hex-encoded entity ID.
-    pub entity_id: String,
 }
 
 #[derive(Deserialize, JsonSchema)]

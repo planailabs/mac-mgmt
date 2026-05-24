@@ -511,153 +511,108 @@ impl MemvaultServer {
     // ── Export ─────────────────────────────────────────────────────
 
     #[tool(
-        name = "memvault_export_doc",
-        description = "Export a document as a standalone markdown file with YAML frontmatter. \
-                       Writes to a temp file and returns the file path. Optionally includes history."
+        name = "memvault_export",
+        description = "Export a single node (document, file, or entity) to a temp file. \
+                       Pass node_id as 'doc:<hex>', 'entity:<hex>', or 'file:<hex>'. \
+                       Returns the file path. For documents, optionally includes history."
     )]
-    async fn export_doc(&self, Parameters(params): Parameters<ExportDocParams>) -> String {
+    async fn export_node(&self, Parameters(params): Parameters<ExportNodeParams>) -> String {
         let Some(client) = self.client.as_memvault_client() else {
             return "error: export tools require local mode (--db)".to_string();
         };
-        let doc_id_bytes = match hex::decode(&params.doc_id) {
-            Ok(b) if b.len() == 32 => b,
-            _ => return "error: invalid doc_id hex (expected 64 hex chars)".to_string(),
-        };
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&doc_id_bytes);
-        let doc_id = memvault_core::DocId(arr);
-        let history = params.history.unwrap_or(false);
-        match memvault_export::export_single_doc(client, &doc_id, history).await {
-            Ok(entries) => {
-                if entries.is_empty() {
-                    return "error: document not found".to_string();
-                }
-                let tmp_dir = std::env::temp_dir().join("memvault-export");
-                let _ = std::fs::create_dir_all(&tmp_dir);
-                // Write main document
-                let (rel_path, content) = &entries[0];
-                let filename = std::path::Path::new(rel_path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("doc.md");
-                let out_path = tmp_dir.join(filename);
-                if let Err(e) = std::fs::write(&out_path, content) {
-                    return format!("error writing file: {e}");
-                }
-                // Write history files if present
-                let mut history_paths = Vec::new();
-                if entries.len() > 1 {
-                    let hist_dir = tmp_dir.join(&params.doc_id);
-                    let _ = std::fs::create_dir_all(&hist_dir);
-                    for (rel, data) in &entries[1..] {
-                        let hist_name = std::path::Path::new(rel)
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("version.md");
-                        let hp = hist_dir.join(hist_name);
-                        let _ = std::fs::write(&hp, data);
-                        history_paths.push(hp.display().to_string());
+        let tmp_dir = std::env::temp_dir().join("memvault-export");
+        let _ = std::fs::create_dir_all(&tmp_dir);
+
+        if let Some(hex_str) = params.node_id.strip_prefix("doc:") {
+            let bytes = match hex::decode(hex_str) {
+                Ok(b) if b.len() == 32 => b,
+                _ => return "error: invalid doc ID (expected doc:<64 hex chars>)".to_string(),
+            };
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            let doc_id = memvault_core::DocId(arr);
+            let history = params.history.unwrap_or(false);
+            match memvault_export::export_single_doc(client, &doc_id, history).await {
+                Ok(entries) if entries.is_empty() => "error: document not found".to_string(),
+                Ok(entries) => {
+                    let (rel_path, content) = &entries[0];
+                    let filename = std::path::Path::new(rel_path)
+                        .file_name().and_then(|n| n.to_str()).unwrap_or("doc.md");
+                    let out_path = tmp_dir.join(filename);
+                    if let Err(e) = std::fs::write(&out_path, content) {
+                        return format!("error writing file: {e}");
                     }
+                    let mut result = serde_json::json!({
+                        "path": out_path.display().to_string(),
+                        "type": "doc",
+                        "node_id": params.node_id,
+                    });
+                    if entries.len() > 1 {
+                        let hist_dir = tmp_dir.join(hex_str);
+                        let _ = std::fs::create_dir_all(&hist_dir);
+                        for (rel, data) in &entries[1..] {
+                            let hist_name = std::path::Path::new(rel)
+                                .file_name().and_then(|n| n.to_str()).unwrap_or("version.md");
+                            let _ = std::fs::write(hist_dir.join(hist_name), data);
+                        }
+                        result["history_count"] = serde_json::json!(entries.len() - 1);
+                        result["history_dir"] = serde_json::json!(hist_dir.display().to_string());
+                    }
+                    result.to_string()
                 }
-                serde_json::json!({
-                    "path": out_path.display().to_string(),
-                    "history_count": entries.len() - 1,
-                    "history_dir": if history_paths.is_empty() { None } else { Some(tmp_dir.join(&params.doc_id).display().to_string()) },
-                }).to_string()
+                Err(e) => format!("error: {e}"),
             }
-            Err(e) => format!("error: {e}"),
-        }
-    }
-
-    #[tool(
-        name = "memvault_export_file",
-        description = "Export a file attachment to a temp file. Returns the file path and metadata."
-    )]
-    async fn export_file(&self, Parameters(params): Parameters<ExportFileParams>) -> String {
-        let Some(client) = self.client.as_memvault_client() else {
-            return "error: export tools require local mode (--db)".to_string();
-        };
-        let cid_bytes = match hex::decode(&params.manifest_cid) {
-            Ok(b) => b,
-            Err(_) => return "error: invalid manifest_cid hex".to_string(),
-        };
-        let include_content = params.include_content.unwrap_or(true);
-
-        // Get manifest for metadata
-        let manifest_info = match client.get_file_manifest(&cid_bytes).await {
-            Ok(Some(data)) => serde_json::from_slice::<serde_json::Value>(&data).ok(),
-            _ => None,
-        };
-
-        let filename = manifest_info.as_ref()
-            .and_then(|m| m["filename"].as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let mime = manifest_info.as_ref()
-            .and_then(|m| m["mime_type"].as_str())
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        let size = manifest_info.as_ref()
-            .and_then(|m| m["content_size"].as_u64())
-            .unwrap_or(0);
-
-        if !include_content {
-            return serde_json::json!({
-                "filename": filename,
-                "mime": mime,
-                "size": size,
-            }).to_string();
-        }
-
-        match client.read_file(&cid_bytes).await {
-            Ok(data) => {
-                let tmp_dir = std::env::temp_dir().join("memvault-export").join("files");
-                let _ = std::fs::create_dir_all(&tmp_dir);
-                let out_path = tmp_dir.join(&filename);
-                if let Err(e) = std::fs::write(&out_path, &data) {
-                    return format!("error writing file: {e}");
+        } else if let Some(hex_str) = params.node_id.strip_prefix("entity:") {
+            let bytes = match hex::decode(hex_str) {
+                Ok(b) if b.len() == 32 => b,
+                _ => return "error: invalid entity ID (expected entity:<64 hex chars>)".to_string(),
+            };
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            let entity_id = memvault_core::EntityId(arr);
+            match memvault_export::export_single_entity(client, &entity_id).await {
+                Ok((_rel_path, content)) => {
+                    let graph_dir = tmp_dir.join("graph");
+                    let _ = std::fs::create_dir_all(&graph_dir);
+                    let out_path = graph_dir.join(format!("{hex_str}.json"));
+                    if let Err(e) = std::fs::write(&out_path, &content) {
+                        return format!("error writing file: {e}");
+                    }
+                    serde_json::json!({
+                        "path": out_path.display().to_string(),
+                        "type": "entity",
+                        "node_id": params.node_id,
+                        "content": String::from_utf8_lossy(&content),
+                    }).to_string()
                 }
-                serde_json::json!({
-                    "path": out_path.display().to_string(),
-                    "filename": filename,
-                    "mime": mime,
-                    "size": data.len(),
-                }).to_string()
+                Err(e) => format!("error: {e}"),
             }
-            Err(e) => format!("error: {e}"),
-        }
-    }
-
-    #[tool(
-        name = "memvault_export_entity",
-        description = "Export a graph entity as a JSON file. Returns the file path."
-    )]
-    async fn export_entity(&self, Parameters(params): Parameters<ExportEntityParams>) -> String {
-        let Some(client) = self.client.as_memvault_client() else {
-            return "error: export tools require local mode (--db)".to_string();
-        };
-        let entity_id_bytes = match hex::decode(&params.entity_id) {
-            Ok(b) if b.len() == 32 => b,
-            _ => return "error: invalid entity_id hex (expected 64 hex chars)".to_string(),
-        };
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&entity_id_bytes);
-        let entity_id = memvault_core::EntityId(arr);
-        match memvault_export::export_single_entity(client, &entity_id).await {
-            Ok((_rel_path, content)) => {
-                let tmp_dir = std::env::temp_dir().join("memvault-export").join("graph");
-                let _ = std::fs::create_dir_all(&tmp_dir);
-                let out_path = tmp_dir.join(format!("{}.json", params.entity_id));
-                if let Err(e) = std::fs::write(&out_path, &content) {
-                    return format!("error writing file: {e}");
+        } else if let Some(hex_str) = params.node_id.strip_prefix("file:") {
+            let cid_bytes = match hex::decode(hex_str) {
+                Ok(b) => b,
+                Err(_) => return "error: invalid file CID hex".to_string(),
+            };
+            match memvault_export::export_single_file(client, &cid_bytes).await {
+                Ok((rel_path, data)) => {
+                    let files_dir = tmp_dir.join("files");
+                    let _ = std::fs::create_dir_all(&files_dir);
+                    let filename = std::path::Path::new(&rel_path)
+                        .file_name().and_then(|n| n.to_str()).unwrap_or("file.bin");
+                    let out_path = files_dir.join(filename);
+                    if let Err(e) = std::fs::write(&out_path, &data) {
+                        return format!("error writing file: {e}");
+                    }
+                    serde_json::json!({
+                        "path": out_path.display().to_string(),
+                        "type": "file",
+                        "node_id": params.node_id,
+                        "size": data.len(),
+                    }).to_string()
                 }
-                serde_json::json!({
-                    "path": out_path.display().to_string(),
-                    "entity_id": params.entity_id,
-                    "content": String::from_utf8_lossy(&content),
-                }).to_string()
+                Err(e) => format!("error: {e}"),
             }
-            Err(e) => format!("error: {e}"),
+        } else {
+            "error: node_id must start with 'doc:', 'entity:', or 'file:'".to_string()
         }
     }
 
