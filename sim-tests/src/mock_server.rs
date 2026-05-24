@@ -80,7 +80,7 @@ impl MockServerState {
             }),
             nixpkgs_pin: Mutex::new(NixpkgsPin { commit: None }),
             skills: Mutex::new(HashMap::new()),
-            mcp_servers: Mutex::new(serde_json::json!([])),
+            mcp_servers: Mutex::new(serde_json::json!({})),
             ssh_keys: Mutex::new(Vec::new()),
             heartbeats: Mutex::new(Vec::new()),
             assessments: Mutex::new(Vec::new()),
