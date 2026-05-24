@@ -8699,6 +8699,7 @@ dependencies = [
  "memvault-store",
  "mime_guess",
  "opentelemetry",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "tempfile",
@@ -8824,10 +8825,15 @@ name = "memvault-import"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "memvault-api",
  "memvault-core",
  "memvault-doc",
+ "memvault-query",
+ "memvault-store",
+ "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
