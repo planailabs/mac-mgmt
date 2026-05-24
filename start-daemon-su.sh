@@ -6,4 +6,4 @@ RELEASE=0 ./build-memvault.sh
 # cache as the WASM client, preventing hydration mismatches.
 cp target/dx/mac-mgmt/debug/web/server /tmp/mac-mgmt
 chmod 755 /tmp/mac-mgmt
-sudo su -l daemon -s /bin/bash -c "env RUST_BACKTRACE=1 INPROCESS_SERVICE_MANAGER=1 /tmp/mac-mgmt daemon"
+sudo su -l daemon -s /bin/bash -c "env RUST_BACKTRACE=1 RUST_LOG=debug INPROCESS_SERVICE_MANAGER=1 /tmp/mac-mgmt daemon" | tee /tmp/mac-mgmt-daemon.log
