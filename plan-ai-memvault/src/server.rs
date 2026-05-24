@@ -507,4 +507,161 @@ impl MemvaultServer {
             Err(e) => format!("error: {e}"),
         }
     }
+
+    // ── Export ─────────────────────────────────────────────────────
+
+    #[tool(
+        name = "memvault_export_doc",
+        description = "Export a document as a standalone markdown file with YAML frontmatter. Optionally includes full version history."
+    )]
+    async fn export_doc(&self, Parameters(params): Parameters<ExportDocParams>) -> String {
+        let Some(client) = self.client.as_memvault_client() else {
+            return "error: export tools require local mode (--db)".to_string();
+        };
+        let doc_id_bytes = match hex::decode(&params.doc_id) {
+            Ok(b) if b.len() == 32 => b,
+            _ => return "error: invalid doc_id hex (expected 64 hex chars)".to_string(),
+        };
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&doc_id_bytes);
+        let doc_id = memvault_core::DocId(arr);
+        let history = params.history.unwrap_or(false);
+        match memvault_export::export_single_doc(client, &doc_id, history).await {
+            Ok(entries) => {
+                if entries.is_empty() {
+                    return "error: document not found".to_string();
+                }
+                // Return the main document content; if history is included, note the count
+                let main_content = String::from_utf8_lossy(&entries[0].1);
+                if entries.len() > 1 {
+                    format!("{main_content}\n\n---\n[{} history entries available]", entries.len() - 1)
+                } else {
+                    main_content.into_owned()
+                }
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_export_file",
+        description = "Export a file attachment. Returns metadata and content (base64 for binary, plain text for text files)."
+    )]
+    async fn export_file(&self, Parameters(params): Parameters<ExportFileParams>) -> String {
+        let Some(client) = self.client.as_memvault_client() else {
+            return "error: export tools require local mode (--db)".to_string();
+        };
+        let cid_bytes = match hex::decode(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(_) => return "error: invalid manifest_cid hex".to_string(),
+        };
+        let include_content = params.include_content.unwrap_or(true);
+
+        // Get manifest for metadata
+        let manifest_info = match client.get_file_manifest(&cid_bytes).await {
+            Ok(Some(data)) => serde_json::from_slice::<serde_json::Value>(&data).ok(),
+            _ => None,
+        };
+
+        let filename = manifest_info.as_ref()
+            .and_then(|m| m["filename"].as_str())
+            .unwrap_or("unknown");
+        let mime = manifest_info.as_ref()
+            .and_then(|m| m["mime_type"].as_str())
+            .unwrap_or("application/octet-stream");
+        let size = manifest_info.as_ref()
+            .and_then(|m| m["content_size"].as_u64())
+            .unwrap_or(0);
+
+        if !include_content {
+            return serde_json::json!({
+                "filename": filename,
+                "mime": mime,
+                "size": size,
+            }).to_string();
+        }
+
+        match client.read_file(&cid_bytes).await {
+            Ok(data) => {
+                let is_text = mime.starts_with("text/") || mime == "application/json";
+                if is_text {
+                    serde_json::json!({
+                        "filename": filename,
+                        "mime": mime,
+                        "size": data.len(),
+                        "content": String::from_utf8_lossy(&data),
+                    }).to_string()
+                } else {
+                    use base64::Engine;
+                    serde_json::json!({
+                        "filename": filename,
+                        "mime": mime,
+                        "size": data.len(),
+                        "content_base64": base64::engine::general_purpose::STANDARD.encode(&data),
+                    }).to_string()
+                }
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_export_entity",
+        description = "Export a graph entity as JSON including its properties and outgoing edges."
+    )]
+    async fn export_entity(&self, Parameters(params): Parameters<ExportEntityParams>) -> String {
+        let Some(client) = self.client.as_memvault_client() else {
+            return "error: export tools require local mode (--db)".to_string();
+        };
+        let entity_id_bytes = match hex::decode(&params.entity_id) {
+            Ok(b) if b.len() == 32 => b,
+            _ => return "error: invalid entity_id hex (expected 64 hex chars)".to_string(),
+        };
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&entity_id_bytes);
+        let entity_id = memvault_core::EntityId(arr);
+        match memvault_export::export_single_entity(client, &entity_id).await {
+            Ok((_path, content)) => String::from_utf8_lossy(&content).into_owned(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_export_vault",
+        description = "Export the entire vault (or a filtered subset) to a directory or tar archive on disk."
+    )]
+    async fn export_vault(&self, Parameters(params): Parameters<ExportVaultParams>) -> String {
+        let Some(client) = self.client.as_memvault_client() else {
+            return "error: export tools require local mode (--db)".to_string();
+        };
+        let tag_filter = params.tag.as_deref().and_then(|t| {
+            let parts: Vec<&str> = t.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                None
+            }
+        });
+        let opts = memvault_export::ExportOptions {
+            history: params.history.unwrap_or(false),
+            include_vfs: true,
+            tag_filter,
+            view_filter: params.view,
+        };
+        let output = std::path::PathBuf::from(&params.output_path);
+        let force_tar = params.tar.unwrap_or(false);
+        let gzip = output.to_str().is_some_and(|s| s.ends_with(".gz") || s.ends_with(".tgz"));
+        let sink = match memvault_export::create_sink(&output, force_tar, gzip) {
+            Ok(s) => s,
+            Err(e) => return format!("error creating output: {e}"),
+        };
+        match memvault_export::run_export(client, sink, opts).await {
+            Ok(stats) => format!(
+                "Exported {} documents, {} files, {} entities ({} history versions) to {}",
+                stats.documents, stats.files, stats.entities, stats.history_versions,
+                params.output_path
+            ),
+            Err(e) => format!("error: {e}"),
+        }
+    }
 }

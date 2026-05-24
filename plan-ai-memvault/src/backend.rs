@@ -2,10 +2,17 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use memvault_api::MemvaultClient;
 
 /// Operations the MCP server needs from its backend.
 #[async_trait]
 pub trait Backend: Send + Sync {
+    /// Return the underlying MemvaultClient if available (local mode).
+    /// Used by export tools that need typed access.
+    fn as_memvault_client(&self) -> Option<&dyn MemvaultClient> {
+        None
+    }
+
     // -- Documents --
     async fn put_doc(&self, body: &str, frontmatter: serde_json::Value, tags: Vec<(String, String)>, visibility: Option<&str>) -> Result<serde_json::Value>;
     async fn get_doc(&self, id: &str) -> Result<Option<serde_json::Value>>;

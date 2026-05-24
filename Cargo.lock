@@ -8755,6 +8755,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "memvault-export"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "flate2",
+ "hex",
+ "memvault-api",
+ "memvault-core",
+ "memvault-doc",
+ "memvault-query",
+ "memvault-store",
+ "regex",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "memvault-extract"
 version = "0.1.0"
 dependencies = [
@@ -10911,6 +10937,7 @@ dependencies = [
  "memvault-api",
  "memvault-core",
  "memvault-doc",
+ "memvault-export",
  "memvault-extract",
  "memvault-query",
  "memvault-store",

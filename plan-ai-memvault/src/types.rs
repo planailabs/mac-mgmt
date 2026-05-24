@@ -402,3 +402,47 @@ pub struct VfsFindParams {
     /// Node ID to search for — "doc:<hex>", "entity:<hex>", or "file:<hex>".
     pub node: String,
 }
+
+// -- Export tools --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ExportDocParams {
+    /// Hex-encoded doc ID to export.
+    pub doc_id: String,
+    /// Include historical versions.
+    #[serde(default)]
+    pub history: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ExportFileParams {
+    /// Hex-encoded manifest CID of the file to export.
+    pub manifest_cid: String,
+    /// Whether to include file content (default true). Set false for metadata only.
+    #[serde(default)]
+    pub include_content: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ExportEntityParams {
+    /// Hex-encoded entity ID.
+    pub entity_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ExportVaultParams {
+    /// Output directory or tar file path.
+    pub output_path: String,
+    /// Include historical versions of documents.
+    #[serde(default)]
+    pub history: Option<bool>,
+    /// Export as tar archive.
+    #[serde(default)]
+    pub tar: Option<bool>,
+    /// Filter by tag (scope:label format).
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Filter by view name.
+    #[serde(default)]
+    pub view: Option<String>,
+}

@@ -63,6 +63,10 @@ fn hex_to_32(hex_str: &str) -> Result<[u8; 32]> {
 
 #[async_trait]
 impl Backend for LocalBackend {
+    fn as_memvault_client(&self) -> Option<&dyn MemvaultClient> {
+        Some(&self.client)
+    }
+
     async fn put_doc(
         &self, body: &str, frontmatter: serde_json::Value,
         tags: Vec<(String, String)>, visibility: Option<&str>,
