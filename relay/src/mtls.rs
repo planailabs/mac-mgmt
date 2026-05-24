@@ -7,6 +7,7 @@
 use std::io;
 use std::sync::Arc;
 
+use base64::Engine;
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
@@ -19,6 +20,8 @@ pub struct ClientCertInfo {
     pub fingerprint_sha256: String,
     /// Certificate subject common name (best-effort).
     pub subject: String,
+    /// PEM-encoded certificate.
+    pub certificate_pem: String,
 }
 
 // ── serve_tls ───────────────────────────────────────────────────────
@@ -205,9 +208,15 @@ fn extract_client_cert(conn: &rustls::ServerConnection) -> Option<ClientCertInfo
         Err(_) => String::new(),
     };
 
+    let certificate_pem = format!(
+        "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----",
+        base64::engine::general_purpose::STANDARD.encode(cert_der.as_ref()),
+    );
+
     Some(ClientCertInfo {
         fingerprint_sha256: fingerprint,
         subject,
+        certificate_pem,
     })
 }
 

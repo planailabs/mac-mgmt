@@ -7,7 +7,7 @@ use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct ClientCertDisplay {
+pub struct OrgCertDisplay {
     pub id: uuid::Uuid,
     pub fingerprint: String,
     pub label: String,
@@ -15,28 +15,22 @@ pub struct ClientCertDisplay {
 }
 
 #[server]
-async fn list_client_certs(cluster_id: String) -> Result<Vec<ClientCertDisplay>, ServerFnError> {
+async fn list_org_certs(organization_id: String) -> Result<Vec<OrgCertDisplay>, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_id
+    let oid: uuid::Uuid = organization_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user
-        .accessible_cluster_ids(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    {
-        if !ids.contains(&uuid) {
-            return Err(ServerFnError::new("access denied"));
-        }
+    if !user.is_admin && !user.org_ids().contains(&oid) {
+        return Err(ServerFnError::new("access denied"));
     }
-    let certs = sqlx::query_as::<_, ClientCertDisplay>(
+    let certs = sqlx::query_as::<_, OrgCertDisplay>(
         "SELECT id, fingerprint, label, created_at \
          FROM client_certificates \
-         WHERE scope = 'cluster' AND scope_id = $1 AND is_ca = false \
+         WHERE scope = 'organization' AND scope_id = $1 AND is_ca = false \
          ORDER BY created_at",
     )
-    .bind(uuid)
+    .bind(oid)
     .fetch_all(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -44,27 +38,18 @@ async fn list_client_certs(cluster_id: String) -> Result<Vec<ClientCertDisplay>,
 }
 
 #[server]
-async fn add_client_cert(
-    cluster_id: String,
+async fn add_org_cert(
+    organization_id: String,
     fingerprint: String,
     certificate_pem: String,
     label: String,
 ) -> Result<(), ServerFnError> {
     let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id
+    let oid: uuid::Uuid = organization_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let org_ids = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT organization_id FROM organization_clusters WHERE cluster_id = $1",
-    )
-    .bind(cid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if org_ids.is_empty() || !org_ids.iter().any(|oid| user.is_org_admin(oid)) {
-        return Err(ServerFnError::new("organization admin access required"));
-    }
+    user.require_org_admin(&oid)?;
+    let pool = crate::server_pool()?;
 
     let lbl = label.trim().to_string();
     let (fp, pem) = if !certificate_pem.trim().is_empty() {
@@ -79,9 +64,9 @@ async fn add_client_cert(
 
     sqlx::query(
         "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
-         VALUES ('cluster', $1, false, $2, $3, $4)",
+         VALUES ('organization', $1, false, $2, $3, $4)",
     )
-    .bind(cid)
+    .bind(oid)
     .bind(&fp)
     .bind(&pem)
     .bind(&lbl)
@@ -92,35 +77,22 @@ async fn add_client_cert(
 }
 
 #[server]
-async fn remove_client_cert(cert_id: String) -> Result<(), ServerFnError> {
+async fn remove_org_cert(organization_id: String, cert_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
+    let oid: uuid::Uuid = organization_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    user.require_org_admin(&oid)?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = cert_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT scope_id FROM client_certificates WHERE id = $1 AND scope = 'cluster' AND is_ca = false",
-    )
-    .bind(uuid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if let Some(owner_cid) = owner_cid {
-        let org_ids = sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT organization_id FROM organization_clusters WHERE cluster_id = $1",
-        )
-        .bind(owner_cid)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-        if org_ids.is_empty() || !org_ids.iter().any(|oid| user.is_org_admin(oid)) {
-            return Err(ServerFnError::new("organization admin access required"));
-        }
-    }
     sqlx::query(
-        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'cluster' AND is_ca = false",
+        "DELETE FROM client_certificates \
+         WHERE id = $1 AND scope = 'organization' AND scope_id = $2 AND is_ca = false",
     )
     .bind(uuid)
+    .bind(oid)
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -128,11 +100,11 @@ async fn remove_client_cert(cert_id: String) -> Result<(), ServerFnError> {
 }
 
 #[component]
-pub fn ClusterClientCerts(cluster_id: String, read_only: bool) -> Element {
-    let cid_list = cluster_id.clone();
+pub fn OrganizationClientCerts(organization_id: String, read_only: bool) -> Element {
+    let oid_list = organization_id.clone();
     let mut certs = use_server_future(move || {
-        let cid = cid_list.clone();
-        async move { list_client_certs(cid).await }
+        let oid = oid_list.clone();
+        async move { list_org_certs(oid).await }
     })?;
 
     let mut fp_input = use_signal(String::new);
@@ -140,7 +112,7 @@ pub fn ClusterClientCerts(cluster_id: String, read_only: bool) -> Element {
     let mut label_input = use_signal(String::new);
     let mut error_msg = use_signal(|| None::<String>);
 
-    let cid_add = cluster_id.clone();
+    let oid_add = organization_id.clone();
 
     rsx! {
         if !read_only {
@@ -150,13 +122,13 @@ pub fn ClusterClientCerts(cluster_id: String, read_only: bool) -> Element {
             form { class: "flex flex-col gap-2 mb-3",
                 onsubmit: move |evt: FormEvent| {
                     evt.prevent_default();
-                    let cid = cid_add.clone();
+                    let oid = oid_add.clone();
                     let fp = fp_input.read().clone();
                     let pem = pem_input.read().clone();
                     let lbl = label_input.read().clone();
                     spawn(async move {
                         if !fp.trim().is_empty() || !pem.trim().is_empty() {
-                            match add_client_cert(cid, fp, pem, lbl).await {
+                            match add_org_cert(oid, fp, pem, lbl).await {
                                 Ok(()) => {
                                     error_msg.set(None);
                                     fp_input.set(String::new());
@@ -203,6 +175,7 @@ pub fn ClusterClientCerts(cluster_id: String, read_only: bool) -> Element {
                     for cert in list {
                         {
                             let cid = cert.id.to_string();
+                            let oid = organization_id.clone();
                             let fp = cert.fingerprint.clone();
                             let label = cert.label.clone();
                             rsx! {
@@ -217,8 +190,9 @@ pub fn ClusterClientCerts(cluster_id: String, read_only: bool) -> Element {
                                         button { class: "link-danger text-sm",
                                             onclick: move |_| {
                                                 let cid = cid.clone();
+                                                let oid = oid.clone();
                                                 spawn(async move {
-                                                    if remove_client_cert(cid).await.is_ok() {
+                                                    if remove_org_cert(oid, cid).await.is_ok() {
                                                         certs.restart();
                                                     }
                                                 });

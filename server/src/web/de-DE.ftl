@@ -194,12 +194,23 @@ ssh-keys-no-keys = Keine SSH Keys.
 ## ── Client-Zertifikate ─────────────────────────────────────────
 
 cluster-detail-tab-client-certs = Client-Zertifikate
+cluster-detail-tab-client-cas = Client-CAs
 admin-client-certs-title = Admin Client-Zertifikate
 admin-client-certs-description = Client-Zertifikate mit Admin-Zugriff. Diese Zertifikate haben Zugang zu allen Clustern über das Relay.
 nav-admin-client-certs = Client-Zertifikate
+nav-admin-client-cas = Client-CAs
+admin-client-cas-title = Admin Client-CAs
+admin-client-cas-description = CA-Zertifikate für Admin-Vertrauen. Von diesen CAs signierte Client-Zertifikate erhalten Admin-Zugriff auf alle Cluster.
 client-certs-fingerprint-placeholder = sha256:ab12cd34...
 client-certs-label-placeholder = Bezeichnung (optional)
 client-certs-no-certs = Keine Client-Zertifikate.
+client-certs-pem-placeholder = PEM-kodiertes Zertifikat einfügen (optional)...
+client-cas-pem-placeholder = PEM-kodiertes CA-Zertifikat einfügen...
+client-cas-no-cas = Keine CA-Zertifikate.
+org-detail-client-certs = Client-Zertifikate
+org-detail-client-cas = Client-CAs
+org-client-certs-description = Client-Zertifikate mit Organisations-Zugriff. Diese Zertifikate haben Zugang zu allen Clustern dieser Organisation.
+org-client-cas-description = CA-Zertifikate für Organisations-Vertrauen. Von diesen CAs signierte Client-Zertifikate erhalten Zugriff auf die Cluster dieser Organisation.
 
 ## ── Flotten-Dashboard ──────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_i18n::{prelude::*, unic_langid::langid};
 
+use super::components::admin_client_cas_page::AdminClientCas;
 use super::components::admin_client_certs_page::AdminClientCerts;
 use super::components::admin_tokens_page::AdminTokens;
 use super::components::bundle_detail::BundleDetail;
@@ -89,6 +90,8 @@ pub enum Route {
     AdminTokens {},
     #[route("/admin-client-certs")]
     AdminClientCerts {},
+    #[route("/admin-client-cas")]
+    AdminClientCas {},
     #[route("/rollouts")]
     RolloutList {},
     #[route("/rollouts/new")]

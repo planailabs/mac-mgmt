@@ -46,7 +46,7 @@ async fn verify_access(
 ) -> Result<(), Response> {
     // Try client certificate first.
     if let Some(cert) = cert_info {
-        if crate::auth::validate_cert(server_api_url, &cert.fingerprint_sha256)
+        if crate::auth::validate_cert(server_api_url, &cert.fingerprint_sha256, &cert.certificate_pem)
             .await
             .is_ok()
         {

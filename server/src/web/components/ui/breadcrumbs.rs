@@ -166,6 +166,7 @@ fn chain_keys(route: &Route) -> Vec<Entry> {
         // ── Admin
         AdminTokens {} => vec![cat("nav-admin"), cur("nav-admin-tokens")],
         AdminClientCerts {} => vec![cat("nav-admin"), cur("nav-admin-client-certs")],
+        AdminClientCas {} => vec![cat("nav-admin"), cur("nav-admin-client-cas")],
         StaffPings {} => vec![cat("nav-admin"), cur("nav-staff-pings")],
         OrganizationList {} => vec![cat("nav-admin"), cur("nav-organizations")],
         OrganizationForm {} => vec![

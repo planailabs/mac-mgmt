@@ -4,6 +4,8 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::organization_client_cas::OrganizationClientCas;
+use crate::web::components::organization_client_certs::OrganizationClientCerts;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Alert, AlertVariant, Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, Card,
@@ -991,6 +993,30 @@ pub fn OrganizationDetail(id: String) -> Element {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // Client Certificates section
+                    Card { class: "p-4",
+                        SectionHeading { {t!("org-detail-client-certs")} }
+                        p { class: "text-fg-muted text-sm mb-3",
+                            {t!("org-client-certs-description")}
+                        }
+                        OrganizationClientCerts {
+                            organization_id: id.clone(),
+                            read_only: !perms.is_org_admin,
+                        }
+                    }
+
+                    // Client CAs section
+                    Card { class: "p-4",
+                        SectionHeading { {t!("org-detail-client-cas")} }
+                        p { class: "text-fg-muted text-sm mb-3",
+                            {t!("org-client-cas-description")}
+                        }
+                        OrganizationClientCas {
+                            organization_id: id.clone(),
+                            read_only: !perms.is_org_admin,
                         }
                     }
                 }

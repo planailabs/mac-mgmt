@@ -3893,7 +3893,11 @@ pub async fn setting_remove_ssh_key(
     Ok(Status::NoContent)
 }
 
-// ── Client Certificates (setting + admin + relay validation) ────────
+// ── Client Certificates (setting + admin + org + relay validation) ──
+//
+// All certificates/CAs live in the unified `client_certificates` table with
+// columns: scope ('admin'|'organization'|'cluster'), scope_id, is_ca, fingerprint,
+// certificate_pem, label.
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
 pub struct ClientCertRow {
@@ -3905,10 +3909,51 @@ pub struct ClientCertRow {
 
 #[derive(Deserialize, ToSchema)]
 pub struct AddClientCertBody {
-    pub fingerprint: String,
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+    #[serde(default)]
+    pub certificate_pem: Option<String>,
     #[serde(default)]
     pub label: String,
 }
+
+#[derive(Deserialize, ToSchema)]
+pub struct AddClientCaBody {
+    pub certificate_pem: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+/// Compute SHA-256 fingerprint from a PEM-encoded certificate.
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+fn fingerprint_from_pem(pem: &str) -> Result<String, Status> {
+    fingerprint_from_pem_str(pem).map_err(|_| Status::BadRequest)
+}
+
+/// Compute SHA-256 fingerprint from PEM (public, for use in web server functions).
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+pub fn fingerprint_from_pem_str(pem: &str) -> Result<String, &'static str> {
+    let der = pem_to_der(pem).map_err(|_| "invalid PEM")?;
+    use sha2::Digest;
+    let hash = sha2::Sha256::digest(&der);
+    Ok(format!("sha256:{}", hex::encode(hash)))
+}
+
+/// Resolve fingerprint from an `AddClientCertBody`. Either the fingerprint is
+/// provided directly, or it is computed from the PEM.
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+fn resolve_fingerprint(body: &AddClientCertBody) -> Result<(String, Option<String>), Status> {
+    match (&body.fingerprint, &body.certificate_pem) {
+        (Some(fp), pem) => Ok((fp.trim().to_lowercase(), pem.clone())),
+        (None, Some(pem)) => {
+            let fp = fingerprint_from_pem(pem)?;
+            Ok((fp, Some(pem.clone())))
+        }
+        (None, None) => Err(Status::BadRequest),
+    }
+}
+
+// ── Setting (cluster) Client Certificates ──────────────────────────
 
 #[utoipa::path(
     get,
@@ -3928,7 +3973,9 @@ pub async fn setting_list_client_certs(
 ) -> Result<Json<Vec<ClientCertRow>>, Status> {
     let rows = sqlx::query_as::<_, ClientCertRow>(
         "SELECT id, fingerprint, label, created_at \
-         FROM cluster_client_certs WHERE cluster_id = $1 ORDER BY created_at",
+         FROM client_certificates \
+         WHERE scope = 'cluster' AND scope_id = $1 AND is_ca = false \
+         ORDER BY created_at",
     )
     .bind(auth.cluster_id)
     .fetch_all(pool.inner())
@@ -3941,7 +3988,7 @@ pub async fn setting_list_client_certs(
     post,
     path = "/api/setting/client-certs",
     tag = "Setting — Client Certificates",
-    summary = "Add a client certificate fingerprint",
+    summary = "Add a client certificate",
     security(("bearer" = [])),
     request_body = AddClientCertBody,
     responses(
@@ -3956,15 +4003,16 @@ pub async fn setting_add_client_cert(
     pool: &State<PgPool>,
     body: Json<AddClientCertBody>,
 ) -> Result<Status, Status> {
-    let fingerprint = body.fingerprint.trim().to_lowercase();
+    let (fingerprint, pem) = resolve_fingerprint(&body)?;
     let label = body.label.trim().to_string();
 
     sqlx::query(
-        "INSERT INTO cluster_client_certs (cluster_id, fingerprint, label) \
-         VALUES ($1, $2, $3)",
+        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
+         VALUES ('cluster', $1, false, $2, $3, $4)",
     )
     .bind(auth.cluster_id)
     .bind(&fingerprint)
+    .bind(&pem)
     .bind(&label)
     .execute(pool.inner())
     .await
@@ -3999,12 +4047,119 @@ pub async fn setting_remove_client_cert(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM cluster_client_certs WHERE id = $1 AND cluster_id = $2")
-        .bind(uuid)
-        .bind(auth.cluster_id)
-        .execute(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
+    sqlx::query(
+        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'cluster' AND scope_id = $2",
+    )
+    .bind(uuid)
+    .bind(auth.cluster_id)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::NoContent)
+}
+
+// ── Setting (cluster) Client CAs ───────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/api/setting/client-cas",
+    tag = "Setting — Client CAs",
+    summary = "List cluster client CAs",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Client CAs", body = Vec<ClientCertRow>),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[rocket::get("/setting/client-cas")]
+pub async fn setting_list_client_cas(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<ClientCertRow>>, Status> {
+    let rows = sqlx::query_as::<_, ClientCertRow>(
+        "SELECT id, fingerprint, label, created_at \
+         FROM client_certificates \
+         WHERE scope = 'cluster' AND scope_id = $1 AND is_ca = true \
+         ORDER BY created_at",
+    )
+    .bind(auth.cluster_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/setting/client-cas",
+    tag = "Setting — Client CAs",
+    summary = "Add a cluster client CA",
+    security(("bearer" = [])),
+    request_body = AddClientCaBody,
+    responses(
+        (status = 201, description = "Client CA added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "CA already exists"),
+    ),
+)]
+#[rocket::post("/setting/client-cas", data = "<body>")]
+pub async fn setting_add_client_ca(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    body: Json<AddClientCaBody>,
+) -> Result<Status, Status> {
+    let fingerprint = fingerprint_from_pem(&body.certificate_pem)?;
+    let label = body.label.trim().to_string();
+
+    sqlx::query(
+        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
+         VALUES ('cluster', $1, true, $2, $3, $4)",
+    )
+    .bind(auth.cluster_id)
+    .bind(&fingerprint)
+    .bind(&body.certificate_pem)
+    .bind(&label)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("unique constraint") || e.to_string().contains("duplicate key") {
+            Status::Conflict
+        } else {
+            Status::InternalServerError
+        }
+    })?;
+
+    Ok(Status::Created)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/setting/client-cas/{id}",
+    tag = "Setting — Client CAs",
+    summary = "Remove a cluster client CA",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Client CA ID")),
+    responses(
+        (status = 204, description = "Client CA removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[rocket::delete("/setting/client-cas/<id>")]
+pub async fn setting_remove_client_ca(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    id: &str,
+) -> Result<Status, Status> {
+    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query(
+        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'cluster' AND scope_id = $2 AND is_ca = true",
+    )
+    .bind(uuid)
+    .bind(auth.cluster_id)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
     Ok(Status::NoContent)
 }
 
@@ -4029,7 +4184,9 @@ pub async fn admin_list_client_certs(
 ) -> Result<Json<Vec<ClientCertRow>>, Status> {
     let rows = sqlx::query_as::<_, ClientCertRow>(
         "SELECT id, fingerprint, label, created_at \
-         FROM admin_client_certs ORDER BY created_at",
+         FROM client_certificates \
+         WHERE scope = 'admin' AND is_ca = false \
+         ORDER BY created_at",
     )
     .fetch_all(pool.inner())
     .await
@@ -4041,7 +4198,7 @@ pub async fn admin_list_client_certs(
     post,
     path = "/api/admin/client-certs",
     tag = "Admin — Client Certificates",
-    summary = "Add an admin client certificate fingerprint",
+    summary = "Add an admin client certificate",
     security(("bearer" = [])),
     request_body = AddClientCertBody,
     responses(
@@ -4057,13 +4214,15 @@ pub async fn admin_add_client_cert(
     pool: &State<PgPool>,
     body: Json<AddClientCertBody>,
 ) -> Result<Status, Status> {
-    let fingerprint = body.fingerprint.trim().to_lowercase();
+    let (fingerprint, pem) = resolve_fingerprint(&body)?;
     let label = body.label.trim().to_string();
 
     sqlx::query(
-        "INSERT INTO admin_client_certs (fingerprint, label) VALUES ($1, $2)",
+        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
+         VALUES ('admin', NULL, false, $1, $2, $3)",
     )
     .bind(&fingerprint)
+    .bind(&pem)
     .bind(&label)
     .execute(pool.inner())
     .await
@@ -4099,7 +4258,7 @@ pub async fn admin_remove_client_cert(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM admin_client_certs WHERE id = $1")
+    sqlx::query("DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = false")
         .bind(uuid)
         .execute(pool.inner())
         .await
@@ -4107,25 +4266,366 @@ pub async fn admin_remove_client_cert(
     Ok(Status::NoContent)
 }
 
-/// Cert validation endpoint for the relay — looks up a fingerprint and
-/// returns the associated permissions (like `/api/self` for tokens).
+// ── Admin Client CAs ────────────────────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/client-cas",
+    tag = "Admin — Client CAs",
+    summary = "List admin client CAs",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Admin client CAs", body = Vec<ClientCertRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+    ),
+)]
+#[rocket::get("/admin/client-cas")]
+pub async fn admin_list_client_cas(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<ClientCertRow>>, Status> {
+    let rows = sqlx::query_as::<_, ClientCertRow>(
+        "SELECT id, fingerprint, label, created_at \
+         FROM client_certificates \
+         WHERE scope = 'admin' AND is_ca = true \
+         ORDER BY created_at",
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/client-cas",
+    tag = "Admin — Client CAs",
+    summary = "Add an admin client CA",
+    security(("bearer" = [])),
+    request_body = AddClientCaBody,
+    responses(
+        (status = 201, description = "Admin client CA added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+        (status = 409, description = "CA already exists"),
+    ),
+)]
+#[rocket::post("/admin/client-cas", data = "<body>")]
+pub async fn admin_add_client_ca(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    body: Json<AddClientCaBody>,
+) -> Result<Status, Status> {
+    let fingerprint = fingerprint_from_pem(&body.certificate_pem)?;
+    let label = body.label.trim().to_string();
+
+    sqlx::query(
+        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
+         VALUES ('admin', NULL, true, $1, $2, $3)",
+    )
+    .bind(&fingerprint)
+    .bind(&body.certificate_pem)
+    .bind(&label)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("unique constraint") || e.to_string().contains("duplicate key") {
+            Status::Conflict
+        } else {
+            Status::InternalServerError
+        }
+    })?;
+
+    Ok(Status::Created)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/client-cas/{id}",
+    tag = "Admin — Client CAs",
+    summary = "Remove an admin client CA",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Admin client CA ID")),
+    responses(
+        (status = 204, description = "Admin client CA removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+    ),
+)]
+#[rocket::delete("/admin/client-cas/<id>")]
+pub async fn admin_remove_client_ca(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    id: &str,
+) -> Result<Status, Status> {
+    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query("DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = true")
+        .bind(uuid)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::NoContent)
+}
+
+// ── Organization Client Certificates ────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/organizations/{org_id}/client-certs",
+    tag = "Organization — Client Certificates",
+    summary = "List organization client certificates",
+    security(("bearer" = [])),
+    params(("org_id" = Uuid, Path, description = "Organization ID")),
+    responses(
+        (status = 200, description = "Org client certs", body = Vec<ClientCertRow>),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[rocket::get("/admin/organizations/<org_id>/client-certs")]
+pub async fn org_list_client_certs(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    org_id: &str,
+) -> Result<Json<Vec<ClientCertRow>>, Status> {
+    let oid: Uuid = org_id.parse().map_err(|_| Status::BadRequest)?;
+    let rows = sqlx::query_as::<_, ClientCertRow>(
+        "SELECT id, fingerprint, label, created_at \
+         FROM client_certificates \
+         WHERE scope = 'organization' AND scope_id = $1 AND is_ca = false \
+         ORDER BY created_at",
+    )
+    .bind(oid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/organizations/{org_id}/client-certs",
+    tag = "Organization — Client Certificates",
+    summary = "Add an organization client certificate",
+    security(("bearer" = [])),
+    params(("org_id" = Uuid, Path, description = "Organization ID")),
+    request_body = AddClientCertBody,
+    responses(
+        (status = 201, description = "Org client cert added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "Certificate already exists"),
+    ),
+)]
+#[rocket::post("/admin/organizations/<org_id>/client-certs", data = "<body>")]
+pub async fn org_add_client_cert(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    org_id: &str,
+    body: Json<AddClientCertBody>,
+) -> Result<Status, Status> {
+    let oid: Uuid = org_id.parse().map_err(|_| Status::BadRequest)?;
+    let (fingerprint, pem) = resolve_fingerprint(&body)?;
+    let label = body.label.trim().to_string();
+
+    sqlx::query(
+        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
+         VALUES ('organization', $1, false, $2, $3, $4)",
+    )
+    .bind(oid)
+    .bind(&fingerprint)
+    .bind(&pem)
+    .bind(&label)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("unique constraint") || e.to_string().contains("duplicate key") {
+            Status::Conflict
+        } else {
+            Status::InternalServerError
+        }
+    })?;
+
+    Ok(Status::Created)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/organizations/{org_id}/client-certs/{id}",
+    tag = "Organization — Client Certificates",
+    summary = "Remove an organization client certificate",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = Uuid, Path, description = "Organization ID"),
+        ("id" = Uuid, Path, description = "Client cert ID"),
+    ),
+    responses(
+        (status = 204, description = "Org client cert removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[rocket::delete("/admin/organizations/<org_id>/client-certs/<id>")]
+pub async fn org_remove_client_cert(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    org_id: &str,
+    id: &str,
+) -> Result<Status, Status> {
+    let oid: Uuid = org_id.parse().map_err(|_| Status::BadRequest)?;
+    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query(
+        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'organization' AND scope_id = $2 AND is_ca = false",
+    )
+    .bind(uuid)
+    .bind(oid)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::NoContent)
+}
+
+// ── Organization Client CAs ────────────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/organizations/{org_id}/client-cas",
+    tag = "Organization — Client CAs",
+    summary = "List organization client CAs",
+    security(("bearer" = [])),
+    params(("org_id" = Uuid, Path, description = "Organization ID")),
+    responses(
+        (status = 200, description = "Org client CAs", body = Vec<ClientCertRow>),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[rocket::get("/admin/organizations/<org_id>/client-cas")]
+pub async fn org_list_client_cas(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    org_id: &str,
+) -> Result<Json<Vec<ClientCertRow>>, Status> {
+    let oid: Uuid = org_id.parse().map_err(|_| Status::BadRequest)?;
+    let rows = sqlx::query_as::<_, ClientCertRow>(
+        "SELECT id, fingerprint, label, created_at \
+         FROM client_certificates \
+         WHERE scope = 'organization' AND scope_id = $1 AND is_ca = true \
+         ORDER BY created_at",
+    )
+    .bind(oid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/organizations/{org_id}/client-cas",
+    tag = "Organization — Client CAs",
+    summary = "Add an organization client CA",
+    security(("bearer" = [])),
+    params(("org_id" = Uuid, Path, description = "Organization ID")),
+    request_body = AddClientCaBody,
+    responses(
+        (status = 201, description = "Org client CA added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "CA already exists"),
+    ),
+)]
+#[rocket::post("/admin/organizations/<org_id>/client-cas", data = "<body>")]
+pub async fn org_add_client_ca(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    org_id: &str,
+    body: Json<AddClientCaBody>,
+) -> Result<Status, Status> {
+    let oid: Uuid = org_id.parse().map_err(|_| Status::BadRequest)?;
+    let fingerprint = fingerprint_from_pem(&body.certificate_pem)?;
+    let label = body.label.trim().to_string();
+
+    sqlx::query(
+        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
+         VALUES ('organization', $1, true, $2, $3, $4)",
+    )
+    .bind(oid)
+    .bind(&fingerprint)
+    .bind(&body.certificate_pem)
+    .bind(&label)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("unique constraint") || e.to_string().contains("duplicate key") {
+            Status::Conflict
+        } else {
+            Status::InternalServerError
+        }
+    })?;
+
+    Ok(Status::Created)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/organizations/{org_id}/client-cas/{id}",
+    tag = "Organization — Client CAs",
+    summary = "Remove an organization client CA",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = Uuid, Path, description = "Organization ID"),
+        ("id" = Uuid, Path, description = "Client CA ID"),
+    ),
+    responses(
+        (status = 204, description = "Org client CA removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[rocket::delete("/admin/organizations/<org_id>/client-cas/<id>")]
+pub async fn org_remove_client_ca(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    org_id: &str,
+    id: &str,
+) -> Result<Status, Status> {
+    let oid: Uuid = org_id.parse().map_err(|_| Status::BadRequest)?;
+    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query(
+        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'organization' AND scope_id = $2 AND is_ca = true",
+    )
+    .bind(uuid)
+    .bind(oid)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::NoContent)
+}
+
+// ── Relay certificate auth (fingerprint lookup + CA validation) ─────
+
 #[derive(Deserialize)]
 pub struct CertAuthQuery {
     fingerprint: String,
 }
 
+#[derive(Deserialize, ToSchema)]
+pub struct CertAuthBody {
+    certificate_pem: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct CertAuthResponse {
-    pub cluster_id: Option<Uuid>,
     pub cluster_ids: Vec<Uuid>,
+    pub organization_ids: Vec<Uuid>,
     pub token_kind: String,
 }
 
+/// GET /api/cert-auth — backward-compatible fingerprint-only validation.
 #[utoipa::path(
     get,
     path = "/api/cert-auth",
     tag = "Relay — Certificate Auth",
-    summary = "Validate a client certificate fingerprint",
+    summary = "Validate a client certificate fingerprint (legacy)",
     params(("fingerprint" = String, Query, description = "SHA-256 fingerprint")),
     responses(
         (status = 200, description = "Certificate found", body = CertAuthResponse),
@@ -4138,47 +4638,206 @@ pub async fn cert_auth(
     fingerprint: &str,
 ) -> Result<Json<CertAuthResponse>, Status> {
     let fp = fingerprint.trim().to_lowercase();
+    cert_auth_lookup(pool.inner(), &fp, None).await
+}
 
-    // Check admin certs first.
-    let is_admin = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM admin_client_certs WHERE fingerprint = $1)",
+/// POST /api/cert-auth — full PEM certificate validation with CA support.
+#[utoipa::path(
+    post,
+    path = "/api/cert-auth",
+    tag = "Relay — Certificate Auth",
+    summary = "Validate a client certificate (PEM)",
+    request_body = CertAuthBody,
+    responses(
+        (status = 200, description = "Certificate authorized", body = CertAuthResponse),
+        (status = 404, description = "Certificate not authorized"),
+    ),
+)]
+#[rocket::post("/cert-auth", data = "<body>")]
+pub async fn cert_auth_post(
+    pool: &State<PgPool>,
+    body: Json<CertAuthBody>,
+) -> Result<Json<CertAuthResponse>, Status> {
+    let fp = fingerprint_from_pem(&body.certificate_pem)?;
+    cert_auth_lookup(pool.inner(), &fp, Some(&body.certificate_pem)).await
+}
+
+/// A scope match from the client_certificates table.
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+#[derive(sqlx::FromRow)]
+struct CertMatch {
+    scope: String,
+    scope_id: Option<Uuid>,
+}
+
+/// Core cert-auth logic shared by GET (legacy) and POST (new).
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+async fn cert_auth_lookup(
+    pool: &PgPool,
+    fingerprint: &str,
+    certificate_pem: Option<&str>,
+) -> Result<Json<CertAuthResponse>, Status> {
+    // 1. Direct fingerprint lookup (non-CA entries).
+    let matches = sqlx::query_as::<_, CertMatch>(
+        "SELECT scope, scope_id FROM client_certificates \
+         WHERE fingerprint = $1 AND is_ca = false",
     )
-    .bind(&fp)
-    .fetch_one(pool.inner())
+    .bind(fingerprint)
+    .fetch_all(pool)
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    if is_admin {
-        // Return all cluster_ids for admin certs.
+    // Backfill PEM if we matched and PEM was provided.
+    if !matches.is_empty() {
+        if let Some(pem) = certificate_pem {
+            let _ = sqlx::query(
+                "UPDATE client_certificates SET certificate_pem = $1 \
+                 WHERE fingerprint = $2 AND is_ca = false AND certificate_pem IS NULL",
+            )
+            .bind(pem)
+            .bind(fingerprint)
+            .execute(pool)
+            .await;
+        }
+    }
+
+    if !matches.is_empty() {
+        return build_cert_auth_response(pool, &matches).await;
+    }
+
+    // 2. CA validation (if PEM provided and no fingerprint match).
+    if let Some(pem) = certificate_pem {
+        let ca_matches = validate_against_cas(pool, pem).await?;
+        if !ca_matches.is_empty() {
+            return build_cert_auth_response(pool, &ca_matches).await;
+        }
+    }
+
+    Err(Status::NotFound)
+}
+
+/// Build a CertAuthResponse from a set of scope matches.
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+async fn build_cert_auth_response(
+    pool: &PgPool,
+    matches: &[CertMatch],
+) -> Result<Json<CertAuthResponse>, Status> {
+    // Check for admin scope first.
+    if matches.iter().any(|m| m.scope == "admin") {
         let all_ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM clusters")
-            .fetch_all(pool.inner())
+            .fetch_all(pool)
             .await
             .map_err(|_| Status::InternalServerError)?;
         return Ok(Json(CertAuthResponse {
-            cluster_id: None,
             cluster_ids: all_ids,
+            organization_ids: vec![],
             token_kind: "cert_admin".to_string(),
         }));
     }
 
-    // Check cluster certs.
-    let cluster_ids = sqlx::query_scalar::<_, Uuid>(
-        "SELECT cluster_id FROM cluster_client_certs WHERE fingerprint = $1",
+    let mut cluster_ids = Vec::new();
+    let mut organization_ids = Vec::new();
+
+    // Collect organization matches and resolve their clusters.
+    for m in matches.iter().filter(|m| m.scope == "organization") {
+        if let Some(oid) = m.scope_id {
+            organization_ids.push(oid);
+            let org_clusters = sqlx::query_scalar::<_, Uuid>(
+                "SELECT cluster_id FROM organization_clusters WHERE organization_id = $1",
+            )
+            .bind(oid)
+            .fetch_all(pool)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+            cluster_ids.extend(org_clusters);
+        }
+    }
+
+    // Collect direct cluster matches.
+    for m in matches.iter().filter(|m| m.scope == "cluster") {
+        if let Some(cid) = m.scope_id {
+            cluster_ids.push(cid);
+        }
+    }
+
+    cluster_ids.sort();
+    cluster_ids.dedup();
+    organization_ids.sort();
+    organization_ids.dedup();
+
+    let token_kind = if !organization_ids.is_empty() {
+        "cert_organization"
+    } else {
+        "cert_cluster"
+    };
+
+    Ok(Json(CertAuthResponse {
+        cluster_ids,
+        organization_ids,
+        token_kind: token_kind.to_string(),
+    }))
+}
+
+/// Validate a client certificate PEM against stored CA certificates.
+/// Returns matching scopes (like a fingerprint match would).
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+async fn validate_against_cas(
+    pool: &PgPool,
+    client_pem: &str,
+) -> Result<Vec<CertMatch>, Status> {
+    // Parse client certificate.
+    let client_der = self::pem_to_der(client_pem).map_err(|_| Status::BadRequest)?;
+    let (_, client_cert) = x509_parser::parse_x509_certificate(&client_der)
+        .map_err(|_| Status::BadRequest)?;
+
+    // Load all CA certificates.
+    #[derive(sqlx::FromRow)]
+    struct CaRow {
+        scope: String,
+        scope_id: Option<Uuid>,
+        certificate_pem: String,
+    }
+    let cas = sqlx::query_as::<_, CaRow>(
+        "SELECT scope, scope_id, certificate_pem FROM client_certificates WHERE is_ca = true",
     )
-    .bind(&fp)
-    .fetch_all(pool.inner())
+    .fetch_all(pool)
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    if cluster_ids.is_empty() {
-        return Err(Status::NotFound);
+    let mut matches = Vec::new();
+    for ca in &cas {
+        let Ok(ca_der) = self::pem_to_der(&ca.certificate_pem) else {
+            continue;
+        };
+        let Ok((_, ca_cert)) = x509_parser::parse_x509_certificate(&ca_der) else {
+            continue;
+        };
+        // Check issuer matches CA subject, then verify signature.
+        if client_cert.issuer() == ca_cert.subject() {
+            if client_cert
+                .verify_signature(Some(ca_cert.public_key()))
+                .is_ok()
+            {
+                matches.push(CertMatch {
+                    scope: ca.scope.clone(),
+                    scope_id: ca.scope_id,
+                });
+            }
+        }
     }
 
-    Ok(Json(CertAuthResponse {
-        cluster_id: cluster_ids.first().copied(),
-        cluster_ids,
-        token_kind: "cert_cluster".to_string(),
-    }))
+    Ok(matches)
+}
+
+/// Decode PEM to DER bytes.
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+fn pem_to_der(pem: &str) -> Result<Vec<u8>, ()> {
+    let b64: String = pem
+        .lines()
+        .filter(|l| !l.starts_with("-----"))
+        .collect::<Vec<_>>()
+        .join("");
+    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).map_err(|_| ())
 }
 
 // ── Rollout Groups (admin) ──────────────────────────────────────────

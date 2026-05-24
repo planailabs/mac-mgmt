@@ -14,6 +14,7 @@ use crate::web::user::{current_user, WebUserExt};
 use super::cluster_healer_settings::ClusterHealerSettings;
 use super::cluster_mcp_servers::ClusterMcpServers;
 use super::cluster_skills::ClusterSkills;
+use super::cluster_client_cas::ClusterClientCas;
 use super::cluster_client_certs::ClusterClientCerts;
 use super::cluster_ssh_keys::ClusterSshKeys;
 use super::setting_token_list::SettingTokenList;
@@ -560,6 +561,10 @@ pub fn ClusterDetail(id: String) -> Element {
                             div {
                                 SectionHeading { {t!("cluster-detail-tab-client-certs")} }
                                 ClusterClientCerts { cluster_id: cid2.clone(), read_only: !can_admin }
+                            }
+                            div {
+                                SectionHeading { {t!("cluster-detail-tab-client-cas")} }
+                                ClusterClientCas { cluster_id: cid2.clone(), read_only: !can_admin }
                             }
                         }
                     }

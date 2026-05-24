@@ -7,8 +7,8 @@ edition = "2024"
 default = ["web", "server", "webui"]
 web = ["webui", "dioxus/web"]
 webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-tabular", "dep:pulldown-cmark", "dep:dioxus-i18n", "dep:unic-langid", "dep:plan-ai-design"]
-server = ["webui", "dioxus/server", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:similar", "dep:ed25519-dalek", "dep:pulldown-cmark", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "dep:fs2", "dep:aes-gcm", "dep:zip", "dep:async-compression", "dep:tokio-util", "dep:glob", "dep:scraper", "dep:rmcp", "dep:swiftide", "dep:http", "mac-mgmt-common/observability", "plan-ai-auth/server"]
-server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "dep:fs2", "dep:aes-gcm", "mac-mgmt-common/observability"]
+server = ["webui", "dioxus/server", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:similar", "dep:ed25519-dalek", "dep:pulldown-cmark", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "dep:fs2", "dep:aes-gcm", "dep:zip", "dep:async-compression", "dep:tokio-util", "dep:glob", "dep:scraper", "dep:rmcp", "dep:swiftide", "dep:http", "dep:x509-parser", "mac-mgmt-common/observability", "plan-ai-auth/server"]
+server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "dep:fs2", "dep:aes-gcm", "dep:x509-parser", "mac-mgmt-common/observability"]
 
 [dependencies]
 dioxus = { version = "0.8.0-alpha.0", features = ["fullstack", "router"], optional = true }
@@ -61,6 +61,7 @@ scraper = { version = "0.22", optional = true }
 rmcp = { version = "0.17", features = ["server", "macros", "transport-streamable-http-server"], default-features = false, optional = true }
 swiftide = { version = "0.32.1", default-features = false, optional = true }
 http = { version = "1", optional = true }
+x509-parser = { version = "0.16", features = ["verify"], optional = true }
 
 # getrandom 0.2 (pulled in transitively by sqlx, mac-mgmt-healer, etc.)
 # needs the "js" feature on wasm32 targets for the WASM client build.

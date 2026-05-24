@@ -194,12 +194,23 @@ ssh-keys-no-keys = No SSH keys.
 ## ── Cluster Client Certificates ────────────────────────────────
 
 cluster-detail-tab-client-certs = Client Certificates
+cluster-detail-tab-client-cas = Client CAs
 admin-client-certs-title = Admin Client Certificates
 admin-client-certs-description = Client certificates with admin-level access. These certificates can access all clusters via the relay.
 nav-admin-client-certs = Client Certificates
+nav-admin-client-cas = Client CAs
+admin-client-cas-title = Admin Client CAs
+admin-client-cas-description = CA certificates for admin-level trust. Client certificates signed by these CAs get admin access to all clusters.
 client-certs-fingerprint-placeholder = sha256:ab12cd34...
 client-certs-label-placeholder = Label (optional)
 client-certs-no-certs = No client certificates.
+client-certs-pem-placeholder = Paste PEM-encoded certificate (optional)...
+client-cas-pem-placeholder = Paste PEM-encoded CA certificate...
+client-cas-no-cas = No CA certificates.
+org-detail-client-certs = Client Certificates
+org-detail-client-cas = Client CAs
+org-client-certs-description = Client certificates with organization-level access. These certificates can access all clusters belonging to this organization.
+org-client-cas-description = CA certificates for organization-level trust. Client certificates signed by these CAs get access to this organization's clusters.
 
 ## ── Fleet Dashboard ─────────────────────────────────────────────
 

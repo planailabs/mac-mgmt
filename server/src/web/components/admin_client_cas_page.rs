@@ -9,7 +9,7 @@ use crate::web::user::{current_user, WebUserExt};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct AdminCertDisplay {
+pub struct AdminCaDisplay {
     pub id: uuid::Uuid,
     pub fingerprint: String,
     pub label: String,
@@ -17,49 +17,38 @@ pub struct AdminCertDisplay {
 }
 
 #[server]
-async fn list_admin_certs() -> Result<Vec<AdminCertDisplay>, ServerFnError> {
+async fn list_admin_cas() -> Result<Vec<AdminCaDisplay>, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let certs = sqlx::query_as::<_, AdminCertDisplay>(
+    let cas = sqlx::query_as::<_, AdminCaDisplay>(
         "SELECT id, fingerprint, label, created_at \
          FROM client_certificates \
-         WHERE scope = 'admin' AND is_ca = false \
+         WHERE scope = 'admin' AND is_ca = true \
          ORDER BY created_at",
     )
     .fetch_all(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(certs)
+    Ok(cas)
 }
 
 #[server]
-async fn add_admin_cert(
-    fingerprint: String,
-    certificate_pem: String,
-    label: String,
-) -> Result<(), ServerFnError> {
+async fn add_admin_ca(certificate_pem: String, label: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
+    let fp = crate::api::routes::fingerprint_from_pem_str(&certificate_pem)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     let lbl = label.trim().to_string();
-    let (fp, pem) = if !certificate_pem.trim().is_empty() {
-        let fp = crate::api::routes::fingerprint_from_pem_str(&certificate_pem)
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-        (fp, Some(certificate_pem))
-    } else if !fingerprint.trim().is_empty() {
-        (fingerprint.trim().to_lowercase(), None)
-    } else {
-        return Err(ServerFnError::new("fingerprint or certificate PEM required"));
-    };
 
     sqlx::query(
         "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
-         VALUES ('admin', NULL, false, $1, $2, $3)",
+         VALUES ('admin', NULL, true, $1, $2, $3)",
     )
     .bind(&fp)
-    .bind(&pem)
+    .bind(&certificate_pem)
     .bind(&lbl)
     .execute(&pool)
     .await
@@ -68,15 +57,15 @@ async fn add_admin_cert(
 }
 
 #[server]
-async fn remove_admin_cert(cert_id: String) -> Result<(), ServerFnError> {
+async fn remove_admin_ca(ca_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cert_id
+    let uuid: uuid::Uuid = ca_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query(
-        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = false",
+        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = true",
     )
     .bind(uuid)
     .execute(&pool)
@@ -86,20 +75,19 @@ async fn remove_admin_cert(cert_id: String) -> Result<(), ServerFnError> {
 }
 
 #[component]
-pub fn AdminClientCerts() -> Element {
-    use_topbar(t!("admin-client-certs-title"), None);
+pub fn AdminClientCas() -> Element {
+    use_topbar(t!("admin-client-cas-title"), None);
 
-    let mut certs = use_server_future(|| async { list_admin_certs().await })?;
+    let mut cas = use_server_future(|| async { list_admin_cas().await })?;
 
-    let mut fp_input = use_signal(String::new);
     let mut pem_input = use_signal(String::new);
     let mut label_input = use_signal(String::new);
     let mut error_msg = use_signal(|| None::<String>);
 
     rsx! {
-        h2 { class: "h-page text-fg-strong", {t!("admin-client-certs-title")} }
+        h2 { class: "h-page text-fg-strong", {t!("admin-client-cas-title")} }
         p { class: "text-fg mb-6 text-sm",
-            {t!("admin-client-certs-description")}
+            {t!("admin-client-cas-description")}
         }
 
         if let Some(err) = &*error_msg.read() {
@@ -109,18 +97,16 @@ pub fn AdminClientCerts() -> Element {
         form { class: "flex flex-col gap-2 mb-6",
             onsubmit: move |evt: FormEvent| {
                 evt.prevent_default();
-                let fp = fp_input.read().clone();
                 let pem = pem_input.read().clone();
                 let lbl = label_input.read().clone();
                 spawn(async move {
-                    if !fp.trim().is_empty() || !pem.trim().is_empty() {
-                        match add_admin_cert(fp, pem, lbl).await {
+                    if !pem.trim().is_empty() {
+                        match add_admin_ca(pem, lbl).await {
                             Ok(()) => {
                                 error_msg.set(None);
-                                fp_input.set(String::new());
                                 pem_input.set(String::new());
                                 label_input.set(String::new());
-                                certs.restart();
+                                cas.restart();
                             }
                             Err(e) => error_msg.set(Some(e.to_string())),
                         }
@@ -128,12 +114,7 @@ pub fn AdminClientCerts() -> Element {
                 });
             },
             div { class: "flex gap-2",
-                input { class: "input flex-1 w-auto py-1 text-sm font-mono",
-                    placeholder: "{t!(\"client-certs-fingerprint-placeholder\")}",
-                    value: "{fp_input}",
-                    oninput: move |e| fp_input.set(e.value()),
-                }
-                input { class: "input w-48 py-1 text-sm",
+                input { class: "input flex-1 w-auto py-1 text-sm",
                     placeholder: "{t!(\"client-certs-label-placeholder\")}",
                     value: "{label_input}",
                     oninput: move |e| label_input.set(e.value()),
@@ -145,24 +126,24 @@ pub fn AdminClientCerts() -> Element {
                     {t!("add")}
                 }
             }
-            textarea { class: "input w-full py-1 text-xs font-mono h-20",
-                placeholder: "{t!(\"client-certs-pem-placeholder\")}",
+            textarea { class: "input w-full py-1 text-xs font-mono h-24",
+                placeholder: "{t!(\"client-cas-pem-placeholder\")}",
                 value: "{pem_input}",
                 oninput: move |e| pem_input.set(e.value()),
             }
         }
 
-        {match &*certs.read() {
+        {match &*cas.read() {
             Some(Ok(list)) if list.is_empty() => rsx! {
-                HelpText { {t!("client-certs-no-certs")} }
+                HelpText { {t!("client-cas-no-cas")} }
             },
             Some(Ok(list)) => rsx! {
                 ul { class: "divide-y divide-line-soft",
-                    for cert in list {
+                    for ca in list {
                         {
-                            let cid = cert.id.to_string();
-                            let fp = cert.fingerprint.clone();
-                            let label = cert.label.clone();
+                            let cid = ca.id.to_string();
+                            let fp = ca.fingerprint.clone();
+                            let label = ca.label.clone();
                             rsx! {
                                 li { class: "py-2 flex justify-between items-center",
                                     div {
@@ -175,8 +156,8 @@ pub fn AdminClientCerts() -> Element {
                                         onclick: move |_| {
                                             let cid = cid.clone();
                                             spawn(async move {
-                                                if remove_admin_cert(cid).await.is_ok() {
-                                                    certs.restart();
+                                                if remove_admin_ca(cid).await.is_ok() {
+                                                    cas.restart();
                                                 }
                                             });
                                         },

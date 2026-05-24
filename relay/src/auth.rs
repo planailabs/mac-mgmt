@@ -1,7 +1,7 @@
 //! Token validation and auth types shared across relay endpoints.
 
 use axum::http::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Information about the authenticated token holder, from the server's /api/self endpoint.
@@ -46,12 +46,19 @@ pub async fn validate_token(server_api_url: &str, token: &str) -> Result<SelfInf
     })
 }
 
+/// Request body for the server's POST /api/cert-auth endpoint.
+#[derive(Debug, Serialize)]
+struct CertAuthBody {
+    certificate_pem: String,
+}
+
 /// Response from the server's /api/cert-auth endpoint.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CertAuthInfo {
-    pub cluster_id: Option<Uuid>,
     #[serde(default)]
     pub cluster_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub organization_ids: Vec<Uuid>,
     pub token_kind: String,
 }
 
@@ -70,11 +77,13 @@ enum CertAuthResult {
     NotFound,
 }
 
-/// Validate a client certificate fingerprint against the server's
-/// /api/cert-auth endpoint. Results are cached for 5 minutes.
+/// Validate a client certificate against the server's /api/cert-auth endpoint.
+/// The full PEM is sent; the server computes the fingerprint.
+/// Results are cached for 5 minutes, keyed by the locally-computed fingerprint.
 pub async fn validate_cert(
     server_api_url: &str,
     fingerprint: &str,
+    certificate_pem: &str,
 ) -> Result<CertAuthInfo, StatusCode> {
     // Check cache first.
     {
@@ -92,8 +101,10 @@ pub async fn validate_cert(
     // Cache miss — validate against server.
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{server_api_url}/api/cert-auth"))
-        .query(&[("fingerprint", fingerprint)])
+        .post(format!("{server_api_url}/api/cert-auth"))
+        .json(&CertAuthBody {
+            certificate_pem: certificate_pem.to_string(),
+        })
         .send()
         .await
         .map_err(|e| {

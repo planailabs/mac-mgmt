@@ -94,6 +94,7 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
             links: vec![
                 NavLink::Internal(Route::AdminTokens {}, "nav-admin-tokens".to_string()),
                 NavLink::Internal(Route::AdminClientCerts {}, "nav-admin-client-certs".to_string()),
+                NavLink::Internal(Route::AdminClientCas {}, "nav-admin-client-cas".to_string()),
                 NavLink::Internal(Route::StaffPings {}, "nav-staff-pings".to_string()),
                 NavLink::Internal(Route::OrganizationList {}, "nav-organizations".to_string()),
                 NavLink::Internal(Route::UserList {}, "nav-users".to_string()),

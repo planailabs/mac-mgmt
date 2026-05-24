@@ -82,8 +82,13 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::setting_list_client_certs,
         routes::setting_add_client_cert,
         routes::setting_remove_client_cert,
+        // Setting — Client CAs
+        routes::setting_list_client_cas,
+        routes::setting_add_client_ca,
+        routes::setting_remove_client_ca,
         // Relay — Cert auth validation
         routes::cert_auth,
+        routes::cert_auth_post,
         // Sync — Heartbeat
         routes::post_heartbeat,
         // Sync — System assessment
@@ -100,6 +105,17 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::admin_list_client_certs,
         routes::admin_add_client_cert,
         routes::admin_remove_client_cert,
+        // Admin — Client CAs
+        routes::admin_list_client_cas,
+        routes::admin_add_client_ca,
+        routes::admin_remove_client_ca,
+        // Organization — Client certs & CAs
+        routes::org_list_client_certs,
+        routes::org_add_client_cert,
+        routes::org_remove_client_cert,
+        routes::org_list_client_cas,
+        routes::org_add_client_ca,
+        routes::org_remove_client_ca,
         // Setting — cloud-init
         routes::setting_cloud_init,
         // Admin — Rollouts
@@ -241,8 +257,13 @@ pub fn build_rocket(
         routes::setting_list_client_certs,
         routes::setting_add_client_cert,
         routes::setting_remove_client_cert,
+        // Setting — Client CAs
+        routes::setting_list_client_cas,
+        routes::setting_add_client_ca,
+        routes::setting_remove_client_ca,
         // Relay — Cert auth validation
         routes::cert_auth,
+        routes::cert_auth_post,
         // Public server info (unauthenticated)
         routes::get_server_info,
         // Daemon binary download (public)
@@ -340,6 +361,17 @@ pub fn build_rocket(
         routes::admin_list_client_certs,
         routes::admin_add_client_cert,
         routes::admin_remove_client_cert,
+        // Admin — Client CAs
+        routes::admin_list_client_cas,
+        routes::admin_add_client_ca,
+        routes::admin_remove_client_ca,
+        // Organization — Client certs & CAs
+        routes::org_list_client_certs,
+        routes::org_add_client_cert,
+        routes::org_remove_client_cert,
+        routes::org_list_client_cas,
+        routes::org_add_client_ca,
+        routes::org_remove_client_ca,
         // Setting — cloud-init
         routes::setting_cloud_init,
         // Proxy token

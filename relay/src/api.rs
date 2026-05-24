@@ -50,6 +50,7 @@ pub fn router(
         .route("/api/tunnels", get(list_tunnels))
         .route("/api/ssh", get(list_ssh_targets))
         .route("/api/batch/instances", get(batch_instances))
+        .route("/certificate-info", get(certificate_info))
         .route("/metrics", get(federated_metrics))
         .route("/health", get(health))
         .layer(middleware::from_fn(security_headers))
@@ -127,24 +128,25 @@ async fn require_auth_ext(
 
     // Fall back to client certificate auth.
     if let Some(cert) = cert_info {
-        let cert_auth = validate_cert(server_api_url, &cert.fingerprint_sha256)
-            .await
-            .map_err(|s| {
-                if s == StatusCode::FORBIDDEN {
-                    // Return the fingerprint so the user can add it.
-                    Json(serde_json::json!({
-                        "error": "certificate not authorized",
-                        "cert_fingerprint": cert.fingerprint_sha256,
-                        "hint": "Add this fingerprint to cluster or admin certificate settings"
-                    }))
-                    .into_response()
-                } else {
-                    s.into_response()
-                }
-            })?;
+        let cert_auth =
+            validate_cert(server_api_url, &cert.fingerprint_sha256, &cert.certificate_pem)
+                .await
+                .map_err(|s| {
+                    if s == StatusCode::FORBIDDEN {
+                        // Return the fingerprint so the user can add it.
+                        Json(serde_json::json!({
+                            "error": "certificate not authorized",
+                            "cert_fingerprint": cert.fingerprint_sha256,
+                            "hint": "Add this fingerprint to cluster or admin certificate settings"
+                        }))
+                        .into_response()
+                    } else {
+                        s.into_response()
+                    }
+                })?;
         // Convert CertAuthInfo to SelfInfo for compatibility.
         let self_info = SelfInfo {
-            cluster_id: cert_auth.cluster_id,
+            cluster_id: None,
             cluster_name: None,
             organization_id: None,
             token_kind: cert_auth.token_kind,
@@ -153,7 +155,9 @@ async fn require_auth_ext(
         };
         if !allowed_kinds.contains(&self_info.token_kind.as_str())
             && !(allowed_kinds.contains(&"admin") && self_info.token_kind == "cert_admin")
-            && !(allowed_kinds.contains(&"setting") && self_info.token_kind == "cert_cluster")
+            && !(allowed_kinds.contains(&"setting")
+                && (self_info.token_kind == "cert_cluster"
+                    || self_info.token_kind == "cert_organization"))
         {
             return Err(StatusCode::FORBIDDEN.into_response());
         }
@@ -161,6 +165,42 @@ async fn require_auth_ext(
     }
 
     Err(StatusCode::UNAUTHORIZED.into_response())
+}
+
+// ── Certificate info ────────────────────────────────────────────────
+
+async fn certificate_info(
+    cert: Option<axum::Extension<ClientCertInfo>>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let Some(cert) = cert else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "no client certificate presented"})),
+        )
+            .into_response();
+    };
+
+    let (authorized, token_kind, cluster_ids, organization_ids) = match validate_cert(
+        &state.server_api_url,
+        &cert.fingerprint_sha256,
+        &cert.certificate_pem,
+    )
+    .await
+    {
+        Ok(info) => (true, info.token_kind, info.cluster_ids, info.organization_ids),
+        Err(_) => (false, String::new(), vec![], vec![]),
+    };
+
+    Json(serde_json::json!({
+        "fingerprint": cert.fingerprint_sha256,
+        "subject": cert.subject,
+        "authorized": authorized,
+        "token_kind": token_kind,
+        "cluster_ids": cluster_ids,
+        "organization_ids": organization_ids,
+    }))
+    .into_response()
 }
 
 fn is_safe_path(path: &str) -> bool {
