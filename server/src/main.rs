@@ -505,59 +505,21 @@ fn main() {
     #[cfg(all(feature = "server", feature = "webui"))]
     {
         use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
-        use std::sync::OnceLock;
+        use tokio::sync::watch;
 
-        static INIT: OnceLock<Option<Vec<plan_ai_auth::AuthLayer>>> = OnceLock::new();
-
-        // Set PORT env var for dioxus if not already set.
+        // Set PORT env var for Dioxus-compatible tooling if not already set.
         // SAFETY: called before any threads are spawned.
         if std::env::var("PORT").is_err() {
             let cfg = config::load();
             unsafe { std::env::set_var("PORT", cfg.web.port.to_string()) };
         }
 
-        // Dioxus's release-mode server doesn't handle SIGTERM. We register
-        // the handler before any tokio runtime is created so it's available
-        // on a dedicated thread.  On SIGTERM we:
-        //   1. Tell Rocket to shut down gracefully (drains in-flight requests)
-        //   2. Exit the process so Dioxus/axum stops too
-        static ROCKET_SHUTDOWN: std::sync::OnceLock<rocket::Shutdown> = std::sync::OnceLock::new();
-
-        std::thread::spawn(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .build()
-                .unwrap()
-                .block_on(async {
-                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                        .expect("failed to register SIGTERM handler")
-                        .recv()
-                        .await;
-                    tracing::info!("received SIGTERM, shutting down");
-                    // Drain healer sessions before stopping
-                    if let Some(healer) = crate::server_state::healer_state() {
-                        let drained = healer
-                            .graceful_shutdown(std::time::Duration::from_secs(30))
-                            .await;
-                        if drained > 0 {
-                            tracing::info!("drained {drained} healer sessions");
-                        }
-                    }
-                    if let Some(handle) = ROCKET_SHUTDOWN.get() {
-                        handle.clone().notify();
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    }
-                    std::process::exit(0);
-                });
-        });
-
-        dioxus::serve(move || async move {
-            let dev_no_auth = std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1");
-            let auth_layers = if let Some(layers) = INIT.get() {
-                layers.clone()
-            } else {
-                let (_pool, api_rocket, _healer_state) = init_server().await;
+        tokio::runtime::Runtime::new()
+            .expect("failed to create tokio runtime")
+            .block_on(async {
+                let (_pool, api_rocket, healer_state) = init_server().await;
                 let cfg = config::load();
+                let dev_no_auth = std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1");
 
                 // Install the shared auth user resolver.
                 if let Ok(pool) = crate::server_pool() {
@@ -586,88 +548,149 @@ fn main() {
                     None
                 };
 
-                let _ = ROCKET_SHUTDOWN.set(api_rocket.shutdown());
-                tokio::spawn(async move {
+                let rocket_shutdown = api_rocket.shutdown();
+                let rocket_task = tokio::spawn(async move {
                     if let Err(e) = api_rocket.launch().await {
                         tracing::error!("API server failed: {e}");
                     }
                 });
 
-                let _ = INIT.set(auth_layers.clone());
-                auth_layers
-            };
-
-            let mut router = axum::Router::new()
-                .serve_dioxus_application(ServeConfig::new(), web::app::App)
-                .route(
-                    web::healer_sse::SSE_PATH,
-                    axum::routing::get(web::healer_sse::view_session_sse),
-                );
-
-            // Disable nginx response buffering so streaming server functions
-            // (healer session streams, JsonStream) are forwarded immediately
-            // instead of being buffered until completion.
-            router = router.layer(axum::middleware::map_response(
-                |mut response: axum::http::Response<axum::body::Body>| async {
-                    response.headers_mut().insert(
-                        "X-Accel-Buffering",
-                        axum::http::HeaderValue::from_static("no"),
+                let mut router = axum::Router::new()
+                    .serve_dioxus_application(ServeConfig::new(), web::app::App)
+                    .route(
+                        web::healer_sse::SSE_PATH,
+                        axum::routing::get(web::healer_sse::view_session_sse),
                     );
-                    response
-                },
-            ));
 
-            if let Some(auth_layers) = auth_layers {
-                router = router
-                    .route("/auth/login", axum::routing::get(web::auth::login_page))
-                    .route("/auth/logout", axum::routing::get(web::auth::logout_handler))
-                    .route(
-                        "/auth/impersonate/start/{user_id}",
-                        axum::routing::post(web::auth::start_impersonation),
-                    )
-                    .route(
-                        "/auth/impersonate/stop",
-                        axum::routing::post(web::auth::stop_impersonation),
-                    )
-                    .route(
-                        "/easy-access/direct/{machine}/{tunnel}",
-                        axum::routing::get(web::components::easy_access::easy_access_direct),
-                    )
-                    .layer(axum::middleware::from_fn(web::auth::require_auth));
-                for layer in auth_layers {
-                    router = router.layer(layer);
+                // Disable nginx response buffering so streaming server functions
+                // (healer session streams, JsonStream) are forwarded immediately
+                // instead of being buffered until completion.
+                router = router.layer(axum::middleware::map_response(
+                    |mut response: axum::http::Response<axum::body::Body>| async {
+                        response.headers_mut().insert(
+                            "X-Accel-Buffering",
+                            axum::http::HeaderValue::from_static("no"),
+                        );
+                        response
+                    },
+                ));
+
+                if let Some(auth_layers) = auth_layers {
+                    router = router
+                        .route("/auth/login", axum::routing::get(web::auth::login_page))
+                        .route("/auth/logout", axum::routing::get(web::auth::logout_handler))
+                        .route(
+                            "/auth/impersonate/start/{user_id}",
+                            axum::routing::post(web::auth::start_impersonation),
+                        )
+                        .route(
+                            "/auth/impersonate/stop",
+                            axum::routing::post(web::auth::stop_impersonation),
+                        )
+                        .route(
+                            "/easy-access/direct/{machine}/{tunnel}",
+                            axum::routing::get(web::components::easy_access::easy_access_direct),
+                        )
+                        .layer(axum::middleware::from_fn(web::auth::require_auth));
+                    for layer in auth_layers {
+                        router = router.layer(layer);
+                    }
+                } else if dev_no_auth {
+                    // DEV mode: add require_auth middleware (for dev user injection) without OIDC layer
+                    router = router
+                        .route(
+                            "/easy-access/direct/{machine}/{tunnel}",
+                            axum::routing::get(web::components::easy_access::easy_access_direct),
+                        )
+                        .layer(axum::middleware::from_fn(web::auth::require_auth));
                 }
-            } else if dev_no_auth {
-                // DEV mode: add require_auth middleware (for dev user injection) without OIDC layer
-                router = router
-                    .route(
-                        "/easy-access/direct/{machine}/{tunnel}",
-                        axum::routing::get(web::components::easy_access::easy_access_direct),
-                    )
-                    .layer(axum::middleware::from_fn(web::auth::require_auth));
-            }
 
-            // MCP healer endpoint — merged AFTER the OIDC auth layers are
-            // applied so it is not wrapped by require_auth. The MCP server
-            // uses its own admin token auth in the initialize() handshake.
-            {
-                let pool = crate::server_state::server_pool().unwrap();
-                let store = crate::server_state::pg_healer_store().unwrap();
-                let healer = crate::server_state::healer_state();
-                let instance_data = healer.as_ref().map(|h| h.instance_data().clone());
-                let push_fn = healer.as_ref().and_then(|h| h.push_fn().map(|p| p.clone()));
-                if let Some(instance_data) = instance_data {
-                    let mcp_service =
-                        mcp_healer::build_mcp_service(pool, store, instance_data, push_fn);
-                    let mcp_router = axum::Router::new()
-                        .route_service("/mcp/healer", mcp_service.clone())
-                        .route_service("/mcp/healer/", mcp_service);
-                    router = router.merge(mcp_router);
+                // MCP healer endpoint — merged AFTER the OIDC auth layers are
+                // applied so it is not wrapped by require_auth. The MCP server
+                // uses its own admin token auth in the initialize() handshake.
+                {
+                    let pool = crate::server_state::server_pool().unwrap();
+                    let store = crate::server_state::pg_healer_store().unwrap();
+                    let healer = crate::server_state::healer_state();
+                    let instance_data = healer.as_ref().map(|h| h.instance_data().clone());
+                    let push_fn = healer.as_ref().and_then(|h| h.push_fn().map(|p| p.clone()));
+                    if let Some(instance_data) = instance_data {
+                        let mcp_service =
+                            mcp_healer::build_mcp_service(pool, store, instance_data, push_fn);
+                        let mcp_router = axum::Router::new()
+                            .route_service("/mcp/healer", mcp_service.clone())
+                            .route_service("/mcp/healer/", mcp_service);
+                        router = router.merge(mcp_router);
+                    }
                 }
-            }
 
-            Ok(router)
-        });
+                // Dioxus's release-mode `dioxus::serve` calls `axum::serve(...).await`
+                // without a shutdown future, so systemd restarts can hang after Rocket
+                // drains: the web Axum listener keeps accepting connections. Own the Axum
+                // listener here and drive both Rocket and Axum from the same signal.
+                let addr = std::net::SocketAddr::from(([127, 0, 0, 1], cfg.web.port));
+                let listener = tokio::net::TcpListener::bind(addr)
+                    .await
+                    .unwrap_or_else(|e| panic!("failed to bind web server to {addr}: {e}"));
+                tracing::info!("web server listening on {addr}");
+
+                let (shutdown_tx, shutdown_rx) = watch::channel(false);
+                let mut force_exit_rx = shutdown_rx.clone();
+                tokio::spawn(async move {
+                    let mut sigterm = tokio::signal::unix::signal(
+                        tokio::signal::unix::SignalKind::terminate(),
+                    )
+                    .expect("failed to register SIGTERM handler");
+                    let mut sigint = tokio::signal::unix::signal(
+                        tokio::signal::unix::SignalKind::interrupt(),
+                    )
+                    .expect("failed to register SIGINT handler");
+
+                    tokio::select! {
+                        _ = sigterm.recv() => tracing::info!("received SIGTERM, shutting down"),
+                        _ = sigint.recv() => tracing::info!("received SIGINT, shutting down"),
+                    }
+
+                    let drained = healer_state
+                        .graceful_shutdown(std::time::Duration::from_secs(30))
+                        .await;
+                    if drained > 0 {
+                        tracing::info!("drained {drained} healer sessions");
+                    }
+
+                    rocket_shutdown.notify();
+                    let _ = shutdown_tx.send(true);
+                });
+
+                let mut axum_shutdown_rx = shutdown_rx.clone();
+                let axum_server = axum::serve(listener, router).with_graceful_shutdown(async move {
+                    let _ = axum_shutdown_rx.changed().await;
+                });
+
+                tokio::select! {
+                    result = axum_server => {
+                        if let Err(e) = result {
+                            tracing::error!("web server failed: {e}");
+                        }
+                    }
+                    _ = async move {
+                        let _ = force_exit_rx.changed().await;
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    } => {
+                        tracing::warn!("web server did not drain within 10s after shutdown signal; exiting");
+                    }
+                };
+
+                if *shutdown_rx.borrow() {
+                    match tokio::time::timeout(std::time::Duration::from_secs(10), rocket_task).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => tracing::error!("API server task failed during shutdown: {e}"),
+                        Err(_) => tracing::warn!("API server did not drain within 10s after shutdown signal; exiting"),
+                    }
+                } else {
+                    rocket_task.abort();
+                }
+            });
     }
 
     // API-only mode: no web UI, just Rocket
