@@ -520,99 +520,11 @@ impl MemvaultServer {
         let Some(client) = self.client.as_memvault_client() else {
             return "error: export tools require local mode (--db)".to_string();
         };
-        let tmp_dir = std::env::temp_dir().join("memvault-export");
-        let _ = std::fs::create_dir_all(&tmp_dir);
-
-        if let Some(hex_str) = params.node_id.strip_prefix("doc:") {
-            let bytes = match hex::decode(hex_str) {
-                Ok(b) if b.len() == 32 => b,
-                _ => return "error: invalid doc ID (expected doc:<64 hex chars>)".to_string(),
-            };
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes);
-            let doc_id = memvault_core::DocId(arr);
-            let history = params.history.unwrap_or(false);
-            match memvault_export::export_single_doc(client, &doc_id, history).await {
-                Ok(entries) if entries.is_empty() => "error: document not found".to_string(),
-                Ok(entries) => {
-                    let (rel_path, content) = &entries[0];
-                    let filename = std::path::Path::new(rel_path)
-                        .file_name().and_then(|n| n.to_str()).unwrap_or("doc.md");
-                    let out_path = tmp_dir.join(filename);
-                    if let Err(e) = std::fs::write(&out_path, content) {
-                        return format!("error writing file: {e}");
-                    }
-                    let mut result = serde_json::json!({
-                        "path": out_path.display().to_string(),
-                        "type": "doc",
-                        "node_id": params.node_id,
-                    });
-                    if entries.len() > 1 {
-                        let hist_dir = tmp_dir.join(hex_str);
-                        let _ = std::fs::create_dir_all(&hist_dir);
-                        for (rel, data) in &entries[1..] {
-                            let hist_name = std::path::Path::new(rel)
-                                .file_name().and_then(|n| n.to_str()).unwrap_or("version.md");
-                            let _ = std::fs::write(hist_dir.join(hist_name), data);
-                        }
-                        result["history_count"] = serde_json::json!(entries.len() - 1);
-                        result["history_dir"] = serde_json::json!(hist_dir.display().to_string());
-                    }
-                    result.to_string()
-                }
-                Err(e) => format!("error: {e}"),
-            }
-        } else if let Some(hex_str) = params.node_id.strip_prefix("entity:") {
-            let bytes = match hex::decode(hex_str) {
-                Ok(b) if b.len() == 32 => b,
-                _ => return "error: invalid entity ID (expected entity:<64 hex chars>)".to_string(),
-            };
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes);
-            let entity_id = memvault_core::EntityId(arr);
-            match memvault_export::export_single_entity(client, &entity_id).await {
-                Ok((_rel_path, content)) => {
-                    let graph_dir = tmp_dir.join("graph");
-                    let _ = std::fs::create_dir_all(&graph_dir);
-                    let out_path = graph_dir.join(format!("{hex_str}.json"));
-                    if let Err(e) = std::fs::write(&out_path, &content) {
-                        return format!("error writing file: {e}");
-                    }
-                    serde_json::json!({
-                        "path": out_path.display().to_string(),
-                        "type": "entity",
-                        "node_id": params.node_id,
-                        "content": String::from_utf8_lossy(&content),
-                    }).to_string()
-                }
-                Err(e) => format!("error: {e}"),
-            }
-        } else if let Some(hex_str) = params.node_id.strip_prefix("file:") {
-            let cid_bytes = match hex::decode(hex_str) {
-                Ok(b) => b,
-                Err(_) => return "error: invalid file CID hex".to_string(),
-            };
-            match memvault_export::export_single_file(client, &cid_bytes).await {
-                Ok((rel_path, data)) => {
-                    let files_dir = tmp_dir.join("files");
-                    let _ = std::fs::create_dir_all(&files_dir);
-                    let filename = std::path::Path::new(&rel_path)
-                        .file_name().and_then(|n| n.to_str()).unwrap_or("file.bin");
-                    let out_path = files_dir.join(filename);
-                    if let Err(e) = std::fs::write(&out_path, &data) {
-                        return format!("error writing file: {e}");
-                    }
-                    serde_json::json!({
-                        "path": out_path.display().to_string(),
-                        "type": "file",
-                        "node_id": params.node_id,
-                        "size": data.len(),
-                    }).to_string()
-                }
-                Err(e) => format!("error: {e}"),
-            }
-        } else {
-            "error: node_id must start with 'doc:', 'entity:', or 'file:'".to_string()
+        let out_dir = std::env::temp_dir().join("memvault-export");
+        let history = params.history.unwrap_or(false);
+        match memvault_export::export_node(client, &params.node_id, &out_dir, history).await {
+            Ok(result) => serde_json::to_string(&result).unwrap_or_else(|e| format!("error: {e}")),
+            Err(e) => format!("error: {e}"),
         }
     }
 
