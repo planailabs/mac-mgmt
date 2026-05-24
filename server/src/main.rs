@@ -628,7 +628,14 @@ fn main() {
                 // without a shutdown future, so systemd restarts can hang after Rocket
                 // drains: the web Axum listener keeps accepting connections. Own the Axum
                 // listener here and drive both Rocket and Axum from the same signal.
-                let addr = std::net::SocketAddr::from(([127, 0, 0, 1], cfg.web.port));
+                //
+                // When running under `dx serve`, the dev proxy sets PORT to the port it
+                // expects the backend to listen on. Honour that so hot-reload works.
+                let web_port = std::env::var("PORT")
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(cfg.web.port);
+                let addr = std::net::SocketAddr::from(([127, 0, 0, 1], web_port));
                 let listener = tokio::net::TcpListener::bind(addr)
                     .await
                     .unwrap_or_else(|e| panic!("failed to bind web server to {addr}: {e}"));
