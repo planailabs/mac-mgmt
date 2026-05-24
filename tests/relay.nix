@@ -44,11 +44,27 @@ let
     ${pkgs.openssh}/bin/ssh-keygen -t ed25519 -f $out/id_ed25519 -N "" -q
   '';
 
+  # Release relay builds require TLS material. Generate a local self-signed
+  # certificate for the VM test and talk to the relay with curl -k.
+  testTlsDir = pkgs.runCommand "test-relay-tls" {} ''
+    mkdir -p $out
+    ${pkgs.openssl}/bin/openssl req -x509 -newkey rsa:2048 \
+      -keyout $out/key.pem \
+      -out $out/cert.pem \
+      -days 1 \
+      -nodes \
+      -subj "/CN=127.0.0.1" \
+      -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+  '';
+
   relayConfig = pkgs.writeText "relay.toml" ''
     listen_addr = "127.0.0.1:8080"
     server_api_url = "http://127.0.0.1:7378"
-    proxy_url = "http://127.0.0.1:8080"
+    proxy_url = "https://127.0.0.1:8080"
+    data_dir = "/tmp/mac-mgmt-relay-data"
     p2p_port = 4001
+    tls_cert_path = "${testTlsDir}/cert.pem"
+    tls_key_path = "${testTlsDir}/key.pem"
   '';
 
   # Daemon config — connects to relay via libp2p WS on the HTTP port.
@@ -148,16 +164,23 @@ pkgs.testers.nixosTest {
     assert self_info["token_kind"] == "setting", f"unexpected token kind: {self_info}"
     machine.log("Token validation via mac-mgmt-server verified")
 
-    # Start the relay
+    # Start the relay and fail with its log if it exits before becoming ready.
     machine.execute(
-        "mac-mgmt-relay -c ${relayConfig} >/tmp/relay.log 2>&1 &"
+        "RUST_LOG=info mac-mgmt-relay -c ${relayConfig} >/tmp/relay.log 2>&1 & echo $! >/tmp/relay.pid"
     )
-    machine.wait_for_open_port(8080)
-    machine.log("Relay started on port 8080")
-
-    # Verify health endpoint
-    machine.succeed("curl -sf http://127.0.0.1:8080/health")
-    machine.log("Relay health check passed")
+    attempts = 0
+    while attempts < 120:
+        if machine.execute("curl -skf https://127.0.0.1:8080/health >/dev/null")[0] == 0:
+            break
+        if machine.execute("kill -0 $(cat /tmp/relay.pid) 2>/dev/null")[0] != 0:
+            relay_log = machine.succeed("cat /tmp/relay.log || true")
+            raise Exception(f"relay exited before readiness:\n{relay_log}")
+        time.sleep(1)
+        attempts += 1
+    else:
+        relay_log = machine.succeed("cat /tmp/relay.log || true")
+        raise Exception(f"relay did not become ready on port 8080:\n{relay_log}")
+    machine.log("Relay started on port 8080 and health check passed")
 
     # Set up the daemon environment
     machine.succeed(
@@ -183,8 +206,8 @@ pkgs.testers.nixosTest {
     while attempts < 120:
         try:
             tunnels_json = machine.succeed(
-                "curl -sf -H 'Authorization: Bearer ${settingToken}' "
-                "http://127.0.0.1:8080/api/tunnels"
+                "curl -skf -H 'Authorization: Bearer ${settingToken}' "
+                "https://127.0.0.1:8080/api/tunnels"
             )
             tunnels = json.loads(tunnels_json)
             if len(tunnels) > 0:
