@@ -195,6 +195,7 @@ async fn certificate_info(
     Json(serde_json::json!({
         "fingerprint": cert.fingerprint_sha256,
         "subject": cert.subject,
+        "certificate_pem": cert.certificate_pem,
         "authorized": authorized,
         "token_kind": token_kind,
         "cluster_ids": cluster_ids,
