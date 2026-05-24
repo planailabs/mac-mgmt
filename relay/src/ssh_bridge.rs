@@ -39,8 +39,12 @@ impl SshBridge {
     /// a TCP listener that bridges connections to the daemon over libp2p.
     pub fn on_ssh_enabled(&self, instance_id: &str) {
         let mut listeners = self.listeners.lock().unwrap();
-        if listeners.contains_key(instance_id) {
-            return; // already listening
+        if let Some(entry) = listeners.get(instance_id) {
+            // Listener already running — just ensure the registry reflects the port
+            // (covers the case where a daemon re-registers while the old listener
+            // is still alive, replacing the DaemonConn with ssh_port: None).
+            self.registry.set_ssh_port(instance_id, entry.port);
+            return;
         }
 
         let Some(port) = self.registry.allocate_port(instance_id) else {
