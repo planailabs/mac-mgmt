@@ -8176,6 +8176,7 @@ dependencies = [
  "plan-ai-cloud",
  "plan-ai-memvault",
  "prometheus 0.14.0",
+ "pty-process",
  "ramhorns",
  "rand 0.9.4",
  "regex",
@@ -11340,6 +11341,16 @@ name = "psl-types"
 version = "2.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
+
+[[package]]
+name = "pty-process"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71cec9e2670207c5ebb9e477763c74436af3b9091dd550b9fb3c1bec7f3ea266"
+dependencies = [
+ "rustix 1.1.4",
+ "tokio",
+]
 
 [[package]]
 name = "publicsuffix"
