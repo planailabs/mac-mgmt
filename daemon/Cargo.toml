@@ -85,6 +85,7 @@ plan-ai-cleaner = { path = "../plan-ai-cleaner" }
 plan-ai-cloud = { path = "../plan-ai-cloud" }
 plan-ai-memvault = { path = "../plan-ai-memvault" }
 memvault-api = { path = "../memvault/crates/memvault-api" }
+memctl = { path = "../memvault/crates/memctl" }
 aes-gcm = "0.10"
 tokio-tungstenite = "0.26"
 tokio-util = { version = "0.7", features = ["compat"] }

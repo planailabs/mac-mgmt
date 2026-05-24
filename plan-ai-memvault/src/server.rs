@@ -512,7 +512,8 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_export_doc",
-        description = "Export a document as a standalone markdown file with YAML frontmatter. Optionally includes full version history."
+        description = "Export a document as a standalone markdown file with YAML frontmatter. \
+                       Writes to a temp file and returns the file path. Optionally includes history."
     )]
     async fn export_doc(&self, Parameters(params): Parameters<ExportDocParams>) -> String {
         let Some(client) = self.client.as_memvault_client() else {
@@ -531,13 +532,38 @@ impl MemvaultServer {
                 if entries.is_empty() {
                     return "error: document not found".to_string();
                 }
-                // Return the main document content; if history is included, note the count
-                let main_content = String::from_utf8_lossy(&entries[0].1);
-                if entries.len() > 1 {
-                    format!("{main_content}\n\n---\n[{} history entries available]", entries.len() - 1)
-                } else {
-                    main_content.into_owned()
+                let tmp_dir = std::env::temp_dir().join("memvault-export");
+                let _ = std::fs::create_dir_all(&tmp_dir);
+                // Write main document
+                let (rel_path, content) = &entries[0];
+                let filename = std::path::Path::new(rel_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("doc.md");
+                let out_path = tmp_dir.join(filename);
+                if let Err(e) = std::fs::write(&out_path, content) {
+                    return format!("error writing file: {e}");
                 }
+                // Write history files if present
+                let mut history_paths = Vec::new();
+                if entries.len() > 1 {
+                    let hist_dir = tmp_dir.join(&params.doc_id);
+                    let _ = std::fs::create_dir_all(&hist_dir);
+                    for (rel, data) in &entries[1..] {
+                        let hist_name = std::path::Path::new(rel)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("version.md");
+                        let hp = hist_dir.join(hist_name);
+                        let _ = std::fs::write(&hp, data);
+                        history_paths.push(hp.display().to_string());
+                    }
+                }
+                serde_json::json!({
+                    "path": out_path.display().to_string(),
+                    "history_count": entries.len() - 1,
+                    "history_dir": if history_paths.is_empty() { None } else { Some(tmp_dir.join(&params.doc_id).display().to_string()) },
+                }).to_string()
             }
             Err(e) => format!("error: {e}"),
         }
@@ -545,7 +571,7 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_export_file",
-        description = "Export a file attachment. Returns metadata and content (base64 for binary, plain text for text files)."
+        description = "Export a file attachment to a temp file. Returns the file path and metadata."
     )]
     async fn export_file(&self, Parameters(params): Parameters<ExportFileParams>) -> String {
         let Some(client) = self.client.as_memvault_client() else {
@@ -565,10 +591,12 @@ impl MemvaultServer {
 
         let filename = manifest_info.as_ref()
             .and_then(|m| m["filename"].as_str())
-            .unwrap_or("unknown");
+            .unwrap_or("unknown")
+            .to_string();
         let mime = manifest_info.as_ref()
             .and_then(|m| m["mime_type"].as_str())
-            .unwrap_or("application/octet-stream");
+            .unwrap_or("application/octet-stream")
+            .to_string();
         let size = manifest_info.as_ref()
             .and_then(|m| m["content_size"].as_u64())
             .unwrap_or(0);
@@ -583,23 +611,18 @@ impl MemvaultServer {
 
         match client.read_file(&cid_bytes).await {
             Ok(data) => {
-                let is_text = mime.starts_with("text/") || mime == "application/json";
-                if is_text {
-                    serde_json::json!({
-                        "filename": filename,
-                        "mime": mime,
-                        "size": data.len(),
-                        "content": String::from_utf8_lossy(&data),
-                    }).to_string()
-                } else {
-                    use base64::Engine;
-                    serde_json::json!({
-                        "filename": filename,
-                        "mime": mime,
-                        "size": data.len(),
-                        "content_base64": base64::engine::general_purpose::STANDARD.encode(&data),
-                    }).to_string()
+                let tmp_dir = std::env::temp_dir().join("memvault-export").join("files");
+                let _ = std::fs::create_dir_all(&tmp_dir);
+                let out_path = tmp_dir.join(&filename);
+                if let Err(e) = std::fs::write(&out_path, &data) {
+                    return format!("error writing file: {e}");
                 }
+                serde_json::json!({
+                    "path": out_path.display().to_string(),
+                    "filename": filename,
+                    "mime": mime,
+                    "size": data.len(),
+                }).to_string()
             }
             Err(e) => format!("error: {e}"),
         }
@@ -607,7 +630,7 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_export_entity",
-        description = "Export a graph entity as JSON including its properties and outgoing edges."
+        description = "Export a graph entity as a JSON file. Returns the file path."
     )]
     async fn export_entity(&self, Parameters(params): Parameters<ExportEntityParams>) -> String {
         let Some(client) = self.client.as_memvault_client() else {
@@ -621,7 +644,19 @@ impl MemvaultServer {
         arr.copy_from_slice(&entity_id_bytes);
         let entity_id = memvault_core::EntityId(arr);
         match memvault_export::export_single_entity(client, &entity_id).await {
-            Ok((_path, content)) => String::from_utf8_lossy(&content).into_owned(),
+            Ok((_rel_path, content)) => {
+                let tmp_dir = std::env::temp_dir().join("memvault-export").join("graph");
+                let _ = std::fs::create_dir_all(&tmp_dir);
+                let out_path = tmp_dir.join(format!("{}.json", params.entity_id));
+                if let Err(e) = std::fs::write(&out_path, &content) {
+                    return format!("error writing file: {e}");
+                }
+                serde_json::json!({
+                    "path": out_path.display().to_string(),
+                    "entity_id": params.entity_id,
+                    "content": String::from_utf8_lossy(&content),
+                }).to_string()
+            }
             Err(e) => format!("error: {e}"),
         }
     }

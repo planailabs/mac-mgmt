@@ -8163,6 +8163,7 @@ dependencies = [
  "mac-mgmt-common",
  "mac-mgmt-healer",
  "mac-mgmt-services",
+ "memctl",
  "memvault-api",
  "memvault-auth",
  "memvault-core",
@@ -8631,6 +8632,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "memctl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs 6.0.0",
+ "hex",
+ "memvault-api",
+ "memvault-auth",
+ "memvault-core",
+ "memvault-doc",
+ "memvault-export",
+ "memvault-import",
+ "memvault-query",
+ "memvault-store",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "memfd"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8793,6 +8816,17 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "memvault-import"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "memvault-api",
+ "memvault-core",
+ "memvault-doc",
  "tracing",
 ]
 

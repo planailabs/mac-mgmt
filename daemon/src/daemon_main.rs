@@ -121,7 +121,7 @@ enum Commands {
     /// Run the memvault memory MCP server (stdio transport)
     McpMemvault(plan_ai_memvault::Cli),
     /// Memvault management CLI (memctl)
-    Memctl(memvault_api::memctl::Cli),
+    Memctl(memctl::Cli),
     /// systemctl compatibility shim for managed services
     Systemctl {
         /// systemctl arguments (e.g. "start ollama.service")
@@ -535,7 +535,7 @@ async fn run(
             plan_ai_memvault::run(cli).await?;
         }
         Commands::Memctl(cli) => {
-            memvault_api::memctl::run(cli).await?;
+            memctl::run(cli).await?;
         }
         Commands::Systemctl { args } => {
             let code = mac_mgmt_daemon::systemctl::run(args, false).await?;
