@@ -359,7 +359,8 @@ fn terminal_html(instance_id: &str) -> String {
     display: none; position: fixed; inset: 0;
     background: rgba(0,0,0,0.7); color: #fff;
     font-family: monospace; font-size: 14px;
-    justify-content: center; align-items: center;
+    justify-content: center; align-items: center; text-align: center;
+    white-space: pre-line;
     z-index: 10;
   }}
   #overlay.active {{ display: flex; }}
