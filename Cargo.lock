@@ -9328,6 +9328,7 @@ dependencies = [
  "memvault-auth",
  "memvault-core",
  "memvault-doc",
+ "memvault-net",
  "memvault-query",
  "memvault-store",
  "rand 0.8.6",
