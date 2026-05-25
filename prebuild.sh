@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 
-set -euxo pipefail
+set -euo pipefail
+
+if [ -z "${XZAR_TOKEN:-}" ]; then
+  echo "XZAR_TOKEN is not set; skipping cache prebuild/upload job."
+  echo "This is expected for pipelines that do not receive protected CI variables."
+  exit 0
+fi
 
 # ── Configure xzar plan.ai cache ────────────────────────────────────
 xzar config add-server planai https://xzar.plan.ai "$XZAR_TOKEN"

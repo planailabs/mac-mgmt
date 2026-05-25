@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-set -euxo pipefail
+set -euo pipefail
+
+: "${XZAR_TOKEN:?XZAR_TOKEN must be set for production artifact upload}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
