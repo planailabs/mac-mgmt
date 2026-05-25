@@ -48,6 +48,13 @@ impl Connector for MemvaultHermes {
             .context("failed to resolve current binary path")?;
         let bin_str = bin.to_string_lossy().to_string();
 
+        let identity_dir = dirs::data_local_dir()
+            .context("HOME not set")?
+            .join("memvault")
+            .join("agents")
+            .join("hermes");
+        let identity_dir_str = identity_dir.to_string_lossy().to_string();
+
         let patch = serde_json::json!({
             "mcp_servers": {
                 "plan-ai-memvault": {
@@ -57,6 +64,8 @@ impl Connector for MemvaultHermes {
                         "MEMVAULT_URL": format!("http://127.0.0.1:{}", self.port),
                         "MEMVAULT_DEFAULT_TAGS": "agent:hermes",
                         "MEMVAULT_DEFAULT_VISIBILITY": "internal",
+                        "MEMVAULT_AGENT_ID": "hermes",
+                        "MEMVAULT_IDENTITY_DIR": identity_dir_str,
                     },
                 }
             }

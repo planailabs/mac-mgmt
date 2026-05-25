@@ -78,6 +78,14 @@ impl Connector for MemvaultOpenClaw {
             .context("failed to resolve current binary path")?;
         let bin_str = bin.to_string_lossy().to_string();
 
+        // Compute agent identity directory for enrollment
+        let identity_dir = dirs::data_local_dir()
+            .context("HOME not set")?
+            .join("memvault")
+            .join("agents")
+            .join("openclaw");
+        let identity_dir_str = identity_dir.to_string_lossy().to_string();
+
         // Enable the plugin, register the load path, and add the MCP server.
         let patch = serde_json::json!({
             "mcp": {
@@ -89,6 +97,8 @@ impl Connector for MemvaultOpenClaw {
                             "MEMVAULT_URL": format!("http://127.0.0.1:{}", self.port),
                             "MEMVAULT_DEFAULT_TAGS": "agent:openclaw",
                             "MEMVAULT_DEFAULT_VISIBILITY": "internal",
+                            "MEMVAULT_AGENT_ID": "openclaw",
+                            "MEMVAULT_IDENTITY_DIR": identity_dir_str,
                         },
                     }
                 }
