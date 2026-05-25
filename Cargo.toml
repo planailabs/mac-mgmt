@@ -9,6 +9,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "logg
 sentry = { version = "0.47", default-features = false, features = ["reqwest", "panic", "backtrace", "contexts", "debug-images"] }
 which = "7"
 rmcp = { version = "0.17", default-features = false, features = ["server", "transport-io", "macros"] }
+libp2p = { version = "0.56", default-features = false, features = ["tokio", "noise", "yamux", "quic", "tcp", "mdns", "request-response", "identify", "ping", "gossipsub", "kad", "macros", "serde", "ed25519"] }
 
 [patch.crates-io]
 dioxus = { git = "https://github.com/mkg20001/dioxus.git", branch = "feat/embed" }
