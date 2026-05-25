@@ -576,10 +576,10 @@ impl ServiceManager {
                     if let (Some(desired), Some(running)) = (&desired_resolved, &running_resolved) {
                         if desired != running {
                             tracing::info!(
-                                "{name} binary changed ({} -> {}), scheduling restart",
+                                "{name} binary changed ({} -> {}), scheduling upgrade",
                                 running.display(), desired.display(),
                             );
-                            state.restart_pending = true;
+                            state.upgrade_pending = true;
                         }
                     }
                 }
@@ -864,12 +864,13 @@ impl ServiceManager {
                     continue;
                 }
 
-                // Detect binary store-path drift.
+                // Detect binary store-path drift — treated as an upgrade so
+                // the restart waits for the upgrade window.
                 let current_store = crate::nix::binary_store_path(state.service.binary_name());
                 if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
-                    if old != new && (!busy || in_upgrade_window) {
-                        tracing::info!("{name} binary changed ({old} → {new}), restarting");
-                        pending_reregisters.push(i);
+                    if old != new && !state.upgrade_pending {
+                        tracing::info!("{name} binary changed ({old} → {new}), scheduling upgrade");
+                        state.upgrade_pending = true;
                     }
                 }
             }
