@@ -8,7 +8,7 @@ description = "MCP server for cross-cluster memvault share proposal review"
 memvault-api = { path = "../memvault/crates/memvault-api", features = ["http-client"] }
 memvault-auth = { path = "../memvault/crates/memvault-auth" }
 memvault-core = { path = "../memvault/crates/memvault-core" }
-rmcp = { version = "0.17", features = ["server", "transport-io", "macros"], default-features = false }
+rmcp = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

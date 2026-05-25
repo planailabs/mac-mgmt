@@ -12,7 +12,7 @@ name = "plan-ai-memvault"
 path = "src/main.rs"
 
 [dependencies]
-rmcp = { version = "0.17", features = ["server", "transport-io", "macros"], default-features = false }
+rmcp = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
