@@ -348,7 +348,7 @@ impl Backend for LocalBackend {
         let view = memvault_api::View {
             name: name.to_string(),
             tags,
-            created_ns: memvault_core::wall_ns(), cid: String::new(),
+            created_ns: memvault_core::wall_ns(), cid: String::new(), bucket_id: None,
         };
         self.client.create_view(view).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "name": name, "status": "created" }))
@@ -358,7 +358,7 @@ impl Backend for LocalBackend {
         let view = memvault_api::View {
             name: name.to_string(),
             tags,
-            created_ns: memvault_core::wall_ns(), cid: String::new(),
+            created_ns: memvault_core::wall_ns(), cid: String::new(), bucket_id: None,
         };
         self.client.update_view(view).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "name": name, "status": "updated" }))
