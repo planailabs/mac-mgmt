@@ -858,20 +858,22 @@ impl ServiceManager {
                     continue;
                 }
 
+                // Detect binary store-path drift — treated as an upgrade so
+                // the restart waits for the upgrade window.
+                if !state.upgrade_pending {
+                    let current_store = crate::nix::binary_store_path(state.service.binary_name());
+                    if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
+                        if old != new {
+                            tracing::info!("{name} binary changed ({old} → {new}), scheduling upgrade");
+                            state.upgrade_pending = true;
+                        }
+                    }
+                }
+
                 if state.upgrade_pending && in_upgrade_window {
                     pending_reregisters.push(i);
                     state.upgrade_pending = false;
                     continue;
-                }
-
-                // Detect binary store-path drift — treated as an upgrade so
-                // the restart waits for the upgrade window.
-                let current_store = crate::nix::binary_store_path(state.service.binary_name());
-                if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
-                    if old != new && !state.upgrade_pending {
-                        tracing::info!("{name} binary changed ({old} → {new}), scheduling upgrade");
-                        state.upgrade_pending = true;
-                    }
                 }
             }
 
@@ -880,11 +882,21 @@ impl ServiceManager {
             }
         }
 
-        for i in pending_reregisters {
-            let name = self.services[i].name.clone();
-            self.reregister_service(i).await;
-            self.dispatcher
-                .dispatch(&DaemonEvent::UpgradeInstalled { service: name });
+        if !pending_reregisters.is_empty() {
+            for i in pending_reregisters {
+                let name = self.services[i].name.clone();
+                self.reregister_service(i).await;
+                self.dispatcher
+                    .dispatch(&DaemonEvent::UpgradeInstalled { service: name });
+            }
+            // Refresh running_store_path immediately so the drift check on the
+            // next tick sees the newly spawned binary, not the stale pre-reregister
+            // value.  Without this, a transient supervisor-list failure on the next
+            // tick would leave running_store_path stale, causing a false drift
+            // detection and a spurious re-upgrade.
+            if has_managed {
+                self.refresh_running_store_paths().await;
+            }
         }
 
         // Phase 2: concurrent health checks with timeout.
