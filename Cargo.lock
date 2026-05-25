@@ -11415,6 +11415,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "plan-ai-memvault-share-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "memvault-api",
+ "memvault-auth",
+ "memvault-core",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
