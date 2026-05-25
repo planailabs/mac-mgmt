@@ -9048,10 +9048,12 @@ name = "memctl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "clap",
  "dirs 6.0.0",
  "ed25519-dalek 2.2.0",
  "futures",
+ "getrandom 0.4.2",
  "hex",
  "libp2p",
  "memvault-api",
@@ -9063,7 +9065,9 @@ dependencies = [
  "memvault-net",
  "memvault-query",
  "memvault-store",
+ "memvault-web",
  "rand 0.8.6",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
