@@ -9323,7 +9323,9 @@ name = "memvault-smoke"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek 2.2.0",
+ "futures",
  "hex",
+ "libp2p",
  "memvault-api",
  "memvault-auth",
  "memvault-core",
@@ -9333,6 +9335,7 @@ dependencies = [
  "memvault-store",
  "rand 0.8.6",
  "serde",
+ "serde_ipld_dagcbor",
  "serde_json",
  "tempfile",
  "tokio",
