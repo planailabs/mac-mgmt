@@ -44,14 +44,51 @@ let
   relayConfig = pkgs.writeText "relay.toml" ''
     listen_addr = "127.0.0.1:8080"
     server_api_url = "http://127.0.0.1:7378"
-    proxy_url = "http://127.0.0.1:8080"
+    proxy_url = "https://127.0.0.1:8080"
+    data_dir = "/tmp/mac-mgmt-relay-data"
     p2p_port = 4001
+    tls_cert_path = "${testTlsDir}/cert.pem"
+    tls_key_path = "${testTlsDir}/key.pem"
   '';
 
   testKeyDir = pkgs.runCommand "test-ssh-keys" {} ''
     mkdir -p $out
     ${pkgs.openssh}/bin/ssh-keygen -t ed25519 -f $out/id_ed25519 -N "" -q
   '';
+
+  # Release relay builds require TLS material. Generate a local test CA and a
+  # relay server certificate signed by that CA so curl and Prometheus can
+  # verify HTTPS normally instead of relying on certificate bypasses.
+  testTlsDir = pkgs.runCommand "test-relay-tls" {} ''
+    mkdir -p $out
+    ${pkgs.openssl}/bin/openssl req -x509 -newkey rsa:2048 \
+      -keyout $out/ca-key.pem \
+      -out $out/ca-cert.pem \
+      -days 1 \
+      -nodes \
+      -subj "/CN=mac-mgmt metrics federation test CA" \
+      -addext "basicConstraints=critical,CA:TRUE" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign"
+    ${pkgs.openssl}/bin/openssl req -newkey rsa:2048 \
+      -keyout $out/key.pem \
+      -out $out/cert.csr \
+      -nodes \
+      -subj "/CN=127.0.0.1" \
+      -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+    ${pkgs.openssl}/bin/openssl x509 -req \
+      -in $out/cert.csr \
+      -CA $out/ca-cert.pem \
+      -CAkey $out/ca-key.pem \
+      -CAcreateserial \
+      -out $out/cert.pem \
+      -days 1 \
+      -copy_extensions copyall
+    rm $out/cert.csr
+  '';
+
+  testCaModule = { ... }: {
+    security.pki.certificateFiles = [ "${testTlsDir}/ca-cert.pem" ];
+  };
 
   daemonConfig = pkgs.writeText "daemon-config.toml" ''
     [metrics]
@@ -95,7 +132,10 @@ pkgs.testers.nixosTest {
   name = "metrics-federation";
 
   nodes.machine = { lib, ... }: {
-    imports = [ ../server/module.nix ];
+    imports = [
+      ../server/module.nix
+      testCaModule
+    ];
 
     nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
@@ -132,7 +172,7 @@ pkgs.testers.nixosTest {
       scrapeConfigs = [{
         job_name = "mac-mgmt-relay";
         metrics_path = "/metrics";
-        scheme = "http";
+        scheme = "https";
         bearer_token = settingToken;
         scrape_interval = "3s";
         scrape_timeout = "2s";
@@ -172,18 +212,44 @@ pkgs.testers.nixosTest {
     assert json.loads(self_json)["cluster_name"] == "test-cluster"
     machine.log("Token validation verified via mac-mgmt-server")
 
-    # Start the relay
+    def dump_service_logs(context):
+        machine.log(f"{context}; dumping relay/daemon/server logs:")
+        machine.log("--- /tmp/relay.log ---")
+        machine.log(machine.succeed("cat /tmp/relay.log || true"))
+        machine.log("--- /tmp/daemon.log ---")
+        machine.log(machine.succeed("cat /tmp/daemon.log || true"))
+        machine.log("--- mac-mgmt.service journal ---")
+        machine.log(machine.succeed("journalctl -u mac-mgmt.service --no-pager -n 200 || true"))
+
+    def wait_for_pid_health(name, pid_file, health_cmd, log_file, attempts=120):
+        for _ in range(attempts):
+            if machine.execute(health_cmd)[0] == 0:
+                return
+            if machine.execute(f"kill -0 $(cat {pid_file}) 2>/dev/null")[0] != 0:
+                service_log = machine.succeed(f"cat {log_file} || true")
+                raise Exception(f"{name} exited before readiness:\n{service_log}")
+            time.sleep(1)
+        service_log = machine.succeed(f"cat {log_file} || true")
+        raise Exception(f"{name} did not become ready within {attempts}s:\n{service_log}")
+
+    # Start the relay and poll its real health endpoint.  Do not rely only on
+    # wait_for_open_port: if the relay exits early, dump its log immediately
+    # instead of letting the VM test hang until the NixOS backdoor times out.
     machine.execute(
-        "mac-mgmt-relay -c ${relayConfig} >/tmp/relay.log 2>&1 &"
+        "mac-mgmt-relay -c ${relayConfig} >/tmp/relay.log 2>&1 & echo $! >/tmp/relay.pid"
     )
-    machine.wait_for_open_port(8080)
-    machine.succeed("curl -sf http://127.0.0.1:8080/health")
+    wait_for_pid_health(
+        "mac-mgmt-relay",
+        "/tmp/relay.pid",
+        "curl -sf https://127.0.0.1:8080/health >/dev/null",
+        "/tmp/relay.log",
+    )
     machine.log("Relay running on port 8080")
 
     # Sanity-check the federated /metrics endpoint reachable + auth-gated
-    machine.fail("curl -sf http://127.0.0.1:8080/metrics")  # 401 — no token
+    machine.fail("curl -sf https://127.0.0.1:8080/metrics")  # 401 — no token
     machine.succeed(
-        "curl -sf -H 'Authorization: Bearer ${settingToken}' http://127.0.0.1:8080/metrics >/tmp/relay-metrics-empty.txt"
+        "curl -sf -H 'Authorization: Bearer ${settingToken}' https://127.0.0.1:8080/metrics >/tmp/relay-metrics-empty.txt"
     )
     machine.log("Relay /metrics is reachable with bearer auth (no daemons yet)")
 
@@ -198,35 +264,41 @@ pkgs.testers.nixosTest {
         "cp ${daemonConfig} /root/.config/mac-mgmt/config.toml && "
         "cp ${testKeyDir}/id_ed25519.pub /root/.config/mac-mgmt/ssh/authorized_keys"
     )
-    machine.execute("mac-mgmt daemon >/tmp/daemon.log 2>&1 &")
+    machine.execute("mac-mgmt daemon >/tmp/daemon.log 2>&1 & echo $! >/tmp/daemon.pid")
     machine.log("Daemon kicked off")
 
     # Wait for the daemon to register with the relay via libp2p RPC stream.
+    # Detect early daemon exits while polling so failures include daemon/relay logs.
     instance_id = None
+    last_tunnels_error = None
     for _ in range(120):
         try:
             tunnels_json = machine.succeed(
                 "curl -sf -H 'Authorization: Bearer ${settingToken}' "
-                "http://127.0.0.1:8080/api/tunnels"
+                "https://127.0.0.1:8080/api/tunnels"
             )
             tunnels = json.loads(tunnels_json)
             if len(tunnels) > 0:
                 instance_id = tunnels[0]["instance_id"]
                 break
-        except Exception:
-            pass
+        except Exception as exc:
+            last_tunnels_error = str(exc)
+        if machine.execute("kill -0 $(cat /tmp/daemon.pid) 2>/dev/null")[0] != 0:
+            dump_service_logs("daemon exited before registering with relay")
+            raise Exception("daemon exited before registering with relay")
         time.sleep(1)
     if instance_id is None:
-        machine.log("daemon did not register; dumping /tmp/daemon.log:")
-        machine.log(machine.succeed("cat /tmp/daemon.log || true"))
-        machine.log(machine.succeed("cat /tmp/relay.log || true"))
-    assert instance_id is not None, "daemon did not register with relay within 120s"
+        dump_service_logs("daemon did not register with relay within 120s")
+        raise Exception(
+            "daemon did not register with relay within 120s; "
+            f"last tunnels error: {last_tunnels_error}"
+        )
     machine.log(f"Daemon registered: instance_id={instance_id}")
 
     # Hit the federated /metrics directly to confirm the daemon scrape now
     # produces synthetic relay metrics carrying the federation labels.
     direct = machine.succeed(
-        "curl -sf -H 'Authorization: Bearer ${settingToken}' http://127.0.0.1:8080/metrics"
+        "curl -sf -H 'Authorization: Bearer ${settingToken}' https://127.0.0.1:8080/metrics"
     )
     machine.log("Federated /metrics body (first 1KB):")
     machine.log(direct[:1024])

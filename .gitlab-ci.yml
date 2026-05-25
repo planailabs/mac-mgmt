@@ -28,7 +28,9 @@ deploy:
   only:
     - trunk
   script:
-    - nix flake check -L
+    # VM-backed flake checks are resource-heavy; run them serially so one
+    # test VM cannot starve another until the NixOS backdoor times out.
+    - nix flake check -L --max-jobs 1
     - nix develop -c bash xzar.sh
     - ./docker-push.sh
   timeout: 3h
