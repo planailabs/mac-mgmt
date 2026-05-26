@@ -9429,6 +9429,7 @@ dependencies = [
  "memvault-core",
  "redb",
  "serde",
+ "serde_ipld_dagcbor",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
