@@ -613,6 +613,7 @@ impl Backend for LocalBackend {
                 description,
                 Visibility::Internal,
                 Classification::Internal,
+                memvault_doc::BucketRole::Standard,
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
