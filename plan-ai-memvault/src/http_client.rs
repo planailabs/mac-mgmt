@@ -361,6 +361,45 @@ impl Backend for HttpClient {
         let resp = self.client.get(self.url(&format!("/views/{}/members", urlencoded(name)))).send().await?.error_for_status()?;
         Ok(resp.json().await?)
     }
+    async fn bucket_list(&self) -> Result<serde_json::Value> {
+        let resp = self.client.get(self.url("/buckets")).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+
+    async fn bucket_create(&self, name: &str, description: Option<&str>) -> Result<serde_json::Value> {
+        let resp = self.client.post(self.url("/buckets"))
+            .json(&serde_json::json!({ "name": name, "description": description }))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+
+    async fn bucket_get(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let resp = self.client.get(self.url(&format!("/buckets/{id}"))).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND { return Ok(None); }
+        Ok(Some(resp.error_for_status()?.json().await?))
+    }
+
+    async fn bucket_rename(&self, id: &str, new_name: &str) -> Result<serde_json::Value> {
+        let resp = self.client.patch(self.url(&format!("/buckets/{id}")))
+            .json(&serde_json::json!({ "name": new_name }))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+
+    async fn bucket_attach(&self, id: &str) -> Result<serde_json::Value> {
+        let resp = self.client.post(self.url(&format!("/buckets/{id}/attach")))
+            .json(&serde_json::json!({}))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+
+    async fn bucket_archive(&self, id: &str, reason: &str) -> Result<serde_json::Value> {
+        let resp = self.client.post(self.url(&format!("/buckets/{id}/archive")))
+            .json(&serde_json::json!({ "reason": reason }))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+
     async fn audit(&self, limit: usize, op_kind: Option<&str>) -> Result<serde_json::Value> {
         let mut url = format!("{}?limit={limit}", self.url("/audit"));
         if let Some(k) = op_kind {

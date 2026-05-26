@@ -63,6 +63,14 @@ pub trait Backend: Send + Sync {
     async fn delete_view(&self, name: &str) -> Result<serde_json::Value>;
     async fn view_members(&self, name: &str) -> Result<serde_json::Value>;
 
+    // -- Buckets --
+    async fn bucket_list(&self) -> Result<serde_json::Value>;
+    async fn bucket_create(&self, name: &str, description: Option<&str>) -> Result<serde_json::Value>;
+    async fn bucket_get(&self, id: &str) -> Result<Option<serde_json::Value>>;
+    async fn bucket_rename(&self, id: &str, new_name: &str) -> Result<serde_json::Value>;
+    async fn bucket_attach(&self, id: &str) -> Result<serde_json::Value>;
+    async fn bucket_archive(&self, id: &str, reason: &str) -> Result<serde_json::Value>;
+
     // -- Audit --
     async fn audit(&self, limit: usize, op_kind: Option<&str>) -> Result<serde_json::Value>;
 

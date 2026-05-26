@@ -379,6 +379,45 @@ impl Backend for LocalBackend {
         Ok(serde_json::json!({ "view": name, "count": members.len(), "members": members }))
     }
 
+    async fn bucket_list(&self) -> Result<serde_json::Value> {
+        let buckets = self.client.bucket_list().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::to_value(&buckets)?)
+    }
+
+    async fn bucket_create(&self, name: &str, description: Option<&str>) -> Result<serde_json::Value> {
+        use memvault_core::classification::Classification;
+        let id = self.client.bucket_create(name, description, Visibility::Internal, Classification::Internal).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "bucket_id": hex::encode(id.0), "name": name }))
+    }
+
+    async fn bucket_get(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let arr = hex_to_32(id)?;
+        let bid = memvault_core::BucketId(arr);
+        let info = self.client.bucket_get(&bid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(info.map(|i| serde_json::to_value(&i).unwrap_or_default()))
+    }
+
+    async fn bucket_rename(&self, id: &str, new_name: &str) -> Result<serde_json::Value> {
+        let arr = hex_to_32(id)?;
+        let bid = memvault_core::BucketId(arr);
+        self.client.bucket_rename(&bid, new_name).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "status": "renamed" }))
+    }
+
+    async fn bucket_attach(&self, id: &str) -> Result<serde_json::Value> {
+        let arr = hex_to_32(id)?;
+        let bid = memvault_core::BucketId(arr);
+        self.client.bucket_attach(&bid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "status": "attached" }))
+    }
+
+    async fn bucket_archive(&self, id: &str, reason: &str) -> Result<serde_json::Value> {
+        let arr = hex_to_32(id)?;
+        let bid = memvault_core::BucketId(arr);
+        self.client.bucket_archive(&bid, reason).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "status": "archived" }))
+    }
+
     async fn audit(&self, limit: usize, op_kind: Option<&str>) -> Result<serde_json::Value> {
         use memvault_query::AuditQuery;
         let query = AuditQuery {

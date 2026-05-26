@@ -366,6 +366,42 @@ impl MemvaultServer {
         ok_or_err!(self.client.delete_view(&params.name).await)
     }
 
+    // ── Buckets ────────────────────────────────────────────────────
+
+    #[tool(name = "memvault_bucket_list", description = "List all buckets with status, name, and item count.")]
+    async fn bucket_list(&self) -> String {
+        ok_or_err!(self.client.bucket_list().await)
+    }
+
+    #[tool(name = "memvault_bucket_create", description = "Create a new bucket. Returns the bucket ID.")]
+    async fn bucket_create(&self, Parameters(params): Parameters<BucketCreateParams>) -> String {
+        ok_or_err!(self.client.bucket_create(&params.name, params.description.as_deref()).await)
+    }
+
+    #[tool(name = "memvault_bucket_get", description = "Get details of a bucket by hex ID.")]
+    async fn bucket_get(&self, Parameters(params): Parameters<BucketGetParams>) -> String {
+        match self.client.bucket_get(&params.id).await {
+            Ok(Some(v)) => v.to_string(),
+            Ok(None) => "not found".to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(name = "memvault_bucket_rename", description = "Rename a bucket.")]
+    async fn bucket_rename(&self, Parameters(params): Parameters<BucketRenameParams>) -> String {
+        ok_or_err!(self.client.bucket_rename(&params.id, &params.name).await)
+    }
+
+    #[tool(name = "memvault_bucket_attach", description = "Attach a private bucket to the cluster (makes it visible to peers).")]
+    async fn bucket_attach(&self, Parameters(params): Parameters<BucketAttachParams>) -> String {
+        ok_or_err!(self.client.bucket_attach(&params.id).await)
+    }
+
+    #[tool(name = "memvault_bucket_archive", description = "Archive a bucket (soft-remove, data preserved).")]
+    async fn bucket_archive(&self, Parameters(params): Parameters<BucketArchiveParams>) -> String {
+        ok_or_err!(self.client.bucket_archive(&params.id, &params.reason).await)
+    }
+
     // ── Audit ──────────────────────────────────────────────────────
 
     #[tool(name = "memvault_audit", description = "Query audit log. Optionally filter by op_kind (DocCreate, EntityCreate, AttachFile, EdgeAdd, Retract).")]

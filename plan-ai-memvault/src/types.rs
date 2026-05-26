@@ -22,6 +22,9 @@ pub struct PutParams {
     /// Optional VFS path to place the new document at (e.g. "/notes/my-doc").
     #[serde(default)]
     pub vfs_path: Option<String>,
+    /// Optional bucket ID (hex) to scope this operation to.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_get --
@@ -59,6 +62,9 @@ pub struct ListParams {
     /// Filter by tag label.
     #[serde(default)]
     pub tag_label: Option<String>,
+    /// Optional bucket ID (hex) to scope this operation to.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_upload_file --
@@ -79,6 +85,9 @@ pub struct UploadFileParams {
     /// Optional VFS path to place the new file at (e.g. "/assets/logo.png").
     #[serde(default)]
     pub vfs_path: Option<String>,
+    /// Optional bucket ID (hex) to scope this operation to.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_read_range --
@@ -140,6 +149,9 @@ pub struct GraphAddParams {
     /// Optional VFS path to place the new entity at (e.g. "/projects/acme").
     #[serde(default)]
     pub vfs_path: Option<String>,
+    /// Optional bucket ID (hex) to scope this operation to.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_graph_link --
@@ -281,6 +293,48 @@ pub struct ViewDeleteParams {
     pub name: String,
 }
 
+// -- Bucket tools --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct BucketListParams {}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct BucketCreateParams {
+    /// Name for the new bucket.
+    pub name: String,
+    /// Optional description.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct BucketGetParams {
+    /// Hex-encoded bucket ID.
+    pub id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct BucketRenameParams {
+    /// Hex-encoded bucket ID.
+    pub id: String,
+    /// New name for the bucket.
+    pub name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct BucketAttachParams {
+    /// Hex-encoded bucket ID.
+    pub id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct BucketArchiveParams {
+    /// Hex-encoded bucket ID.
+    pub id: String,
+    /// Reason for archiving.
+    pub reason: String,
+}
+
 // -- memvault_get_entity --
 
 #[derive(Deserialize, JsonSchema)]
@@ -296,6 +350,9 @@ pub struct ListEntitiesParams {
     /// Maximum number of results (default: 50).
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Optional bucket ID (hex) to scope this operation to.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_traverse --
