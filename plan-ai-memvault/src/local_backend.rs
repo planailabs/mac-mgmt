@@ -25,14 +25,16 @@ impl LocalBackend {
             std::fs::create_dir_all(parent)?;
         }
         let store = Arc::new(MemvaultStore::open(db_path)?);
-        let client = LocalClient::new(
+        let client = LocalClient::open(
             store,
             Arc::new(RwLock::new(TextIndex::new())),
             Arc::new(RwLock::new(QuotaManager::new(Default::default()))),
             Arc::new(EventBus::new(16)),
             vec![0u8; 32], // peer_id
             cluster_id,
-        );
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("LocalClient open: {e}"))?;
         // Load or rebuild the text index from disk cache.
         let cache_path = db_path.with_extension("text_index.json");
         match client.load_or_rebuild_index(&cache_path).await {
