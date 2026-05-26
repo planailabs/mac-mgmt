@@ -78,7 +78,7 @@ impl Backend for LocalBackend {
         let doc = Document::new(DocId::random(), body.to_string(), fm);
         let doc_id = hex::encode(doc.id.0);
         let vis = parse_visibility(visibility);
-        let cid = self.client.put_doc(doc, tags, vis).await
+        let cid = self.client.put_doc(doc, tags, vis, None).await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "cid": hex::encode(&cid), "id": doc_id }))
     }
@@ -130,7 +130,7 @@ impl Backend for LocalBackend {
             (Some(ns), Some(val)) => Some((ns.to_string(), val.to_string())),
             _ => None,
         };
-        let docs = self.client.list_docs(tag_filter, limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let docs = self.client.list_docs(tag_filter, limit, None).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(docs.iter().map(|d| serde_json::json!({
             "id": hex::encode(d.id.0),
             "title": d.title,
@@ -139,7 +139,7 @@ impl Backend for LocalBackend {
     }
 
     async fn upload_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value> {
-        let cid = self.client.upload_file(data, Some(filename), content_type, vec![], "internal").await
+        let cid = self.client.upload_file(data, Some(filename), content_type, vec![], "internal", None).await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "cid": hex::encode(&cid) }))
     }
@@ -194,7 +194,7 @@ impl Backend for LocalBackend {
             edges_out: vec![],
         };
         let vis = parse_visibility(visibility);
-        let id = self.client.add_entity(entity, vis).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let id = self.client.add_entity(entity, vis, None).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "id": hex::encode(id.0) }))
     }
 
@@ -217,7 +217,7 @@ impl Backend for LocalBackend {
     }
 
     async fn list_entities(&self, limit: usize) -> Result<serde_json::Value> {
-        let entities = self.client.list_entities(limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let entities = self.client.list_entities(limit, None).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(entities.iter().map(|e| serde_json::json!({
             "id": hex::encode(e.id.0),
             "kind": e.kind,
@@ -348,7 +348,7 @@ impl Backend for LocalBackend {
         let view = memvault_api::View {
             name: name.to_string(),
             tags,
-            created_ns: memvault_core::wall_ns(), cid: String::new(),
+            created_ns: memvault_core::wall_ns(), cid: String::new(), bucket_id: None,
         };
         self.client.create_view(view).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "name": name, "status": "created" }))
@@ -358,7 +358,7 @@ impl Backend for LocalBackend {
         let view = memvault_api::View {
             name: name.to_string(),
             tags,
-            created_ns: memvault_core::wall_ns(), cid: String::new(),
+            created_ns: memvault_core::wall_ns(), cid: String::new(), bucket_id: None,
         };
         self.client.update_view(view).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "name": name, "status": "updated" }))

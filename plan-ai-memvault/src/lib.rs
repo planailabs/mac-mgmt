@@ -41,6 +41,14 @@ pub struct Cli {
     /// Default visibility when the agent omits it (internal, federated, public).
     #[arg(long, env = "MEMVAULT_DEFAULT_VISIBILITY", default_value = "internal")]
     pub default_visibility: String,
+
+    /// Agent identifier for authenticated operations.
+    #[arg(long, env = "MEMVAULT_AGENT_ID")]
+    pub agent_id: Option<String>,
+
+    /// Path to the agent identity directory (contains private_key.pem, attestation.cbor, etc.).
+    #[arg(long, env = "MEMVAULT_IDENTITY_DIR")]
+    pub identity_dir: Option<std::path::PathBuf>,
 }
 
 fn default_token_path() -> std::path::PathBuf {
@@ -52,6 +60,37 @@ fn default_token_path() -> std::path::PathBuf {
 
 /// Run the memvault MCP server with the given CLI arguments.
 pub async fn run(cli: Cli) -> Result<()> {
+    // Load agent identity if configured
+    if let Some(ref agent_id) = cli.agent_id {
+        let identity_dir = cli.identity_dir.clone().unwrap_or_else(|| {
+            dirs::data_local_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("memvault")
+                .join("agents")
+                .join(agent_id)
+        });
+
+        if memvault_api::agent_identity::AgentIdentity::exists(&identity_dir) {
+            match memvault_api::agent_identity::AgentIdentity::load(&identity_dir) {
+                Ok(id) => {
+                    tracing::info!(
+                        agent_id = %id.agent_id.0,
+                        cluster = %hex::encode(id.cluster_id.0),
+                        "loaded agent identity"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("failed to load agent identity from {}: {e}", identity_dir.display());
+                }
+            }
+        } else {
+            tracing::warn!(
+                "agent identity not found at {} — running without agent auth",
+                identity_dir.display()
+            );
+        }
+    }
+
     let backend: Arc<dyn crate::backend::Backend> = if let Some(ref db_path) = cli.db {
         // Local mode: direct redb access.
         let cluster_id = if let Some(ref hex_str) = cli.cluster_id {

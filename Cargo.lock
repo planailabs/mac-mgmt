@@ -9109,17 +9109,27 @@ name = "memctl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "clap",
+ "dioxus",
  "dirs 6.0.0",
+ "ed25519-dalek 2.2.0",
+ "futures",
+ "getrandom 0.4.2",
  "hex",
+ "libp2p",
  "memvault-api",
  "memvault-auth",
  "memvault-core",
  "memvault-doc",
  "memvault-export",
  "memvault-import",
+ "memvault-net",
  "memvault-query",
  "memvault-store",
+ "memvault-web",
+ "rand 0.8.6",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
@@ -9161,7 +9171,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "data-encoding",
  "dirs 6.0.0",
+ "ed25519-dalek 2.2.0",
  "hex",
  "memvault-attach",
  "memvault-auth",
@@ -9172,8 +9184,10 @@ dependencies = [
  "memvault-store",
  "mime_guess",
  "opentelemetry",
+ "rand 0.8.6",
  "reqwest 0.13.2",
  "serde",
+ "serde_ipld_dagcbor",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
@@ -9237,6 +9251,7 @@ dependencies = [
  "serde_ipld_dagcbor",
  "serde_json",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -9244,6 +9259,7 @@ name = "memvault-doc"
 version = "0.1.0"
 dependencies = [
  "loro",
+ "memvault-auth",
  "memvault-core",
  "serde",
  "serde_ipld_dagcbor",
@@ -9373,6 +9389,29 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "memvault-smoke"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek 2.2.0",
+ "futures",
+ "hex",
+ "libp2p",
+ "memvault-api",
+ "memvault-auth",
+ "memvault-core",
+ "memvault-doc",
+ "memvault-net",
+ "memvault-query",
+ "memvault-store",
+ "rand 0.8.6",
+ "serde",
+ "serde_ipld_dagcbor",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -11470,6 +11509,26 @@ dependencies = [
  "memvault-store",
  "mime_guess",
  "reqwest 0.12.28",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "plan-ai-memvault-share-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs 6.0.0",
+ "hex",
+ "memvault-api",
+ "memvault-auth",
+ "memvault-core",
  "rmcp",
  "schemars",
  "serde",

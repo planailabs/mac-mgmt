@@ -1,0 +1,21 @@
+[package]
+name = "plan-ai-memvault-share-agent"
+version = "0.1.0"
+edition = "2024"
+description = "MCP server for cross-cluster memvault share proposal review"
+
+[dependencies]
+memvault-api = { path = "../memvault/crates/memvault-api", features = ["http-client"] }
+memvault-auth = { path = "../memvault/crates/memvault-auth" }
+memvault-core = { path = "../memvault/crates/memvault-core" }
+rmcp = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+hex = "0.4"
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "6"
+schemars = "1"
