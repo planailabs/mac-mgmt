@@ -3,8 +3,6 @@
 //! Tests document creation, cross-node sync via raw block copy, search,
 //! and retraction visibility across multiple MemvaultStore instances.
 
-#![cfg(feature = "memvault")]
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -69,7 +67,7 @@ async fn put_sync_search_retract() {
     ];
 
     let cid = client1
-        .put_doc(doc, tags, Visibility::Internal)
+        .put_doc(doc, tags, Visibility::Internal, None)
         .await
         .unwrap();
 
@@ -78,13 +76,10 @@ async fn put_sync_search_retract() {
     assert!(!hits.is_empty(), "node1 should find the doc via search");
 
     // Simulate sync: copy the raw block(s) from store1 to stores 2 and 3.
-    // We need to copy the CID block and also discover what was stored.
-    // The LocalClient stores under the CID returned by put_doc.
     copy_blocks(&store1, &store2, &[cid.clone()]);
     copy_blocks(&store1, &store3, &[cid.clone()]);
 
     // Also replicate the envelope via insert_envelope metadata so queries work.
-    // For the integration test, we re-insert the envelope with metadata on each node.
     let block_data = store1.get_block(&cid).unwrap().unwrap();
 
     // Parse the envelope to extract metadata for indexing on remote nodes.
@@ -105,6 +100,7 @@ async fn put_sync_search_retract() {
         causal: vec![],
         provenance: vec![],
         cluster_id: Some(vec![0u8; 32]),
+        bucket_id: None,
     };
 
     // Insert envelope on nodes 2 and 3 so their indexes are populated.
