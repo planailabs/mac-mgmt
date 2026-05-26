@@ -60,7 +60,10 @@ pub async fn detect_entities(
         .context("failed to reach Ollama")?;
 
     let status = resp.status();
-    let text = resp.text().await.context("failed to read Ollama response")?;
+    let text = resp
+        .text()
+        .await
+        .context("failed to read Ollama response")?;
 
     if !status.is_success() {
         anyhow::bail!("Ollama returned {status}: {text}");

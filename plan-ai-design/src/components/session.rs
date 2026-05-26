@@ -30,10 +30,12 @@ pub fn ActiveSessionCard(
     /// progress bar fill percentage and the "step N of M" line.
     current_step: usize,
     /// Optional duration label — e.g. "00:00:32".
-    #[props(default, into)] duration: Option<String>,
+    #[props(default, into)]
+    duration: Option<String>,
     /// Right-side action (typically an "Open session" button). Pass any
     /// element; rendered as-is.
-    #[props(default)] action: Option<Element>,
+    #[props(default)]
+    action: Option<Element>,
 ) -> Element {
     let total = trace.len().max(1);
     let pct = (current_step as f64 / total as f64 * 100.0).clamp(0.0, 100.0);

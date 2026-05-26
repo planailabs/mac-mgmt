@@ -7,7 +7,7 @@ use crate::web::components::ui::{
     ActiveSessionCard, Badge, BadgeVariant, Kicker, Pill, PillVariant, TraceStatus, TraceStep,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 // ── Wire types ─────────────────────────────────────────────────────────
 
@@ -64,18 +64,23 @@ pub fn staff_pings_to_wire(pings: &[mac_mgmt_healer::session::StaffPing]) -> Vec
 }
 
 #[cfg(feature = "server")]
-pub fn running_tools_to_wire(tools: &[mac_mgmt_healer::session::RunningTool]) -> Vec<RunningToolInfo> {
+pub fn running_tools_to_wire(
+    tools: &[mac_mgmt_healer::session::RunningTool],
+) -> Vec<RunningToolInfo> {
     tools
         .iter()
         .map(|t| RunningToolInfo {
             name: t.name.clone(),
             args: t.args.clone(),
             started_at: t.started_at.to_rfc3339(),
-            validation: t.validation.as_ref().map(|v| mac_mgmt_common::HealerToolValidation {
-                status: v.status.clone(),
-                reasoning: v.reasoning.clone(),
-                risk: v.risk.clone(),
-            }),
+            validation: t
+                .validation
+                .as_ref()
+                .map(|v| mac_mgmt_common::HealerToolValidation {
+                    status: v.status.clone(),
+                    reasoning: v.reasoning.clone(),
+                    risk: v.risk.clone(),
+                }),
         })
         .collect()
 }
@@ -299,8 +304,8 @@ pub async fn start_healer_session(
     validator_provider: Option<String>,
     validator_model: Option<String>,
 ) -> Result<String, ServerFnError> {
-    use mac_mgmt_healer::agent::InstanceInfo;
     use mac_mgmt_healer::SpawnRequest;
+    use mac_mgmt_healer::agent::InstanceInfo;
 
     let user = current_user().await?;
     let pool = crate::server_pool()?;
@@ -340,16 +345,16 @@ pub async fn start_healer_session(
         .mint_proxy_token_scoped(hb.cluster_id, None, Some(healer_scopes))
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let relay_client = std::sync::Arc::new(
-        mac_mgmt_healer::relay_client::RelayClient::new(relay_url.clone(), proxy_token),
-    );
+    let relay_client = std::sync::Arc::new(mac_mgmt_healer::relay_client::RelayClient::new(
+        relay_url.clone(),
+        proxy_token,
+    ));
     let instance_prefix: String = instance_id.chars().take(12).collect();
-    let instance_access: mac_mgmt_healer::DynInstanceAccess = std::sync::Arc::new(
-        mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
+    let instance_access: mac_mgmt_healer::DynInstanceAccess =
+        std::sync::Arc::new(mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
             relay_client.clone(),
             instance_prefix,
-        ),
-    );
+        ));
     let cluster_access: Option<mac_mgmt_healer::DynClusterAccess> = Some(std::sync::Arc::new(
         mac_mgmt_healer::relay_client::RelayClusterAccess::new(relay_client),
     ));
@@ -451,7 +456,8 @@ pub async fn start_healer_session(
                 } else {
                     server_cfg.healer.models.clone()
                 };
-                models.iter()
+                models
+                    .iter()
                     .find(|entry| entry.provider == *p && entry.model == *m)
                     .and_then(|entry| entry.token_budget)
             } else {
@@ -546,7 +552,9 @@ pub async fn resolve_staff_ping(ping_id: String) -> Result<(), ServerFnError> {
     let uuid: uuid::Uuid = ping_id
         .parse()
         .map_err(|_| ServerFnError::new("invalid id"))?;
-    healer.store().resolve_staff_ping(uuid, &user.email)
+    healer
+        .store()
+        .resolve_staff_ping(uuid, &user.email)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
@@ -613,7 +621,9 @@ pub fn FleetHealer(instance_id: String) -> Element {
 
     match &*ctx.read() {
         Some(Ok(c)) => render_healer(c),
-        Some(Err(e)) => rsx! { p { class: "text-danger text-sm", {t!("error-message", message: e.to_string())} } },
+        Some(Err(e)) => {
+            rsx! { p { class: "text-danger text-sm", {t!("error-message", message: e.to_string())} } }
+        }
         None => rsx! { p { class: "text-fg-muted text-sm", {t!("loading")} } },
     }
 }
@@ -1376,9 +1386,18 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
         .as_ref()
         .and_then(|r| r.as_ref().ok())
         .cloned();
-    let model_label = meta.as_ref().and_then(|m| m.model.clone()).unwrap_or_default();
-    let session_label = meta.as_ref().and_then(|m| m.label.clone()).unwrap_or_default();
-    let is_auto = meta.as_ref().map(|m| m.created_by.starts_with("auto:")).unwrap_or(false);
+    let model_label = meta
+        .as_ref()
+        .and_then(|m| m.model.clone())
+        .unwrap_or_default();
+    let session_label = meta
+        .as_ref()
+        .and_then(|m| m.label.clone())
+        .unwrap_or_default();
+    let is_auto = meta
+        .as_ref()
+        .map(|m| m.created_by.starts_with("auto:"))
+        .unwrap_or(false);
 
     rsx! {
         h2 { class: "h-page",
@@ -1527,7 +1546,6 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
     }
 }
 
-
 // ── Helpers ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1591,10 +1609,17 @@ fn state_border(st: &str) -> &'static str {
 
 /// Render a state_change message in the same style as agent/system messages.
 fn render_state_change(msg: &ChatMsg) -> Element {
-    let (state, reason) = if let Ok(data) = serde_json::from_str::<serde_json::Value>(&msg.content) {
+    let (state, reason) = if let Ok(data) = serde_json::from_str::<serde_json::Value>(&msg.content)
+    {
         (
-            data.get("state").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-            data.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            data.get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            data.get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         )
     } else {
         ("unknown".to_string(), String::new())
@@ -1681,7 +1706,8 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
         .split_once(": ")
         .unwrap_or(("tool", &msg.content));
     let is_error = result.starts_with("Error:");
-    let is_rejected = result.starts_with("[Validation rejected]") || result.starts_with("[Validator rejected]");
+    let is_rejected =
+        result.starts_with("[Validation rejected]") || result.starts_with("[Validator rejected]");
     let truncated = result.len() > 500;
     let preview = if truncated { &result[..500] } else { result };
     let tool_badge = if is_rejected {

@@ -54,17 +54,17 @@ async fn main() -> Result<()> {
     if cfg.proxy_url.is_none() {
         let addr = &cfg.listen_addr;
         let url = if addr.starts_with("0.0.0.0:") || addr.starts_with("[::]:") {
-            format!("https://localhost:{}", addr.rsplit(':').next().unwrap_or("8080"))
+            format!(
+                "https://localhost:{}",
+                addr.rsplit(':').next().unwrap_or("8080")
+            )
         } else {
             format!("https://{addr}")
         };
         tracing::info!("proxy_url not configured, defaulting to {url}");
         cfg.proxy_url = Some(url);
     }
-    tracing::info!(
-        "relay starting, listen: {}",
-        cfg.listen_addr,
-    );
+    tracing::info!("relay starting, listen: {}", cfg.listen_addr,);
 
     // Generate ephemeral SSH identity (rotated on every restart).
     let ssh_identity = Arc::new(ssh_identity::RelaySshIdentity::generate());
@@ -163,10 +163,7 @@ async fn main() -> Result<()> {
     // WS upgrades on the main host → libp2p bridge (daemon p2p).
     // WS upgrades on proxy subdomains → axum proxy handler via oneshot.
     // Non-WS requests → axum via oneshot (API or proxy).
-    let app = Router::new().fallback(any(move |
-        Host(hostname): Host,
-        mut req: Request<Body>,
-    | {
+    let app = Router::new().fallback(any(move |Host(hostname): Host, mut req: Request<Body>| {
         let api = api_router.clone();
         let proxy = proxy_router.clone();
         async move {
@@ -185,25 +182,33 @@ async fn main() -> Result<()> {
             // Proxy subdomain.
             if let Some((ref proxy_hostname, ref proxy_router)) = proxy {
                 if host_no_port.ends_with(&format!(".{proxy_hostname}")) {
-                    let is_proxy_ws = req.headers().get("upgrade")
+                    let is_proxy_ws = req
+                        .headers()
+                        .get("upgrade")
                         .and_then(|v| v.to_str().ok())
                         .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
 
                     if is_proxy_ws {
                         use axum::extract::FromRequestParts;
                         let (mut parts, _body) = req.into_parts();
-                        if let Ok(ws) = axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+                        if let Ok(ws) =
+                            axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &())
+                                .await
+                        {
                             let prefix = host_no_port
                                 .strip_suffix(&format!(".{proxy_hostname}"))
                                 .unwrap_or("")
                                 .to_string();
                             let relay_swarm_clone = relay_swarm.clone();
                             return ws.on_upgrade(move |socket| async move {
-                                let (instance_prefix, tunnel_name) = prefix
-                                    .rsplit_once('-')
-                                    .unwrap_or((&prefix, ""));
-                                if let Some(peer_id) = relay_swarm_clone.registry_resolve_peer_id(instance_prefix) {
-                                    if let Ok(tunnel) = relay_swarm_clone.open_tunnel_stream(peer_id).await {
+                                let (instance_prefix, tunnel_name) =
+                                    prefix.rsplit_once('-').unwrap_or((&prefix, ""));
+                                if let Some(peer_id) =
+                                    relay_swarm_clone.registry_resolve_peer_id(instance_prefix)
+                                {
+                                    if let Ok(tunnel) =
+                                        relay_swarm_clone.open_tunnel_stream(peer_id).await
+                                    {
                                         let handshake = serde_json::json!({
                                             "type": "proxy",
                                             "tunnel_name": tunnel_name,
@@ -211,10 +216,13 @@ async fn main() -> Result<()> {
                                             "path": "/",
                                             "headers": [],
                                         });
-                                        let data = serde_json::to_vec(&handshake).unwrap_or_default();
+                                        let data =
+                                            serde_json::to_vec(&handshake).unwrap_or_default();
                                         use futures_util::AsyncWriteExt;
                                         let mut tunnel = tunnel;
-                                        let _ = tunnel.write_all(&(data.len() as u32).to_be_bytes()).await;
+                                        let _ = tunnel
+                                            .write_all(&(data.len() as u32).to_be_bytes())
+                                            .await;
                                         let _ = tunnel.write_all(&data).await;
                                         let _ = tunnel.flush().await;
                                         crate::ws_bridge::bridge_ws_to_stream(socket, tunnel).await;
@@ -233,7 +241,9 @@ async fn main() -> Result<()> {
             // Main host: check if this is a WS upgrade → bridge to libp2p.
             // Only intercept WS connections that are NOT for named routes
             // (e.g. /ssh/* is handled by the API router's WebSocket handler).
-            let is_ws = req.headers().get("upgrade")
+            let is_ws = req
+                .headers()
+                .get("upgrade")
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
             let is_p2p_ws = is_ws && !req.uri().path().starts_with("/ssh/");
@@ -241,7 +251,8 @@ async fn main() -> Result<()> {
             if is_p2p_ws {
                 use axum::extract::FromRequestParts;
                 let (mut parts, _body) = req.into_parts();
-                match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+                match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await
+                {
                     Ok(ws) => {
                         return ws.on_upgrade(move |socket| async move {
                             tracing::debug!("p2p WS bridge started");
@@ -262,33 +273,26 @@ async fn main() -> Result<()> {
     }));
 
     // Build TLS config: load from files or generate self-signed in debug mode.
-    let (cert_chain, private_key) =
-        match (&cfg.tls_cert_path, &cfg.tls_key_path) {
-            (Some(cert_path), Some(key_path)) => {
-                tracing::info!("loading TLS cert from {cert_path}");
-                mtls::load_certs_and_key(cert_path, key_path)?
-            }
-            _ => {
-                if cfg!(debug_assertions) {
-                    tracing::warn!(
-                        "TLS cert/key not configured — generating self-signed certificate \
+    let (cert_chain, private_key) = match (&cfg.tls_cert_path, &cfg.tls_key_path) {
+        (Some(cert_path), Some(key_path)) => {
+            tracing::info!("loading TLS cert from {cert_path}");
+            mtls::load_certs_and_key(cert_path, key_path)?
+        }
+        _ => {
+            if cfg!(debug_assertions) {
+                tracing::warn!(
+                    "TLS cert/key not configured — generating self-signed certificate \
                          (development only)"
-                    );
-                    mtls::generate_self_signed()?
-                } else {
-                    anyhow::bail!(
-                        "tls_cert_path and tls_key_path are required in release builds"
-                    );
-                }
+                );
+                mtls::generate_self_signed()?
+            } else {
+                anyhow::bail!("tls_cert_path and tls_key_path are required in release builds");
             }
-        };
+        }
+    };
 
-    let tls_config = mtls::build_tls_config(
-        cert_chain,
-        private_key,
-        cfg.client_ca_path.as_deref(),
-    )
-    .map_err(|e| anyhow::anyhow!("failed to build TLS config: {e}"))?;
+    let tls_config = mtls::build_tls_config(cert_chain, private_key, cfg.client_ca_path.as_deref())
+        .map_err(|e| anyhow::anyhow!("failed to build TLS config: {e}"))?;
     let tls_acceptor = mtls::make_acceptor(tls_config);
 
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;

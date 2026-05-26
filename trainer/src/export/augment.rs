@@ -156,13 +156,14 @@ fn phase_dropout(conv: &mut SftConversation, dropout_prob: f32, rng: &mut StdRng
                 for j in (0..idx).rev() {
                     if conv.messages[j].role == "assistant"
                         && let Some(ref calls) = conv.messages[j].tool_calls
-                            && calls.iter().any(|c| c.id == *tool_call_id) {
-                                // Only remove if this assistant turn has exactly this one tool call
-                                if calls.len() == 1 {
-                                    indices_to_remove.push(j);
-                                }
-                                break;
-                            }
+                        && calls.iter().any(|c| c.id == *tool_call_id)
+                    {
+                        // Only remove if this assistant turn has exactly this one tool call
+                        if calls.len() == 1 {
+                            indices_to_remove.push(j);
+                        }
+                        break;
+                    }
                 }
             }
         }

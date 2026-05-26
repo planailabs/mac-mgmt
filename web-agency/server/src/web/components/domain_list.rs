@@ -2,7 +2,9 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th};
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DomainRow {
@@ -24,7 +26,10 @@ struct DomainRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CfCredOption { id: Uuid, name: String }
+struct CfCredOption {
+    id: Uuid,
+    name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BulkOpResult {
@@ -42,7 +47,22 @@ async fn list_domains() -> Result<Vec<DomainRow>, ServerFnError> {
         return Ok(vec![]);
     }
 
-    type Row = (Uuid, String, Option<String>, String, bool, Option<String>, Option<chrono::DateTime<chrono::Utc>>, String, Option<String>, Option<Uuid>, Option<bool>, bool, Option<String>, bool);
+    type Row = (
+        Uuid,
+        String,
+        Option<String>,
+        String,
+        bool,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        String,
+        Option<String>,
+        Option<Uuid>,
+        Option<bool>,
+        bool,
+        Option<String>,
+        bool,
+    );
     let query = "SELECT d.id, d.name, d.registrar_type, d.ssl_mode, d.dnssec_enabled, d.cloudflare_zone_id, d.expires_at, o.name, \
          d.registrar_type, d.registrar_credential_id, d.ns_ok, \
          EXISTS(SELECT 1 FROM webspace_domains wd WHERE wd.domain_id = d.id) AS has_webspace, \
@@ -52,29 +72,54 @@ async fn list_domains() -> Result<Vec<DomainRow>, ServerFnError> {
 
     let rows = if user.is_admin {
         sqlx::query_as::<_, Row>(&format!("{query} ORDER BY d.name"))
-            .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
-        sqlx::query_as::<_, Row>(&format!("{query} WHERE d.organization_id = ANY($1) ORDER BY d.name"))
-            .bind(&org_ids).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+        sqlx::query_as::<_, Row>(&format!(
+            "{query} WHERE d.organization_id = ANY($1) ORDER BY d.name"
+        ))
+        .bind(&org_ids)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, registrar_type, ssl_mode, dnssec_enabled, cloudflare_zone_id, expires_at, organization_name, reg_type, reg_cred_id, ns_ok, has_webspace, ai_bots_protection, expires_soon)| DomainRow {
-            id,
-            name,
-            registrar_type,
-            ssl_mode,
-            dnssec_enabled,
-            cloudflare_zone_id,
-            expires_at: expires_at.map(|d| d.format("%Y-%m-%d").to_string()),
-            organization_name,
-            can_set_nameservers: reg_type.as_deref() == Some("spaceship") && reg_cred_id.is_some(),
-            ns_ok,
-            has_webspace,
-            ai_bots_protection,
-            expires_soon,
-        })
+        .map(
+            |(
+                id,
+                name,
+                registrar_type,
+                ssl_mode,
+                dnssec_enabled,
+                cloudflare_zone_id,
+                expires_at,
+                organization_name,
+                reg_type,
+                reg_cred_id,
+                ns_ok,
+                has_webspace,
+                ai_bots_protection,
+                expires_soon,
+            )| DomainRow {
+                id,
+                name,
+                registrar_type,
+                ssl_mode,
+                dnssec_enabled,
+                cloudflare_zone_id,
+                expires_at: expires_at.map(|d| d.format("%Y-%m-%d").to_string()),
+                organization_name,
+                can_set_nameservers: reg_type.as_deref() == Some("spaceship")
+                    && reg_cred_id.is_some(),
+                ns_ok,
+                has_webspace,
+                ai_bots_protection,
+                expires_soon,
+            },
+        )
         .collect())
 }
 
@@ -82,42 +127,65 @@ async fn list_domains() -> Result<Vec<DomainRow>, ServerFnError> {
 async fn list_cf_credentials_for_bulk() -> Result<Vec<CfCredOption>, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
-    let rows = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String)>(
+    let rows =
+        if user.is_admin {
+            sqlx::query_as::<_, (Uuid, String)>(
             "SELECT id, name FROM credentials WHERE credential_type = 'cloudflare' ORDER BY name",
         ).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        let org_ids = user.org_ids();
-        sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT id, name FROM credentials WHERE credential_type = 'cloudflare' \
+        } else {
+            let org_ids = user.org_ids();
+            sqlx::query_as::<_, (Uuid, String)>(
+                "SELECT id, name FROM credentials WHERE credential_type = 'cloudflare' \
              AND (organization_id = ANY($1) OR organization_id IS NULL) ORDER BY name",
-        ).bind(&org_ids).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-    Ok(rows.into_iter().map(|(id, name)| CfCredOption { id, name }).collect())
+            )
+            .bind(&org_ids)
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+        };
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| CfCredOption { id, name })
+        .collect())
 }
 
 /// Deploy multiple domains to Cloudflare under one credential.
 #[server]
-async fn bulk_deploy_to_cloudflare(domain_ids: Vec<Uuid>, credential_id: Uuid) -> Result<BulkOpResult, ServerFnError> {
+async fn bulk_deploy_to_cloudflare(
+    domain_ids: Vec<Uuid>,
+    credential_id: Uuid,
+) -> Result<BulkOpResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     if !user.is_admin {
         return Err(ServerFnError::new("admin required"));
     }
     let pool = crate::server_pool()?;
 
-    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id).await
+    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id)
+        .await
         .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
     let mut succeeded = Vec::new();
     let mut failed = Vec::new();
 
     for domain_id in &domain_ids {
-        let row = sqlx::query_as::<_, (String,)>(
-            "SELECT name FROM domains WHERE id = $1",
-        ).bind(domain_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        let row = sqlx::query_as::<_, (String,)>("SELECT name FROM domains WHERE id = $1")
+            .bind(domain_id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
         let Some((domain_name,)) = row else { continue };
 
-        match deploy_single(&client, &account_id, &pool, *domain_id, &domain_name, credential_id).await {
+        match deploy_single(
+            &client,
+            &account_id,
+            &pool,
+            *domain_id,
+            &domain_name,
+            credential_id,
+        )
+        .await
+        {
             Ok(()) => succeeded.push(domain_name),
             Err(e) => failed.push((domain_name, format!("{e}"))),
         }
@@ -165,7 +233,11 @@ async fn bulk_set_nameservers(domain_ids: Vec<Uuid>) -> Result<BulkOpResult, Ser
     for domain_id in &domain_ids {
         let row = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
             "SELECT name, cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-        ).bind(domain_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(domain_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         let Some((domain_name, Some(zone_id), Some(cred_id))) = row else {
             continue; // skip domains without CF zone
@@ -197,14 +269,23 @@ async fn set_ns_single(
 
     let reg = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT registrar_type, registrar_credential_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_one(pool).await?;
+    )
+    .bind(domain_id)
+    .fetch_one(pool)
+    .await?;
 
     match reg {
         (Some(ref rt), Some(reg_cred_id)) if rt == "spaceship" => {
             let ss_client = crate::credentials::spaceship_client(pool, reg_cred_id).await?;
-            ss_client.set_nameservers(domain_name, &spaceship_api::compat::NameserverConfig {
-                provider: "custom".into(), hosts: Some(nameservers),
-            }).await?;
+            ss_client
+                .set_nameservers(
+                    domain_name,
+                    &spaceship_api::compat::NameserverConfig {
+                        provider: "custom".into(),
+                        hosts: Some(nameservers),
+                    },
+                )
+                .await?;
             Ok(())
         }
         _ => Err("no supported registrar".into()),
@@ -213,9 +294,14 @@ async fn set_ns_single(
 
 /// Bulk set SSL mode for domains with CF zones.
 #[server]
-async fn bulk_set_ssl_mode(domain_ids: Vec<Uuid>, ssl_mode: String) -> Result<BulkOpResult, ServerFnError> {
+async fn bulk_set_ssl_mode(
+    domain_ids: Vec<Uuid>,
+    ssl_mode: String,
+) -> Result<BulkOpResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
-    if !user.is_admin { return Err(ServerFnError::new("admin required")); }
+    if !user.is_admin {
+        return Err(ServerFnError::new("admin required"));
+    }
     let pool = crate::server_pool()?;
 
     let mut succeeded = Vec::new();
@@ -224,17 +310,28 @@ async fn bulk_set_ssl_mode(domain_ids: Vec<Uuid>, ssl_mode: String) -> Result<Bu
     for domain_id in &domain_ids {
         let row = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
             "SELECT name, cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-        ).bind(domain_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(domain_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-        let Some((domain_name, Some(zone_id), Some(cred_id))) = row else { continue };
+        let Some((domain_name, Some(zone_id), Some(cred_id))) = row else {
+            continue;
+        };
 
         match async {
             let client = crate::credentials::cf_client(&pool, cred_id).await?;
             client.set_ssl_mode(&zone_id, &ssl_mode).await?;
             sqlx::query("UPDATE domains SET ssl_mode = $1, updated_at = now() WHERE id = $2")
-                .bind(&ssl_mode).bind(domain_id).execute(&pool).await?;
+                .bind(&ssl_mode)
+                .bind(domain_id)
+                .execute(&pool)
+                .await?;
             Ok::<_, anyhow::Error>(())
-        }.await {
+        }
+        .await
+        {
             Ok(()) => succeeded.push(domain_name),
             Err(e) => failed.push((domain_name, format!("{e}"))),
         }
@@ -244,9 +341,14 @@ async fn bulk_set_ssl_mode(domain_ids: Vec<Uuid>, ssl_mode: String) -> Result<Bu
 
 /// Bulk set AI bot protection for domains with CF zones.
 #[server]
-async fn bulk_set_ai_bots_protection(domain_ids: Vec<Uuid>, value: String) -> Result<BulkOpResult, ServerFnError> {
+async fn bulk_set_ai_bots_protection(
+    domain_ids: Vec<Uuid>,
+    value: String,
+) -> Result<BulkOpResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
-    if !user.is_admin { return Err(ServerFnError::new("admin required")); }
+    if !user.is_admin {
+        return Err(ServerFnError::new("admin required"));
+    }
     let pool = crate::server_pool()?;
 
     let mut succeeded = Vec::new();
@@ -255,17 +357,32 @@ async fn bulk_set_ai_bots_protection(domain_ids: Vec<Uuid>, value: String) -> Re
     for domain_id in &domain_ids {
         let row = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
             "SELECT name, cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-        ).bind(domain_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(domain_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-        let Some((domain_name, Some(zone_id), Some(cred_id))) = row else { continue };
+        let Some((domain_name, Some(zone_id), Some(cred_id))) = row else {
+            continue;
+        };
 
         match async {
             let client = crate::credentials::cf_client(&pool, cred_id).await?;
-            client.set_bot_management(&zone_id, &serde_json::json!({"ai_bots_protection": value})).await?;
-            sqlx::query("UPDATE domains SET ai_bots_protection = $1, updated_at = now() WHERE id = $2")
-                .bind(&value).bind(domain_id).execute(&pool).await?;
+            client
+                .set_bot_management(&zone_id, &serde_json::json!({"ai_bots_protection": value}))
+                .await?;
+            sqlx::query(
+                "UPDATE domains SET ai_bots_protection = $1, updated_at = now() WHERE id = $2",
+            )
+            .bind(&value)
+            .bind(domain_id)
+            .execute(&pool)
+            .await?;
             Ok::<_, anyhow::Error>(())
-        }.await {
+        }
+        .await
+        {
             Ok(()) => succeeded.push(domain_name),
             Err(e) => failed.push((domain_name, format!("{e}"))),
         }
@@ -275,12 +392,18 @@ async fn bulk_set_ai_bots_protection(domain_ids: Vec<Uuid>, value: String) -> Re
 
 /// Bulk create CF Pages direct-upload projects for domains without webspaces.
 #[server]
-async fn bulk_create_pages_project(domain_ids: Vec<Uuid>, credential_id: Uuid) -> Result<BulkOpResult, ServerFnError> {
+async fn bulk_create_pages_project(
+    domain_ids: Vec<Uuid>,
+    credential_id: Uuid,
+) -> Result<BulkOpResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
-    if !user.is_admin { return Err(ServerFnError::new("admin required")); }
+    if !user.is_admin {
+        return Err(ServerFnError::new("admin required"));
+    }
     let pool = crate::server_pool()?;
 
-    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id).await
+    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id)
+        .await
         .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
     let mut succeeded = Vec::new();
@@ -289,9 +412,15 @@ async fn bulk_create_pages_project(domain_ids: Vec<Uuid>, credential_id: Uuid) -
     for domain_id in &domain_ids {
         let row = sqlx::query_as::<_, (String, Uuid)>(
             "SELECT name, organization_id FROM domains WHERE id = $1",
-        ).bind(domain_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(domain_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-        let Some((domain_name, org_id)) = row else { continue };
+        let Some((domain_name, org_id)) = row else {
+            continue;
+        };
 
         // Project name: replace dots with hyphens (CF Pages doesn't allow dots)
         let project_name = domain_name.replace('.', "-");
@@ -333,50 +462,95 @@ pub fn DomainList() -> Element {
         Some(Ok(r)) => r.clone(),
         _ => vec![],
     };
-    let cred_list: Vec<CfCredOption> = match &*creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
+    let cred_list: Vec<CfCredOption> = match &*creds.read() {
+        Some(Ok(c)) => c.clone(),
+        _ => vec![],
+    };
 
     let mut selected: Signal<Vec<Uuid>> = use_signal(Vec::new);
     let mut bulk_result = use_signal(|| None::<BulkOpResult>);
     let mut running = use_signal(|| false);
-    let mut cred_id = use_signal(|| cred_list.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let mut cred_id = use_signal(|| {
+        cred_list
+            .first()
+            .map(|c| c.id.to_string())
+            .unwrap_or_default()
+    });
     let mut filter = use_signal(|| "all".to_string());
     let mut bulk_ssl_mode = use_signal(|| "full".to_string());
     let mut bulk_ai_bots = use_signal(|| "block".to_string());
 
     // Apply filter
     let filtered_rows: Vec<&DomainRow> = match filter.read().as_str() {
-        "no_cf" => all_rows.iter().filter(|r| r.cloudflare_zone_id.is_none()).collect(),
+        "no_cf" => all_rows
+            .iter()
+            .filter(|r| r.cloudflare_zone_id.is_none())
+            .collect(),
         "needs_ns" => all_rows.iter().filter(|r| r.ns_ok == Some(false)).collect(),
-        "no_webspace" => all_rows.iter().filter(|r| !r.has_webspace && r.cloudflare_zone_id.is_some()).collect(),
-        "ai_crawl_off" => all_rows.iter().filter(|r| r.ai_bots_protection.as_deref() != Some("block")).collect(),
-        "ai_crawl_on" => all_rows.iter().filter(|r| r.ai_bots_protection.as_deref() == Some("block")).collect(),
-        "ssl_not_full" => all_rows.iter().filter(|r| r.cloudflare_zone_id.is_some() && r.ssl_mode != "full" && r.ssl_mode != "strict").collect(),
+        "no_webspace" => all_rows
+            .iter()
+            .filter(|r| !r.has_webspace && r.cloudflare_zone_id.is_some())
+            .collect(),
+        "ai_crawl_off" => all_rows
+            .iter()
+            .filter(|r| r.ai_bots_protection.as_deref() != Some("block"))
+            .collect(),
+        "ai_crawl_on" => all_rows
+            .iter()
+            .filter(|r| r.ai_bots_protection.as_deref() == Some("block"))
+            .collect(),
+        "ssl_not_full" => all_rows
+            .iter()
+            .filter(|r| {
+                r.cloudflare_zone_id.is_some() && r.ssl_mode != "full" && r.ssl_mode != "strict"
+            })
+            .collect(),
         "expires_soon" => all_rows.iter().filter(|r| r.expires_soon).collect(),
         _ => all_rows.iter().collect(),
     };
 
     // Count how many selected domains are eligible for each operation
     let sel = selected.read();
-    let no_cf_count = filtered_rows.iter().filter(|r| sel.contains(&r.id) && r.cloudflare_zone_id.is_none()).count();
-    let ns_eligible_count = filtered_rows.iter().filter(|r| sel.contains(&r.id) && r.ns_ok == Some(false)).count();
+    let no_cf_count = filtered_rows
+        .iter()
+        .filter(|r| sel.contains(&r.id) && r.cloudflare_zone_id.is_none())
+        .count();
+    let ns_eligible_count = filtered_rows
+        .iter()
+        .filter(|r| sel.contains(&r.id) && r.ns_ok == Some(false))
+        .count();
     let sel_count = sel.len();
     let filtered_count = filtered_rows.len();
     // Collect IDs for bulk ops before dropping sel
-    let deploy_ids: Vec<Uuid> = filtered_rows.iter()
+    let deploy_ids: Vec<Uuid> = filtered_rows
+        .iter()
         .filter(|r| sel.contains(&r.id) && r.cloudflare_zone_id.is_none())
-        .map(|r| r.id).collect();
-    let ns_ids: Vec<Uuid> = filtered_rows.iter()
+        .map(|r| r.id)
+        .collect();
+    let ns_ids: Vec<Uuid> = filtered_rows
+        .iter()
         .filter(|r| sel.contains(&r.id) && r.ns_ok == Some(false))
-        .map(|r| r.id).collect();
+        .map(|r| r.id)
+        .collect();
     let filtered_ids: Vec<Uuid> = filtered_rows.iter().map(|r| r.id).collect();
-    let cf_selected_count = filtered_rows.iter().filter(|r| sel.contains(&r.id) && r.cloudflare_zone_id.is_some()).count();
-    let cf_selected_ids: Vec<Uuid> = filtered_rows.iter()
+    let cf_selected_count = filtered_rows
+        .iter()
         .filter(|r| sel.contains(&r.id) && r.cloudflare_zone_id.is_some())
-        .map(|r| r.id).collect();
-    let no_ws_count = filtered_rows.iter().filter(|r| sel.contains(&r.id) && !r.has_webspace && r.cloudflare_zone_id.is_some()).count();
-    let no_ws_ids: Vec<Uuid> = filtered_rows.iter()
+        .count();
+    let cf_selected_ids: Vec<Uuid> = filtered_rows
+        .iter()
+        .filter(|r| sel.contains(&r.id) && r.cloudflare_zone_id.is_some())
+        .map(|r| r.id)
+        .collect();
+    let no_ws_count = filtered_rows
+        .iter()
         .filter(|r| sel.contains(&r.id) && !r.has_webspace && r.cloudflare_zone_id.is_some())
-        .map(|r| r.id).collect();
+        .count();
+    let no_ws_ids: Vec<Uuid> = filtered_rows
+        .iter()
+        .filter(|r| sel.contains(&r.id) && !r.has_webspace && r.cloudflare_zone_id.is_some())
+        .map(|r| r.id)
+        .collect();
     drop(sel);
 
     rsx! {

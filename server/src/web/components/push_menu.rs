@@ -6,7 +6,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushResult {
@@ -36,10 +36,12 @@ pub async fn send_push_event(
         "sync_nixpkgs" => mac_mgmt_common::PushEvent::SyncNixpkgs,
         "sync_packages" => mac_mgmt_common::PushEvent::SyncPackages,
         "request_assessment" => mac_mgmt_common::PushEvent::RequestAssessment,
-        other => return Ok(PushResult {
-            ok: false,
-            message: format!("unknown event: {other}"),
-        }),
+        other => {
+            return Ok(PushResult {
+                ok: false,
+                message: format!("unknown event: {other}"),
+            });
+        }
     };
 
     crate::api::push::notify_global(cid, msg).await;
@@ -56,14 +58,46 @@ struct PushAction {
 }
 
 const ACTIONS: &[PushAction] = &[
-    PushAction { key: "sync_config", label_key: "push-sync-config", desc_key: "push-sync-config-desc" },
-    PushAction { key: "sync_skills", label_key: "push-sync-skills", desc_key: "push-sync-skills-desc" },
-    PushAction { key: "sync_mcp_servers", label_key: "push-sync-mcp", desc_key: "push-sync-mcp-desc" },
-    PushAction { key: "sync_ssh_keys", label_key: "push-sync-ssh", desc_key: "push-sync-ssh-desc" },
-    PushAction { key: "sync_nixpkgs", label_key: "push-sync-nixpkgs", desc_key: "push-sync-nixpkgs-desc" },
-    PushAction { key: "sync_packages", label_key: "push-sync-packages", desc_key: "push-sync-packages-desc" },
-    PushAction { key: "self_update", label_key: "push-self-update", desc_key: "push-self-update-desc" },
-    PushAction { key: "request_assessment", label_key: "push-request-assessment", desc_key: "push-request-assessment-desc" },
+    PushAction {
+        key: "sync_config",
+        label_key: "push-sync-config",
+        desc_key: "push-sync-config-desc",
+    },
+    PushAction {
+        key: "sync_skills",
+        label_key: "push-sync-skills",
+        desc_key: "push-sync-skills-desc",
+    },
+    PushAction {
+        key: "sync_mcp_servers",
+        label_key: "push-sync-mcp",
+        desc_key: "push-sync-mcp-desc",
+    },
+    PushAction {
+        key: "sync_ssh_keys",
+        label_key: "push-sync-ssh",
+        desc_key: "push-sync-ssh-desc",
+    },
+    PushAction {
+        key: "sync_nixpkgs",
+        label_key: "push-sync-nixpkgs",
+        desc_key: "push-sync-nixpkgs-desc",
+    },
+    PushAction {
+        key: "sync_packages",
+        label_key: "push-sync-packages",
+        desc_key: "push-sync-packages-desc",
+    },
+    PushAction {
+        key: "self_update",
+        label_key: "push-self-update",
+        desc_key: "push-self-update-desc",
+    },
+    PushAction {
+        key: "request_assessment",
+        label_key: "push-request-assessment",
+        desc_key: "push-request-assessment-desc",
+    },
 ];
 
 #[component]

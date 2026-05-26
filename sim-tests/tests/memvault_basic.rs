@@ -55,8 +55,12 @@ async fn put_sync_search_retract() {
     // Node 1: put a document with tags.
     let doc = Document::new(
         DocId::random(),
-        "Quantum entanglement enables instantaneous correlation between distant particles.".to_string(),
-        BTreeMap::from([("title".to_string(), serde_json::Value::String("Quantum Physics Note".to_string()))]),
+        "Quantum entanglement enables instantaneous correlation between distant particles."
+            .to_string(),
+        BTreeMap::from([(
+            "title".to_string(),
+            serde_json::Value::String("Quantum Physics Note".to_string()),
+        )]),
     );
     let doc_id = doc.id.clone();
     let tags = vec![
@@ -64,7 +68,10 @@ async fn put_sync_search_retract() {
         ("source".to_string(), "research".to_string()),
     ];
 
-    let cid = client1.put_doc(doc, tags, Visibility::Internal).await.unwrap();
+    let cid = client1
+        .put_doc(doc, tags, Visibility::Internal)
+        .await
+        .unwrap();
 
     // Verify node 1 can search for it.
     let hits = client1.search("quantum", 10).await.unwrap();
@@ -82,7 +89,10 @@ async fn put_sync_search_retract() {
 
     // Parse the envelope to extract metadata for indexing on remote nodes.
     let envelope: serde_json::Value = serde_json::from_slice(&block_data).unwrap();
-    let wall_ns = envelope.get("wall_ns").and_then(|v| v.as_u64()).unwrap_or(0);
+    let wall_ns = envelope
+        .get("wall_ns")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let tags_val: Vec<(String, String)> = envelope
         .get("tags")
         .and_then(|t| serde_json::from_value(t.clone()).ok())
@@ -151,7 +161,10 @@ async fn put_sync_search_retract() {
 
     // Node 2: retract the document.
     let tombstone = client2.retract(&cid, "outdated information").await.unwrap();
-    assert!(!tombstone.is_empty(), "retraction should produce a tombstone CID");
+    assert!(
+        !tombstone.is_empty(),
+        "retraction should produce a tombstone CID"
+    );
 
     // Verify retraction is visible on node 2.
     assert!(

@@ -28,11 +28,19 @@ async fn list_tokens() -> Result<Vec<TokenRow>, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|(id, label, kind, revoked, created_at, expires_at)| TokenRow {
-        id, label, kind, revoked,
-        created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-        expires_at: expires_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, label, kind, revoked, created_at, expires_at)| TokenRow {
+                id,
+                label,
+                kind,
+                revoked,
+                created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
+                expires_at: expires_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+            },
+        )
+        .collect())
 }
 
 #[component]

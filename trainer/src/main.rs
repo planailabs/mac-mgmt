@@ -8,7 +8,10 @@ use clap::{Parser, Subcommand};
 const FINETUNE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/finetune");
 
 #[derive(Parser)]
-#[command(name = "mac-mgmt-trainer", about = "Train models on healer session data")]
+#[command(
+    name = "mac-mgmt-trainer",
+    about = "Train models on healer session data"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -211,16 +214,12 @@ fn run_train(
                 burn::backend::Autodiff<burn::backend::wgpu::Wgpu>,
             >(config)
         }
-        (ModelType::Embedder, BackendType::Cpu) => {
-            mac_mgmt_trainer::training::train_embedder::<
-                burn::backend::Autodiff<burn::backend::NdArray>,
-            >(config)
-        }
-        (ModelType::Embedder, BackendType::Gpu) => {
-            mac_mgmt_trainer::training::train_embedder::<
-                burn::backend::Autodiff<burn::backend::wgpu::Wgpu>,
-            >(config)
-        }
+        (ModelType::Embedder, BackendType::Cpu) => mac_mgmt_trainer::training::train_embedder::<
+            burn::backend::Autodiff<burn::backend::NdArray>,
+        >(config),
+        (ModelType::Embedder, BackendType::Gpu) => mac_mgmt_trainer::training::train_embedder::<
+            burn::backend::Autodiff<burn::backend::wgpu::Wgpu>,
+        >(config),
     }
 }
 
@@ -259,11 +258,9 @@ fn run_eval(model: ModelType, checkpoint: &str, data: &str, backend: BackendType
         (ModelType::Embedder, BackendType::Cpu) => {
             mac_mgmt_trainer::inference::eval_embedder::<burn::backend::NdArray>(checkpoint, data)
         }
-        (ModelType::Embedder, BackendType::Gpu) => {
-            mac_mgmt_trainer::inference::eval_embedder::<burn::backend::wgpu::Wgpu>(
-                checkpoint, data,
-            )
-        }
+        (ModelType::Embedder, BackendType::Gpu) => mac_mgmt_trainer::inference::eval_embedder::<
+            burn::backend::wgpu::Wgpu,
+        >(checkpoint, data),
     }
 }
 
@@ -280,7 +277,11 @@ fn run_python(script: &str, args: &[&str]) -> Result<()> {
         );
     }
 
-    tracing::info!("running: python {} {}", script_path.display(), args.join(" "));
+    tracing::info!(
+        "running: python {} {}",
+        script_path.display(),
+        args.join(" ")
+    );
 
     let status = Process::new("python")
         .arg(&script_path)
@@ -538,25 +539,23 @@ async fn main() -> Result<()> {
             tracing::info!("=== Step 4/6: Fine-tune LLM with QLoRA ===");
             let sft_path = sft_dir.join("sft_conversations.jsonl");
             let sft_path_s = sft_path.to_string_lossy().to_string();
-            run_python("train.py", &[
-                "--data",
-                &sft_path_s,
-                "--output",
-                &ft_dir_s,
-                "--base-model",
-                &base_model,
-            ])?;
+            run_python(
+                "train.py",
+                &[
+                    "--data",
+                    &sft_path_s,
+                    "--output",
+                    &ft_dir_s,
+                    "--base-model",
+                    &base_model,
+                ],
+            )?;
 
             // Step 5: Export GGUF
             tracing::info!("=== Step 5/6: Export to GGUF ===");
             let adapter_dir = ft_dir.join("lora_adapter");
             let adapter_dir_s = adapter_dir.to_string_lossy().to_string();
-            let mut gguf_args = vec![
-                "--adapter-dir",
-                &adapter_dir_s,
-                "--output",
-                &ft_dir_s,
-            ];
+            let mut gguf_args = vec!["--adapter-dir", &adapter_dir_s, "--output", &ft_dir_s];
             if skip_ollama {
                 gguf_args.push("--skip-ollama");
             }
@@ -565,19 +564,15 @@ async fn main() -> Result<()> {
             // Step 6: Evaluate
             tracing::info!("=== Step 6/6: Evaluate ===");
             if !skip_ollama {
-                run_python("eval_generate.py", &[
-                    "--data",
-                    &sft_path_s,
-                    "--ollama-model",
-                    "mac-mgmt-healer",
-                ])?;
+                run_python(
+                    "eval_generate.py",
+                    &["--data", &sft_path_s, "--ollama-model", "mac-mgmt-healer"],
+                )?;
             } else {
-                run_python("eval_generate.py", &[
-                    "--data",
-                    &sft_path_s,
-                    "--adapter-dir",
-                    &adapter_dir_s,
-                ])?;
+                run_python(
+                    "eval_generate.py",
+                    &["--data", &sft_path_s, "--adapter-dir", &adapter_dir_s],
+                )?;
             }
 
             tracing::info!("=== Pipeline complete! ===");

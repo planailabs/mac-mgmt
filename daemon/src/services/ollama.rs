@@ -330,7 +330,9 @@ impl ManagedService for Ollama {
 
     fn service_inventory(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         use mac_mgmt_common::{InventoryEntry, InventoryValueType};
         Box::pin(async move {
             let mut entries = Vec::new();
@@ -357,7 +359,8 @@ impl ManagedService for Ollama {
             if let Ok(body) = self.http_get("/api/tags").await {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
                     if let Some(models) = json.get("models").and_then(|m| m.as_array()) {
-                        let names: Vec<serde_json::Value> = models.iter()
+                        let names: Vec<serde_json::Value> = models
+                            .iter()
                             .filter_map(|m| m.get("name").cloned())
                             .collect();
                         entries.push(InventoryEntry {
@@ -376,7 +379,9 @@ impl ManagedService for Ollama {
 
     fn service_sample(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         use mac_mgmt_common::{InventoryEntry, InventoryValueType};
         Box::pin(async move {
             let mut entries = Vec::new();
@@ -384,7 +389,8 @@ impl ManagedService for Ollama {
             if let Ok(body) = self.http_get("/api/ps").await {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
                     if let Some(models) = json.get("models").and_then(|m| m.as_array()) {
-                        let names: Vec<serde_json::Value> = models.iter()
+                        let names: Vec<serde_json::Value> = models
+                            .iter()
                             .filter_map(|m| m.get("name").cloned())
                             .collect();
                         entries.push(InventoryEntry {
@@ -403,7 +409,9 @@ impl ManagedService for Ollama {
 
     fn service_security(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>,
+    > {
         use mac_mgmt_common::{FindingSeverity, SecurityFinding};
         Box::pin(async move {
             let mut findings = Vec::new();

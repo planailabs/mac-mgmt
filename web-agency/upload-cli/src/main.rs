@@ -9,12 +9,16 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use serde::Deserialize;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use serde::Deserialize;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "web-agency-upload", version, about = "Upload a site folder to a web-agency webspace")]
+#[command(
+    name = "web-agency-upload",
+    version,
+    about = "Upload a site folder to a web-agency webspace"
+)]
 struct Cli {
     /// Directory to upload (will be tarred and gzipped)
     path: PathBuf,
@@ -116,12 +120,19 @@ fn main() -> Result<()> {
     // Create tarball in memory
     eprintln!("Packaging {}...", cli.path.display());
     let tarball = create_tarball(&cli.path)?;
-    eprintln!("Tarball size: {} bytes ({:.1} KB)", tarball.len(), tarball.len() as f64 / 1024.0);
+    eprintln!(
+        "Tarball size: {} bytes ({:.1} KB)",
+        tarball.len(),
+        tarball.len() as f64 / 1024.0
+    );
 
     // Upload
     let mut upload_url = format!("{base_url}/api/v1/deploy/{webspace_id}");
     if let Some(ref branch) = cli.branch {
-        upload_url = format!("{upload_url}?branch={}", utf8_percent_encode(branch, NON_ALPHANUMERIC));
+        upload_url = format!(
+            "{upload_url}?branch={}",
+            utf8_percent_encode(branch, NON_ALPHANUMERIC)
+        );
         eprintln!("Uploading to webspace {webspace_id} (branch: {branch})...");
     } else {
         eprintln!("Uploading to webspace {webspace_id}...");
@@ -140,13 +151,19 @@ fn main() -> Result<()> {
     }
 
     let upload: UploadResponse = resp.json().context("invalid upload response")?;
-    eprintln!("Deployment {} started (status: {})", upload.deployment_id, upload.status);
+    eprintln!(
+        "Deployment {} started (status: {})",
+        upload.deployment_id, upload.status
+    );
 
     if cli.no_wait {
-        println!("{}", serde_json::json!({
-            "deployment_id": upload.deployment_id,
-            "status": upload.status,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "deployment_id": upload.deployment_id,
+                "status": upload.status,
+            })
+        );
         return Ok(());
     }
 
@@ -173,10 +190,13 @@ fn main() -> Result<()> {
         match status.status.as_str() {
             "success" => {
                 eprintln!("\nDeployment successful!");
-                println!("{}", serde_json::json!({
-                    "deployment_id": status.deployment_id,
-                    "status": "success",
-                }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "deployment_id": status.deployment_id,
+                        "status": "success",
+                    })
+                );
                 return Ok(());
             }
             "failed" => {

@@ -130,7 +130,11 @@ impl OpenClawProbe {
     pub fn new(cfg: &OpenClawConfig, canary_model: String, cloud_llm: bool) -> Self {
         let (host, port) = match &cfg.gateway {
             Some(g) => {
-                let h = if g.host.is_empty() { "127.0.0.1" } else { &g.host };
+                let h = if g.host.is_empty() {
+                    "127.0.0.1"
+                } else {
+                    &g.host
+                };
                 (h.to_string(), g.port)
             }
             None => ("127.0.0.1".to_string(), 18789),
@@ -170,11 +174,24 @@ impl Probe for OpenClawProbe {
     }
 
     async fn run(&self, ctx: &ProbeCtx) -> ProbeResult {
-        timed(|| run_gateway(&self.gateway_url, self.auth_token.as_deref(), &self.canary_model, ctx)).await
+        timed(|| {
+            run_gateway(
+                &self.gateway_url,
+                self.auth_token.as_deref(),
+                &self.canary_model,
+                ctx,
+            )
+        })
+        .await
     }
 }
 
-async fn run_gateway(base_url: &str, auth_token: Option<&str>, canary_model: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
+async fn run_gateway(
+    base_url: &str,
+    auth_token: Option<&str>,
+    canary_model: &str,
+    ctx: &ProbeCtx,
+) -> Result<ProbeResult> {
     let client = Client::builder().timeout(ctx.timeout).build()?;
     let body = ChatBody {
         model: canary_model.into(),
@@ -238,4 +255,3 @@ async fn run_gateway(base_url: &str, auth_token: Option<&str>, canary_model: &st
         ..Default::default()
     })
 }
-

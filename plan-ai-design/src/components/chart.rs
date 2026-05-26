@@ -19,10 +19,10 @@ impl ChartColor {
     pub fn text_class(self) -> &'static str {
         match self {
             Self::Brand => "text-brand",
-            Self::Ok    => "text-success",
-            Self::Warn  => "text-warn",
-            Self::Bad   => "text-danger",
-            Self::Info  => "text-info",
+            Self::Ok => "text-success",
+            Self::Warn => "text-warn",
+            Self::Bad => "text-danger",
+            Self::Info => "text-info",
             Self::Muted => "text-fg-faint",
         }
     }
@@ -110,7 +110,11 @@ pub fn Bars(
     #[props(default = 56)] height: u32,
     #[props(default, into)] class: String,
 ) -> Element {
-    let max = data.iter().cloned().fold(f64::NEG_INFINITY, f64::max).max(1.0);
+    let max = data
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max)
+        .max(1.0);
     let n = data.len();
     let color_cls = color.text_class();
     let cls = format!("flex items-end gap-[3px] {color_cls} {class}");

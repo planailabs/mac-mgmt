@@ -2,12 +2,17 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th};
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th,
+};
 
 use crate::web::user::OrgOption;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CredOption { id: Uuid, name: String }
+struct CredOption {
+    id: Uuid,
+    name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DiscoveredProject {
@@ -18,7 +23,11 @@ struct DiscoveredProject {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ImportResult { imported: u32, skipped: u32, errors: Vec<String> }
+struct ImportResult {
+    imported: u32,
+    skipped: u32,
+    errors: Vec<String>,
+}
 
 // ── Server functions ────────────────────────────────────────────────
 
@@ -35,21 +44,33 @@ async fn list_cf_creds() -> Result<Vec<CredOption>, ServerFnError> {
     let pool = crate::server_pool()?;
     let rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM credentials WHERE credential_type = 'cloudflare' ORDER BY name",
-    ).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(rows.into_iter().map(|(id, name)| CredOption { id, name }).collect())
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| CredOption { id, name })
+        .collect())
 }
 
 #[server]
-async fn discover_pages_projects(credential_id: Uuid, org_id: Uuid) -> Result<Vec<DiscoveredProject>, ServerFnError> {
+async fn discover_pages_projects(
+    credential_id: Uuid,
+    org_id: Uuid,
+) -> Result<Vec<DiscoveredProject>, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
     let pool = crate::server_pool()?;
 
-    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id).await
+    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id)
+        .await
         .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
-    let projects = client.list_pages_projects(&account_id).await
+    let projects = client
+        .list_pages_projects(&account_id)
+        .await
         .map_err(|e| ServerFnError::new(format!("CF Pages API: {e}")))?;
 
     // Check which project IDs are already imported
@@ -61,26 +82,34 @@ async fn discover_pages_projects(credential_id: Uuid, org_id: Uuid) -> Result<Ve
         "SELECT cloudflare_pages_project FROM webspaces WHERE organization_id = $1 AND cloudflare_pages_project IS NOT NULL",
     ).bind(org_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(projects.into_iter().map(|p| {
-        let already = p.id.as_ref().map_or(false, |id| existing_ids.contains(id))
-            || existing_names.contains(&p.name);
-        DiscoveredProject {
-            name: p.name,
-            id: p.id,
-            subdomain: p.subdomain,
-            already_imported: already,
-        }
-    }).collect())
+    Ok(projects
+        .into_iter()
+        .map(|p| {
+            let already = p.id.as_ref().map_or(false, |id| existing_ids.contains(id))
+                || existing_names.contains(&p.name);
+            DiscoveredProject {
+                name: p.name,
+                id: p.id,
+                subdomain: p.subdomain,
+                already_imported: already,
+            }
+        })
+        .collect())
 }
 
 #[server]
-async fn import_pages_projects(credential_id: Uuid, org_id: Uuid, project_names: Vec<String>) -> Result<ImportResult, ServerFnError> {
+async fn import_pages_projects(
+    credential_id: Uuid,
+    org_id: Uuid,
+    project_names: Vec<String>,
+) -> Result<ImportResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
     let pool = crate::server_pool()?;
 
-    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id).await
+    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id)
+        .await
         .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
     let mut imported = 0u32;
@@ -93,7 +122,10 @@ async fn import_pages_projects(credential_id: Uuid, org_id: Uuid, project_names:
             "SELECT EXISTS(SELECT 1 FROM webspaces WHERE organization_id = $1 AND cloudflare_pages_project = $2)",
         ).bind(org_id).bind(name).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-        if exists { skipped += 1; continue; }
+        if exists {
+            skipped += 1;
+            continue;
+        }
 
         // Fetch project to get ID
         match client.get_pages_project(&account_id, name).await {
@@ -117,7 +149,11 @@ async fn import_pages_projects(credential_id: Uuid, org_id: Uuid, project_names:
     if imported > 0 {
         crate::api::internal::notify_proxy_reload();
     }
-    Ok(ImportResult { imported, skipped, errors })
+    Ok(ImportResult {
+        imported,
+        skipped,
+        errors,
+    })
 }
 
 // ── Component ───────────────────────────────────────────────────────
@@ -126,11 +162,27 @@ async fn import_pages_projects(credential_id: Uuid, org_id: Uuid, project_names:
 pub fn WebspaceImport() -> Element {
     let orgs = use_server_future(list_orgs)?;
     let creds = use_server_future(list_cf_creds)?;
-    let org_list = match &*orgs.read() { Some(Ok(o)) => o.clone(), _ => vec![] };
-    let cred_list = match &*creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
+    let org_list = match &*orgs.read() {
+        Some(Ok(o)) => o.clone(),
+        _ => vec![],
+    };
+    let cred_list = match &*creds.read() {
+        Some(Ok(c)) => c.clone(),
+        _ => vec![],
+    };
 
-    let mut org_id = use_signal(|| org_list.first().map(|o| o.id.to_string()).unwrap_or_default());
-    let mut cred_id = use_signal(|| cred_list.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let mut org_id = use_signal(|| {
+        org_list
+            .first()
+            .map(|o| o.id.to_string())
+            .unwrap_or_default()
+    });
+    let mut cred_id = use_signal(|| {
+        cred_list
+            .first()
+            .map(|c| c.id.to_string())
+            .unwrap_or_default()
+    });
     let mut discovered: Signal<Vec<DiscoveredProject>> = use_signal(Vec::new);
     let mut selected: Signal<Vec<String>> = use_signal(Vec::new);
     let mut discovering = use_signal(|| false);

@@ -231,19 +231,14 @@ impl Daemon {
                 #[cfg(feature = "services")]
                 if let Some(ref handle) = self.ai_proxy_handle {
                     handle
-                        .reload_config(
-                            &new_cfg.ai_proxy,
-                            &new_cfg.ollama,
-                            &new_cfg.unsloth,
-                        )
+                        .reload_config(&new_cfg.ai_proxy, &new_cfg.ollama, &new_cfg.unsloth)
                         .await;
                 }
 
                 // Preserve the runtime-only probe token across config reloads.
                 #[cfg(feature = "services")]
                 {
-                    new_cfg.ai_proxy.probe_token =
-                        self.current_cfg.ai_proxy.probe_token.clone();
+                    new_cfg.ai_proxy.probe_token = self.current_cfg.ai_proxy.probe_token.clone();
                 }
 
                 self.assessor.update_config(new_cfg.clone()).await;
@@ -269,7 +264,10 @@ impl Daemon {
 
         let password_file = Restic::password_file_path(cfg);
         if !password_file.exists() {
-            tracing::warn!("backup: password file not found at {}, skipping", password_file.display());
+            tracing::warn!(
+                "backup: password file not found at {}, skipping",
+                password_file.display()
+            );
             return;
         }
 
@@ -315,7 +313,11 @@ impl Daemon {
                 .lines()
                 .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
                 .find(|j| j.get("message_type").and_then(|v| v.as_str()) == Some("summary"))
-                .and_then(|j| j.get("snapshot_id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .and_then(|j| {
+                    j.get("snapshot_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
                 .unwrap_or_else(|| "unknown".to_string());
 
             // 2. Forget + prune
@@ -422,8 +424,7 @@ impl Daemon {
                                 .insert("kind".into(), "directory".into());
                             val.as_object_mut().unwrap().insert(
                                 "include".into(),
-                                serde_json::to_value(include)
-                                    .unwrap_or(serde_json::Value::Null),
+                                serde_json::to_value(include).unwrap_or(serde_json::Value::Null),
                             );
                         } else {
                             val.as_object_mut()
@@ -517,7 +518,9 @@ impl Daemon {
                 if ok && pending.swap(false, Ordering::Relaxed) {
                     // Initial send — service inventories/security will be
                     // collected on the first full 6h inventory tick.
-                    assessor.send_inventory(&url, &token, &iid, &hk, Vec::new(), Vec::new()).await;
+                    assessor
+                        .send_inventory(&url, &token, &iid, &hk, Vec::new(), Vec::new())
+                        .await;
                 }
             });
         }
@@ -539,7 +542,10 @@ impl Daemon {
                 self.svc_mgr.collect_service_security(),
             );
             #[cfg(not(feature = "services"))]
-            let (si, ss): (Vec<mac_mgmt_common::ServiceInventory>, Vec<mac_mgmt_common::ServiceSecurity>) = (Vec::new(), Vec::new());
+            let (si, ss): (
+                Vec<mac_mgmt_common::ServiceInventory>,
+                Vec<mac_mgmt_common::ServiceSecurity>,
+            ) = (Vec::new(), Vec::new());
 
             self.metrics.assessment.update_service_inventories(&si);
             self.metrics.assessment.update_service_security(&ss);
@@ -564,9 +570,7 @@ impl Daemon {
             let hk = Arc::clone(&self.host_key);
             let assessor = Arc::clone(&self.assessor);
             tokio::spawn(async move {
-                assessor
-                    .run_probes_filtered(&u, &t, &iid, &hk, kind)
-                    .await;
+                assessor.run_probes_filtered(&u, &t, &iid, &hk, kind).await;
             });
         }
     }
@@ -580,7 +584,10 @@ impl Daemon {
                 self.svc_mgr.collect_service_security(),
             );
             #[cfg(not(feature = "services"))]
-            let (si, ss): (Vec<mac_mgmt_common::ServiceInventory>, Vec<mac_mgmt_common::ServiceSecurity>) = (Vec::new(), Vec::new());
+            let (si, ss): (
+                Vec<mac_mgmt_common::ServiceInventory>,
+                Vec<mac_mgmt_common::ServiceSecurity>,
+            ) = (Vec::new(), Vec::new());
             let u = url.clone();
             let t = token.clone();
             let iid = self.instance_id.clone();
@@ -637,8 +644,10 @@ impl Daemon {
         let sample = self.assessor.latest_sample_snapshot();
         let sample_json = sample.as_ref().and_then(|s| serde_json::to_value(s).ok());
 
-        let file_tunnels = serde_json::to_value(self.svc_mgr.collect_file_tunnels()).unwrap_or_default();
-        let shell_tunnels = serde_json::to_value(self.svc_mgr.collect_shell_tunnels()).unwrap_or_default();
+        let file_tunnels =
+            serde_json::to_value(self.svc_mgr.collect_file_tunnels()).unwrap_or_default();
+        let shell_tunnels =
+            serde_json::to_value(self.svc_mgr.collect_shell_tunnels()).unwrap_or_default();
 
         let hostname = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
@@ -662,7 +671,12 @@ impl Daemon {
             model: None,
             label: None,
         };
-        let access = match self.healer.session_factory().build_access(&dummy_session).await {
+        let access = match self
+            .healer
+            .session_factory()
+            .build_access(&dummy_session)
+            .await
+        {
             Ok(a) => a,
             Err(e) => {
                 tracing::debug!(err = %e, "healer auto-trigger: failed to build access");
@@ -1274,21 +1288,27 @@ pub async fn run(
             mac_mgmt_healer::store::json_file::JsonFileStore::open(&store_dir)
                 .context("failed to open healer store")?,
         );
-        let instance_data: mac_mgmt_healer::DynInstanceData = std::sync::Arc::new(
-            crate::healer_bridge::LocalInstanceDataSource::new(Arc::clone(&assessor), instance_id.clone()),
-        );
-        let cloud_anthropic = cfg.cloud.iter().find(|c| {
-            c.enabled && c.provider == mac_mgmt_common::CloudProvider::Anthropic
-        });
-        let cloud_openrouter = cfg.cloud.iter().find(|c| {
-            c.enabled && c.provider == mac_mgmt_common::CloudProvider::Openrouter
-        });
+        let instance_data: mac_mgmt_healer::DynInstanceData =
+            std::sync::Arc::new(crate::healer_bridge::LocalInstanceDataSource::new(
+                Arc::clone(&assessor),
+                instance_id.clone(),
+            ));
+        let cloud_anthropic = cfg
+            .cloud
+            .iter()
+            .find(|c| c.enabled && c.provider == mac_mgmt_common::CloudProvider::Anthropic);
+        let cloud_openrouter = cfg
+            .cloud
+            .iter()
+            .find(|c| c.enabled && c.provider == mac_mgmt_common::CloudProvider::Openrouter);
         let connector_config = mac_mgmt_healer::connector::ConnectorConfig {
             ollama_url: Some(format!("http://{}:{}", cfg.ollama.host, cfg.ollama.port)),
             ollama_model: Some(cfg.ollama.default_model.clone()),
-            anthropic_api_key: cloud_anthropic.and_then(|c| c.api_key.as_ref().map(|s| s.expose().to_string())),
+            anthropic_api_key: cloud_anthropic
+                .and_then(|c| c.api_key.as_ref().map(|s| s.expose().to_string())),
             anthropic_model: None,
-            openrouter_api_key: cloud_openrouter.and_then(|c| c.api_key.as_ref().map(|s| s.expose().to_string())),
+            openrouter_api_key: cloud_openrouter
+                .and_then(|c| c.api_key.as_ref().map(|s| s.expose().to_string())),
             openrouter_model: None,
             openai_compat_api_key: None,
             openai_compat_url: None,
@@ -1299,13 +1319,11 @@ pub async fn run(
             validator_model: None,
             fine_tuned_model: cfg.healer.fine_tuned_model.clone(),
         };
-        let session_factory = std::sync::Arc::new(
-            crate::healer_bridge::LocalSessionFactory::new(
-                relay_mgr.file_tunnel_registry(),
-                relay_mgr.shell_tunnel_registry(),
-                log_buf.clone(),
-            ),
-        );
+        let session_factory = std::sync::Arc::new(crate::healer_bridge::LocalSessionFactory::new(
+            relay_mgr.file_tunnel_registry(),
+            relay_mgr.shell_tunnel_registry(),
+            log_buf.clone(),
+        ));
         Arc::new(mac_mgmt_healer::HealerState::new(
             store,
             instance_data,
@@ -1318,8 +1336,8 @@ pub async fn run(
     #[cfg(feature = "memvault")]
     let memvault_handle = if cfg.memvault.enabled {
         let memvault_peer_id = {
-            use sha2::{Digest, Sha256};
             use russh::keys::PublicKeyBase64;
+            use sha2::{Digest, Sha256};
             Sha256::digest(&host_key.public_key_bytes()).to_vec()
         };
         match crate::memvault::MemvaultHandle::init(&cfg.memvault, memvault_peer_id).await {
@@ -1647,7 +1665,9 @@ pub async fn run(
         // Use argv[0] (the symlink) — it was already updated to point to
         // the new binary. This way exec goes through the symlink and picks
         // up the new version, rather than exec'ing the resolved store path.
-        let argv0 = std::env::args().next().unwrap_or_else(|| "mac-mgmt".to_string());
+        let argv0 = std::env::args()
+            .next()
+            .unwrap_or_else(|| "mac-mgmt".to_string());
         let args: Vec<String> = std::env::args().skip(1).collect();
         tracing::info!("exec'ing via {argv0}");
         let err = std::process::Command::new(&argv0).args(&args).exec();
@@ -1695,9 +1715,13 @@ async fn fetch_server_json<T: serde::de::DeserializeOwned>(
 async fn fetch_target_version(server_url: &str, server_token: &str) {
     let system = crate::nix::current_system().unwrap_or("");
     let path = format!("/api/update?system={system}");
-    if let Some(info) =
-        fetch_server_json::<mac_mgmt_common::UpdateTarget>(server_url, server_token, &path, "update target")
-            .await
+    if let Some(info) = fetch_server_json::<mac_mgmt_common::UpdateTarget>(
+        server_url,
+        server_token,
+        &path,
+        "update target",
+    )
+    .await
     {
         if let Some(ver) = info.target_version {
             tracing::info!(
@@ -1723,11 +1747,19 @@ async fn fetch_nix_caches(server_url: &str, server_token: &str) {
         url: String,
         public_key: String,
     }
-    if let Some(resp) =
-        fetch_server_json::<NixCachesResponse>(server_url, server_token, "/api/nix-caches", "nix caches")
-            .await
+    if let Some(resp) = fetch_server_json::<NixCachesResponse>(
+        server_url,
+        server_token,
+        "/api/nix-caches",
+        "nix caches",
+    )
+    .await
     {
-        let caches: Vec<(String, String)> = resp.caches.into_iter().map(|c| (c.url, c.public_key)).collect();
+        let caches: Vec<(String, String)> = resp
+            .caches
+            .into_iter()
+            .map(|c| (c.url, c.public_key))
+            .collect();
         tracing::info!("server returned {} nix cache(s)", caches.len());
         crate::nix::set_nix_caches(caches);
     }
@@ -1735,9 +1767,13 @@ async fn fetch_nix_caches(server_url: &str, server_token: &str) {
 
 /// Fetch the cluster's nixpkgs commit pin from the server and apply it.
 async fn fetch_nixpkgs_pin(server_url: &str, server_token: &str) {
-    if let Some(pin) =
-        fetch_server_json::<mac_mgmt_common::NixpkgsPin>(server_url, server_token, "/api/nixpkgs", "nixpkgs pin")
-            .await
+    if let Some(pin) = fetch_server_json::<mac_mgmt_common::NixpkgsPin>(
+        server_url,
+        server_token,
+        "/api/nixpkgs",
+        "nixpkgs pin",
+    )
+    .await
     {
         tracing::info!("server nixpkgs pin: {:?}", pin.commit);
         crate::nix::set_nixpkgs_commit(pin.commit);
@@ -1944,12 +1980,25 @@ pub async fn run_sim(
 
     #[cfg(feature = "healer")]
     let healer_sim = {
-        let ft = std::sync::Arc::new(tokio::sync::RwLock::new(crate::file_tunnels::FileTunnelRegistry::new()));
-        let st = std::sync::Arc::new(tokio::sync::RwLock::new(crate::shell_tunnels::ShellTunnelRegistry::new()));
+        let ft = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::file_tunnels::FileTunnelRegistry::new(),
+        ));
+        let st = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::shell_tunnels::ShellTunnelRegistry::new(),
+        ));
         Arc::new(mac_mgmt_healer::HealerState::new(
-            std::sync::Arc::new(mac_mgmt_healer::store::json_file::JsonFileStore::open("/tmp/healer-sim").unwrap()),
-            std::sync::Arc::new(crate::healer_bridge::LocalInstanceDataSource::new(Arc::clone(&assessor), instance_id.clone())),
-            std::sync::Arc::new(crate::healer_bridge::LocalSessionFactory::new(ft, st, crate::log_buffer::LogBuffer::new())),
+            std::sync::Arc::new(
+                mac_mgmt_healer::store::json_file::JsonFileStore::open("/tmp/healer-sim").unwrap(),
+            ),
+            std::sync::Arc::new(crate::healer_bridge::LocalInstanceDataSource::new(
+                Arc::clone(&assessor),
+                instance_id.clone(),
+            )),
+            std::sync::Arc::new(crate::healer_bridge::LocalSessionFactory::new(
+                ft,
+                st,
+                crate::log_buffer::LogBuffer::new(),
+            )),
             mac_mgmt_healer::connector::ConnectorConfig::default(),
         ))
     };
@@ -2227,10 +2276,20 @@ pub async fn run_sim_with_services(
 
     #[cfg(feature = "healer")]
     let healer = Arc::new(mac_mgmt_healer::HealerState::new(
-        std::sync::Arc::new(mac_mgmt_healer::store::json_file::JsonFileStore::open(config::config_dir().join("healer")).unwrap()),
-        std::sync::Arc::new(crate::healer_bridge::LocalInstanceDataSource::new(Arc::clone(&assessor), instance_id.clone())),
+        std::sync::Arc::new(
+            mac_mgmt_healer::store::json_file::JsonFileStore::open(
+                config::config_dir().join("healer"),
+            )
+            .unwrap(),
+        ),
+        std::sync::Arc::new(crate::healer_bridge::LocalInstanceDataSource::new(
+            Arc::clone(&assessor),
+            instance_id.clone(),
+        )),
         std::sync::Arc::new(crate::healer_bridge::LocalSessionFactory::new(
-            relay_mgr.file_tunnel_registry(), relay_mgr.shell_tunnel_registry(), log_buf.clone(),
+            relay_mgr.file_tunnel_registry(),
+            relay_mgr.shell_tunnel_registry(),
+            log_buf.clone(),
         )),
         mac_mgmt_healer::connector::ConnectorConfig::default(),
     ));
@@ -2366,9 +2425,7 @@ pub async fn run_sim_with_services(
 /// if `/nix/store` doesn't exist or can't be matched.
 fn nix_store_mount() -> String {
     use std::os::unix::fs::MetadataExt;
-    let nix_dev = std::fs::metadata("/nix/store")
-        .ok()
-        .map(|m| m.dev());
+    let nix_dev = std::fs::metadata("/nix/store").ok().map(|m| m.dev());
     if let Some(dev) = nix_dev {
         // Walk the tracked mounts and pick the longest prefix whose dev matches.
         for candidate in &["/nix/store", "/nix", "/"] {

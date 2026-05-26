@@ -48,9 +48,7 @@ impl ManagedService for MemvaultService {
     fn check_health(&self) -> Result<bool> {
         // Sync fallback — check that the store file exists.
         let data_dir = if self.config.data_dir.is_empty() {
-            dirs::data_local_dir()
-                .unwrap_or_default()
-                .join("memvault")
+            dirs::data_local_dir().unwrap_or_default().join("memvault")
         } else {
             std::path::PathBuf::from(&self.config.data_dir)
         };
@@ -98,9 +96,7 @@ impl ManagedService for MemvaultService {
     }
 
     /// Static inventory: cluster ID, data dir, configuration.
-    fn service_inventory(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Vec<InventoryEntry>> + Send + '_>> {
+    fn service_inventory(&self) -> Pin<Box<dyn Future<Output = Vec<InventoryEntry>> + Send + '_>> {
         Box::pin(async move {
             let mut entries = vec![
                 InventoryEntry {
@@ -163,9 +159,7 @@ impl ManagedService for MemvaultService {
     }
 
     /// Dynamic sample: current store size, block count (lightweight).
-    fn service_sample(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Vec<InventoryEntry>> + Send + '_>> {
+    fn service_sample(&self) -> Pin<Box<dyn Future<Output = Vec<InventoryEntry>> + Send + '_>> {
         Box::pin(async move {
             let mut entries = Vec::new();
 

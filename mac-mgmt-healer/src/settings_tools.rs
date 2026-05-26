@@ -29,7 +29,9 @@ macro_rules! settings_tool {
             pub fn new(ctx: ToolContext) -> Box<dyn Tool> {
                 Box::new(Self { ctx })
             }
-            pub fn risk() -> ToolRisk { $risk }
+            pub fn risk() -> ToolRisk {
+                $risk
+            }
             pub fn new_with_risk(ctx: ToolContext) -> (Box<dyn Tool>, ToolRisk) {
                 (Box::new(Self { ctx }), $risk)
             }
@@ -84,7 +86,9 @@ macro_rules! settings_tool {
             pub fn new(ctx: ToolContext) -> Box<dyn Tool> {
                 Box::new(Self { ctx })
             }
-            pub fn risk() -> ToolRisk { $risk }
+            pub fn risk() -> ToolRisk {
+                $risk
+            }
             pub fn new_with_risk(ctx: ToolContext) -> (Box<dyn Tool>, ToolRisk) {
                 (Box::new(Self { ctx }), $risk)
             }
@@ -628,7 +632,10 @@ settings_tool! {
 ///
 /// When `diagnosis_only` is true, mutating tools (patch_config, set_config,
 /// add/remove skill/mcp, send_push, request_assessment) are omitted.
-pub fn all_settings_tools_with_risk(ctx: ToolContext, diagnosis_only: bool) -> Vec<(Box<dyn Tool>, ToolRisk)> {
+pub fn all_settings_tools_with_risk(
+    ctx: ToolContext,
+    diagnosis_only: bool,
+) -> Vec<(Box<dyn Tool>, ToolRisk)> {
     let mut tools: Vec<(Box<dyn Tool>, ToolRisk)> = vec![
         WaitTool::new_with_risk(ctx.clone()),
         GetConfigTool::new_with_risk(ctx.clone()),

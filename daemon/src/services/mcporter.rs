@@ -96,7 +96,9 @@ impl ManagedService for McPorter {
 
     fn service_inventory(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         use mac_mgmt_common::{InventoryEntry, InventoryValueType};
         Box::pin(async {
             let mut entries = Vec::new();

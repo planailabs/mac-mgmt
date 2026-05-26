@@ -10,7 +10,7 @@ use crate::web::components::ui::{
     ChartColor, Dot, ErrorText, HelpText, KpiCard, Mono, PageHero, Pill, PillVariant,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FleetEntry {
@@ -195,13 +195,17 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
 }
 
 #[server]
-async fn get_commit_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
+async fn get_commit_counts(
+    shas: Vec<String>,
+) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
     let set: std::collections::HashSet<String> = shas.into_iter().collect();
     Ok(crate::commit_count::mac_mgmt_commit_counts(&set).await)
 }
 
 #[server]
-async fn get_nixpkgs_commit_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
+async fn get_nixpkgs_commit_counts(
+    shas: Vec<String>,
+) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
     let set: std::collections::HashSet<String> = shas.into_iter().collect();
     Ok(crate::commit_count::nixpkgs_commit_counts(&set).await)
 }
@@ -408,7 +412,10 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
     // Fetch commit counts async for all unique SHAs in the current data.
     // Both mac-mgmt and nixpkgs counts are fetched in a single resource
     // to avoid double-borrowing the data signal.
-    type CountPair = (std::collections::HashMap<String, u64>, std::collections::HashMap<String, u64>);
+    type CountPair = (
+        std::collections::HashMap<String, u64>,
+        std::collections::HashMap<String, u64>,
+    );
     let all_counts = use_resource(move || async move {
         let entries = data.read();
         let (git_shas, nix_shas): (Vec<String>, Vec<String>) = entries
@@ -438,12 +445,15 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
         let nix_counts = if nix_shas.is_empty() {
             std::collections::HashMap::new()
         } else {
-            get_nixpkgs_commit_counts(nix_shas).await.unwrap_or_default()
+            get_nixpkgs_commit_counts(nix_shas)
+                .await
+                .unwrap_or_default()
         };
         (git_counts, nix_counts) as CountPair
     });
     let counts_read = all_counts.read();
-    let (counts, nix_counts) = counts_read.as_ref()
+    let (counts, nix_counts) = counts_read
+        .as_ref()
         .map(|(g, n)| (Some(g), Some(n)))
         .unwrap_or((None, None));
 
@@ -499,11 +509,15 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                             let av = parse_semver(&a.version);
                             let bv = parse_semver(&b.version);
                             av.cmp(&bv).then_with(|| {
-                                let ac = a.git_sha.as_ref()
+                                let ac = a
+                                    .git_sha
+                                    .as_ref()
                                     .and_then(|sha| counts.and_then(|m| m.get(sha)))
                                     .copied()
                                     .unwrap_or(0);
-                                let bc = b.git_sha.as_ref()
+                                let bc = b
+                                    .git_sha
+                                    .as_ref()
                                     .and_then(|sha| counts.and_then(|m| m.get(sha)))
                                     .copied()
                                     .unwrap_or(0);

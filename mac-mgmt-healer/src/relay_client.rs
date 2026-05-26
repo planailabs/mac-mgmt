@@ -90,11 +90,15 @@ impl RelayClient {
     }
 
     fn req(&self, url: &str) -> reqwest::RequestBuilder {
-        self.http.get(url).header("x-proxy-token", &self.proxy_token)
+        self.http
+            .get(url)
+            .header("x-proxy-token", &self.proxy_token)
     }
 
     fn post_req(&self, url: &str) -> reqwest::RequestBuilder {
-        self.http.post(url).header("x-proxy-token", &self.proxy_token)
+        self.http
+            .post(url)
+            .header("x-proxy-token", &self.proxy_token)
     }
 
     // ── Daemon connectivity ────────────────────────────────────────────
@@ -138,8 +142,14 @@ impl RelayClient {
     /// Check if we've received a recent heartbeat (within 2 minutes).
     /// The daemon may be alive and heartbeating to the server even when
     /// its relay WS connection is down.
-    async fn check_recent_heartbeat(&self, data: &dyn crate::instance_data::InstanceDataSource, instance_id: &str) -> bool {
-        data.has_recent_heartbeat(instance_id).await.unwrap_or(false)
+    async fn check_recent_heartbeat(
+        &self,
+        data: &dyn crate::instance_data::InstanceDataSource,
+        instance_id: &str,
+    ) -> bool {
+        data.has_recent_heartbeat(instance_id)
+            .await
+            .unwrap_or(false)
     }
 
     /// Wait for the daemon to reconnect to the relay (up to 10 minutes).
@@ -243,7 +253,11 @@ impl RelayClient {
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<reqwest::Response, reqwest::Error>>,
     {
-        tracing::debug!(instance = instance_prefix, label, "guarded_request: sending");
+        tracing::debug!(
+            instance = instance_prefix,
+            label,
+            "guarded_request: sending"
+        );
         match make_request().await {
             Ok(resp) if is_daemon_offline_status(resp.status()) => {
                 tracing::warn!(
@@ -534,21 +548,13 @@ impl RelayInstanceAccess {
 
 #[async_trait::async_trait]
 impl crate::instance_access::InstanceAccess for RelayInstanceAccess {
-    async fn file_list(
-        &self,
-        tunnel_name: &str,
-        path: Option<&str>,
-    ) -> Result<serde_json::Value> {
+    async fn file_list(&self, tunnel_name: &str, path: Option<&str>) -> Result<serde_json::Value> {
         self.relay
             .file_list(&self.instance_prefix, tunnel_name, path)
             .await
     }
 
-    async fn file_read(
-        &self,
-        tunnel_name: &str,
-        path: &str,
-    ) -> Result<FileReadResult> {
+    async fn file_read(&self, tunnel_name: &str, path: &str) -> Result<FileReadResult> {
         self.relay
             .file_read(&self.instance_prefix, tunnel_name, path)
             .await
@@ -562,15 +568,17 @@ impl crate::instance_access::InstanceAccess for RelayInstanceAccess {
         expected_mtime: Option<i64>,
     ) -> Result<serde_json::Value> {
         self.relay
-            .file_write(&self.instance_prefix, tunnel_name, path, content, expected_mtime)
+            .file_write(
+                &self.instance_prefix,
+                tunnel_name,
+                path,
+                content,
+                expected_mtime,
+            )
             .await
     }
 
-    async fn shell_exec(
-        &self,
-        command_name: &str,
-        user_arg: Option<&str>,
-    ) -> Result<ShellOutput> {
+    async fn shell_exec(&self, command_name: &str, user_arg: Option<&str>) -> Result<ShellOutput> {
         self.relay
             .shell_exec(&self.instance_prefix, command_name, user_arg)
             .await

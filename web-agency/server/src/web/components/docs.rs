@@ -86,7 +86,12 @@ async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
                 .get("ordering_override")
                 .and_then(|v| v.parse::<i32>().ok())
                 .unwrap_or(0);
-            entries.push(DocEntry { slug, title, audience, ordering });
+            entries.push(DocEntry {
+                slug,
+                title,
+                audience,
+                ordering,
+            });
         }
     }
 
@@ -107,8 +112,8 @@ async fn get_doc(slug: String) -> Result<DocContent, ServerFnError> {
     use pulldown_cmark::{Options, Parser, html};
 
     let filename = format!("{slug}.md");
-    let file = DocsAssets::get(&filename)
-        .ok_or_else(|| ServerFnError::new("document not found"))?;
+    let file =
+        DocsAssets::get(&filename).ok_or_else(|| ServerFnError::new("document not found"))?;
 
     let content = std::str::from_utf8(file.data.as_ref())
         .map_err(|e| ServerFnError::new(format!("invalid UTF-8: {e}")))?;
@@ -117,12 +122,17 @@ async fn get_doc(slug: String) -> Result<DocContent, ServerFnError> {
     let title = extract_title(body);
     let audience = meta.get("audience").cloned().unwrap_or_default();
 
-    let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let options =
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(body, options);
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);
 
-    Ok(DocContent { title, html: html_output, audience })
+    Ok(DocContent {
+        title,
+        html: html_output,
+        audience,
+    })
 }
 
 // ── Components ────────────────────────────────────────────────────────
@@ -145,10 +155,28 @@ pub fn DocList() -> Element {
         _ => vec![],
     };
 
-    let user_docs: Vec<_> = entries.iter().filter(|e| e.audience == "user").cloned().collect();
-    let dev_docs: Vec<_> = entries.iter().filter(|e| e.audience == "developer").cloned().collect();
-    let admin_docs: Vec<_> = entries.iter().filter(|e| e.audience == "admin").cloned().collect();
-    let other_docs: Vec<_> = entries.iter().filter(|e| e.audience.is_empty() || !["user", "developer", "admin"].contains(&e.audience.as_str())).cloned().collect();
+    let user_docs: Vec<_> = entries
+        .iter()
+        .filter(|e| e.audience == "user")
+        .cloned()
+        .collect();
+    let dev_docs: Vec<_> = entries
+        .iter()
+        .filter(|e| e.audience == "developer")
+        .cloned()
+        .collect();
+    let admin_docs: Vec<_> = entries
+        .iter()
+        .filter(|e| e.audience == "admin")
+        .cloned()
+        .collect();
+    let other_docs: Vec<_> = entries
+        .iter()
+        .filter(|e| {
+            e.audience.is_empty() || !["user", "developer", "admin"].contains(&e.audience.as_str())
+        })
+        .cloned()
+        .collect();
 
     rsx! {
         PageHeader { "Documentation" }

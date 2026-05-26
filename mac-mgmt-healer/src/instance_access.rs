@@ -39,18 +39,10 @@ pub struct FileReadResult {
 #[async_trait]
 pub trait InstanceAccess: Send + Sync + 'static {
     /// List files in a file tunnel directory.
-    async fn file_list(
-        &self,
-        tunnel_name: &str,
-        path: Option<&str>,
-    ) -> Result<serde_json::Value>;
+    async fn file_list(&self, tunnel_name: &str, path: Option<&str>) -> Result<serde_json::Value>;
 
     /// Read a file from a file tunnel.
-    async fn file_read(
-        &self,
-        tunnel_name: &str,
-        path: &str,
-    ) -> Result<FileReadResult>;
+    async fn file_read(&self, tunnel_name: &str, path: &str) -> Result<FileReadResult>;
 
     /// Write a file to a file tunnel. `expected_mtime` enables optimistic concurrency.
     async fn file_write(
@@ -62,11 +54,7 @@ pub trait InstanceAccess: Send + Sync + 'static {
     ) -> Result<serde_json::Value>;
 
     /// Execute a predefined shell command.
-    async fn shell_exec(
-        &self,
-        command_name: &str,
-        user_arg: Option<&str>,
-    ) -> Result<ShellOutput>;
+    async fn shell_exec(&self, command_name: &str, user_arg: Option<&str>) -> Result<ShellOutput>;
 
     /// Fetch recent log lines, optionally filtered by service.
     async fn log_fetch(

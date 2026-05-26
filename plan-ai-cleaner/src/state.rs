@@ -33,15 +33,9 @@ impl SharedState {
 
     /// Allocate a new placeholder ID for the given session and category.
     /// Returns something like "PERSON_1", "EMAIL_2", etc.
-    pub async fn next_placeholder(
-        &self,
-        session_id: &str,
-        category: EntityCategory,
-    ) -> String {
+    pub async fn next_placeholder(&self, session_id: &str, category: EntityCategory) -> String {
         let mut counters = self.inner.counters.write().await;
-        let session_counters = counters
-            .entry(session_id.to_string())
-            .or_default();
+        let session_counters = counters.entry(session_id.to_string()).or_default();
         let count = session_counters.entry(category).or_insert(0);
         *count += 1;
         format!("{}_{}", category.prefix(), count)

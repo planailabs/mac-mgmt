@@ -6,9 +6,9 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::*;
 use crate::instance_data::InstanceDataSource;
 use crate::session::models::{HealerMessage, HealerSession, SessionState, StaffPing};
-use super::*;
 
 /// [`HealerStore`] backed by a Postgres connection pool.
 #[derive(Clone)]
@@ -609,12 +609,10 @@ impl HealerStore for PgHealerStore {
     }
 
     async fn get_token_usage(&self, session_id: Uuid) -> Result<u64> {
-        let used: i64 = sqlx::query_scalar(
-            "SELECT tokens_used FROM healer_sessions WHERE id = $1",
-        )
-        .bind(session_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let used: i64 = sqlx::query_scalar("SELECT tokens_used FROM healer_sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_one(&self.pool)
+            .await?;
         Ok(used as u64)
     }
 
@@ -628,12 +626,11 @@ impl HealerStore for PgHealerStore {
     }
 
     async fn get_token_budget(&self, session_id: Uuid) -> Result<u64> {
-        let budget: i64 = sqlx::query_scalar(
-            "SELECT token_budget FROM healer_sessions WHERE id = $1",
-        )
-        .bind(session_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let budget: i64 =
+            sqlx::query_scalar("SELECT token_budget FROM healer_sessions WHERE id = $1")
+                .bind(session_id)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(budget as u64)
     }
 }

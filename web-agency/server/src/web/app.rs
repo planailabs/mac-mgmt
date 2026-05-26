@@ -28,8 +28,7 @@ use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
 use super::components::user_list::UserList;
 use super::components::webspace_changedetection::{
-    WebspaceChangedetection, WebspaceChangedetectionNotification,
-    WebspaceChangedetectionSuburl,
+    WebspaceChangedetection, WebspaceChangedetectionNotification, WebspaceChangedetectionSuburl,
 };
 use super::components::webspace_detail::WebspaceDetail;
 use super::components::webspace_form::WebspaceForm;

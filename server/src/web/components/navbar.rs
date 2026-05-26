@@ -62,7 +62,10 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
         Route::FleetDashboard { stage_id: None },
         "nav-fleet".to_string(),
     ));
-    overview_links.push(NavLink::Internal(Route::EasyAccess {}, "nav-easy-access".to_string()));
+    overview_links.push(NavLink::Internal(
+        Route::EasyAccess {},
+        "nav-easy-access".to_string(),
+    ));
     let mut groups = vec![NavGroup {
         title: "nav-overview".to_string(),
         links: overview_links,
@@ -81,19 +84,23 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
 
         groups.push(NavGroup {
             title: "nav-import".to_string(),
-            links: vec![
-                NavLink::Internal(
-                    Route::ImportSources { prefill_slug: None, prefill_name: None },
-                    "nav-import-sources".to_string(),
-                ),
-            ],
+            links: vec![NavLink::Internal(
+                Route::ImportSources {
+                    prefill_slug: None,
+                    prefill_name: None,
+                },
+                "nav-import-sources".to_string(),
+            )],
         });
 
         groups.push(NavGroup {
             title: "nav-admin".to_string(),
             links: vec![
                 NavLink::Internal(Route::AdminTokens {}, "nav-admin-tokens".to_string()),
-                NavLink::Internal(Route::AdminClientCerts {}, "nav-admin-client-certs".to_string()),
+                NavLink::Internal(
+                    Route::AdminClientCerts {},
+                    "nav-admin-client-certs".to_string(),
+                ),
                 NavLink::Internal(Route::AdminClientCas {}, "nav-admin-client-cas".to_string()),
                 NavLink::Internal(Route::StaffPings {}, "nav-staff-pings".to_string()),
                 NavLink::Internal(Route::OrganizationList {}, "nav-organizations".to_string()),
@@ -106,7 +113,10 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
             title: "nav-version".to_string(),
             links: vec![
                 NavLink::Internal(Route::RolloutList {}, "nav-rollouts".to_string()),
-                NavLink::Internal(Route::DaemonVersionList {}, "nav-daemon-versions".to_string()),
+                NavLink::Internal(
+                    Route::DaemonVersionList {},
+                    "nav-daemon-versions".to_string(),
+                ),
             ],
         });
     }
@@ -208,21 +218,21 @@ fn route_active(link: &Route, current: &Route) -> bool {
         (
             FleetDashboard { .. },
             FleetDashboard { .. }
-                | FleetDetail { .. }
-                | FleetFiles { .. }
-                | FleetShell { .. }
-                | FleetLogs { .. }
-                | FleetHealer { .. }
-                | FleetHealerSession { .. },
+            | FleetDetail { .. }
+            | FleetFiles { .. }
+            | FleetShell { .. }
+            | FleetLogs { .. }
+            | FleetHealer { .. }
+            | FleetHealerSession { .. },
         ) => true,
         // Clusters area — list + detail + sub-pages + form.
         (
             ClusterList { .. },
             ClusterList { .. }
-                | ClusterDetail { .. }
-                | ClusterConfigPage { .. }
-                | ClusterPackagesPage { .. }
-                | ClusterForm { .. },
+            | ClusterDetail { .. }
+            | ClusterConfigPage { .. }
+            | ClusterPackagesPage { .. }
+            | ClusterForm { .. },
         ) => true,
         // Skills, MCP, Bundles, Rollouts, Orgs, Users, Skill Centers,
         // Daemon Versions, Import Sources, Docs all light their list
@@ -230,7 +240,10 @@ fn route_active(link: &Route, current: &Route) -> bool {
         (SkillList { .. }, SkillList { .. } | SkillDetail { .. }) => true,
         (
             McpServerList { .. },
-            McpServerList { .. } | McpServerDetail { .. } | McpServerEdit { .. } | McpServerForm { .. },
+            McpServerList { .. }
+            | McpServerDetail { .. }
+            | McpServerEdit { .. }
+            | McpServerForm { .. },
         ) => true,
         (
             McpBundleList { .. },
@@ -240,10 +253,10 @@ fn route_active(link: &Route, current: &Route) -> bool {
         (
             RolloutList { .. },
             RolloutList { .. }
-                | RolloutDetail { .. }
-                | RolloutForm { .. }
-                | RolloutGroupList { .. }
-                | RolloutGroupDetail { .. },
+            | RolloutDetail { .. }
+            | RolloutForm { .. }
+            | RolloutGroupList { .. }
+            | RolloutGroupDetail { .. },
         ) => true,
         (
             OrganizationList { .. },
@@ -254,16 +267,13 @@ fn route_active(link: &Route, current: &Route) -> bool {
             SkillCenterList { .. },
             SkillCenterList { .. } | SkillCenterDetail { .. } | SkillCenterForm { .. },
         ) => true,
-        (
-            DaemonVersionList { .. },
-            DaemonVersionList { .. } | DaemonVersionDetail { .. },
-        ) => true,
+        (DaemonVersionList { .. }, DaemonVersionList { .. } | DaemonVersionDetail { .. }) => true,
         (
             ImportSources { .. },
             ImportSources { .. }
-                | ImportSourcesSearch { .. }
-                | ImportSourceDetail { .. }
-                | ImportSourceEdit { .. },
+            | ImportSourcesSearch { .. }
+            | ImportSourceDetail { .. }
+            | ImportSourceEdit { .. },
         ) => true,
         (DocList { .. }, DocList { .. } | DocPage { .. }) => true,
         // Single-page entries — match exact variant.
@@ -281,12 +291,14 @@ fn NavGroupList(
     /// Optional callback fired when an internal link is clicked. The
     /// mobile drawer uses this to close itself; the sidebar passes
     /// `None`.
-    #[props(default)] on_navigate: Option<EventHandler<()>>,
+    #[props(default)]
+    on_navigate: Option<EventHandler<()>>,
     /// When true (desktop sidebar only), each group header is a
     /// collapse toggle. The mobile drawer passes `false` so users
     /// always see every link — matches the always-expanded mobile
     /// pattern of most chrome.
-    #[props(default = false)] collapsible: bool,
+    #[props(default = false)]
+    collapsible: bool,
 ) -> Element {
     rsx! {
         // `min-h-0` is the flexbox escape hatch that lets this child
@@ -448,11 +460,7 @@ pub fn Sidebar(is_admin: bool) -> Element {
 // -- Mobile drawer ---------------------------------------------------------
 
 #[component]
-pub fn MobileDrawer(
-    is_admin: bool,
-    display_name: String,
-    is_open: Signal<bool>,
-) -> Element {
+pub fn MobileDrawer(is_admin: bool, display_name: String, is_open: Signal<bool>) -> Element {
     let open = *is_open.read();
 
     let swagger_fut = use_server_future(get_swagger_url);

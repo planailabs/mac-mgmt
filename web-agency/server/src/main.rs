@@ -58,7 +58,9 @@ async fn init_server() -> sqlx::PgPool {
             let token = hex::encode(token_bytes);
             match std::fs::write(path, &token) {
                 Ok(()) => tracing::info!(path = %path.display(), "generated internal API token"),
-                Err(e) => tracing::error!(path = %path.display(), "failed to write internal token: {e}"),
+                Err(e) => {
+                    tracing::error!(path = %path.display(), "failed to write internal token: {e}")
+                }
             }
         }
     }
@@ -121,7 +123,11 @@ async fn cert_renewal_tick(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     for domain in &expiring {
         tracing::info!(domain, "renewing expiring cert");
         match api::acme::issue_cert(pool, domain).await {
-            Ok(()) => { counters.cert_renewal_success.fetch_add(1, Ordering::Relaxed); }
+            Ok(()) => {
+                counters
+                    .cert_renewal_success
+                    .fetch_add(1, Ordering::Relaxed);
+            }
             Err(e) => {
                 tracing::error!(domain, "renewal failed: {e}");
                 counters.cert_renewal_failed.fetch_add(1, Ordering::Relaxed);
@@ -149,10 +155,16 @@ async fn cert_renewal_tick(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     for domain in &missing {
         tracing::info!(domain, "issuing cert for new domain");
         match api::acme::issue_cert(pool, domain).await {
-            Ok(()) => { counters.cert_issuance_success.fetch_add(1, Ordering::Relaxed); }
+            Ok(()) => {
+                counters
+                    .cert_issuance_success
+                    .fetch_add(1, Ordering::Relaxed);
+            }
             Err(e) => {
                 tracing::error!(domain, "issuance failed: {e}");
-                counters.cert_issuance_failed.fetch_add(1, Ordering::Relaxed);
+                counters
+                    .cert_issuance_failed
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -185,8 +197,8 @@ fn main() {
     #[cfg(all(feature = "server", feature = "webui"))]
     {
         use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
-        use std::sync::{Arc, OnceLock};
         use std::sync::atomic::AtomicUsize;
+        use std::sync::{Arc, OnceLock};
 
         static INIT: OnceLock<Option<Vec<plan_ai_auth::AuthLayer>>> = OnceLock::new();
         static ACTIVE_DEPLOYS: OnceLock<Arc<AtomicUsize>> = OnceLock::new();
@@ -259,21 +271,30 @@ fn main() {
             // routers do their own Bearer-token check and must NOT be
             // wrapped, otherwise unauthenticated requests get redirected to
             // /auth/login before their handler-level auth runs.
-            let mut web_router = axum::Router::new()
-                .serve_dioxus_application(ServeConfig::new(), web::app::App);
+            let mut web_router =
+                axum::Router::new().serve_dioxus_application(ServeConfig::new(), web::app::App);
 
             if let Some(auth_layers) = auth_layers {
                 web_router = web_router
                     .route("/auth/login", axum::routing::get(plan_ai_auth::login_page))
-                    .route("/auth/logout", axum::routing::get(plan_ai_auth::logout_handler))
-                    .route("/proxy-gate", axum::routing::get(crate::api::internal::proxy_gate))
+                    .route(
+                        "/auth/logout",
+                        axum::routing::get(plan_ai_auth::logout_handler),
+                    )
+                    .route(
+                        "/proxy-gate",
+                        axum::routing::get(crate::api::internal::proxy_gate),
+                    )
                     .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
                 for layer in auth_layers {
                     web_router = web_router.layer(layer);
                 }
             } else if dev_no_auth {
                 web_router = web_router
-                    .route("/proxy-gate", axum::routing::get(crate::api::internal::proxy_gate))
+                    .route(
+                        "/proxy-gate",
+                        axum::routing::get(crate::api::internal::proxy_gate),
+                    )
                     .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
             }
 
@@ -303,10 +324,11 @@ fn main() {
             });
 
             // Mount changedetection webhook API (secret-in-URL auth)
-            let cd_router =
-                crate::api::changedetection::router(crate::api::changedetection::ChangeDetectionState {
+            let cd_router = crate::api::changedetection::router(
+                crate::api::changedetection::ChangeDetectionState {
                     pool: crate::server_pool().expect("pool for changedetection API"),
-                });
+                },
+            );
 
             let router = axum::Router::new()
                 .merge(deploy_router)

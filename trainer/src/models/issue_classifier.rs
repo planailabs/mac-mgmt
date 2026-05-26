@@ -1,8 +1,8 @@
 use burn::config::Config;
 use burn::module::Module;
 use burn::nn::{Dropout, DropoutConfig, Linear, LinearConfig};
-use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::Tensor;
+use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::train::{TrainOutput, TrainStep, ValidStep};
 
 use crate::export::dataset::IssueClassifierBatch;
@@ -73,9 +73,11 @@ impl IssueClassifierConfig {
 
 impl<B: Backend> IssueClassifier<B> {
     pub fn forward(&self, batch: &IssueClassifierBatch<B>) -> Tensor<B, 2> {
-        let encoded =
-            self.encoder
-                .forward(batch.tokens.clone(), batch.roles.clone(), batch.mask.clone());
+        let encoded = self.encoder.forward(
+            batch.tokens.clone(),
+            batch.roles.clone(),
+            batch.mask.clone(),
+        );
         let pooled = self.encoder.pool(encoded, batch.mask.clone());
         let pooled = self.dropout.forward(pooled);
         self.category_head.forward(pooled) // [batch, NUM_CATEGORIES]

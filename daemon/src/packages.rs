@@ -77,8 +77,7 @@ fn write_state(state: &PackageState) -> Result<()> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let json =
-        serde_json::to_string_pretty(state).context("failed to serialize package state")?;
+    let json = serde_json::to_string_pretty(state).context("failed to serialize package state")?;
     std::fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
@@ -155,7 +154,11 @@ pub async fn sync_packages(server_url: &str, token: &str) -> Result<bool> {
     let to_install: Vec<&String> = desired.difference(&current).collect();
     for pkg in &to_install {
         tracing::info!("installing package: {pkg}");
-        sentry_ext::breadcrumb("pkg-sync", &format!("installing {pkg}"), &[("package", pkg)]);
+        sentry_ext::breadcrumb(
+            "pkg-sync",
+            &format!("installing {pkg}"),
+            &[("package", pkg)],
+        );
         if let Err(e) = crate::nix::profile_install(pkg, false) {
             tracing::warn!("failed to install package {pkg}: {e}");
             sentry_ext::capture_error(

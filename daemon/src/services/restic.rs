@@ -77,7 +77,10 @@ impl ManagedService for Restic {
 
         // Generate password file if it doesn't exist.
         if !password_file.exists() {
-            tracing::info!("generating restic password file at {}", password_file.display());
+            tracing::info!(
+                "generating restic password file at {}",
+                password_file.display()
+            );
             if let Some(parent) = password_file.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -101,7 +104,10 @@ impl ManagedService for Restic {
             sentry_ext::breadcrumb(
                 "setup",
                 "initializing restic repository",
-                &[("service", "restic"), ("repository", &self.config.repository)],
+                &[
+                    ("service", "restic"),
+                    ("repository", &self.config.repository),
+                ],
             );
             let output = crate::cmd::output_with_timeout(
                 Command::new("restic")

@@ -55,8 +55,7 @@ impl ProxyConfig {
 
 pub fn load() -> &'static ProxyConfig {
     CONFIG.get_or_init(|| {
-        let path =
-            std::env::var("CONFIG_PATH").unwrap_or_else(|_| "./config.toml".to_string());
+        let path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "./config.toml".to_string());
         let content = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("failed to read config from {path}: {e}"));
         let file: ConfigFile = toml::from_str(&content)

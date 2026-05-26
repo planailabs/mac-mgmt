@@ -9,7 +9,7 @@ use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th};
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct UserRow {
@@ -124,7 +124,10 @@ pub fn UserList() -> Element {
 }
 
 #[component]
-fn UserTable(list: Vec<UserRow>, users_future: Resource<Result<Vec<UserRow>, ServerFnError>>) -> Element {
+fn UserTable(
+    list: Vec<UserRow>,
+    users_future: Resource<Result<Vec<UserRow>, ServerFnError>>,
+) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
 
@@ -134,7 +137,11 @@ fn UserTable(list: Vec<UserRow>, users_future: Resource<Result<Vec<UserRow>, Ser
         if q.is_empty() {
             list_clone.clone()
         } else {
-            list_clone.iter().filter(|u| u.matches_search(&q)).cloned().collect()
+            list_clone
+                .iter()
+                .filter(|u| u.matches_search(&q))
+                .cloned()
+                .collect()
         }
     });
 
@@ -163,7 +170,10 @@ fn UserTable(list: Vec<UserRow>, users_future: Resource<Result<Vec<UserRow>, Ser
 }
 
 #[component]
-fn UserRowView(user: UserRow, users_future: Resource<Result<Vec<UserRow>, ServerFnError>>) -> Element {
+fn UserRowView(
+    user: UserRow,
+    users_future: Resource<Result<Vec<UserRow>, ServerFnError>>,
+) -> Element {
     let mut users_future = users_future;
     let uid = user.id.clone();
     let is_admin = user.is_admin;

@@ -92,8 +92,7 @@ pub fn train_outcome_predictor<B: AutodiffBackend>(config: TrainConfig) -> Resul
     let device = B::Device::default();
 
     let data_path = Path::new(&config.data_dir).join("outcome.jsonl");
-    let dataset =
-        OutcomeDataset::from_jsonl(&data_path).context("failed to load outcome.jsonl")?;
+    let dataset = OutcomeDataset::from_jsonl(&data_path).context("failed to load outcome.jsonl")?;
 
     tracing::info!("loaded {} outcome samples", dataset.len());
 

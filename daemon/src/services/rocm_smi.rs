@@ -97,7 +97,7 @@ impl ManagedService for RocmSmi {
             args: vec![],
             description: "AMD GPU status".into(),
             arg_template: None,
-                timeout_secs: None,
+            timeout_secs: None,
         }]
     }
 

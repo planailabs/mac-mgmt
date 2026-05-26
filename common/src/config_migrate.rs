@@ -81,10 +81,7 @@ fn migrate_002_relay_libp2p(config: &mut Value) {
     if let Some(url_val) = relay.remove("url") {
         if let Some(url) = url_val.as_str() {
             if let Some(multiaddr) = ws_url_to_multiaddr(url) {
-                relay.insert(
-                    "relay_multiaddr".to_string(),
-                    Value::String(multiaddr),
-                );
+                relay.insert("relay_multiaddr".to_string(), Value::String(multiaddr));
             }
         }
     }

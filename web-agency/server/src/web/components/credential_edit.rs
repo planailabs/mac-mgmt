@@ -2,7 +2,9 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::ui::{Badge, BadgeVariant, Button, ButtonKind, ButtonVariant, Card, FormField, PageHeader};
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonKind, ButtonVariant, Card, FormField, PageHeader,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CredentialData {
@@ -14,7 +16,9 @@ struct CredentialData {
 }
 
 #[server]
-async fn get_credential(credential_id: Uuid) -> Result<(CredentialData, Vec<crate::web::user::OrgOption>, bool), ServerFnError> {
+async fn get_credential(
+    credential_id: Uuid,
+) -> Result<(CredentialData, Vec<crate::web::user::OrgOption>, bool), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
@@ -33,7 +37,10 @@ async fn get_credential(credential_id: Uuid) -> Result<(CredentialData, Vec<crat
 
     Ok((
         CredentialData {
-            id, name, credential_type, organization_id,
+            id,
+            name,
+            credential_type,
+            organization_id,
             created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
         },
         orgs,
@@ -60,9 +67,15 @@ async fn update_credential(
         Some(oid) => user.require_org_write(&oid)?,
     }
 
-    sqlx::query("UPDATE credentials SET name = $1, organization_id = $2, updated_at = now() WHERE id = $3")
-        .bind(&name).bind(org_id).bind(credential_id)
-        .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "UPDATE credentials SET name = $1, organization_id = $2, updated_at = now() WHERE id = $3",
+    )
+    .bind(&name)
+    .bind(org_id)
+    .bind(credential_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     if let Some(json) = new_data_json {
         if !json.trim().is_empty() {
@@ -70,9 +83,14 @@ async fn update_credential(
                 .map_err(|e| ServerFnError::new(format!("invalid JSON: {e}")))?;
             let encrypted = crate::crypto::encrypt(json.as_bytes())
                 .map_err(|e| ServerFnError::new(format!("encryption failed: {e}")))?;
-            sqlx::query("UPDATE credentials SET encrypted_data = $1, updated_at = now() WHERE id = $2")
-                .bind(&encrypted).bind(credential_id)
-                .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+            sqlx::query(
+                "UPDATE credentials SET encrypted_data = $1, updated_at = now() WHERE id = $2",
+            )
+            .bind(&encrypted)
+            .bind(credential_id)
+            .execute(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
         }
     }
 
@@ -86,7 +104,9 @@ async fn delete_credential(credential_id: Uuid) -> Result<(), ServerFnError> {
     crate::web::user::require_credential_write(&user, &pool, credential_id).await?;
 
     sqlx::query("DELETE FROM credentials WHERE id = $1")
-        .bind(credential_id).execute(&pool).await
+        .bind(credential_id)
+        .execute(&pool)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
@@ -97,29 +117,42 @@ async fn test_credential_conn(credential_id: Uuid) -> Result<String, ServerFnErr
     let pool = crate::server_pool()?;
     crate::web::user::require_credential_read(&user, &pool, credential_id).await?;
 
-    let cred_type = sqlx::query_scalar::<_, String>(
-        "SELECT credential_type FROM credentials WHERE id = $1",
-    ).bind(credential_id).fetch_optional(&pool).await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("credential not found"))?;
+    let cred_type =
+        sqlx::query_scalar::<_, String>("SELECT credential_type FROM credentials WHERE id = $1")
+            .bind(credential_id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("credential not found"))?;
 
     match cred_type.as_str() {
         "cloudflare" => {
-            let client = crate::credentials::cf_client(&pool, credential_id).await
+            let client = crate::credentials::cf_client(&pool, credential_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let zones = client.list_zones(None).await.map_err(|e| ServerFnError::new(format!("CF: {e}")))?;
+            let zones = client
+                .list_zones(None)
+                .await
+                .map_err(|e| ServerFnError::new(format!("CF: {e}")))?;
             Ok(format!("OK — {} zone(s) accessible", zones.len()))
         }
         "spaceship" => {
-            let client = crate::credentials::spaceship_client(&pool, credential_id).await
+            let client = crate::credentials::spaceship_client(&pool, credential_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let resp = client.list_domains(0, 1).await.map_err(|e| ServerFnError::new(format!("SS: {e}")))?;
+            let resp = client
+                .list_domains(0, 1)
+                .await
+                .map_err(|e| ServerFnError::new(format!("SS: {e}")))?;
             Ok(format!("OK — {} domain(s)", resp.total_count.unwrap_or(0)))
         }
         "changedetection" => {
-            let (client, _group) = crate::credentials::changedetection_client(&pool, credential_id).await
+            let (client, _group) = crate::credentials::changedetection_client(&pool, credential_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let info = client.get_system_info().await
+            let info = client
+                .get_system_info()
+                .await
                 .map_err(|e| ServerFnError::new(format!("CD: {e}")))?;
             let info = info.into_inner();
             Ok(format!(
@@ -137,7 +170,12 @@ pub fn CredentialEdit(id: String) -> Element {
     let cred_id = Uuid::parse_str(&id).ok();
     let data = use_server_future(move || {
         let cid = cred_id;
-        async move { match cid { Some(id) => get_credential(id).await, None => Err(ServerFnError::new("invalid ID")) } }
+        async move {
+            match cid {
+                Some(id) => get_credential(id).await,
+                None => Err(ServerFnError::new("invalid ID")),
+            }
+        }
     })?;
 
     let (cred, org_list, is_admin) = match &*data.read() {
@@ -147,7 +185,11 @@ pub fn CredentialEdit(id: String) -> Element {
     };
 
     let mut name = use_signal(move || cred.name.clone());
-    let mut org_id = use_signal(move || cred.organization_id.map(|id| id.to_string()).unwrap_or_default());
+    let mut org_id = use_signal(move || {
+        cred.organization_id
+            .map(|id| id.to_string())
+            .unwrap_or_default()
+    });
     let mut new_data = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut saving = use_signal(|| false);

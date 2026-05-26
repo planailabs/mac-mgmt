@@ -6,7 +6,7 @@ use super::config_save_bar::SaveBar;
 use super::extra_config_modal::{ExtraConfigField, ExtraConfigModalHost};
 use crate::models::ClusterConfig;
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[server]
 async fn get_current_config(cluster_id: String) -> Result<Option<ClusterConfig>, ServerFnError> {
@@ -104,11 +104,13 @@ async fn convert_to_secret(
     }
 
     let cfg = crate::config::config();
-    let secrets = cfg.secrets.as_ref().ok_or_else(|| ServerFnError::new("secrets not configured"))?;
+    let secrets = cfg
+        .secrets
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("secrets not configured"))?;
     let key_b64 = &secrets.encryption_key;
-    let key_bytes =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_b64)
-            .map_err(|e| ServerFnError::new(format!("invalid encryption key: {e}")))?;
+    let key_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_b64)
+        .map_err(|e| ServerFnError::new(format!("invalid encryption key: {e}")))?;
     let key = *Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(&key);
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -230,8 +232,8 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let mut baseline_signal = use_signal(|| serde_json::Value::Null);
     use_effect(move || {
         let text = saved_text.read().clone();
-        let parsed = serde_json::from_str::<serde_json::Value>(&text)
-            .unwrap_or(serde_json::Value::Null);
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&text).unwrap_or(serde_json::Value::Null);
         if *baseline_signal.read() != parsed {
             baseline_signal.set(parsed);
         }
@@ -241,8 +243,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     if !*initialized.read() {
         match &*config.read() {
             Some(Ok(Some(cfg))) => {
-                let pretty =
-                    serde_json::to_string_pretty(&cfg.config_json).unwrap_or_default();
+                let pretty = serde_json::to_string_pretty(&cfg.config_json).unwrap_or_default();
                 editor_text.set(pretty.clone());
                 saved_text.set(pretty);
                 initialized.set(true);
@@ -250,8 +251,8 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
             Some(Ok(None)) => {
                 // No config yet — initialize with empty object so the editor
                 // is usable and the save bar appears once the user edits.
-                let empty = serde_json::to_string_pretty(&serde_json::json!({}))
-                    .unwrap_or_default();
+                let empty =
+                    serde_json::to_string_pretty(&serde_json::json!({})).unwrap_or_default();
                 editor_text.set(empty.clone());
                 saved_text.set(empty);
                 initialized.set(true);
@@ -308,8 +309,9 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                      e.preventDefault(); e.returnValue = ''; return ''; \
                    }; \
                    window.__configBeforeUnloadInstalled = true; \
-                 }"
-            ).await;
+                 }",
+            )
+            .await;
         });
     });
     use_effect(move || {
@@ -498,7 +500,11 @@ fn gather_sections(
 /// Renders structured form sections from JSON Schema, keeping the JSON signal in sync.
 /// Sections are grouped by `x-category` from the schema and rendered as collapsible cards.
 #[component]
-fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Signal<String>) -> Element {
+fn StructuredEditor(
+    cluster_id: String,
+    schema: serde_json::Value,
+    json_text: Signal<String>,
+) -> Element {
     let mut form_values: Signal<serde_json::Value> =
         use_signal(|| serde_json::Value::Object(Default::default()));
     let extra_config_open = use_signal(|| false);
@@ -994,28 +1000,46 @@ fn ObjectSectionCard(
     let EditorBaseline(baseline_sig) = use_context::<EditorBaseline>();
     let baseline_snapshot = baseline_sig.read().clone();
     let form_snapshot_card = form_values.read().clone();
-    let mod_count = properties.keys().filter(|fname| {
-        if fname.as_str() == "enabled" { return false; }
-        let path = [section_name.clone(), fname.to_string()];
-        let current = get_at_path(&form_snapshot_card, &path);
-        let saved = get_at_path(&baseline_snapshot, &path);
-        current != saved
-    }).count();
+    let mod_count = properties
+        .keys()
+        .filter(|fname| {
+            if fname.as_str() == "enabled" {
+                return false;
+            }
+            let path = [section_name.clone(), fname.to_string()];
+            let current = get_at_path(&form_snapshot_card, &path);
+            let saved = get_at_path(&baseline_snapshot, &path);
+            current != saved
+        })
+        .count();
 
     // Split fields into essential and advanced
-    let essential_fields: Vec<_> = properties.iter()
+    let essential_fields: Vec<_> = properties
+        .iter()
         .filter(|(k, v)| {
             k.as_str() != "enabled"
-                && !resolve_ref(v, &defs).get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
-                && !v.get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
+                && !resolve_ref(v, &defs)
+                    .get("x-advanced")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                && !v
+                    .get("x-advanced")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
         })
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    let advanced_fields: Vec<_> = properties.iter()
+    let advanced_fields: Vec<_> = properties
+        .iter()
         .filter(|(k, v)| {
             k.as_str() != "enabled"
-                && (resolve_ref(v, &defs).get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
-                    || v.get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false))
+                && (resolve_ref(v, &defs)
+                    .get("x-advanced")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || v.get("x-advanced")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false))
         })
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
@@ -1209,24 +1233,41 @@ fn ArrayEntrySectionCard(
         true
     };
 
-    let essential_fields: Vec<_> = properties.iter()
+    let essential_fields: Vec<_> = properties
+        .iter()
         .filter(|(k, v)| {
             k.as_str() != "enabled"
-                && !resolve_ref(v, &defs).get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
-                && !v.get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
+                && !resolve_ref(v, &defs)
+                    .get("x-advanced")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                && !v
+                    .get("x-advanced")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
         })
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    let advanced_fields: Vec<_> = properties.iter()
+    let advanced_fields: Vec<_> = properties
+        .iter()
         .filter(|(k, v)| {
             k.as_str() != "enabled"
-                && (resolve_ref(v, &defs).get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
-                    || v.get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false))
+                && (resolve_ref(v, &defs)
+                    .get("x-advanced")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || v.get("x-advanced")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false))
         })
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    let dot_class = if is_enabled { "dot dot-ok" } else { "dot dot-muted" };
+    let dot_class = if is_enabled {
+        "dot dot-ok"
+    } else {
+        "dot dot-muted"
+    };
     // Same rule as in `ObjectSectionCard`: expand state is independent
     // of the enabled toggle so users can read disabled sections.
     let show_body = *expanded.read();
@@ -1409,8 +1450,14 @@ fn SectionFieldRow(
     cluster_id: String,
 ) -> Element {
     let resolved = resolve_ref(&field_schema, &defs);
-    let is_secret = resolved.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false)
-        || field_schema.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_secret = resolved
+        .get("x-secret")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || field_schema
+            .get("x-secret")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
     let model_source_kind = resolved
         .get("x-model-source")
         .or_else(|| field_schema.get("x-model-source"))
@@ -1448,9 +1495,9 @@ fn SectionFieldRow(
     let EditorBaseline(baseline_sig) = use_context::<EditorBaseline>();
     let saved_value = get_at_path(&baseline_sig.read(), &field_path);
     let is_modified = current_value != saved_value;
-    let differs_from_default = current_value.as_ref().is_some_and(|v| {
-        schema_default.as_ref().map_or(true, |d| v != d)
-    });
+    let differs_from_default = current_value
+        .as_ref()
+        .is_some_and(|v| schema_default.as_ref().map_or(true, |d| v != d));
 
     let sync = move || {
         let json = form_values.read().clone();
@@ -1807,7 +1854,8 @@ fn render_field_input(
             }
         }
         "array" => {
-            let items_schema = resolved.get("items")
+            let items_schema = resolved
+                .get("items")
                 .map(|s| resolve_ref(s, defs))
                 .unwrap_or_default();
             let is_object_array = items_schema.get("properties").is_some();
@@ -1993,7 +2041,11 @@ fn render_field_input(
             let enum_values: Vec<String> = resolved
                 .get("enum")
                 .and_then(|e| e.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             let val_str = current_value
                 .as_ref()

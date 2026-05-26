@@ -14,12 +14,12 @@ pub enum ButtonVariant {
 impl ButtonVariant {
     fn class(self) -> &'static str {
         match self {
-            Self::Primary   => "btn-primary",
+            Self::Primary => "btn-primary",
             Self::Secondary => "btn-secondary",
-            Self::Danger    => "btn-danger",
-            Self::Warn      => "btn-warn",
-            Self::Ghost     => "btn-ghost",
-            Self::Accent    => "btn-accent",
+            Self::Danger => "btn-danger",
+            Self::Warn => "btn-warn",
+            Self::Ghost => "btn-ghost",
+            Self::Accent => "btn-accent",
         }
     }
 }
@@ -57,7 +57,7 @@ impl ButtonKind {
         match self {
             Self::Button => "button",
             Self::Submit => "submit",
-            Self::Reset  => "reset",
+            Self::Reset => "reset",
         }
     }
 }
@@ -78,7 +78,8 @@ pub fn Button(
     #[props(default, into)] title: Option<String>,
     /// Optional click handler. Buttons of `kind: Submit` rely on the
     /// surrounding `<form onsubmit=...>` and don't need this.
-    #[props(default)] onclick: EventHandler<MouseEvent>,
+    #[props(default)]
+    onclick: EventHandler<MouseEvent>,
     children: Element,
 ) -> Element {
     let cls = format!("btn {} {} {}", size.class(), variant.class(), class);

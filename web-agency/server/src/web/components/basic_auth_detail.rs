@@ -27,7 +27,9 @@ async fn get_basic_auth_list(list_id: Uuid) -> Result<BasicAuthListData, ServerF
     let row = sqlx::query_as::<_, (Uuid, String, Uuid)>(
         "SELECT id, name, organization_id FROM basic_auth_lists WHERE id = $1",
     )
-    .bind(list_id).fetch_optional(&pool).await
+    .bind(list_id)
+    .fetch_optional(&pool)
+    .await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("list not found"))?;
 
@@ -36,7 +38,10 @@ async fn get_basic_auth_list(list_id: Uuid) -> Result<BasicAuthListData, ServerF
     user.require_org_read(&org_id)?;
 
     let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
-        .bind(org_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(org_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let creds = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, username, created_at FROM basic_auth_credentials WHERE list_id = $1 ORDER BY username",
@@ -47,20 +52,32 @@ async fn get_basic_auth_list(list_id: Uuid) -> Result<BasicAuthListData, ServerF
         id,
         name,
         organization_name: org_name,
-        credentials: creds.into_iter().map(|(id, username, created_at)| CredentialRow {
-            id, username, created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-        }).collect(),
+        credentials: creds
+            .into_iter()
+            .map(|(id, username, created_at)| CredentialRow {
+                id,
+                username,
+                created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
+            })
+            .collect(),
     })
 }
 
 #[server]
-async fn add_credential(list_id: Uuid, username: String, password: String) -> Result<(), ServerFnError> {
+async fn add_credential(
+    list_id: Uuid,
+    username: String,
+    password: String,
+) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM basic_auth_lists WHERE id = $1",
-    ).bind(list_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM basic_auth_lists WHERE id = $1")
+            .bind(list_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
@@ -72,8 +89,12 @@ async fn add_credential(list_id: Uuid, username: String, password: String) -> Re
         "INSERT INTO basic_auth_credentials (list_id, username, password_hash) VALUES ($1, $2, $3) \
          ON CONFLICT (list_id, username) DO UPDATE SET password_hash = $3",
     )
-    .bind(list_id).bind(&username).bind(&hash)
-    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .bind(list_id)
+    .bind(&username)
+    .bind(&hash)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
 }
@@ -86,13 +107,20 @@ async fn remove_credential(credential_id: Uuid) -> Result<(), ServerFnError> {
     let org_id = sqlx::query_scalar::<_, Uuid>(
         "SELECT b.organization_id FROM basic_auth_credentials c \
          JOIN basic_auth_lists b ON b.id = c.list_id WHERE c.id = $1",
-    ).bind(credential_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(credential_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
     sqlx::query("DELETE FROM basic_auth_credentials WHERE id = $1")
-        .bind(credential_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(credential_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
 }
@@ -102,9 +130,12 @@ async fn delete_basic_auth_list(list_id: Uuid) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM basic_auth_lists WHERE id = $1",
-    ).bind(list_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM basic_auth_lists WHERE id = $1")
+            .bind(list_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
@@ -114,7 +145,10 @@ async fn delete_basic_auth_list(list_id: Uuid) -> Result<(), ServerFnError> {
         .bind(list_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     sqlx::query("DELETE FROM basic_auth_lists WHERE id = $1")
-        .bind(list_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(list_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     crate::api::internal::notify_proxy_reload();
     Ok(())

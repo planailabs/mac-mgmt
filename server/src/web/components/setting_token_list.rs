@@ -6,7 +6,7 @@ use crate::web::components::ui::{
     Alert, AlertVariant, Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[server]
 async fn list_setting_tokens(cluster_id: String) -> Result<Vec<Token>, ServerFnError> {
@@ -213,10 +213,10 @@ pub fn ExpiringTokenRow(
     let expires_label = token.expires_at.map(|e| {
         let date = e.format("%Y-%m-%d %H:%M").to_string();
         match (expires_kind, expired) {
-            ("setting", true)  => t!("setting-token-expired", date: date),
+            ("setting", true) => t!("setting-token-expired", date: date),
             ("setting", false) => t!("setting-token-expires", date: date),
-            ("sync", true)     => t!("sync-token-expired", date: date),
-            ("sync", false)    => t!("sync-token-expires", date: date),
+            ("sync", true) => t!("sync-token-expired", date: date),
+            ("sync", false) => t!("sync-token-expires", date: date),
             _ => date,
         }
     });

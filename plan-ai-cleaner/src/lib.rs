@@ -62,12 +62,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         tracing::info!("cleaned up {removed} expired session(s)");
     }
 
-    let server = CleanerServer::new(
-        state,
-        cli.ollama_host,
-        cli.ollama_port,
-        cli.ollama_model,
-    );
+    let server = CleanerServer::new(state, cli.ollama_host, cli.ollama_port, cli.ollama_model);
 
     tracing::info!("starting plan-ai-cleaner MCP server on stdio");
 

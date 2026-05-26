@@ -70,8 +70,8 @@ pub async fn write_json<T>(io: &mut T, val: &serde_json::Value) -> io::Result<()
 where
     T: AsyncWrite + Unpin + Send,
 {
-    let data = serde_json::to_vec(val)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let data =
+        serde_json::to_vec(val).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_tagged(io, TAG_JSON, &data).await
 }
 
@@ -99,8 +99,7 @@ where
     T: AsyncRead + Unpin + Send,
 {
     let payload = read_payload(io).await?;
-    serde_json::from_slice(&payload)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    serde_json::from_slice(&payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 /// Write a length-prefixed JSON value.
@@ -108,8 +107,8 @@ pub async fn write_lp_json<T>(io: &mut T, val: &serde_json::Value) -> io::Result
 where
     T: AsyncWrite + Unpin + Send,
 {
-    let data = serde_json::to_vec(val)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let data =
+        serde_json::to_vec(val).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     if data.len() > MAX_FRAME_SIZE as usize {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

@@ -108,8 +108,7 @@ mod tests {
     #[test]
     fn roundtrip_russh_to_libp2p() {
         let key =
-            PrivateKey::random(&mut test_rng(), Algorithm::Ed25519)
-                .expect("generate Ed25519 key");
+            PrivateKey::random(&mut test_rng(), Algorithm::Ed25519).expect("generate Ed25519 key");
 
         let libp2p_kp = keypair_from_russh(&key).expect("conversion should succeed");
         assert!(
@@ -132,8 +131,7 @@ mod tests {
     #[test]
     fn deterministic_peer_id() {
         let key =
-            PrivateKey::random(&mut test_rng(), Algorithm::Ed25519)
-                .expect("generate Ed25519 key");
+            PrivateKey::random(&mut test_rng(), Algorithm::Ed25519).expect("generate Ed25519 key");
 
         let kp1 = keypair_from_russh(&key).expect("first conversion");
         let kp2 = keypair_from_russh(&key).expect("second conversion");

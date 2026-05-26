@@ -91,7 +91,10 @@ async fn refresh_one(
     let new_catalog = match client.fetch_catalog().await {
         Ok(c) => c,
         Err(e) => {
-            tracing::warn!("failed to refresh catalog from skill center '{}': {e}", sc.name);
+            tracing::warn!(
+                "failed to refresh catalog from skill center '{}': {e}",
+                sc.name
+            );
             return;
         }
     };
@@ -101,11 +104,7 @@ async fn refresh_one(
         let mut affected_clusters: HashSet<Uuid> = HashSet::new();
 
         // Detect deleted skill channels
-        let new_sc_ids: HashSet<Uuid> = new_catalog
-            .skill_channels
-            .iter()
-            .map(|s| s.id)
-            .collect();
+        let new_sc_ids: HashSet<Uuid> = new_catalog.skill_channels.iter().map(|s| s.id).collect();
         let deleted_sc_ids: Vec<Uuid> = old
             .catalog
             .skill_channels
@@ -130,8 +129,7 @@ async fn refresh_one(
         }
 
         // Detect deleted bundles
-        let new_bundle_ids: HashSet<Uuid> =
-            new_catalog.bundles.iter().map(|b| b.id).collect();
+        let new_bundle_ids: HashSet<Uuid> = new_catalog.bundles.iter().map(|b| b.id).collect();
         let deleted_bundle_ids: Vec<Uuid> = old
             .catalog
             .bundles
@@ -166,11 +164,7 @@ async fn refresh_one(
         }
 
         // Detect deleted MCP servers
-        let new_mcp_ids: HashSet<Uuid> = new_catalog
-            .mcp_servers
-            .iter()
-            .map(|m| m.id)
-            .collect();
+        let new_mcp_ids: HashSet<Uuid> = new_catalog.mcp_servers.iter().map(|m| m.id).collect();
         let deleted_mcp_ids: Vec<Uuid> = old
             .catalog
             .mcp_servers
@@ -197,11 +191,8 @@ async fn refresh_one(
         }
 
         // Detect deleted MCP bundles
-        let new_mcp_bundle_ids: HashSet<Uuid> = new_catalog
-            .mcp_bundles
-            .iter()
-            .map(|b| b.id)
-            .collect();
+        let new_mcp_bundle_ids: HashSet<Uuid> =
+            new_catalog.mcp_bundles.iter().map(|b| b.id).collect();
         let deleted_mcp_bundle_ids: Vec<Uuid> = old
             .catalog
             .mcp_bundles
@@ -281,9 +272,7 @@ async fn refresh_all(cache: &SkillCenterCache, pool: &PgPool, push_channels: &Pu
     let active_ids: HashSet<Uuid> = skill_centers.iter().map(|s| s.id).collect();
     let cached = cache.get_all().await;
     for id in cached.keys() {
-        if !active_ids.contains(id)
-            && !crate::builtin_skill_center::is_builtin(id)
-        {
+        if !active_ids.contains(id) && !crate::builtin_skill_center::is_builtin(id) {
             cache.remove(id).await;
         }
     }
@@ -328,7 +317,10 @@ async fn spawn_sse_listeners(
             sse_listener_loop(sc, cache, pool, push_channels).await;
             // If the loop exits, remove from the set so it can be respawned
             SSE_LISTENERS.write().await.remove(&sc_id);
-            tracing::info!("SSE listener for skill center '{}' exited, will respawn on next poll", sc_name);
+            tracing::info!(
+                "SSE listener for skill center '{}' exited, will respawn on next poll",
+                sc_name
+            );
         });
     }
 }
@@ -362,20 +354,14 @@ async fn sse_listener_loop(
                         }
                         Ok(FederationEvent::Ping) => {} // keepalive, ignore
                         Err(e) => {
-                            tracing::warn!(
-                                "SSE error from skill center '{}': {e}",
-                                sc.name
-                            );
+                            tracing::warn!("SSE error from skill center '{}': {e}", sc.name);
                             break; // reconnect
                         }
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!(
-                    "failed to connect SSE for skill center '{}': {e}",
-                    sc.name
-                );
+                tracing::warn!("failed to connect SSE for skill center '{}': {e}", sc.name);
             }
         }
 

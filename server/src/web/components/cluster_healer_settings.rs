@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::components::ui::{Button, ButtonSize, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Settings {
@@ -167,9 +167,21 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
     let mut fix_model_key = use_signal(move || data.settings.fix_model_key.clone());
     let mut saving = use_signal(|| false);
 
-    let ollama: Vec<_> = models.iter().filter(|m| m.provider == "ollama").cloned().collect();
-    let anthropic: Vec<_> = models.iter().filter(|m| m.provider == "anthropic").cloned().collect();
-    let openrouter: Vec<_> = models.iter().filter(|m| m.provider == "openrouter").cloned().collect();
+    let ollama: Vec<_> = models
+        .iter()
+        .filter(|m| m.provider == "ollama")
+        .cloned()
+        .collect();
+    let anthropic: Vec<_> = models
+        .iter()
+        .filter(|m| m.provider == "anthropic")
+        .cloned()
+        .collect();
+    let openrouter: Vec<_> = models
+        .iter()
+        .filter(|m| m.provider == "openrouter")
+        .cloned()
+        .collect();
 
     let is_enabled = *enabled.read();
     let fields_disabled = read_only || !is_enabled;

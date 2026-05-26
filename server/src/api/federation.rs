@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use mac_mgmt_common::{
-    FederationCatalog, FederationBundle, FederationBundleSkill, FederationEvent,
-    FederationMcpBundle, FederationMcpBundleServer, FederationMcpServer,
-    FederationSkillChannel, McpServerEntry, ResolveSkillsRequest, ResolveMcpServersRequest,
+    FederationBundle, FederationBundleSkill, FederationCatalog, FederationEvent,
+    FederationMcpBundle, FederationMcpBundleServer, FederationMcpServer, FederationSkillChannel,
+    McpServerEntry, ResolveMcpServersRequest, ResolveSkillsRequest,
 };
 use rocket::http::Status;
 use rocket::response::stream::{Event, EventStream};
@@ -54,7 +54,11 @@ async fn fetch_skill_channels(
     pool: &PgPool,
     include_hidden: bool,
 ) -> Result<Vec<FederationSkillChannel>, Status> {
-    let filter = if include_hidden { "TRUE" } else { "NOT s.hide_from_public_catalog" };
+    let filter = if include_hidden {
+        "TRUE"
+    } else {
+        "NOT s.hide_from_public_catalog"
+    };
     let query = format!(
         "SELECT sc.id, s.slug AS skill_slug, s.name AS skill_name, \
          s.description AS skill_description, sc.channel, \
@@ -90,7 +94,10 @@ async fn fetch_skill_channels(
         .await
         .map_err(|_| Status::InternalServerError)?;
         for dep in dep_rows {
-            mcp_deps.entry(dep.skill_channel_id).or_default().push(dep.slug);
+            mcp_deps
+                .entry(dep.skill_channel_id)
+                .or_default()
+                .push(dep.slug);
         }
     }
 
@@ -133,7 +140,11 @@ async fn fetch_bundles(
     pool: &PgPool,
     include_hidden: bool,
 ) -> Result<Vec<FederationBundle>, Status> {
-    let filter = if include_hidden { "TRUE" } else { "NOT b.hide_from_public_catalog" };
+    let filter = if include_hidden {
+        "TRUE"
+    } else {
+        "NOT b.hide_from_public_catalog"
+    };
     let query = format!(
         "SELECT b.id, b.slug, b.name, b.description, \
          b.hide_from_public_catalog AS hidden \

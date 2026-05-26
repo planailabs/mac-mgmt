@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
-use progenitor_client::{encode_path, ClientHooks, OperationInfo, RequestBuilderExt};
-#[allow(unused_imports)]
 pub use progenitor_client::{ByteStream, ClientInfo, Error, ResponseValue};
+#[allow(unused_imports)]
+use progenitor_client::{ClientHooks, OperationInfo, RequestBuilderExt, encode_path};
 
 pub mod compat;
 /// Types used as operation parameters and responses.
@@ -24343,13 +24343,13 @@ pub mod types {
             T::try_from(V).unwrap()
         }
 
-        pub(super) fn pages_deployment_config_values_request_usage_model(
-        ) -> super::PagesDeploymentConfigValuesRequestUsageModel {
+        pub(super) fn pages_deployment_config_values_request_usage_model()
+        -> super::PagesDeploymentConfigValuesRequestUsageModel {
             super::PagesDeploymentConfigValuesRequestUsageModel::Standard
         }
 
-        pub(super) fn registrar_api_registration_create_request_privacy_mode(
-        ) -> super::RegistrarApiRegistrationCreateRequestPrivacyMode {
+        pub(super) fn registrar_api_registration_create_request_privacy_mode()
+        -> super::RegistrarApiRegistrationCreateRequestPrivacyMode {
             super::RegistrarApiRegistrationCreateRequestPrivacyMode::Redaction
         }
     }

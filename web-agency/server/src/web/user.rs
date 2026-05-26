@@ -128,11 +128,9 @@ pub async fn list_user_orgs(
     pool: &PgPool,
 ) -> Result<Vec<OrgOption>, ServerFnError> {
     let rows = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT id, name FROM organizations ORDER BY name",
-        )
-        .fetch_all(pool)
-        .await
+        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations ORDER BY name")
+            .fetch_all(pool)
+            .await
     } else {
         sqlx::query_as::<_, (Uuid, String)>(
             "SELECT o.id, o.name FROM organizations o \
@@ -158,11 +156,9 @@ pub async fn list_user_write_orgs(
     pool: &PgPool,
 ) -> Result<Vec<OrgOption>, ServerFnError> {
     let rows = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT id, name FROM organizations ORDER BY name",
-        )
-        .fetch_all(pool)
-        .await
+        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations ORDER BY name")
+            .fetch_all(pool)
+            .await
     } else {
         sqlx::query_as::<_, (Uuid, String)>(
             "SELECT o.id, o.name FROM organizations o \

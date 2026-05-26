@@ -74,7 +74,10 @@ If you cannot resolve the issue, use `staff_ping` to escalate to an admin."#;
 /// Reconstructs assistant tool_calls from the message sequence:
 /// an assistant message followed by tool_result messages becomes
 /// an assistant turn with tool_calls + corresponding tool responses.
-pub fn convert_session(session: &ExportedSession, system_template: Option<&str>) -> SftConversation {
+pub fn convert_session(
+    session: &ExportedSession,
+    system_template: Option<&str>,
+) -> SftConversation {
     let template = system_template.unwrap_or(DEFAULT_SYSTEM_TEMPLATE);
 
     // Build system prompt from template
@@ -218,9 +221,10 @@ pub fn convert_session(session: &ExportedSession, system_template: Option<&str>)
                     .and_then(|v| v.as_str());
 
                 if (pin_slot == Some("pin") || msg.role == "pin")
-                    && let Some(ref mut text) = pending_assistant_text {
-                        text.push_str(&format!("\n[PIN] {}", msg.content));
-                    }
+                    && let Some(ref mut text) = pending_assistant_text
+                {
+                    text.push_str(&format!("\n[PIN] {}", msg.content));
+                }
             }
         }
     }

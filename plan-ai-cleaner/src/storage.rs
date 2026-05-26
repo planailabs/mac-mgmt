@@ -1,7 +1,4 @@
-use aes_gcm::{
-    Aes256Gcm, KeyInit, Nonce,
-    aead::Aead,
-};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
 use anyhow::{Context, Result};
 use sha2::Digest;
 use std::path::{Path, PathBuf};
@@ -82,7 +79,10 @@ impl SessionStore {
         if age > self.ttl_seconds as i64 {
             // Clean up expired file.
             let _ = std::fs::remove_file(&path);
-            anyhow::bail!("session {id} has expired ({age}s old, TTL={}s)", self.ttl_seconds);
+            anyhow::bail!(
+                "session {id} has expired ({age}s old, TTL={}s)",
+                self.ttl_seconds
+            );
         }
 
         Ok(manifest)
@@ -189,14 +189,11 @@ pub fn sha256_hex(text: &str) -> String {
 // Inline hex encoding (avoid adding hex crate dependency).
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .fold(String::new(), |mut acc, b| {
-                use std::fmt::Write;
-                let _ = write!(acc, "{b:02x}");
-                acc
-            })
+        bytes.as_ref().iter().fold(String::new(), |mut acc, b| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{b:02x}");
+            acc
+        })
     }
 }
 

@@ -47,17 +47,29 @@ async fn list_billing() -> Result<Vec<BillingRow>, ServerFnError> {
 
     Ok(rows
         .into_iter()
-        .map(|(id, entry_type, description, amount_cents, currency, provider, period_start, period_end, created_at)| BillingRow {
-            id,
-            entry_type,
-            description,
-            amount_cents,
-            currency,
-            provider,
-            period_start: period_start.map(|d| d.to_string()),
-            period_end: period_end.map(|d| d.to_string()),
-            created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-        })
+        .map(
+            |(
+                id,
+                entry_type,
+                description,
+                amount_cents,
+                currency,
+                provider,
+                period_start,
+                period_end,
+                created_at,
+            )| BillingRow {
+                id,
+                entry_type,
+                description,
+                amount_cents,
+                currency,
+                provider,
+                period_start: period_start.map(|d| d.to_string()),
+                period_end: period_end.map(|d| d.to_string()),
+                created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
+            },
+        )
         .collect())
 }
 

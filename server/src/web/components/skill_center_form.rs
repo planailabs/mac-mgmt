@@ -3,9 +3,7 @@ use dioxus_i18n::t;
 
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
-use crate::web::components::ui::{
-    Button, ButtonKind, ErrorText, FormField, HelpText, PageHeader,
-};
+use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, HelpText, PageHeader};
 
 #[server]
 async fn create_skill_center(
@@ -15,7 +13,7 @@ async fn create_skill_center(
     priority: i32,
     enabled: bool,
 ) -> Result<String, ServerFnError> {
-    use crate::web::user::{current_user, WebUserExt};
+    use crate::web::user::{WebUserExt, current_user};
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;

@@ -3,8 +3,8 @@ use prometheus::{
 };
 
 use mac_mgmt_common::{
-    DynamicSample, GpuInfo, GpuSample, Inventory, SecurityFinding, ServiceInventory,
-    ServiceSample, ServiceSecurity,
+    DynamicSample, GpuInfo, GpuSample, Inventory, SecurityFinding, ServiceInventory, ServiceSample,
+    ServiceSecurity,
 };
 
 use crate::assessment::probes::{ProbeKind, ProbeResult};
@@ -482,7 +482,14 @@ impl AssessmentMetrics {
 
     pub fn update_security(&self, findings: &[SecurityFinding]) {
         // Map findings back to the bool gauges by id.
-        let bool_ids = ["macos_sip", "macos_filevault", "macos_firewall", "macos_gatekeeper", "linux_fde", "linux_ufw"];
+        let bool_ids = [
+            "macos_sip",
+            "macos_filevault",
+            "macos_firewall",
+            "macos_gatekeeper",
+            "linux_fde",
+            "linux_ufw",
+        ];
         let gauge_names = ["sip", "filevault", "firewall", "gatekeeper", "fde", "ufw"];
         for (id, gauge_name) in bool_ids.iter().zip(gauge_names.iter()) {
             let value = findings
@@ -490,7 +497,9 @@ impl AssessmentMetrics {
                 .find(|f| f.id == *id)
                 .map(|f| if f.pass { 1i64 } else { 0 })
                 .unwrap_or(-1);
-            self.security_bool.with_label_values(&[gauge_name]).set(value);
+            self.security_bool
+                .with_label_values(&[gauge_name])
+                .set(value);
         }
 
         self.security_info.reset();
@@ -499,8 +508,20 @@ impl AssessmentMetrics {
         let apparmor = findings.iter().find(|f| f.id == "linux_apparmor");
         self.security_info
             .with_label_values(&[
-                xprotect.map(|f| f.message.strip_prefix("XProtect definitions version ").unwrap_or(&f.message)).unwrap_or(""),
-                selinux.map(|f| f.message.strip_prefix("SELinux mode: ").unwrap_or(&f.message)).unwrap_or(""),
+                xprotect
+                    .map(|f| {
+                        f.message
+                            .strip_prefix("XProtect definitions version ")
+                            .unwrap_or(&f.message)
+                    })
+                    .unwrap_or(""),
+                selinux
+                    .map(|f| {
+                        f.message
+                            .strip_prefix("SELinux mode: ")
+                            .unwrap_or(&f.message)
+                    })
+                    .unwrap_or(""),
                 &apparmor.map(|f| f.message.clone()).unwrap_or_default(),
             ])
             .set(1);
@@ -544,7 +565,11 @@ impl AssessmentMetrics {
         self.service_sample.reset();
         for ss in samples {
             for entry in &ss.entries {
-                if let Some(n) = entry.value.as_i64().or_else(|| entry.value.as_f64().map(|f| f as i64)) {
+                if let Some(n) = entry
+                    .value
+                    .as_i64()
+                    .or_else(|| entry.value.as_f64().map(|f| f as i64))
+                {
                     self.service_sample
                         .with_label_values(&[&ss.service, &entry.id])
                         .set(n);
@@ -643,9 +668,7 @@ impl Metrics {
             &["service"],
         )
         .unwrap();
-        registry
-            .register(Box::new(service_phase.clone()))
-            .unwrap();
+        registry.register(Box::new(service_phase.clone())).unwrap();
 
         let assessment = AssessmentMetrics::new(&registry);
 
@@ -701,15 +724,11 @@ impl Metrics {
     pub fn record_heartbeat_success(&self) {
         self.heartbeat_last_success
             .set(chrono::Utc::now().timestamp());
-        self.heartbeat_total
-            .with_label_values(&["success"])
-            .inc();
+        self.heartbeat_total.with_label_values(&["success"]).inc();
     }
 
     pub fn record_heartbeat_failure(&self) {
-        self.heartbeat_total
-            .with_label_values(&["failure"])
-            .inc();
+        self.heartbeat_total.with_label_values(&["failure"]).inc();
     }
 
     pub fn register_collector(

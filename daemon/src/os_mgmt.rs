@@ -214,7 +214,12 @@ fn configure_nix(dry_run: bool) -> Result<()> {
 fn restart_nix_daemon() {
     if cfg!(target_os = "macos") {
         let _ = Command::new("sudo")
-            .args(["launchctl", "kickstart", "-k", "system/org.nixos.nix-daemon"])
+            .args([
+                "launchctl",
+                "kickstart",
+                "-k",
+                "system/org.nixos.nix-daemon",
+            ])
             .status();
     } else {
         let _ = Command::new("sudo")
@@ -259,10 +264,7 @@ fn configure_ufw(dry_run: bool) -> Result<()> {
     }
 
     // Allow SSH before enabling — critical to avoid lockout
-    run_ufw(
-        &["allow", "22/tcp", "comment", "mac-mgmt: SSH"],
-        dry_run,
-    )?;
+    run_ufw(&["allow", "22/tcp", "comment", "mac-mgmt: SSH"], dry_run)?;
 
     // Enable UFW (--force skips the interactive confirmation)
     run_ufw(&["--force", "enable"], dry_run)?;

@@ -110,11 +110,7 @@ impl ManagedService for HermesWebui {
         // to add host + port here.
         crate::managed_service::SpawnSpec {
             program: "hermes-webui".into(),
-            args: vec![
-                "--host".into(),
-                self.host(),
-                self.port().to_string(),
-            ],
+            args: vec!["--host".into(), self.host(), self.port().to_string()],
             env,
         }
     }
@@ -210,7 +206,9 @@ impl ManagedService for HermesWebui {
 
     fn service_inventory(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         use mac_mgmt_common::{InventoryEntry, InventoryValueType};
         let host = self.host();
         let port = self.port();

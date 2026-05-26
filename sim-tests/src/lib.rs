@@ -67,8 +67,9 @@ pub fn generate_host_key() -> russh::keys::PrivateKey {
         russh::keys::ssh_key::private::KeypairData::Ed25519(
             russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed),
         ),
-        ""
-    ).unwrap()
+        "",
+    )
+    .unwrap()
 }
 
 /// Start a daemon, returning (shutdown_sender, instance_id).

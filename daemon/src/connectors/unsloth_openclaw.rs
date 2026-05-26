@@ -30,11 +30,19 @@ impl Connector for UnslothOpenClaw {
         _configs: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<()> {
         let base_url = format!("http://{}:{}/v1", self.host, self.port);
-        tracing::info!("connecting unsloth to openclaw (baseUrl={base_url}, model={}, default={})", self.default_model, self.set_default);
+        tracing::info!(
+            "connecting unsloth to openclaw (baseUrl={base_url}, model={}, default={})",
+            self.default_model,
+            self.set_default
+        );
         sentry_ext::breadcrumb(
             "connector",
             &format!("unsloth\u{2192}openclaw baseUrl={base_url}"),
-            &[("connector", "unsloth\u{2192}openclaw"), ("base_url", &base_url), ("model", &self.default_model)],
+            &[
+                ("connector", "unsloth\u{2192}openclaw"),
+                ("base_url", &base_url),
+                ("model", &self.default_model),
+            ],
         );
 
         if self.default_model.is_empty() {
@@ -62,8 +70,7 @@ impl Connector for UnslothOpenClaw {
         });
 
         if self.set_default {
-            patch["agents"] =
-                serde_json::json!({ "defaults": { "model": { "primary": format!("unsloth/{model_id}") } } });
+            patch["agents"] = serde_json::json!({ "defaults": { "model": { "primary": format!("unsloth/{model_id}") } } });
         }
 
         merge_and_validate(&path, &patch)?;

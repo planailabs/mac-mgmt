@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
-use progenitor_client::{encode_path, ClientHooks, OperationInfo, RequestBuilderExt};
-#[allow(unused_imports)]
 pub use progenitor_client::{ByteStream, ClientInfo, Error, ResponseValue};
+#[allow(unused_imports)]
+use progenitor_client::{ClientHooks, OperationInfo, RequestBuilderExt, encode_path};
 
 pub mod compat;
 /// Types used as operation parameters and responses.
@@ -22242,7 +22242,7 @@ pub mod types {
 ///### API key usage
 ///As shown in the example below, API consumers shall pass a valid API key and
 /// a corresponding API secret in the X-API-Secret headers. You do not need to
-/// encode the API key and the API secret. 
+/// encode the API key and the API secret.
 /// ```bash
 /// curl -X GET '/api/resource' \
 /// -H 'X-Api-Secret: F3brvQluT4s8aDB7PeFBH6qKHfH2xTKTneCjZbq3z2w7rj2vV6n_zhSvvJoQ' \

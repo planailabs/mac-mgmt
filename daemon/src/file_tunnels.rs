@@ -64,13 +64,17 @@ impl FileTunnelRegistry {
                     "description": ft.description(),
                 });
                 if let FileTunnelDef::Folder { include, .. } = &ft.def {
-                    val.as_object_mut().unwrap().insert("kind".into(), "directory".into());
+                    val.as_object_mut()
+                        .unwrap()
+                        .insert("kind".into(), "directory".into());
                     val.as_object_mut().unwrap().insert(
                         "include".into(),
                         serde_json::to_value(include).unwrap_or(serde_json::Value::Null),
                     );
                 } else {
-                    val.as_object_mut().unwrap().insert("kind".into(), "file".into());
+                    val.as_object_mut()
+                        .unwrap()
+                        .insert("kind".into(), "file".into());
                 }
                 val
             })
@@ -83,7 +87,10 @@ impl FileTunnelRegistry {
 /// Resolve the requested path within a file tunnel, canonicalize it, and
 /// verify it falls within the tunnel's allowed root.
 #[cfg(feature = "services")]
-pub(crate) fn resolve_path(tunnel: &FileTunnel, relative_path: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn resolve_path(
+    tunnel: &FileTunnel,
+    relative_path: Option<&str>,
+) -> Result<PathBuf, String> {
     let root = PathBuf::from(tunnel.path());
 
     // Strip leading slashes — LLMs often hallucinate them in relative paths.
@@ -102,10 +109,7 @@ pub(crate) fn resolve_path(tunnel: &FileTunnel, relative_path: Option<&str>) -> 
         (FileTunnelDef::File { .. }, Some(name)) => {
             // Allow the file's own name — the list endpoint returns it and
             // agents naturally pass it back as the path to read/write.
-            let file_name = root
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let file_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if name == file_name {
                 root.clone()
             } else {
@@ -190,7 +194,10 @@ pub(crate) fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
 /// relative to the tunnel root.  This ensures patterns like `openclaw.json`
 /// only match at the tunnel root, not in subdirectories.
 #[cfg(feature = "services")]
-fn find_validator<'a>(tunnel: &'a FileTunnel, file_path: &Path) -> Option<&'a crate::validator::Validator> {
+fn find_validator<'a>(
+    tunnel: &'a FileTunnel,
+    file_path: &Path,
+) -> Option<&'a crate::validator::Validator> {
     let FileTunnelDef::Folder { validators, .. } = &tunnel.def else {
         return None;
     };
@@ -344,7 +351,9 @@ pub(crate) fn write_file(
             if actual != expected {
                 return Err((
                     409,
-                    format!("file modified since last read (expected mtime {expected}, actual {actual})"),
+                    format!(
+                        "file modified since last read (expected mtime {expected}, actual {actual})"
+                    ),
                 ));
             }
         }
@@ -353,9 +362,7 @@ pub(crate) fn write_file(
     // Write content to temp file
     let tmp_path = path.with_extension("tmp.file-tunnel");
     std::fs::write(&tmp_path, content)
-        .map_err(|e| {
-            (500u16, format!("failed to create temp file: {e}"))
-        })?;
+        .map_err(|e| (500u16, format!("failed to create temp file: {e}")))?;
 
     // Back up original file (if it exists)
     let backup_path = path.with_extension("bak.file-tunnel");
@@ -408,11 +415,8 @@ pub(crate) fn write_file(
 /// 2. Daemon sends binary chunks (raw file bytes, ≤ STREAM_CHUNK_SIZE)
 /// 3. Daemon sends end-of-stream marker
 #[cfg(feature = "services")]
-pub async fn handle_read_session<S>(
-    tunnel: &FileTunnel,
-    rel_path: Option<&str>,
-    stream: &mut S,
-) where
+pub async fn handle_read_session<S>(tunnel: &FileTunnel, rel_path: Option<&str>, stream: &mut S)
+where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     use mac_mgmt_common::framing as stream_framing;
@@ -487,7 +491,9 @@ pub async fn handle_write_session<S>(
             Ok(Some(TaggedFrame::Binary(data))) => {
                 content.extend_from_slice(&data);
                 if content.len() as u64 > MAX_FILE_SIZE {
-                    send_result!(serde_json::json!({ "status": 413, "body": { "error": "file too large" } }));
+                    send_result!(
+                        serde_json::json!({ "status": 413, "body": { "error": "file too large" } })
+                    );
                 }
             }
             Ok(Some(TaggedFrame::End)) | Ok(None) => break,

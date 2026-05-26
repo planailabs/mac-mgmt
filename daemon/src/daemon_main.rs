@@ -268,9 +268,10 @@ async fn run(
                 self_update::set_target(v, store_path);
             } else {
                 let cfg = config::load_local()?;
-                let (Some(url), Some(token)) =
-                    (cfg.server.url.as_deref(), cfg.server.token.as_ref().map(|s| s.expose()))
-                else {
+                let (Some(url), Some(token)) = (
+                    cfg.server.url.as_deref(),
+                    cfg.server.token.as_ref().map(|s| s.expose()),
+                ) else {
                     anyhow::bail!("no [server] url/token configured — can't fetch update target");
                 };
                 let system = nix::current_system().unwrap_or("");
@@ -342,16 +343,16 @@ async fn run(
         }
         Commands::Supervisor { action } => {
             let socket_path = mac_mgmt_services::default_socket_path();
-            let mut client = mac_mgmt_services::Client::connect(
-                &socket_path,
-                std::time::Duration::from_secs(5),
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!(
-                "cannot connect to supervisor at {}: {e}\n\
+            let mut client =
+                mac_mgmt_services::Client::connect(&socket_path, std::time::Duration::from_secs(5))
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "cannot connect to supervisor at {}: {e}\n\
                  Is the daemon running?",
-                socket_path.display()
-            ))?;
+                            socket_path.display()
+                        )
+                    })?;
 
             match action {
                 SupervisorCmd::List => {
@@ -366,7 +367,12 @@ async fn run(
                                 let client = mac_mgmt_daemon::local_client::build().ok()?;
                                 let resp = client.get(&url).send().await.ok()?;
                                 let s: mac_mgmt_common::StatusResponse = resp.json().await.ok()?;
-                                Some(s.services.into_iter().map(|svc| (svc.name, svc.phase)).collect::<std::collections::HashMap<_, _>>())
+                                Some(
+                                    s.services
+                                        .into_iter()
+                                        .map(|svc| (svc.name, svc.phase))
+                                        .collect::<std::collections::HashMap<_, _>>(),
+                                )
                             }
                             .await
                             .unwrap_or_default()
@@ -375,13 +381,15 @@ async fn run(
                         println!("{:<20} {:<10} {:<8} {}", "NAME", "PHASE", "PID", "PROGRAM");
                         for s in &services {
                             let pid = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
-                            let program = s.spec.as_ref()
-                                .map(|sp| sp.program.as_str())
-                                .unwrap_or("-");
-                            let phase = daemon_phases
-                                .get(&s.name)
-                                .map(|p| p.as_str())
-                                .unwrap_or(if s.pid.is_some() { "running" } else { "stopped" });
+                            let program =
+                                s.spec.as_ref().map(|sp| sp.program.as_str()).unwrap_or("-");
+                            let phase = daemon_phases.get(&s.name).map(|p| p.as_str()).unwrap_or(
+                                if s.pid.is_some() {
+                                    "running"
+                                } else {
+                                    "stopped"
+                                },
+                            );
                             println!("{:<20} {:<10} {:<8} {}", s.name, phase, pid, program);
                         }
                         println!("\n{} service(s)", services.len());
@@ -393,7 +401,10 @@ async fn run(
                     match svc {
                         Some(s) => {
                             println!("Name:    {}", s.name);
-                            println!("PID:     {}", s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into()));
+                            println!(
+                                "PID:     {}",
+                                s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into())
+                            );
                             println!("Exe:     {}", s.exe.as_deref().unwrap_or("-"));
                             println!("Program: {}", s.resolved_program.as_deref().unwrap_or("-"));
                             if let Some(spec) = &s.spec {

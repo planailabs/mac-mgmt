@@ -10,7 +10,7 @@ use crate::web::components::ui::{
     TdMuted, Th,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 /// Return the configured external API base URL.
 #[server]
@@ -299,7 +299,9 @@ fn PathsTable(list: Vec<DaemonStorePath>, api_base_url: String, version: String)
         } else {
             list_clone
                 .iter()
-                .filter(|p| p.system.to_lowercase().contains(&q) || p.store_path.to_lowercase().contains(&q))
+                .filter(|p| {
+                    p.system.to_lowercase().contains(&q) || p.store_path.to_lowercase().contains(&q)
+                })
                 .cloned()
                 .collect()
         };
@@ -420,7 +422,10 @@ fn RolloutsTable(list: Vec<VersionRollout>) -> Element {
         } else {
             list_clone
                 .iter()
-                .filter(|r| r.id.to_string().to_lowercase().contains(&q) || r.status.to_lowercase().contains(&q))
+                .filter(|r| {
+                    r.id.to_string().to_lowercase().contains(&q)
+                        || r.status.to_lowercase().contains(&q)
+                })
                 .cloned()
                 .collect()
         };

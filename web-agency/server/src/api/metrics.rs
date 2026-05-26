@@ -7,8 +7,7 @@
 //! - If `organization_id` is NULL → admin (all orgs + global counters).
 
 use dioxus::fullstack::axum::{
-    self as axum,
-    Router,
+    self as axum, Router,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
@@ -60,10 +59,7 @@ async fn authenticate_metrics(
 
     let (kind, organization_id) = row;
     if kind != "metrics" {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "token kind must be 'metrics'".into(),
-        ));
+        return Err((StatusCode::FORBIDDEN, "token kind must be 'metrics'".into()));
     }
 
     Ok(MetricsAuth { organization_id })
@@ -148,9 +144,7 @@ async fn register_webspace_running(
 
     for (webspace_name, org_name, status) in &rows {
         let val = if status == "running" { 1 } else { 0 };
-        gauge
-            .with_label_values(&[org_name, webspace_name])
-            .set(val);
+        gauge.with_label_values(&[org_name, webspace_name]).set(val);
     }
 
     Ok(())
@@ -195,31 +189,46 @@ async fn register_reachability(
     let labels = &["org", "webspace", "hostname"];
 
     let http_ok = IntGaugeVec::new(
-        Opts::new("web_agency_reachability_http_ok", "HTTP reachability (1=ok, 0=fail)"),
+        Opts::new(
+            "web_agency_reachability_http_ok",
+            "HTTP reachability (1=ok, 0=fail)",
+        ),
         labels,
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let ssl_ok = IntGaugeVec::new(
-        Opts::new("web_agency_reachability_ssl_ok", "SSL validity (1=ok, 0=fail)"),
+        Opts::new(
+            "web_agency_reachability_ssl_ok",
+            "SSL validity (1=ok, 0=fail)",
+        ),
         labels,
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let proxy_ok = IntGaugeVec::new(
-        Opts::new("web_agency_reachability_proxy_ok", "Proxy verification via .well-known (1=ok, 0=fail)"),
+        Opts::new(
+            "web_agency_reachability_proxy_ok",
+            "Proxy verification via .well-known (1=ok, 0=fail)",
+        ),
         labels,
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let latency = GaugeVec::new(
-        Opts::new("web_agency_reachability_latency_ms", "Reachability check latency in milliseconds"),
+        Opts::new(
+            "web_agency_reachability_latency_ms",
+            "Reachability check latency in milliseconds",
+        ),
         labels,
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let checked_at = GaugeVec::new(
-        Opts::new("web_agency_reachability_checked_at", "Unix timestamp of last reachability check"),
+        Opts::new(
+            "web_agency_reachability_checked_at",
+            "Unix timestamp of last reachability check",
+        ),
         labels,
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -244,7 +253,9 @@ async fn register_reachability(
         let lv = &[org_name.as_str(), ws_name.as_str(), hostname.as_str()];
         http_ok.with_label_values(lv).set(if *h_ok { 1 } else { 0 });
         ssl_ok.with_label_values(lv).set(if *s_ok { 1 } else { 0 });
-        proxy_ok.with_label_values(lv).set(if *p_ok { 1 } else { 0 });
+        proxy_ok
+            .with_label_values(lv)
+            .set(if *p_ok { 1 } else { 0 });
         if let Some(ms) = lat_ms {
             latency.with_label_values(lv).set(*ms as f64);
         }
@@ -263,9 +274,7 @@ fn register_relay_mint_status(
     let map = super::counters::RELAY_MINT_RESULTS.lock().unwrap();
     let filtered: Vec<_> = map
         .iter()
-        .filter(|(_, result)| {
-            org_filter.is_none() || org_filter == Some(result.org_id)
-        })
+        .filter(|(_, result)| org_filter.is_none() || org_filter == Some(result.org_id))
         .collect();
 
     if filtered.is_empty() {
@@ -384,14 +393,10 @@ fn register_admin_counters(registry: &Registry) -> Result<(), (StatusCode, Strin
     let success = counters.deploy_success.load(Ordering::Relaxed);
     let failed = counters.deploy_failed.load(Ordering::Relaxed);
     if success > 0 {
-        deployments
-            .with_label_values(&["success"])
-            .inc_by(success);
+        deployments.with_label_values(&["success"]).inc_by(success);
     }
     if failed > 0 {
-        deployments
-            .with_label_values(&["failed"])
-            .inc_by(failed);
+        deployments.with_label_values(&["failed"]).inc_by(failed);
     }
 
     let relay_mints = IntCounterVec::new(

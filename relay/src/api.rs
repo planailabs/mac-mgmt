@@ -13,11 +13,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::auth::{SelfInfo, validate_cert, validate_token};
-use crate::mtls::ClientCertInfo;
 use crate::daemon_registry::DaemonRegistry;
 use crate::metrics_federation::{
     PROMETHEUS_CONTENT_TYPE, encode_families, parse_and_relabel, push_gauge_strs,
 };
+use crate::mtls::ClientCertInfo;
 use crate::p2p::RelaySwarm;
 
 #[derive(Clone)]
@@ -128,22 +128,25 @@ async fn require_auth_ext(
 
     // Fall back to client certificate auth.
     if let Some(cert) = cert_info {
-        let cert_auth =
-            validate_cert(server_api_url, &cert.fingerprint_sha256, &cert.certificate_pem)
-                .await
-                .map_err(|s| {
-                    if s == StatusCode::FORBIDDEN {
-                        // Return the fingerprint so the user can add it.
-                        Json(serde_json::json!({
-                            "error": "certificate not authorized",
-                            "cert_fingerprint": cert.fingerprint_sha256,
-                            "hint": "Add this fingerprint to cluster or admin certificate settings"
-                        }))
-                        .into_response()
-                    } else {
-                        s.into_response()
-                    }
-                })?;
+        let cert_auth = validate_cert(
+            server_api_url,
+            &cert.fingerprint_sha256,
+            &cert.certificate_pem,
+        )
+        .await
+        .map_err(|s| {
+            if s == StatusCode::FORBIDDEN {
+                // Return the fingerprint so the user can add it.
+                Json(serde_json::json!({
+                    "error": "certificate not authorized",
+                    "cert_fingerprint": cert.fingerprint_sha256,
+                    "hint": "Add this fingerprint to cluster or admin certificate settings"
+                }))
+                .into_response()
+            } else {
+                s.into_response()
+            }
+        })?;
         // Convert CertAuthInfo to SelfInfo for compatibility.
         let self_info = SelfInfo {
             cluster_id: None,
@@ -188,7 +191,12 @@ async fn certificate_info(
     )
     .await
     {
-        Ok(info) => (true, info.token_kind, info.cluster_ids, info.organization_ids),
+        Ok(info) => (
+            true,
+            info.token_kind,
+            info.cluster_ids,
+            info.organization_ids,
+        ),
         Err(_) => (false, String::new(), vec![], vec![]),
     };
 
@@ -218,7 +226,14 @@ async fn proxy_metrics(
     State(state): State<AppState>,
 ) -> axum::response::Response {
     let cert_ref = cert.as_ref().map(|c| &c.0);
-    if let Err(resp) = require_auth_ext(&headers, &state.server_api_url, &["admin", "setting"], cert_ref).await {
+    if let Err(resp) = require_auth_ext(
+        &headers,
+        &state.server_api_url,
+        &["admin", "setting"],
+        cert_ref,
+    )
+    .await
+    {
         return resp;
     }
 
@@ -246,15 +261,20 @@ async fn proxy_metrics(
         "path": full_path,
     });
 
-    match crate::tunnel_io::open_and_read_response(&state.relay_swarm, peer_id, handshake, Duration::from_secs(10)).await {
-        Ok((status, content_type, body)) => {
-            axum::response::Response::builder()
-                .status(status)
-                .header("content-type", content_type)
-                .body(axum::body::Body::from(body))
-                .expect("response builder")
-                .into_response()
-        }
+    match crate::tunnel_io::open_and_read_response(
+        &state.relay_swarm,
+        peer_id,
+        handshake,
+        Duration::from_secs(10),
+    )
+    .await
+    {
+        Ok((status, content_type, body)) => axum::response::Response::builder()
+            .status(status)
+            .header("content-type", content_type)
+            .body(axum::body::Body::from(body))
+            .expect("response builder")
+            .into_response(),
         Err(status) => status.into_response(),
     }
 }
@@ -267,7 +287,13 @@ async fn list_tunnels(
     State(state): State<AppState>,
 ) -> axum::response::Response {
     let cert_ref = cert.as_ref().map(|c| &c.0);
-    let self_info = match require_auth_ext(&headers, &state.server_api_url, &["admin", "setting"], cert_ref).await
+    let self_info = match require_auth_ext(
+        &headers,
+        &state.server_api_url,
+        &["admin", "setting"],
+        cert_ref,
+    )
+    .await
     {
         Ok(info) => info,
         Err(resp) => return resp,
@@ -289,7 +315,13 @@ async fn list_ssh_targets(
     State(state): State<AppState>,
 ) -> axum::response::Response {
     let cert_ref = cert.as_ref().map(|c| &c.0);
-    let self_info = match require_auth_ext(&headers, &state.server_api_url, &["admin", "setting"], cert_ref).await
+    let self_info = match require_auth_ext(
+        &headers,
+        &state.server_api_url,
+        &["admin", "setting"],
+        cert_ref,
+    )
+    .await
     {
         Ok(info) => info,
         Err(resp) => return resp,
@@ -325,7 +357,13 @@ async fn federated_metrics(
     State(state): State<AppState>,
 ) -> axum::response::Response {
     let cert_ref = cert.as_ref().map(|c| &c.0);
-    let self_info = match require_auth_ext(&headers, &state.server_api_url, &["admin", "setting"], cert_ref).await
+    let self_info = match require_auth_ext(
+        &headers,
+        &state.server_api_url,
+        &["admin", "setting"],
+        cert_ref,
+    )
+    .await
     {
         Ok(info) => info,
         Err(resp) => return resp,
@@ -413,8 +451,12 @@ async fn scrape_one(
     let Some(peer_id) = registry.resolve_peer_id(&instance_id) else {
         tracing::warn!(%instance_id, "metrics scrape: no peer_id, daemon registered but not connected via p2p");
         return ScrapeOutcome {
-            instance_id, hostname, cluster_id, cluster_name,
-            families: Vec::new(), up: false,
+            instance_id,
+            hostname,
+            cluster_id,
+            cluster_name,
+            families: Vec::new(),
+            up: false,
             duration_secs: started.elapsed().as_secs_f64(),
         };
     };
@@ -426,29 +468,49 @@ async fn scrape_one(
 
     match tokio::time::timeout(
         FEDERATION_SCRAPE_TIMEOUT,
-        crate::tunnel_io::open_and_read_response(swarm, peer_id, handshake, FEDERATION_SCRAPE_TIMEOUT),
-    ).await {
+        crate::tunnel_io::open_and_read_response(
+            swarm,
+            peer_id,
+            handshake,
+            FEDERATION_SCRAPE_TIMEOUT,
+        ),
+    )
+    .await
+    {
         Ok(Ok((status, _content_type, body))) => {
             if status == 200 {
-                match parse_and_relabel(&body, &instance_id, &hostname, &cluster_id, &cluster_name) {
+                match parse_and_relabel(&body, &instance_id, &hostname, &cluster_id, &cluster_name)
+                {
                     Ok(families) => ScrapeOutcome {
-                        instance_id, hostname, cluster_id, cluster_name,
-                        families, up: true,
+                        instance_id,
+                        hostname,
+                        cluster_id,
+                        cluster_name,
+                        families,
+                        up: true,
                         duration_secs: started.elapsed().as_secs_f64(),
                     },
                     Err(e) => {
                         tracing::warn!("federated metrics parse error from {instance_id}: {e}");
                         ScrapeOutcome {
-                            instance_id, hostname, cluster_id, cluster_name,
-                            families: Vec::new(), up: false,
+                            instance_id,
+                            hostname,
+                            cluster_id,
+                            cluster_name,
+                            families: Vec::new(),
+                            up: false,
                             duration_secs: started.elapsed().as_secs_f64(),
                         }
                     }
                 }
             } else {
                 ScrapeOutcome {
-                    instance_id, hostname, cluster_id, cluster_name,
-                    families: Vec::new(), up: false,
+                    instance_id,
+                    hostname,
+                    cluster_id,
+                    cluster_name,
+                    families: Vec::new(),
+                    up: false,
                     duration_secs: started.elapsed().as_secs_f64(),
                 }
             }
@@ -456,16 +518,24 @@ async fn scrape_one(
         Ok(Err(e)) => {
             tracing::warn!(%instance_id, ?e, "metrics scrape failed: tunnel error");
             ScrapeOutcome {
-                instance_id, hostname, cluster_id, cluster_name,
-                families: Vec::new(), up: false,
+                instance_id,
+                hostname,
+                cluster_id,
+                cluster_name,
+                families: Vec::new(),
+                up: false,
                 duration_secs: started.elapsed().as_secs_f64(),
             }
         }
         Err(_) => {
             tracing::warn!(%instance_id, "metrics scrape failed: timeout");
             ScrapeOutcome {
-                instance_id, hostname, cluster_id, cluster_name,
-                families: Vec::new(), up: false,
+                instance_id,
+                hostname,
+                cluster_id,
+                cluster_name,
+                families: Vec::new(),
+                up: false,
                 duration_secs: started.elapsed().as_secs_f64(),
             }
         }

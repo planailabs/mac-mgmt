@@ -5,10 +5,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    ChartColor, Dot, ErrorText, HelpText, Kicker, Mono, Pill, PillVariant, SectionHeading, StatBlock,
+    ChartColor, Dot, ErrorText, HelpText, Kicker, Mono, Pill, PillVariant, SectionHeading,
+    StatBlock,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 /// Build a tunnel URL from the proxy URL and subdomain prefix.
 ///
@@ -379,8 +380,15 @@ fn render_detail(d: &FleetDetailData) -> Element {
         "staging" => PillVariant::Warn,
         _ => PillVariant::Muted,
     };
-    let online = Utc::now().signed_duration_since(d.reported_at).num_seconds() < 300;
-    let live_variant = if online { PillVariant::Ok } else { PillVariant::Bad };
+    let online = Utc::now()
+        .signed_duration_since(d.reported_at)
+        .num_seconds()
+        < 300;
+    let live_variant = if online {
+        PillVariant::Ok
+    } else {
+        PillVariant::Bad
+    };
     let instance_short: String = d.instance_id.chars().take(56).collect();
 
     rsx! {
@@ -1084,7 +1092,11 @@ fn build_security_items(v: &serde_json::Value) -> Vec<(String, String, String)> 
         }
     }
     if let Some(n) = v.get("apparmor_profiles").and_then(|x| x.as_u64()) {
-        items.push(("AppArmor profiles".to_string(), n.to_string(), gray.to_string()));
+        items.push((
+            "AppArmor profiles".to_string(),
+            n.to_string(),
+            gray.to_string(),
+        ));
     }
     if let Some(n) = v.get("nftables_rule_count").and_then(|x| x.as_u64()) {
         let label = if n == 0 {
@@ -1121,9 +1133,24 @@ fn render_per_service_sections(d: &FleetDetailData) -> Element {
         return rsx! {};
     }
 
-    let inv_arr = d.service_inventories.as_ref().and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let sample_arr = d.service_samples.as_ref().and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let sec_arr = d.service_security.as_ref().and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let inv_arr = d
+        .service_inventories
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let sample_arr = d
+        .service_samples
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let sec_arr = d
+        .service_security
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     rsx! {
         SectionHeading { class: "mb-2", {t!("fleet-detail-per-service")} }
@@ -1240,9 +1267,14 @@ fn format_inventory_value(v: &serde_json::Value) -> String {
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::Bool(b) => if *b { "yes" } else { "no" }.to_string(),
         serde_json::Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(|item| {
-                item.as_str().map(String::from).unwrap_or_else(|| item.to_string())
-            }).collect();
+            let items: Vec<String> = arr
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(String::from)
+                        .unwrap_or_else(|| item.to_string())
+                })
+                .collect();
             items.join(", ")
         }
         serde_json::Value::Null => t!("em-dash"),

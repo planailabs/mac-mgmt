@@ -23,7 +23,19 @@ async fn list_certificates() -> Result<Vec<CertRow>, ServerFnError> {
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, bool, Option<String>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            bool,
+            Option<String>,
+        ),
+    >(
         "SELECT id, domain, issuer, acme_status, not_before, not_after, \
          not_after < now() + interval '30 days', last_error \
          FROM certificates ORDER BY domain",
@@ -32,13 +44,23 @@ async fn list_certificates() -> Result<Vec<CertRow>, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|(id, domain, issuer, acme_status, not_before, not_after, expires_soon, last_error)| CertRow {
-        id, domain, issuer, acme_status,
-        not_before: not_before.format("%Y-%m-%d").to_string(),
-        not_after: not_after.format("%Y-%m-%d").to_string(),
-        expires_soon,
-        last_error,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, domain, issuer, acme_status, not_before, not_after, expires_soon, last_error)| {
+                CertRow {
+                    id,
+                    domain,
+                    issuer,
+                    acme_status,
+                    not_before: not_before.format("%Y-%m-%d").to_string(),
+                    not_after: not_after.format("%Y-%m-%d").to_string(),
+                    expires_soon,
+                    last_error,
+                }
+            },
+        )
+        .collect())
 }
 
 #[server]

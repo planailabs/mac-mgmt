@@ -150,16 +150,16 @@ pub async fn create_session(
         .mint_proxy_token_scoped(cluster_id, None, Some(healer_scopes))
         .await
         .map_err(|_| Status::InternalServerError)?;
-    let relay_client = std::sync::Arc::new(
-        mac_mgmt_healer::relay_client::RelayClient::new(relay_url.clone(), proxy_token),
-    );
+    let relay_client = std::sync::Arc::new(mac_mgmt_healer::relay_client::RelayClient::new(
+        relay_url.clone(),
+        proxy_token,
+    ));
     let instance_prefix: String = body.instance_id.chars().take(12).collect();
-    let instance_access: mac_mgmt_healer::DynInstanceAccess = std::sync::Arc::new(
-        mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
+    let instance_access: mac_mgmt_healer::DynInstanceAccess =
+        std::sync::Arc::new(mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
             relay_client.clone(),
             instance_prefix,
-        ),
-    );
+        ));
     let cluster_access: Option<mac_mgmt_healer::DynClusterAccess> = Some(std::sync::Arc::new(
         mac_mgmt_healer::relay_client::RelayClusterAccess::new(relay_client),
     ));
@@ -208,7 +208,8 @@ pub async fn create_session(
         } else {
             crate::config::load().healer.models.clone()
         };
-        models.iter()
+        models
+            .iter()
             .find(|m| m.provider == *provider && m.model == *model)
             .and_then(|m| m.token_budget)
     } else {
@@ -238,10 +239,12 @@ pub async fn create_session(
         proxy_expires: Some(proxy_expires),
         // Priority: request body > cluster config > server global
         auto_approve: body.auto_approve || cluster_healer.auto_approve.unwrap_or(false),
-        fix_provider: body.fix_provider
+        fix_provider: body
+            .fix_provider
             .or(cluster_healer.fix_provider)
             .or_else(|| server_cfg.healer.fix_provider.clone()),
-        fix_model: body.fix_model
+        fix_model: body
+            .fix_model
             .or(cluster_healer.fix_model)
             .or_else(|| server_cfg.healer.fix_model.clone()),
         validator_provider: None,
@@ -278,9 +281,21 @@ pub async fn list_sessions(
         sessions
             .into_iter()
             .map(|s| {
-                let auto_approve = s.state_data.get("auto_approve").and_then(|v| v.as_bool()).unwrap_or(false);
-                let fix_provider = s.state_data.get("fix_provider").and_then(|v| v.as_str()).map(String::from);
-                let fix_model = s.state_data.get("fix_model").and_then(|v| v.as_str()).map(String::from);
+                let auto_approve = s
+                    .state_data
+                    .get("auto_approve")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let fix_provider = s
+                    .state_data
+                    .get("fix_provider")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let fix_model = s
+                    .state_data
+                    .get("fix_model")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 SessionSummary {
                     id: s.id,
                     instance_id: s.instance_id,
@@ -316,9 +331,21 @@ pub async fn get_session(
         .map_err(|_| Status::InternalServerError)?
         .ok_or(Status::NotFound)?;
 
-    let auto_approve = session.state_data.get("auto_approve").and_then(|v| v.as_bool()).unwrap_or(false);
-    let fix_provider = session.state_data.get("fix_provider").and_then(|v| v.as_str()).map(String::from);
-    let fix_model = session.state_data.get("fix_model").and_then(|v| v.as_str()).map(String::from);
+    let auto_approve = session
+        .state_data
+        .get("auto_approve")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let fix_provider = session
+        .state_data
+        .get("fix_provider")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let fix_model = session
+        .state_data
+        .get("fix_model")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     Ok(Json(SessionDetail {
         session: SessionSummary {
@@ -511,7 +538,8 @@ pub async fn stream_session(
     let store = healer.store().clone();
 
     // Load existing messages first
-    let existing = store.get_messages(session_id)
+    let existing = store
+        .get_messages(session_id)
         .await
         .ok()
         .unwrap_or_default();
@@ -729,10 +757,7 @@ pub async fn admin_resolve_staff_ping(
 ) -> Result<Status, Status> {
     let pid: Uuid = ping_id.parse().map_err(|_| Status::BadRequest)?;
 
-    let resolved_by = body
-        .resolved_by
-        .as_deref()
-        .unwrap_or("admin");
+    let resolved_by = body.resolved_by.as_deref().unwrap_or("admin");
 
     let result = sqlx::query(
         "UPDATE healer_staff_pings \

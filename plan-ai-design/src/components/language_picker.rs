@@ -4,7 +4,7 @@
 //! the selection on startup via `use_effect` + `i18n.set_language(...)`.
 
 use dioxus::prelude::*;
-use dioxus_i18n::{t, prelude::*, unic_langid::langid};
+use dioxus_i18n::{prelude::*, t, unic_langid::langid};
 
 pub const LOCALES: &[(&str, &str)] = &[("en-US", "English"), ("de-DE", "Deutsch")];
 

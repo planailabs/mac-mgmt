@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::{non_empty_secret, Connector, ConnectorPhase};
+use super::{Connector, ConnectorPhase, non_empty_secret};
 use crate::sentry_ext;
 use crate::services::openclaw::{config_path, merge_and_validate};
 

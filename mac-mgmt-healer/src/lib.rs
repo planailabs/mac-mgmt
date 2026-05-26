@@ -22,8 +22,7 @@ use uuid::Uuid;
 
 pub use connector::ConnectorConfig;
 pub use instance_access::{
-    ClusterAccess, DynClusterAccess, DynInstanceAccess, FileReadResult, InstanceAccess,
-    ShellOutput,
+    ClusterAccess, DynClusterAccess, DynInstanceAccess, FileReadResult, InstanceAccess, ShellOutput,
 };
 pub use instance_data::{DynInstanceData, InstanceDataSource};
 pub use session::models::{HealerEvent, HealerMessage, HealerSession, SessionState};
@@ -179,12 +178,23 @@ impl HealerState {
     /// Spawn a new healer session. Returns the session ID immediately.
     pub async fn spawn_session(&self, req: SpawnRequest) -> Result<Uuid> {
         // Guard: no concurrent sessions for the same instance
-        if self.inner.store.has_running_session(&req.instance_id).await? {
+        if self
+            .inner
+            .store
+            .has_running_session(&req.instance_id)
+            .await?
+        {
             anyhow::bail!("a healer session is already running for this instance");
         }
 
         // Guard: 1-hour cooldown between sessions (skip in dev mode)
-        if !req.skip_cooldown && self.inner.store.has_recent_session(&req.instance_id).await? {
+        if !req.skip_cooldown
+            && self
+                .inner
+                .store
+                .has_recent_session(&req.instance_id)
+                .await?
+        {
             anyhow::bail!(
                 "a healer session was created for this instance in the last hour — \
                  please wait before starting another"
@@ -208,26 +218,27 @@ impl HealerState {
         });
 
         // 2. Create session row
-        let session_id = self.inner.store.create_session(
-            req.cluster_id,
-            &req.instance_id,
-            &req.created_by,
-            &initial_issues,
-            &state_data,
-            req.provider.as_deref(),
-            req.model.as_deref(),
-            req.label.as_deref(),
-        )
-        .await
-        .context("failed to create healer session")?;
+        let session_id = self
+            .inner
+            .store
+            .create_session(
+                req.cluster_id,
+                &req.instance_id,
+                &req.created_by,
+                &initial_issues,
+                &state_data,
+                req.provider.as_deref(),
+                req.model.as_deref(),
+                req.label.as_deref(),
+            )
+            .await
+            .context("failed to create healer session")?;
 
         // 3. Transition to Initializing
-        self.inner.store.transition_state(
-            session_id,
-            &SessionState::Initializing,
-            &state_data,
-        )
-        .await?;
+        self.inner
+            .store
+            .transition_state(session_id, &SessionState::Initializing, &state_data)
+            .await?;
 
         // 4. Set up cancellation and event broadcasting
         let cancel = CancellationToken::new();
@@ -242,10 +253,15 @@ impl HealerState {
         let effective_budget = if req.provider.as_deref() == Some("openai_compat") {
             0
         } else {
-            req.token_budget.unwrap_or(self.inner.connector_config.token_budget)
+            req.token_budget
+                .unwrap_or(self.inner.connector_config.token_budget)
         };
         if effective_budget > 0 {
-            self.inner.store.set_token_budget(session_id, effective_budget).await.ok();
+            self.inner
+                .store
+                .set_token_budget(session_id, effective_budget)
+                .await
+                .ok();
         }
 
         self.inner.running.insert(
@@ -289,16 +305,18 @@ impl HealerState {
 
             if let Err(e) = &result {
                 tracing::error!(session_id = %session_id, err = %e, "healer session failed");
-                let _ = state.inner.store.fail_session(
-                    session_id,
-                    &e.to_string(),
-                    &json!({}),
-                )
-                .await;
+                let _ = state
+                    .inner
+                    .store
+                    .fail_session(session_id, &e.to_string(), &json!({}))
+                    .await;
             }
 
             // Broadcast done event
-            let final_state = state.inner.store.get_session(session_id)
+            let final_state = state
+                .inner
+                .store
+                .get_session(session_id)
                 .await
                 .ok()
                 .flatten()
@@ -337,7 +355,10 @@ impl HealerState {
     /// If the session was paused due to token budget exhaustion, refuses
     /// to resume unless `extend_budget()` was called first.
     pub async fn resume_session(&self, session_id: Uuid) -> Result<()> {
-        let sess = self.inner.store.get_session(session_id)
+        let sess = self
+            .inner
+            .store
+            .get_session(session_id)
             .await?
             .context("session not found")?;
 
@@ -356,8 +377,18 @@ impl HealerState {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         if reason == "token_budget_exceeded" {
-            let budget = self.inner.store.get_token_budget(session_id).await.unwrap_or(0);
-            let used = self.inner.store.get_token_usage(session_id).await.unwrap_or(0);
+            let budget = self
+                .inner
+                .store
+                .get_token_budget(session_id)
+                .await
+                .unwrap_or(0);
+            let used = self
+                .inner
+                .store
+                .get_token_usage(session_id)
+                .await
+                .unwrap_or(0);
             if budget > 0 && used >= budget {
                 anyhow::bail!(
                     "session was paused for token budget exhaustion — \
@@ -390,7 +421,11 @@ impl HealerState {
         let sample = sess.state_data.get("sample").cloned();
 
         // Build instance access via the session factory
-        let access = self.inner.session_factory.build_access(&sess).await
+        let access = self
+            .inner
+            .session_factory
+            .build_access(&sess)
+            .await
             .context("failed to build instance access for resumed session")?;
 
         // Transition back to a running state
@@ -403,12 +438,10 @@ impl HealerState {
             Some(s) if s.is_active() => s,
             _ => SessionState::Diagnosing,
         };
-        self.inner.store.transition_state(
-            session_id,
-            &resume_state,
-            &sess.state_data,
-        )
-        .await?;
+        self.inner
+            .store
+            .transition_state(session_id, &resume_state, &sess.state_data)
+            .await?;
 
         // Set up cancellation and events
         let cancel = CancellationToken::new();
@@ -452,7 +485,11 @@ impl HealerState {
             label: sess.label.clone(),
             token_budget: None, // resume uses the budget from the running session state
             proxy_expires: access.proxy_expires,
-            auto_approve: sess.state_data.get("auto_approve").and_then(|v| v.as_bool()).unwrap_or(false),
+            auto_approve: sess
+                .state_data
+                .get("auto_approve")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             fix_provider: None,
             fix_model: None,
             validator_provider: None,
@@ -484,15 +521,17 @@ impl HealerState {
 
             if let Err(e) = &result {
                 tracing::error!(session_id = %session_id, err = %e, "resumed healer session failed");
-                let _ = state.inner.store.fail_session(
-                    session_id,
-                    &e.to_string(),
-                    &json!({}),
-                )
-                .await;
+                let _ = state
+                    .inner
+                    .store
+                    .fail_session(session_id, &e.to_string(), &json!({}))
+                    .await;
             }
 
-            let final_state = state.inner.store.get_session(session_id)
+            let final_state = state
+                .inner
+                .store
+                .get_session(session_id)
                 .await
                 .ok()
                 .flatten()
@@ -522,12 +561,10 @@ impl HealerState {
             Ok(())
         } else {
             // Session might not be running — mark it cancelled in DB directly
-            self.inner.store.transition_state(
-                session_id,
-                &SessionState::Cancelled,
-                &json!({}),
-            )
-            .await
+            self.inner
+                .store
+                .transition_state(session_id, &SessionState::Cancelled, &json!({}))
+                .await
         }
     }
 
@@ -552,8 +589,16 @@ impl HealerState {
 
         // If a fix-model was stored in state_data, override the session's
         // provider/model so the resumed agent uses the fix-model for remediation.
-        let fix_provider = sess.state_data.get("fix_provider").and_then(|v| v.as_str()).map(String::from);
-        let fix_model = sess.state_data.get("fix_model").and_then(|v| v.as_str()).map(String::from);
+        let fix_provider = sess
+            .state_data
+            .get("fix_provider")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let fix_model = sess
+            .state_data
+            .get("fix_model")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         if fix_provider.is_some() || fix_model.is_some() {
             if let Some(p) = &fix_provider {
                 sess.provider = Some(p.clone());
@@ -573,7 +618,11 @@ impl HealerState {
         // have auto_approve=true so all tools are registered.
         self.inner
             .store
-            .transition_state(session_id, &SessionState::Remediating, &json!({"reason": "approved"}))
+            .transition_state(
+                session_id,
+                &SessionState::Remediating,
+                &json!({"reason": "approved"}),
+            )
             .await?;
         sess.state = SessionState::Remediating;
 
@@ -583,7 +632,10 @@ impl HealerState {
     /// Increase the token budget for a session to 1 million tokens.
     /// Works for both running and paused sessions. Updates the DB directly.
     pub async fn extend_budget(&self, session_id: Uuid) -> Result<()> {
-        self.inner.store.set_token_budget(session_id, 1_000_000).await?;
+        self.inner
+            .store
+            .set_token_budget(session_id, 1_000_000)
+            .await?;
         tracing::info!("extended token budget to 1M for session {session_id}");
         Ok(())
     }
@@ -692,7 +744,11 @@ async fn run_agent_session(
     // Persist the actual resolved provider/model to the session row so we can
     // resume with the same LLM later and display it in the UI.
     store
-        .update_provider_model(session_id, llm.resolved_provider.as_str(), &llm.resolved_model)
+        .update_provider_model(
+            session_id,
+            llm.resolved_provider.as_str(),
+            &llm.resolved_model,
+        )
         .await
         .ok();
 
@@ -761,7 +817,8 @@ async fn run_agent_session(
     } else {
         None
     };
-    let validator_llm = validation::build_validator_llm(&connector_config, validator_token_ctx).await;
+    let validator_llm =
+        validation::build_validator_llm(&connector_config, validator_token_ctx).await;
     let validation_config = validation::ValidationConfig {
         validator_llm,
         enabled: true,
@@ -870,7 +927,8 @@ async fn run_agent_session(
             "Diagnose and fix the detected issues. Start by listing available tools and reading logs.".to_string()
         });
         // Persist the initial user message so it appears in the chat log
-        store.append_message(session_id, "user", &msg, None)
+        store
+            .append_message(session_id, "user", &msg, None)
             .await
             .ok();
         let _ = events_tx.send(session::HealerEvent::Message {
@@ -940,7 +998,10 @@ async fn run_agent_session(
                     let content = parts
                         .iter()
                         .filter_map(|p| {
-                            if let swiftide::chat_completion::ChatMessageContentPart::Text { text } = p {
+                            if let swiftide::chat_completion::ChatMessageContentPart::Text {
+                                text,
+                            } = p
+                            {
                                 Some(text.as_str())
                             } else {
                                 None
@@ -1013,7 +1074,8 @@ async fn run_agent_session(
                         return Ok(());
                     }
                     // Persist message
-                    store.append_message(session_id, &role, &content, None)
+                    store
+                        .append_message(session_id, &role, &content, None)
                         .await
                         .ok();
 
@@ -1072,11 +1134,13 @@ async fn run_agent_session(
                     // Look up validation result from history (pushed by ValidatedTool)
                     let val_meta = val_history.recent(1).first().and_then(|r| {
                         if r.tool_name == name {
-                            r.validation.as_ref().map(|v| serde_json::json!({
-                                "status": if v.approved { "approved" } else { "rejected" },
-                                "reasoning": v.reasoning,
-                                "risk": v.risk,
-                            }))
+                            r.validation.as_ref().map(|v| {
+                                serde_json::json!({
+                                    "status": if v.approved { "approved" } else { "rejected" },
+                                    "reasoning": v.reasoning,
+                                    "risk": v.risk,
+                                })
+                            })
                         } else {
                             None
                         }
@@ -1090,17 +1154,15 @@ async fn run_agent_session(
                         "status": status,
                     });
                     if let Some(val) = val_meta {
-                        metadata.as_object_mut().unwrap().insert("validation".to_string(), val);
+                        metadata
+                            .as_object_mut()
+                            .unwrap()
+                            .insert("validation".to_string(), val);
                     }
                     store
-                        .append_message(
-                            session_id,
-                            "tool_result",
-                            &content,
-                            Some(&metadata),
-                        )
+                        .append_message(session_id, "tool_result", &content, Some(&metadata))
                         .await
-                    .ok();
+                        .ok();
                     let _ = events_tx.send(HealerEvent::Message {
                         role: "tool_result".to_string(),
                         content,
@@ -1226,12 +1288,11 @@ struct RenamedTool {
 }
 
 impl RenamedTool {
-    fn wrap(tool: Box<dyn swiftide::chat_completion::Tool>) -> Box<dyn swiftide::chat_completion::Tool> {
+    fn wrap(
+        tool: Box<dyn swiftide::chat_completion::Tool>,
+    ) -> Box<dyn swiftide::chat_completion::Tool> {
         let orig_name = tool.name().to_string();
-        let sanitized = orig_name
-            .replace(':', "-")
-            .replace(' ', "_")
-            .to_lowercase();
+        let sanitized = orig_name.replace(':', "-").replace(' ', "_").to_lowercase();
         let mut spec = tool.tool_spec();
         spec.name = sanitized.clone();
         Box::new(Self {
@@ -1256,7 +1317,8 @@ impl swiftide::chat_completion::Tool for RenamedTool {
         &self,
         agent_context: &dyn swiftide::traits::AgentContext,
         tool_call: &swiftide::chat_completion::ToolCall,
-    ) -> Result<swiftide::chat_completion::ToolOutput, swiftide::chat_completion::errors::ToolError> {
+    ) -> Result<swiftide::chat_completion::ToolOutput, swiftide::chat_completion::errors::ToolError>
+    {
         self.inner.invoke(agent_context, tool_call).await
     }
 }
@@ -1286,17 +1348,14 @@ async fn proxy_expiry_signal(expires: Option<DateTime<Utc>>) {
     tokio::time::sleep(dur).await;
 }
 
-
 /// Connect to the Context7 documentation MCP server via SSE.
-async fn connect_context7(
-    api_key: &str,
-) -> Result<swiftide::agents::tools::mcp::McpToolbox> {
+async fn connect_context7(api_key: &str) -> Result<swiftide::agents::tools::mcp::McpToolbox> {
     let url = format!("https://mcp.context7.com/mcp?api_key={api_key}");
-    let transport = rmcp::transport::StreamableHttpClientTransport::<reqwest::Client>::from_uri(url);
-    let mut toolbox =
-        swiftide::agents::tools::mcp::McpToolbox::try_from_transport(transport)
-            .await
-            .context("Context7 MCP handshake failed")?;
+    let transport =
+        rmcp::transport::StreamableHttpClientTransport::<reqwest::Client>::from_uri(url);
+    let mut toolbox = swiftide::agents::tools::mcp::McpToolbox::try_from_transport(transport)
+        .await
+        .context("Context7 MCP handshake failed")?;
     toolbox.with_name("Context7");
     Ok(toolbox)
 }

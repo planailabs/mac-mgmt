@@ -7,8 +7,7 @@
 //! Auth: Bearer token with kind="deploy" and scopes containing the webspace_id.
 
 use dioxus::fullstack::axum::{
-    self as axum,
-    Router,
+    self as axum, Router,
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -48,7 +47,10 @@ pub async fn recover_interrupted_deployments(pool: &PgPool) {
 
     match result {
         Ok(r) if r.rows_affected() > 0 => {
-            tracing::warn!("marked {} interrupted deployment(s) as failed", r.rows_affected());
+            tracing::warn!(
+                "marked {} interrupted deployment(s) as failed",
+                r.rows_affected()
+            );
         }
         Ok(_) => {}
         Err(e) => tracing::error!("failed to recover interrupted deployments: {e}"),
@@ -74,14 +76,18 @@ pub async fn drain_active_deploys(active: &AtomicUsize, timeout: std::time::Dura
 
 // ── Auth ──────────────────────────────────────────────────────────────
 
-async fn authenticate_deploy(pool: &PgPool, headers: &HeaderMap, webspace_id: Uuid) -> Result<(), (StatusCode, String)> {
+async fn authenticate_deploy(
+    pool: &PgPool,
+    headers: &HeaderMap,
+    webspace_id: Uuid,
+) -> Result<(), (StatusCode, String)> {
     let token = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or((StatusCode::UNAUTHORIZED, "missing Bearer token".into()))?;
 
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
     let row = sqlx::query_as::<_, (String, Option<serde_json::Value>)>(
@@ -104,9 +110,15 @@ async fn authenticate_deploy(pool: &PgPool, headers: &HeaderMap, webspace_id: Uu
             .and_then(|v| v.as_str())
             .map(|id| id == webspace_id.to_string())
             .unwrap_or(false);
-        let is_wildcard = !scopes.as_object().map(|o| o.contains_key("webspace_id")).unwrap_or(false);
+        let is_wildcard = !scopes
+            .as_object()
+            .map(|o| o.contains_key("webspace_id"))
+            .unwrap_or(false);
         if !allowed && !is_wildcard {
-            return Err((StatusCode::FORBIDDEN, "token not scoped to this webspace".into()));
+            return Err((
+                StatusCode::FORBIDDEN,
+                "token not scoped to this webspace".into(),
+            ));
         }
     }
 
@@ -132,7 +144,7 @@ async fn whoami(
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or((StatusCode::UNAUTHORIZED, "missing Bearer token".into()))?;
 
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
     let row = sqlx::query_as::<_, (String, Option<serde_json::Value>)>(
@@ -145,7 +157,8 @@ async fn whoami(
     .ok_or((StatusCode::UNAUTHORIZED, "invalid token".into()))?;
 
     let (kind, scopes) = row;
-    let ws_id = scopes.as_ref()
+    let ws_id = scopes
+        .as_ref()
         .and_then(|s| s.get("webspace_id"))
         .and_then(|v| v.as_str())
         .map(String::from);
@@ -153,11 +166,23 @@ async fn whoami(
     let ws_name = if let Some(ref wid) = ws_id {
         if let Ok(uid) = uuid::Uuid::parse_str(wid) {
             sqlx::query_scalar::<_, String>("SELECT name FROM webspaces WHERE id = $1")
-                .bind(uid).fetch_optional(&state.pool).await.ok().flatten()
-        } else { None }
-    } else { None };
+                .bind(uid)
+                .fetch_optional(&state.pool)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    Ok(Json(WhoamiResponse { kind, webspace_id: ws_id, webspace_name: ws_name }))
+    Ok(Json(WhoamiResponse {
+        kind,
+        webspace_id: ws_id,
+        webspace_name: ws_name,
+    }))
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────
@@ -194,10 +219,19 @@ async fn upload_deploy(
 
     let (hosting_type, project_name, cred_id) = ws;
     if hosting_type != "cloudflare_pages" {
-        return Err((StatusCode::BAD_REQUEST, "webspace is not a Cloudflare Pages project".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "webspace is not a Cloudflare Pages project".into(),
+        ));
     }
-    let project_name = project_name.ok_or((StatusCode::BAD_REQUEST, "Pages project not deployed yet".into()))?;
-    let cred_id = cred_id.ok_or((StatusCode::BAD_REQUEST, "no Cloudflare credential linked".into()))?;
+    let project_name = project_name.ok_or((
+        StatusCode::BAD_REQUEST,
+        "Pages project not deployed yet".into(),
+    ))?;
+    let cred_id = cred_id.ok_or((
+        StatusCode::BAD_REQUEST,
+        "no Cloudflare credential linked".into(),
+    ))?;
 
     let tarball_size = body.len() as i64;
     tracing::info!(
@@ -219,7 +253,9 @@ async fn upload_deploy(
     let cf_token = get_cf_token(&state.pool, cred_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let account_id = get_cf_account_id(&state.pool, cred_id).await.unwrap_or_default();
+    let account_id = get_cf_account_id(&state.pool, cred_id)
+        .await
+        .unwrap_or_default();
 
     // If no branch specified, fetch the production branch from the CF Pages project
     let branch = if query.branch.is_some() {
@@ -248,11 +284,23 @@ async fn upload_deploy(
     let active = state.active_deploys.clone();
     active.fetch_add(1, Ordering::Relaxed);
     tokio::spawn(async move {
-        run_wrangler_deploy(pool, deployment_id, project_name, cf_token, account_id, branch, body).await;
+        run_wrangler_deploy(
+            pool,
+            deployment_id,
+            project_name,
+            cf_token,
+            account_id,
+            branch,
+            body,
+        )
+        .await;
         active.fetch_sub(1, Ordering::Relaxed);
     });
 
-    Ok(Json(UploadResponse { deployment_id, status: "uploading".into() }))
+    Ok(Json(UploadResponse {
+        deployment_id,
+        status: "uploading".into(),
+    }))
 }
 
 #[derive(Serialize)]
@@ -272,7 +320,17 @@ async fn deploy_status(
 ) -> Result<Json<StatusResponse>, (StatusCode, String)> {
     authenticate_deploy(&state.pool, &headers, webspace_id).await?;
 
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<i64>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<i64>,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         "SELECT id, status, error_message, tarball_size, created_at, updated_at \
          FROM deployments WHERE webspace_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
@@ -284,20 +342,31 @@ async fn deploy_status(
 
     let (deployment_id, status, error_message, tarball_size, created_at, updated_at) = row;
     Ok(Json(StatusResponse {
-        deployment_id, status, error_message, tarball_size,
-        created_at: created_at.to_rfc3339(), updated_at: updated_at.to_rfc3339(),
+        deployment_id,
+        status,
+        error_message,
+        tarball_size,
+        created_at: created_at.to_rfc3339(),
+        updated_at: updated_at.to_rfc3339(),
     }))
 }
 
 // ── Background deploy ─────────────────────────────────────────────────
 
 async fn get_cf_token(pool: &PgPool, cred_id: Uuid) -> Result<String, String> {
-    let data = crate::credentials::credential_json(pool, cred_id, "cloudflare").await.map_err(|e| e.to_string())?;
-    data["api_token"].as_str().map(String::from).ok_or_else(|| "missing api_token".into())
+    let data = crate::credentials::credential_json(pool, cred_id, "cloudflare")
+        .await
+        .map_err(|e| e.to_string())?;
+    data["api_token"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| "missing api_token".into())
 }
 
 async fn get_cf_account_id(pool: &PgPool, cred_id: Uuid) -> Result<String, String> {
-    let (_, account_id) = crate::credentials::cf_client_with_account(pool, cred_id).await.map_err(|e| e.to_string())?;
+    let (_, account_id) = crate::credentials::cf_client_with_account(pool, cred_id)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(account_id)
 }
 
@@ -320,12 +389,19 @@ async fn run_wrangler_deploy(
         "starting deployment"
     );
 
-    let _ = sqlx::query("UPDATE deployments SET status = 'deploying', updated_at = now() WHERE id = $1")
-        .bind(deployment_id).execute(&pool).await;
+    let _ = sqlx::query(
+        "UPDATE deployments SET status = 'deploying', updated_at = now() WHERE id = $1",
+    )
+    .bind(deployment_id)
+    .execute(&pool)
+    .await;
 
     let tmp_dir = match tempfile::tempdir() {
         Ok(d) => d,
-        Err(e) => { set_failed(&pool, deployment_id, &format!("tempdir: {e}")).await; return; }
+        Err(e) => {
+            set_failed(&pool, deployment_id, &format!("tempdir: {e}")).await;
+            return;
+        }
     };
     tracing::debug!(deployment_id = %deployment_id, dir = %tmp_dir.path().display(), "created temp dir");
 
@@ -344,7 +420,8 @@ async fn run_wrangler_deploy(
         let mut archive = tar::Archive::new(gz);
         archive.set_overwrite(true);
         archive.unpack(&extract_dst).map_err(|e| e.to_string())
-    }).await;
+    })
+    .await;
 
     match tar_result {
         Ok(Ok(())) => {
@@ -385,8 +462,10 @@ async fn run_wrangler_deploy(
     }
 
     let mut wrangler_args = vec![
-        "pages".to_string(), "deploy".to_string(),
-        ".".to_string(), format!("--project-name={project_name}"),
+        "pages".to_string(),
+        "deploy".to_string(),
+        ".".to_string(),
+        format!("--project-name={project_name}"),
     ];
     if let Some(ref branch) = branch {
         wrangler_args.push(format!("--branch={branch}"));
@@ -421,9 +500,15 @@ async fn run_wrangler_deploy(
                 stdout = %stdout.trim(),
                 "deployment succeeded"
             );
-            let _ = sqlx::query("UPDATE deployments SET status = 'success', updated_at = now() WHERE id = $1")
-                .bind(deployment_id).execute(&pool).await;
-            super::counters::COUNTERS.deploy_success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let _ = sqlx::query(
+                "UPDATE deployments SET status = 'success', updated_at = now() WHERE id = $1",
+            )
+            .bind(deployment_id)
+            .execute(&pool)
+            .await;
+            super::counters::COUNTERS
+                .deploy_success
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -438,7 +523,12 @@ async fn run_wrangler_deploy(
                 stdout = %stdout.trim(),
                 "wrangler deployment failed"
             );
-            set_failed(&pool, deployment_id, &format!("wrangler exit {exit_code}: {}", stderr.trim())).await;
+            set_failed(
+                &pool,
+                deployment_id,
+                &format!("wrangler exit {exit_code}: {}", stderr.trim()),
+            )
+            .await;
         }
         Err(e) => {
             tracing::error!(
@@ -458,5 +548,7 @@ async fn set_failed(pool: &PgPool, deployment_id: Uuid, msg: &str) {
     tracing::error!(deployment_id = %deployment_id, error = msg, "deployment failed");
     let _ = sqlx::query("UPDATE deployments SET status = 'failed', error_message = $1, updated_at = now() WHERE id = $2")
         .bind(msg).bind(deployment_id).execute(pool).await;
-    super::counters::COUNTERS.deploy_failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    super::counters::COUNTERS
+        .deploy_failed
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }

@@ -16,7 +16,10 @@ use crate::local_backend::LocalBackend;
 use crate::server::MemvaultServer;
 
 #[derive(Parser, Debug)]
-#[command(name = "plan-ai-memvault", about = "MCP server for memvault p2p memory")]
+#[command(
+    name = "plan-ai-memvault",
+    about = "MCP server for memvault p2p memory"
+)]
 pub struct Cli {
     /// Base URL of the daemon's memvault API (used when --db is not set).
     #[arg(long, env = "MEMVAULT_URL", default_value = "http://127.0.0.1:8401")]
@@ -80,7 +83,10 @@ pub async fn run(cli: Cli) -> Result<()> {
                     );
                 }
                 Err(e) => {
-                    tracing::warn!("failed to load agent identity from {}: {e}", identity_dir.display());
+                    tracing::warn!(
+                        "failed to load agent identity from {}: {e}",
+                        identity_dir.display()
+                    );
                 }
             }
         } else {

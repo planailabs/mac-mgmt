@@ -2,7 +2,10 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td, TdMuted, Th};
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td,
+    TdMuted, Th,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OrgData {
@@ -45,12 +48,26 @@ async fn get_org(org_id: Uuid) -> Result<OrgData, ServerFnError> {
          FROM organization_members om JOIN users u ON u.id = om.user_id \
          WHERE om.organization_id = $1 ORDER BY u.email",
     )
-    .bind(org_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+    .bind(org_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
     .into_iter()
-    .map(|(user_id, email, name, role)| MemberRow { user_id, email, name, role })
+    .map(|(user_id, email, name, role)| MemberRow {
+        user_id,
+        email,
+        name,
+        role,
+    })
     .collect();
 
-    Ok(OrgData { id: org_id, name: org_name, show_billing, default_changedetection_credential_id: default_cd_cred_id, members })
+    Ok(OrgData {
+        id: org_id,
+        name: org_name,
+        show_billing,
+        default_changedetection_credential_id: default_cd_cred_id,
+        members,
+    })
 }
 
 #[server]
@@ -61,15 +78,22 @@ async fn add_member(org_id: Uuid, email: String, role: String) -> Result<(), Ser
     let pool = crate::server_pool()?;
 
     let user_id = sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE email = $1")
-        .bind(&email).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+        .bind(&email)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
         .ok_or_else(|| ServerFnError::new(format!("user {email} not found")))?;
 
     sqlx::query(
         "INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3) \
          ON CONFLICT (organization_id, user_id) DO UPDATE SET role = EXCLUDED.role",
     )
-    .bind(org_id).bind(user_id).bind(&role)
-    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .bind(org_id)
+    .bind(user_id)
+    .bind(&role)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
 }
@@ -82,7 +106,10 @@ async fn remove_member(org_id: Uuid, user_id: Uuid) -> Result<(), ServerFnError>
     let pool = crate::server_pool()?;
 
     sqlx::query("DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2")
-        .bind(org_id).bind(user_id).execute(&pool).await
+        .bind(org_id)
+        .bind(user_id)
+        .execute(&pool)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
@@ -111,20 +138,34 @@ async fn list_cd_creds_for_org() -> Result<Vec<CdCredOption>, ServerFnError> {
     let pool = crate::server_pool()?;
     let rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM credentials WHERE credential_type = 'changedetection' ORDER BY name",
-    ).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(rows.into_iter().map(|(id, name)| CdCredOption { id, name }).collect())
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| CdCredOption { id, name })
+        .collect())
 }
 
 #[server]
-async fn set_org_default_changedetection(org_id: Uuid, credential_id: Option<Uuid>) -> Result<(), ServerFnError> {
+async fn set_org_default_changedetection(
+    org_id: Uuid,
+    credential_id: Option<Uuid>,
+) -> Result<(), ServerFnError> {
     use crate::web::user::WebUserExt;
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    sqlx::query("UPDATE organizations SET default_changedetection_credential_id = $1 WHERE id = $2")
-        .bind(credential_id).bind(org_id)
-        .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "UPDATE organizations SET default_changedetection_credential_id = $1 WHERE id = $2",
+    )
+    .bind(credential_id)
+    .bind(org_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
 
@@ -284,7 +325,10 @@ pub fn OrganizationDetail(id: String) -> Element {
 #[component]
 fn DefaultCdCredSection(org_id: Uuid, current: Option<Uuid>) -> Element {
     let cd_creds = use_server_future(list_cd_creds_for_org)?;
-    let cred_list: Vec<CdCredOption> = match &*cd_creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
+    let cred_list: Vec<CdCredOption> = match &*cd_creds.read() {
+        Some(Ok(c)) => c.clone(),
+        _ => vec![],
+    };
 
     if cred_list.is_empty() {
         return rsx! {};

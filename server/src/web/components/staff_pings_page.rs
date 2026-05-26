@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 // ── Wire types ─────────────────────────────────────────────────────────
 
@@ -106,7 +106,9 @@ pub async fn resolve_ping(ping_id: String) -> Result<(), ServerFnError> {
     let uuid: uuid::Uuid = ping_id
         .parse()
         .map_err(|_| ServerFnError::new("invalid id"))?;
-    healer.store().resolve_staff_ping(uuid, &user.email)
+    healer
+        .store()
+        .resolve_staff_ping(uuid, &user.email)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }

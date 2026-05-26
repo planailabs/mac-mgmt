@@ -63,10 +63,7 @@ impl SshBridge {
             Arc::clone(&self.registry),
         );
 
-        listeners.insert(
-            instance_id.to_string(),
-            ListenerEntry { port, handle },
-        );
+        listeners.insert(instance_id.to_string(), ListenerEntry { port, handle });
         tracing::info!("SSH bridge started for {instance_id} on port {port}");
     }
 
@@ -148,12 +145,10 @@ async fn bridge_ssh(
         .get_peer_id(instance_id)
         .ok_or_else(|| anyhow::anyhow!("daemon {instance_id} has no peer_id"))?;
 
-    let mut tunnel = tokio::time::timeout(
-        OPEN_STREAM_TIMEOUT,
-        relay_swarm.open_tunnel_stream(peer_id),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("timeout opening tunnel to {instance_id}"))??;
+    let mut tunnel =
+        tokio::time::timeout(OPEN_STREAM_TIMEOUT, relay_swarm.open_tunnel_stream(peer_id))
+            .await
+            .map_err(|_| anyhow::anyhow!("timeout opening tunnel to {instance_id}"))??;
 
     // Send SSH handshake.
     let handshake = serde_json::json!({ "type": "ssh" });

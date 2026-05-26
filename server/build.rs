@@ -33,17 +33,30 @@ fn build_tailwind() {
 /// `text-`, `border-`, `hover:*`, or `dark:*` utility paired with one of
 /// these names + a numeric shade is rejected.
 const PALETTE_NAMES: &[&str] = &[
-    "blue", "red", "gray", "green", "yellow", "purple", "orange", "amber",
-    "indigo", "emerald", "slate", "zinc", "neutral", "stone", "sky", "cyan",
-    "teal", "lime", "rose", "pink", "fuchsia", "violet",
+    "blue", "red", "gray", "green", "yellow", "purple", "orange", "amber", "indigo", "emerald",
+    "slate", "zinc", "neutral", "stone", "sky", "cyan", "teal", "lime", "rose", "pink", "fuchsia",
+    "violet",
 ];
 
 /// Class prefixes we consider visual. `hover:bg-`, `dark:hover:bg-`, etc.
 /// are all anchored on these stems.
 const VISUAL_PREFIXES: &[&str] = &[
-    "bg-", "text-", "border-", "divide-", "ring-", "from-", "to-", "via-",
-    "fill-", "stroke-", "placeholder-", "caret-", "outline-", "shadow-",
-    "decoration-", "accent-",
+    "bg-",
+    "text-",
+    "border-",
+    "divide-",
+    "ring-",
+    "from-",
+    "to-",
+    "via-",
+    "fill-",
+    "stroke-",
+    "placeholder-",
+    "caret-",
+    "outline-",
+    "shadow-",
+    "decoration-",
+    "accent-",
 ];
 
 fn check_no_tailwind_palette_literals(root: &Path) {
@@ -52,15 +65,12 @@ fn check_no_tailwind_palette_literals(root: &Path) {
         if path.extension().and_then(|s| s.to_str()) != Some("rs") {
             return;
         }
-        let Ok(text) = fs::read_to_string(path) else { return };
+        let Ok(text) = fs::read_to_string(path) else {
+            return;
+        };
         for (lineno, line) in text.lines().enumerate() {
             if let Some(hit) = find_palette_literal(line) {
-                offenders.push(format!(
-                    "  {}:{}: {}",
-                    path.display(),
-                    lineno + 1,
-                    hit,
-                ));
+                offenders.push(format!("  {}:{}: {}", path.display(), lineno + 1, hit,));
             }
         }
     });
@@ -135,7 +145,9 @@ fn find_palette_literal(line: &str) -> Option<String> {
 }
 
 fn walk(dir: &Path, cb: &mut dyn FnMut(&Path)) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {

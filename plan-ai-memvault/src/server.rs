@@ -27,7 +27,11 @@ pub struct MemvaultServer {
 }
 
 impl MemvaultServer {
-    pub fn new(client: Arc<dyn Backend>, default_tags: Vec<String>, default_visibility: String) -> Self {
+    pub fn new(
+        client: Arc<dyn Backend>,
+        default_tags: Vec<String>,
+        default_visibility: String,
+    ) -> Self {
         Self {
             client,
             default_tags,
@@ -87,15 +91,38 @@ impl MemvaultServer {
     async fn put(&self, Parameters(params): Parameters<PutParams>) -> String {
         let mut frontmatter = serde_json::Map::new();
         if let Some(title) = &params.title {
-            frontmatter.insert("title".to_string(), serde_json::Value::String(title.clone()));
+            frontmatter.insert(
+                "title".to_string(),
+                serde_json::Value::String(title.clone()),
+            );
         }
-        let tags_input = if params.tags.is_empty() { &self.default_tags } else { &params.tags };
+        let tags_input = if params.tags.is_empty() {
+            &self.default_tags
+        } else {
+            &params.tags
+        };
         let tags = parse_tags(tags_input);
-        let vis = params.visibility.as_deref().or(Some(self.default_visibility.as_str()));
-        match self.client.put_doc(&params.text, serde_json::Value::Object(frontmatter), tags, vis).await {
+        let vis = params
+            .visibility
+            .as_deref()
+            .or(Some(self.default_visibility.as_str()));
+        match self
+            .client
+            .put_doc(
+                &params.text,
+                serde_json::Value::Object(frontmatter),
+                tags,
+                vis,
+            )
+            .await
+        {
             Ok(resp) => {
                 let raw_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let node_id = if raw_id.contains(':') { raw_id.to_string() } else { format!("doc:{raw_id}") };
+                let node_id = if raw_id.contains(':') {
+                    raw_id.to_string()
+                } else {
+                    format!("doc:{raw_id}")
+                };
                 let mut result = serde_json::json!({
                     "node_id": node_id,
                     "cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
@@ -104,8 +131,12 @@ impl MemvaultServer {
                 if let Some(vfs_path) = &params.vfs_path {
                     let vfs = Vfs::new(self.client.as_ref());
                     match vfs.link(vfs_path, &node_id).await {
-                        Ok(_) => { result["vfs_path"] = serde_json::json!(vfs_path); }
-                        Err(e) => { result["vfs_error"] = serde_json::json!(e.to_string()); }
+                        Ok(_) => {
+                            result["vfs_path"] = serde_json::json!(vfs_path);
+                        }
+                        Err(e) => {
+                            result["vfs_error"] = serde_json::json!(e.to_string());
+                        }
                     }
                 }
                 result.to_string()
@@ -114,7 +145,10 @@ impl MemvaultServer {
         }
     }
 
-    #[tool(name = "memvault_get", description = "Retrieve a memory by its hex-encoded doc ID.")]
+    #[tool(
+        name = "memvault_get",
+        description = "Retrieve a memory by its hex-encoded doc ID."
+    )]
     async fn get(&self, Parameters(params): Parameters<GetParams>) -> String {
         match self.client.get_doc(&params.cid).await {
             Ok(Some(doc)) => serde_json::json!({
@@ -127,40 +161,73 @@ impl MemvaultServer {
         }
     }
 
-    #[tool(name = "memvault_search", description = "Search memories by text query. Optionally filter by tag (scope:label format).")]
+    #[tool(
+        name = "memvault_search",
+        description = "Search memories by text query. Optionally filter by tag (scope:label format)."
+    )]
     async fn search(&self, Parameters(params): Parameters<SearchParams>) -> String {
         let limit = params.limit.unwrap_or(10);
-        ok_or_err!(self.client.search(&params.query, limit, params.tag_filter.as_deref()).await)
+        ok_or_err!(
+            self.client
+                .search(&params.query, limit, params.tag_filter.as_deref())
+                .await
+        )
     }
 
-    #[tool(name = "memvault_list", description = "List recent documents. Optionally filter by tag scope and label.")]
+    #[tool(
+        name = "memvault_list",
+        description = "List recent documents. Optionally filter by tag scope and label."
+    )]
     async fn list(&self, Parameters(params): Parameters<ListParams>) -> String {
         let limit = params.limit.unwrap_or(20);
-        ok_or_err!(self.client.list_docs(params.tag_scope.as_deref(), params.tag_label.as_deref(), limit).await)
+        ok_or_err!(
+            self.client
+                .list_docs(
+                    params.tag_scope.as_deref(),
+                    params.tag_label.as_deref(),
+                    limit
+                )
+                .await
+        )
     }
 
-    #[tool(name = "memvault_doc_history", description = "View the operation history for a document by its hex-encoded ID.")]
+    #[tool(
+        name = "memvault_doc_history",
+        description = "View the operation history for a document by its hex-encoded ID."
+    )]
     async fn doc_history(&self, Parameters(params): Parameters<DocHistoryParams>) -> String {
         ok_or_err!(self.client.history_of(&params.doc_id).await)
     }
 
     // ── Attachments ────────────────────────────────────────────────
 
-    #[tool(name = "memvault_upload_file", description = "Upload a local file to memvault by its absolute path. Returns the manifest CID.")]
+    #[tool(
+        name = "memvault_upload_file",
+        description = "Upload a local file to memvault by its absolute path. Returns the manifest CID."
+    )]
     async fn upload_file(&self, Parameters(params): Parameters<UploadFileParams>) -> String {
         let path = std::path::Path::new(&params.path);
         let data = match std::fs::read(path) {
             Ok(d) => d,
             Err(e) => return format!("error: cannot read {}: {e}", params.path),
         };
-        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unnamed");
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unnamed");
         let mime_type = params.content_type.as_deref().unwrap_or_else(|| {
-            mime_guess::from_path(path).first_raw().unwrap_or("application/octet-stream")
+            mime_guess::from_path(path)
+                .first_raw()
+                .unwrap_or("application/octet-stream")
         });
         match self.client.upload_file(&data, filename, mime_type).await {
             Ok(resp) => {
                 let raw_cid = resp.get("cid").and_then(|v| v.as_str()).unwrap_or("");
-                let node_id = if raw_cid.contains(':') { raw_cid.to_string() } else { format!("file:{raw_cid}") };
+                let node_id = if raw_cid.contains(':') {
+                    raw_cid.to_string()
+                } else {
+                    format!("file:{raw_cid}")
+                };
                 let mut result = serde_json::json!({
                     "node_id": node_id, "filename": filename,
                     "size": data.len(), "mime_type": mime_type, "status": "uploaded"
@@ -168,8 +235,12 @@ impl MemvaultServer {
                 if let Some(vfs_path) = &params.vfs_path {
                     let vfs = Vfs::new(self.client.as_ref());
                     match vfs.link(vfs_path, &node_id).await {
-                        Ok(_) => { result["vfs_path"] = serde_json::json!(vfs_path); }
-                        Err(e) => { result["vfs_error"] = serde_json::json!(e.to_string()); }
+                        Ok(_) => {
+                            result["vfs_path"] = serde_json::json!(vfs_path);
+                        }
+                        Err(e) => {
+                            result["vfs_error"] = serde_json::json!(e.to_string());
+                        }
                     }
                 }
                 result.to_string()
@@ -178,37 +249,60 @@ impl MemvaultServer {
         }
     }
 
-    #[tool(name = "memvault_read_range", description = "Read a byte range [start, end) from a file. Returns base64-encoded bytes.")]
+    #[tool(
+        name = "memvault_read_range",
+        description = "Read a byte range [start, end) from a file. Returns base64-encoded bytes."
+    )]
     async fn read_range(&self, Parameters(params): Parameters<ReadRangeParams>) -> String {
-        match self.client.read_file_range(&params.manifest_cid, params.start, params.end).await {
+        match self
+            .client
+            .read_file_range(&params.manifest_cid, params.start, params.end)
+            .await
+        {
             Ok(data) => {
                 use base64::Engine;
                 serde_json::json!({
                     "data_base64": base64::engine::general_purpose::STANDARD.encode(&data),
                     "size": data.len(),
-                }).to_string()
+                })
+                .to_string()
             }
             Err(e) => format!("error: {e}"),
         }
     }
 
-    #[tool(name = "memvault_pin", description = "Pin a file to prevent garbage collection.")]
+    #[tool(
+        name = "memvault_pin",
+        description = "Pin a file to prevent garbage collection."
+    )]
     async fn pin(&self, Parameters(params): Parameters<PinParams>) -> String {
         match self.client.pin_file(&params.manifest_cid).await {
-            Ok(()) => serde_json::json!({ "manifest_cid": params.manifest_cid, "status": "pinned" }).to_string(),
+            Ok(()) => {
+                serde_json::json!({ "manifest_cid": params.manifest_cid, "status": "pinned" })
+                    .to_string()
+            }
             Err(e) => format!("error: {e}"),
         }
     }
 
-    #[tool(name = "memvault_unpin", description = "Unpin a file, allowing garbage collection.")]
+    #[tool(
+        name = "memvault_unpin",
+        description = "Unpin a file, allowing garbage collection."
+    )]
     async fn unpin(&self, Parameters(params): Parameters<UnpinParams>) -> String {
         match self.client.unpin_file(&params.manifest_cid).await {
-            Ok(()) => serde_json::json!({ "manifest_cid": params.manifest_cid, "status": "unpinned" }).to_string(),
+            Ok(()) => {
+                serde_json::json!({ "manifest_cid": params.manifest_cid, "status": "unpinned" })
+                    .to_string()
+            }
             Err(e) => format!("error: {e}"),
         }
     }
 
-    #[tool(name = "memvault_extract_text", description = "Extract text from a file (PDF, DOCX, HTML, Markdown, plain text).")]
+    #[tool(
+        name = "memvault_extract_text",
+        description = "Extract text from a file (PDF, DOCX, HTML, Markdown, plain text)."
+    )]
     async fn extract_text(&self, Parameters(params): Parameters<ExtractTextParams>) -> String {
         match self.client.extract_text(&params.manifest_cid).await {
             Ok(Some(text)) => serde_json::json!({ "manifest_cid": params.manifest_cid, "text": text }).to_string(),
@@ -217,7 +311,10 @@ impl MemvaultServer {
         }
     }
 
-    #[tool(name = "memvault_file_info", description = "Get manifest metadata for a file.")]
+    #[tool(
+        name = "memvault_file_info",
+        description = "Get manifest metadata for a file."
+    )]
     async fn file_info(&self, Parameters(params): Parameters<FileInfoParams>) -> String {
         match self.client.get_file_manifest(&params.manifest_cid).await {
             Ok(Some(m)) => m.to_string(),
@@ -228,9 +325,15 @@ impl MemvaultServer {
 
     // ── Graph ──────────────────────────────────────────────────────
 
-    #[tool(name = "memvault_graph_add", description = "Add an entity to the knowledge graph. Returns the hex-encoded entity ID.")]
+    #[tool(
+        name = "memvault_graph_add",
+        description = "Add an entity to the knowledge graph. Returns the hex-encoded entity ID."
+    )]
     async fn graph_add(&self, Parameters(params): Parameters<GraphAddParams>) -> String {
-        let vis = params.visibility.as_deref().or(Some(self.default_visibility.as_str()));
+        let vis = params
+            .visibility
+            .as_deref()
+            .or(Some(self.default_visibility.as_str()));
         let props = serde_json::json!(params.props);
         match self.client.add_entity(&params.kind, props, vis).await {
             Ok(resp) => {
@@ -240,8 +343,12 @@ impl MemvaultServer {
                 if let Some(vfs_path) = &params.vfs_path {
                     let vfs = Vfs::new(self.client.as_ref());
                     match vfs.link(vfs_path, &node_id).await {
-                        Ok(_) => { result["vfs_path"] = serde_json::json!(vfs_path); }
-                        Err(e) => { result["vfs_error"] = serde_json::json!(e.to_string()); }
+                        Ok(_) => {
+                            result["vfs_path"] = serde_json::json!(vfs_path);
+                        }
+                        Err(e) => {
+                            result["vfs_error"] = serde_json::json!(e.to_string());
+                        }
                     }
                 }
                 result.to_string()
@@ -250,7 +357,10 @@ impl MemvaultServer {
         }
     }
 
-    #[tool(name = "memvault_get_entity", description = "Get a single entity by hex ID. Returns kind, properties, and edges.")]
+    #[tool(
+        name = "memvault_get_entity",
+        description = "Get a single entity by hex ID. Returns kind, properties, and edges."
+    )]
     async fn get_entity(&self, Parameters(params): Parameters<GetEntityParams>) -> String {
         match self.client.get_entity(&params.id).await {
             Ok(Some(entity)) => entity.to_string(),
@@ -259,87 +369,169 @@ impl MemvaultServer {
         }
     }
 
-    #[tool(name = "memvault_list_entities", description = "List knowledge graph entities.")]
+    #[tool(
+        name = "memvault_list_entities",
+        description = "List knowledge graph entities."
+    )]
     async fn list_entities(&self, Parameters(params): Parameters<ListEntitiesParams>) -> String {
         ok_or_err!(self.client.list_entities(params.limit.unwrap_or(50)).await)
     }
 
-    #[tool(name = "memvault_traverse", description = "Traverse the graph from any node (type:hex). Returns connected nodes up to max_depth.")]
+    #[tool(
+        name = "memvault_traverse",
+        description = "Traverse the graph from any node (type:hex). Returns connected nodes up to max_depth."
+    )]
     async fn traverse(&self, Parameters(params): Parameters<TraverseParams>) -> String {
-        ok_or_err!(self.client.traverse_from(&params.from, params.relation.as_deref(), params.max_depth.unwrap_or(2)).await)
+        ok_or_err!(
+            self.client
+                .traverse_from(
+                    &params.from,
+                    params.relation.as_deref(),
+                    params.max_depth.unwrap_or(2)
+                )
+                .await
+        )
     }
 
-    #[tool(name = "memvault_graph_link", description = "Link two entities by hex ID. Use memvault_link for cross-type linking.")]
+    #[tool(
+        name = "memvault_graph_link",
+        description = "Link two entities by hex ID. Use memvault_link for cross-type linking."
+    )]
     async fn graph_link(&self, Parameters(params): Parameters<GraphLinkParams>) -> String {
         let source = ensure_entity_id(&params.source_id);
         let target = ensure_entity_id(&params.target_id);
         let props = params.props.into_iter().map(|(k, v)| (k, v)).collect();
-        match self.client.add_link(&source, &target, &params.relation, params.weight, props).await {
+        match self
+            .client
+            .add_link(&source, &target, &params.relation, params.weight, props)
+            .await
+        {
             Ok(resp) => serde_json::json!({
                 "edge_id": resp.get("edge_id").and_then(|v| v.as_str()).unwrap_or(""),
                 "status": "linked"
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
 
-    #[tool(name = "memvault_graph_query", description = "List all edges for an entity.")]
+    #[tool(
+        name = "memvault_graph_query",
+        description = "List all edges for an entity."
+    )]
     async fn graph_query(&self, Parameters(params): Parameters<GraphQueryParams>) -> String {
-        ok_or_err!(self.client.edges_of(&ensure_entity_id(&params.from_id)).await)
+        ok_or_err!(
+            self.client
+                .edges_of(&ensure_entity_id(&params.from_id))
+                .await
+        )
     }
 
     // ── Links (cross-type) ─────────────────────────────────────────
 
-    #[tool(name = "memvault_link", description = "Link any two nodes (type:hex format). Returns the edge ID.")]
+    #[tool(
+        name = "memvault_link",
+        description = "Link any two nodes (type:hex format). Returns the edge ID."
+    )]
     async fn link(&self, Parameters(params): Parameters<LinkParams>) -> String {
         let props = params.props.into_iter().map(|(k, v)| (k, v)).collect();
-        match self.client.add_link(&params.source, &params.target, &params.relation, params.weight, props).await {
+        match self
+            .client
+            .add_link(
+                &params.source,
+                &params.target,
+                &params.relation,
+                params.weight,
+                props,
+            )
+            .await
+        {
             Ok(resp) => serde_json::json!({
                 "edge_id": resp.get("edge_id").and_then(|v| v.as_str()).unwrap_or(""),
                 "status": "linked"
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
 
-    #[tool(name = "memvault_edges", description = "List all edges for any node (type:hex).")]
+    #[tool(
+        name = "memvault_edges",
+        description = "List all edges for any node (type:hex)."
+    )]
     async fn edges(&self, Parameters(params): Parameters<EdgesOfParams>) -> String {
         ok_or_err!(self.client.edges_of(&params.node).await)
     }
 
-    #[tool(name = "memvault_unlink", description = "Remove an edge. Requires edge_id and source node (type:hex).")]
+    #[tool(
+        name = "memvault_unlink",
+        description = "Remove an edge. Requires edge_id and source node (type:hex)."
+    )]
     async fn unlink(&self, Parameters(params): Parameters<UnlinkParams>) -> String {
-        match self.client.delete_link(&params.edge_id, &params.source).await {
-            Ok(_) => serde_json::json!({ "edge_id": params.edge_id, "status": "removed" }).to_string(),
+        match self
+            .client
+            .delete_link(&params.edge_id, &params.source)
+            .await
+        {
+            Ok(_) => {
+                serde_json::json!({ "edge_id": params.edge_id, "status": "removed" }).to_string()
+            }
             Err(e) => format!("error: {e}"),
         }
     }
 
     // ── Nodes (universal) ──────────────────────────────────────────
 
-    #[tool(name = "memvault_list_all", description = "List all nodes (docs, entities, files). Optionally filter by view name.")]
+    #[tool(
+        name = "memvault_list_all",
+        description = "List all nodes (docs, entities, files). Optionally filter by view name."
+    )]
     async fn list_all(&self, Parameters(params): Parameters<ListAllParams>) -> String {
-        ok_or_err!(self.client.list_all(params.view.as_deref(), params.limit.unwrap_or(100)).await)
+        ok_or_err!(
+            self.client
+                .list_all(params.view.as_deref(), params.limit.unwrap_or(100))
+                .await
+        )
     }
 
-    #[tool(name = "memvault_retract", description = "Retract (soft-delete) any node. Node must be in type:hex format: doc:<hex>, entity:<hex>, or file:<hex>.")]
+    #[tool(
+        name = "memvault_retract",
+        description = "Retract (soft-delete) any node. Node must be in type:hex format: doc:<hex>, entity:<hex>, or file:<hex>."
+    )]
     async fn retract(&self, Parameters(params): Parameters<RetractParams>) -> String {
         ok_or_err!(self.client.retract_node(&params.node, &params.reason).await)
     }
 
     // ── Tags ───────────────────────────────────────────────────────
 
-    #[tool(name = "memvault_tag", description = "Add tags to an item (type:hex node ID). Tags in scope:label format.")]
+    #[tool(
+        name = "memvault_tag",
+        description = "Add tags to an item (type:hex node ID). Tags in scope:label format."
+    )]
     async fn tag(&self, Parameters(params): Parameters<TagParams>) -> String {
-        ok_or_err!(self.client.add_tags(&params.node, parse_tags(&params.tags)).await)
+        ok_or_err!(
+            self.client
+                .add_tags(&params.node, parse_tags(&params.tags))
+                .await
+        )
     }
 
-    #[tool(name = "memvault_untag", description = "Remove tags from an item. Tags in scope:label format.")]
+    #[tool(
+        name = "memvault_untag",
+        description = "Remove tags from an item. Tags in scope:label format."
+    )]
     async fn untag(&self, Parameters(params): Parameters<UntagParams>) -> String {
-        ok_or_err!(self.client.remove_tags(&params.node, parse_tags(&params.tags)).await)
+        ok_or_err!(
+            self.client
+                .remove_tags(&params.node, parse_tags(&params.tags))
+                .await
+        )
     }
 
-    #[tool(name = "memvault_get_tags", description = "Get effective tags for an item.")]
+    #[tool(
+        name = "memvault_get_tags",
+        description = "Get effective tags for an item."
+    )]
     async fn get_tags(&self, Parameters(params): Parameters<GetTagsParams>) -> String {
         ok_or_err!(self.client.get_tags(&params.node).await)
     }
@@ -351,14 +543,25 @@ impl MemvaultServer {
         ok_or_err!(self.client.list_views().await)
     }
 
-    #[tool(name = "memvault_view_create", description = "Create a view. Tags in scope:label format.")]
+    #[tool(
+        name = "memvault_view_create",
+        description = "Create a view. Tags in scope:label format."
+    )]
     async fn view_create(&self, Parameters(params): Parameters<ViewCreateParams>) -> String {
-        ok_or_err!(self.client.create_view(&params.name, parse_tags(&params.tags)).await)
+        ok_or_err!(
+            self.client
+                .create_view(&params.name, parse_tags(&params.tags))
+                .await
+        )
     }
 
     #[tool(name = "memvault_view_update", description = "Update a view's tags.")]
     async fn view_update(&self, Parameters(params): Parameters<ViewUpdateParams>) -> String {
-        ok_or_err!(self.client.update_view(&params.name, parse_tags(&params.tags)).await)
+        ok_or_err!(
+            self.client
+                .update_view(&params.name, parse_tags(&params.tags))
+                .await
+        )
     }
 
     #[tool(name = "memvault_view_delete", description = "Delete a view.")]
@@ -368,17 +571,30 @@ impl MemvaultServer {
 
     // ── Buckets ────────────────────────────────────────────────────
 
-    #[tool(name = "memvault_bucket_list", description = "List all buckets with status, name, and item count.")]
+    #[tool(
+        name = "memvault_bucket_list",
+        description = "List all buckets with status, name, and item count."
+    )]
     async fn bucket_list(&self) -> String {
         ok_or_err!(self.client.bucket_list().await)
     }
 
-    #[tool(name = "memvault_bucket_create", description = "Create a new bucket. Returns the bucket ID.")]
+    #[tool(
+        name = "memvault_bucket_create",
+        description = "Create a new bucket. Returns the bucket ID."
+    )]
     async fn bucket_create(&self, Parameters(params): Parameters<BucketCreateParams>) -> String {
-        ok_or_err!(self.client.bucket_create(&params.name, params.description.as_deref()).await)
+        ok_or_err!(
+            self.client
+                .bucket_create(&params.name, params.description.as_deref())
+                .await
+        )
     }
 
-    #[tool(name = "memvault_bucket_get", description = "Get details of a bucket by hex ID.")]
+    #[tool(
+        name = "memvault_bucket_get",
+        description = "Get details of a bucket by hex ID."
+    )]
     async fn bucket_get(&self, Parameters(params): Parameters<BucketGetParams>) -> String {
         match self.client.bucket_get(&params.id).await {
             Ok(Some(v)) => v.to_string(),
@@ -392,26 +608,42 @@ impl MemvaultServer {
         ok_or_err!(self.client.bucket_rename(&params.id, &params.name).await)
     }
 
-    #[tool(name = "memvault_bucket_attach", description = "Attach a private bucket to the cluster (makes it visible to peers).")]
+    #[tool(
+        name = "memvault_bucket_attach",
+        description = "Attach a private bucket to the cluster (makes it visible to peers)."
+    )]
     async fn bucket_attach(&self, Parameters(params): Parameters<BucketAttachParams>) -> String {
         ok_or_err!(self.client.bucket_attach(&params.id).await)
     }
 
-    #[tool(name = "memvault_bucket_archive", description = "Archive a bucket (soft-remove, data preserved).")]
+    #[tool(
+        name = "memvault_bucket_archive",
+        description = "Archive a bucket (soft-remove, data preserved)."
+    )]
     async fn bucket_archive(&self, Parameters(params): Parameters<BucketArchiveParams>) -> String {
         ok_or_err!(self.client.bucket_archive(&params.id, &params.reason).await)
     }
 
     // ── Audit ──────────────────────────────────────────────────────
 
-    #[tool(name = "memvault_audit", description = "Query audit log. Optionally filter by op_kind (DocCreate, EntityCreate, AttachFile, EdgeAdd, Retract).")]
+    #[tool(
+        name = "memvault_audit",
+        description = "Query audit log. Optionally filter by op_kind (DocCreate, EntityCreate, AttachFile, EdgeAdd, Retract)."
+    )]
     async fn audit(&self, Parameters(params): Parameters<AuditParams>) -> String {
-        ok_or_err!(self.client.audit(params.limit.unwrap_or(50), params.op_kind.as_deref()).await)
+        ok_or_err!(
+            self.client
+                .audit(params.limit.unwrap_or(50), params.op_kind.as_deref())
+                .await
+        )
     }
 
     // ── Status ─────────────────────────────────────────────────────
 
-    #[tool(name = "memvault_status", description = "Get node status (block count, doc count, peer count, uptime).")]
+    #[tool(
+        name = "memvault_status",
+        description = "Get node status (block count, doc count, peer count, uptime)."
+    )]
     async fn status(&self) -> String {
         ok_or_err!(self.client.status().await)
     }
@@ -429,7 +661,8 @@ impl MemvaultServer {
             Ok(entries) => serde_json::json!({
                 "path": params.path,
                 "entries": entries,
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -445,8 +678,11 @@ impl MemvaultServer {
                 "path": params.path,
                 "node_id": node_id,
                 "edge_id": edge_id,
-            }).to_string(),
-            Ok(None) => serde_json::json!({ "path": params.path, "error": "not found" }).to_string(),
+            })
+            .to_string(),
+            Ok(None) => {
+                serde_json::json!({ "path": params.path, "error": "not found" }).to_string()
+            }
             Err(e) => format!("error: {e}"),
         }
     }
@@ -462,7 +698,8 @@ impl MemvaultServer {
                 "path": params.path,
                 "entity_id": entity_id,
                 "status": "created",
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -479,7 +716,8 @@ impl MemvaultServer {
                 "target": params.target,
                 "edge_id": edge_id,
                 "status": "linked",
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -494,7 +732,8 @@ impl MemvaultServer {
             Ok(()) => serde_json::json!({
                 "path": params.path,
                 "status": "unlinked",
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -510,7 +749,8 @@ impl MemvaultServer {
                 "from": params.from,
                 "to": params.to,
                 "status": "moved",
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -539,7 +779,8 @@ impl MemvaultServer {
             Ok(paths) => serde_json::json!({
                 "node": params.node,
                 "paths": paths,
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -588,7 +829,9 @@ impl MemvaultServer {
         };
         let output = std::path::PathBuf::from(&params.output_path);
         let force_tar = params.tar.unwrap_or(false);
-        let gzip = output.to_str().is_some_and(|s| s.ends_with(".gz") || s.ends_with(".tgz"));
+        let gzip = output
+            .to_str()
+            .is_some_and(|s| s.ends_with(".gz") || s.ends_with(".tgz"));
         let sink = match memvault_export::create_sink(&output, force_tar, gzip) {
             Ok(s) => s,
             Err(e) => return format!("error creating output: {e}"),
@@ -596,7 +839,10 @@ impl MemvaultServer {
         match memvault_export::run_export(client, sink, opts).await {
             Ok(stats) => format!(
                 "Exported {} documents, {} files, {} entities ({} history versions) to {}",
-                stats.documents, stats.files, stats.entities, stats.history_versions,
+                stats.documents,
+                stats.files,
+                stats.entities,
+                stats.history_versions,
                 params.output_path
             ),
             Err(e) => format!("error: {e}"),

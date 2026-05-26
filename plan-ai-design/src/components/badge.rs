@@ -15,11 +15,11 @@ impl BadgeVariant {
     fn class(self) -> &'static str {
         match self {
             Self::Neutral => "badge-neutral",
-            Self::Info    => "badge-info",
-            Self::Warn    => "badge-warn",
+            Self::Info => "badge-info",
+            Self::Warn => "badge-warn",
             Self::Success => "badge-success",
-            Self::Danger  => "badge-danger",
-            Self::Accent  => "badge-accent",
+            Self::Danger => "badge-danger",
+            Self::Accent => "badge-accent",
         }
     }
 }

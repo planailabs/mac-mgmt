@@ -8,7 +8,7 @@ use crate::web::components::ui::{
     SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 // ── Server functions ────────────────────────────────────────────────────
 
@@ -90,10 +90,7 @@ async fn list_manual_packages(cluster_id: String) -> Result<Vec<PackageRow>, Ser
 }
 
 #[server]
-async fn add_manual_package(
-    cluster_id: String,
-    package: String,
-) -> Result<(), ServerFnError> {
+async fn add_manual_package(cluster_id: String, package: String) -> Result<(), ServerFnError> {
     let _user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = cluster_id
@@ -142,9 +139,7 @@ async fn remove_manual_package(id: String, cluster_id: String) -> Result<(), Ser
 }
 
 #[server]
-async fn list_all_packages(
-    cluster_id: String,
-) -> Result<Vec<PackageWithSources>, ServerFnError> {
+async fn list_all_packages(cluster_id: String) -> Result<Vec<PackageWithSources>, ServerFnError> {
     use std::collections::HashMap;
     let _user = current_user().await?;
     let pool = crate::server_pool()?;
@@ -218,13 +213,12 @@ async fn list_all_packages(
         }
     }
 
-    let manual: Vec<String> = sqlx::query_scalar(
-        "SELECT package FROM cluster_packages WHERE cluster_id = $1",
-    )
-    .bind(uuid)
-    .fetch_all(&pool)
-    .await
-    .unwrap_or_default();
+    let manual: Vec<String> =
+        sqlx::query_scalar("SELECT package FROM cluster_packages WHERE cluster_id = $1")
+            .bind(uuid)
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
 
     for pkg in manual {
         packages.entry(pkg).or_default().push("manual".to_string());

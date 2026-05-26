@@ -122,13 +122,12 @@ async fn get_cd_config(webspace_id: Uuid) -> Result<CdConfig, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
 
@@ -174,15 +173,14 @@ async fn set_webspace_changedetection(
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let (org_id, old_cred_id, ws_name) =
-        sqlx::query_as::<_, (Uuid, Option<Uuid>, String)>(
-            "SELECT organization_id, changedetection_credential_id, name \
+    let (org_id, old_cred_id, ws_name) = sqlx::query_as::<_, (Uuid, Option<Uuid>, String)>(
+        "SELECT organization_id, changedetection_credential_id, name \
              FROM webspaces WHERE id = $1",
-        )
-        .bind(webspace_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(webspace_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
@@ -222,21 +220,17 @@ async fn set_webspace_changedetection(
 
             // Clear cached tag_ids on sub-URLs and delete notifications (they belong
             // to the old credential).
-            sqlx::query(
-                "UPDATE changedetection_suburls SET tag_id = NULL WHERE webspace_id = $1",
-            )
-            .bind(webspace_id)
-            .execute(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            sqlx::query("UPDATE changedetection_suburls SET tag_id = NULL WHERE webspace_id = $1")
+                .bind(webspace_id)
+                .execute(&pool)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-            sqlx::query(
-                "DELETE FROM changedetection_notifications WHERE webspace_id = $1",
-            )
-            .bind(webspace_id)
-            .execute(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            sqlx::query("DELETE FROM changedetection_notifications WHERE webspace_id = $1")
+                .bind(webspace_id)
+                .execute(&pool)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
         }
     }
 
@@ -259,13 +253,12 @@ async fn list_suburls(webspace_id: Uuid) -> Result<Vec<SubUrlRow>, ServerFnError
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
 
@@ -293,13 +286,12 @@ async fn create_suburl(webspace_id: Uuid, path: String) -> Result<Uuid, ServerFn
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
@@ -344,13 +336,12 @@ async fn delete_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<(), ServerF
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
@@ -368,22 +359,18 @@ async fn delete_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<(), ServerF
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     if let Some((Some(tag_id), Some(cred_id))) = tag_and_cred {
-        if let Ok((client, _)) =
-            crate::credentials::changedetection_client(&pool, cred_id).await
-        {
+        if let Ok((client, _)) = crate::credentials::changedetection_client(&pool, cred_id).await {
             let _ = client.delete_tag(&tag_id).await;
         }
     }
 
     // CASCADE deletes associated notifications.
-    sqlx::query(
-        "DELETE FROM changedetection_suburls WHERE id = $1 AND webspace_id = $2",
-    )
-    .bind(suburl_id)
-    .bind(webspace_id)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM changedetection_suburls WHERE id = $1 AND webspace_id = $2")
+        .bind(suburl_id)
+        .bind(webspace_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
 }
@@ -393,13 +380,12 @@ async fn get_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<SubUrlDetail, 
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
 
@@ -413,8 +399,7 @@ async fn get_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<SubUrlDetail, 
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let tag_settings: TagSettings =
-        serde_json::from_value(settings_json).unwrap_or_default();
+    let tag_settings: TagSettings = serde_json::from_value(settings_json).unwrap_or_default();
 
     Ok(SubUrlDetail {
         id,
@@ -432,18 +417,17 @@ async fn update_suburl_settings(
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
-    let settings_json = serde_json::to_value(&settings)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let settings_json =
+        serde_json::to_value(&settings).map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Update the JSONB column.
     sqlx::query(
@@ -471,9 +455,7 @@ async fn update_suburl_settings(
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     if let Some((Some(tag_id), Some(cred_id))) = tag_and_cred {
-        if let Ok((client, _)) =
-            crate::credentials::changedetection_client(&pool, cred_id).await
-        {
+        if let Ok((client, _)) = crate::credentials::changedetection_client(&pool, cred_id).await {
             let update: changedetection_api::types::Tag =
                 serde_json::from_value(settings_json).unwrap_or_default();
             if let Err(e) = client.update_tag(&tag_id, &update).await {
@@ -494,17 +476,25 @@ async fn list_notifications(webspace_id: Uuid) -> Result<Vec<NotificationRow>, S
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
 
-    let rows = sqlx::query_as::<_, (Uuid, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>, String)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Option<String>,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+            String,
+        ),
+    >(
         "SELECT n.id, n.title, n.body, n.created_at, cs.path \
          FROM changedetection_notifications n \
          JOIN changedetection_suburls cs ON cs.id = n.suburl_id \
@@ -545,29 +535,36 @@ async fn get_notification(
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
 
-    let (title, body, created_at, ws_name, path) =
-        sqlx::query_as::<_, (Option<String>, Option<String>, chrono::DateTime<chrono::Utc>, String, String)>(
-            "SELECT n.title, n.body, n.created_at, w.name, cs.path \
+    let (title, body, created_at, ws_name, path) = sqlx::query_as::<
+        _,
+        (
+            Option<String>,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+            String,
+            String,
+        ),
+    >(
+        "SELECT n.title, n.body, n.created_at, w.name, cs.path \
              FROM changedetection_notifications n \
              JOIN webspaces w ON w.id = n.webspace_id \
              JOIN changedetection_suburls cs ON cs.id = n.suburl_id \
              WHERE n.id = $1 AND n.webspace_id = $2",
-        )
-        .bind(notification_id)
-        .bind(webspace_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(notification_id)
+    .bind(webspace_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(NotificationDetail {
         id: notification_id,
@@ -710,8 +707,7 @@ fn CredentialSection(
 
 #[component]
 fn SubUrlsSection(webspace_id: Uuid, ws_id_str: String) -> Element {
-    let mut suburls =
-        use_server_future(move || async move { list_suburls(webspace_id).await })?;
+    let mut suburls = use_server_future(move || async move { list_suburls(webspace_id).await })?;
     let rows = match &*suburls.read() {
         Some(Ok(r)) => r.clone(),
         Some(Err(e)) => return rsx! { div { class: "text-danger", "Error: {e}" } },
@@ -896,8 +892,7 @@ pub fn WebspaceChangedetectionNotification(id: String, notification_id: String) 
         Err(_) => return rsx! { div { class: "text-danger", "Invalid notification ID" } },
     };
 
-    let detail =
-        use_server_future(move || async move { get_notification(ws_id, notif_id).await })?;
+    let detail = use_server_future(move || async move { get_notification(ws_id, notif_id).await })?;
     let d = match &*detail.read() {
         Some(Ok(d)) => d.clone(),
         Some(Err(e)) => return rsx! { div { class: "text-danger", "Error: {e}" } },
@@ -987,7 +982,8 @@ fn SubUrlSettingsForm(webspace_id: Uuid, suburl_id: Uuid, initial: TagSettings) 
     // Text-list fields as multiline text.
     let mut extract_text = use_signal(move || vec_to_lines(&initial.extract_text));
     let mut extract_lines = use_signal(move || vec_to_lines(&initial.extract_lines_containing));
-    let mut text_not_present = use_signal(move || vec_to_lines(&initial.text_should_not_be_present));
+    let mut text_not_present =
+        use_signal(move || vec_to_lines(&initial.text_should_not_be_present));
     let mut include_filters = use_signal(move || vec_to_lines(&initial.include_filters));
     let mut subtractive = use_signal(move || vec_to_lines(&initial.subtractive_selectors));
     let mut ignore_text = use_signal(move || vec_to_lines(&initial.ignore_text));
@@ -1013,9 +1009,11 @@ fn SubUrlSettingsForm(webspace_id: Uuid, suburl_id: Uuid, initial: TagSettings) 
     let mut conditions = use_signal(move || initial.conditions.clone());
 
     // Notification fields.
-    let mut notif_title = use_signal(move || initial.notification_title.clone().unwrap_or_default());
+    let mut notif_title =
+        use_signal(move || initial.notification_title.clone().unwrap_or_default());
     let mut notif_body = use_signal(move || initial.notification_body.clone().unwrap_or_default());
-    let mut notif_format = use_signal(move || initial.notification_format.clone().unwrap_or_default());
+    let mut notif_format =
+        use_signal(move || initial.notification_format.clone().unwrap_or_default());
 
     let mut saving = use_signal(|| false);
     let mut result_msg = use_signal(|| None::<String>);

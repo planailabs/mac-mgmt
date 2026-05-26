@@ -150,7 +150,9 @@ fn insert_into_tree(nodes: &mut Vec<ModelNode>, segments: &[String], entry: Mode
     }
     let seg = &segments[0];
     // Find or create the group for this segment.
-    let pos = nodes.iter().position(|n| matches!(n, ModelNode::Group { name, .. } if name == seg));
+    let pos = nodes
+        .iter()
+        .position(|n| matches!(n, ModelNode::Group { name, .. } if name == seg));
     if let Some(idx) = pos {
         if let ModelNode::Group { children, .. } = &mut nodes[idx] {
             insert_into_tree(children, &segments[1..], entry);

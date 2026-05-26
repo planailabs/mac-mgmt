@@ -22,8 +22,7 @@ static TARGET_STATE: std::sync::RwLock<Target> = std::sync::RwLock::new(Target {
 
 /// Set after a successful update. The main loop checks this to trigger
 /// a clean shutdown followed by exec of the new binary.
-static RESTART_EXEC: std::sync::RwLock<Option<std::path::PathBuf>> =
-    std::sync::RwLock::new(None);
+static RESTART_EXEC: std::sync::RwLock<Option<std::path::PathBuf>> = std::sync::RwLock::new(None);
 
 /// Check whether a self-update completed and a restart is pending.
 /// Returns the path to the new binary if so.
@@ -284,8 +283,13 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
     std::os::unix::fs::symlink(&new_bin, &tmp_link)
         .with_context(|| format!("symlink {} -> {}", tmp_link.display(), new_bin.display()))?;
 
-    std::fs::rename(&tmp_link, &install_path)
-        .with_context(|| format!("rename {} -> {}", tmp_link.display(), install_path.display()))?;
+    std::fs::rename(&tmp_link, &install_path).with_context(|| {
+        format!(
+            "rename {} -> {}",
+            tmp_link.display(),
+            install_path.display()
+        )
+    })?;
 
     write_last_store_path(store_path);
 
@@ -425,13 +429,8 @@ pub fn ensure_symlink() -> Result<std::path::PathBuf> {
     let tmp_link = install_dir.join(".mac-mgmt.update");
     let _ = std::fs::remove_file(&tmp_link);
 
-    std::os::unix::fs::symlink(&store_file, &tmp_link).with_context(|| {
-        format!(
-            "symlink {} -> {}",
-            tmp_link.display(),
-            store_file.display()
-        )
-    })?;
+    std::os::unix::fs::symlink(&store_file, &tmp_link)
+        .with_context(|| format!("symlink {} -> {}", tmp_link.display(), store_file.display()))?;
 
     std::fs::rename(&tmp_link, &install_path).with_context(|| {
         format!(

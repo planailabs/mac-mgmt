@@ -37,15 +37,17 @@ impl Connector for MemvaultHermes {
             return Ok(());
         }
 
-        tracing::info!("connecting memvault MCP server to hermes (port={})", self.port);
+        tracing::info!(
+            "connecting memvault MCP server to hermes (port={})",
+            self.port
+        );
         sentry_ext::breadcrumb(
             "connector",
             &format!("memvault→hermes port={}", self.port),
             &[("connector", "memvault→hermes")],
         );
 
-        let bin = std::env::current_exe()
-            .context("failed to resolve current binary path")?;
+        let bin = std::env::current_exe().context("failed to resolve current binary path")?;
         let bin_str = bin.to_string_lossy().to_string();
 
         let identity_dir = dirs::data_local_dir()

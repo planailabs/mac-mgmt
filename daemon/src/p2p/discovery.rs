@@ -97,10 +97,7 @@ impl PeerRegistry {
 
     pub fn peer_count(&self) -> usize {
         let cutoff = Instant::now() - std::time::Duration::from_secs(STALE_TIMEOUT_SECS);
-        self.peers
-            .values()
-            .filter(|e| e.last_seen > cutoff)
-            .count()
+        self.peers.values().filter(|e| e.last_seen > cutoff).count()
     }
 
     pub fn remove(&mut self, peer_id: &PeerId) {

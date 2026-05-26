@@ -32,7 +32,8 @@ pub fn KpiCard(
     /// Optional drill-down target. When set the card renders as a
     /// `Link` and lights up its border in brand orange on hover so
     /// users can tell at a glance which cards are interactive.
-    #[props(default)] to: Option<Route>,
+    #[props(default)]
+    to: Option<Route>,
 ) -> Element {
     let delta_cls = delta_kind.text_class();
     let interactive = if to.is_some() {

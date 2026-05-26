@@ -12,7 +12,7 @@ use crate::web::components::ui::{
 };
 use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 fn status_variant(status: &str) -> BadgeVariant {
     match status {
@@ -735,7 +735,9 @@ async fn trigger_stage_self_update(
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
-    struct StageRow { group_id: Uuid }
+    struct StageRow {
+        group_id: Uuid,
+    }
     let stage: StageRow = sqlx::query_as("SELECT group_id FROM rollout_stages WHERE id = $1")
         .bind(sid)
         .fetch_one(&pool)
@@ -763,7 +765,10 @@ async fn trigger_stage_self_update(
             }
         }
     }
-    Ok(RequestAssessmentResult { cohort_size, dispatched })
+    Ok(RequestAssessmentResult {
+        cohort_size,
+        dispatched,
+    })
 }
 
 #[server]
@@ -779,7 +784,9 @@ async fn trigger_stage_sync_nixpkgs(
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
-    struct StageRow { group_id: Uuid }
+    struct StageRow {
+        group_id: Uuid,
+    }
     let stage: StageRow = sqlx::query_as("SELECT group_id FROM rollout_stages WHERE id = $1")
         .bind(sid)
         .fetch_one(&pool)
@@ -807,7 +814,10 @@ async fn trigger_stage_sync_nixpkgs(
             }
         }
     }
-    Ok(RequestAssessmentResult { cohort_size, dispatched })
+    Ok(RequestAssessmentResult {
+        cohort_size,
+        dispatched,
+    })
 }
 
 /// Re-evaluate this stage *and every other rolling stage* of the same
@@ -1255,7 +1265,10 @@ pub fn RolloutDetail(id: String) -> Element {
 
             let badge_variant = status_variant(&info.status);
 
-            let display_name = info.name.clone().unwrap_or_else(|| t!("rollout-detail-rollout-prefix", id: &rid[..8]));
+            let display_name = info
+                .name
+                .clone()
+                .unwrap_or_else(|| t!("rollout-detail-rollout-prefix", id: &rid[..8]));
             // ── Page hero ─────────────────────────────────────────
             // Matches the design's Rollouts hero: status pill + created
             // timestamp on top, monospace display title underneath, and

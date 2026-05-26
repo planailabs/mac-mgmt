@@ -76,8 +76,8 @@ pub async fn serve_tls(
 
             // Service that injects cert info + peer addr into request
             // extensions, then delegates to the axum router.
-            let hyper_service = hyper::service::service_fn(
-                move |req: hyper::Request<hyper::body::Incoming>| {
+            let hyper_service =
+                hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                     let app = app.clone();
                     let info = cert_info.clone();
                     async move {
@@ -94,15 +94,13 @@ pub async fn serve_tls(
                         let resp = app.oneshot(req).await;
                         resp.map_err(|e| match e {})
                     }
-                },
-            );
+                });
 
             tracing::debug!(%peer_addr, "starting hyper connection handler");
-            if let Err(e) = hyper_util::server::conn::auto::Builder::new(
-                hyper_util::rt::TokioExecutor::new(),
-            )
-            .serve_connection_with_upgrades(io, hyper_service)
-            .await
+            if let Err(e) =
+                hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+                    .serve_connection_with_upgrades(io, hyper_service)
+                    .await
             {
                 tracing::debug!("connection error from {peer_addr}: {e}");
             }

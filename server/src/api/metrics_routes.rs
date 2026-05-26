@@ -220,24 +220,21 @@ async fn collect_rollout_nodes(
             .fetch_all(pool)
             .await?
         } else {
-            sqlx::query_scalar(
-                "SELECT cluster_id FROM rollout_group_members WHERE group_id = $1",
-            )
-            .bind(stage.group_id)
-            .fetch_all(pool)
-            .await?
+            sqlx::query_scalar("SELECT cluster_id FROM rollout_group_members WHERE group_id = $1")
+                .bind(stage.group_id)
+                .fetch_all(pool)
+                .await?
         };
 
         if group_clusters.is_empty() {
             continue;
         }
 
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM daemon_heartbeats WHERE cluster_id = ANY($1)",
-        )
-        .bind(&group_clusters)
-        .fetch_one(pool)
-        .await?;
+        let total: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM daemon_heartbeats WHERE cluster_id = ANY($1)")
+                .bind(&group_clusters)
+                .fetch_one(pool)
+                .await?;
 
         let updated: i64 = if let Some(ver) = &stage.target_version {
             sqlx::query_scalar(

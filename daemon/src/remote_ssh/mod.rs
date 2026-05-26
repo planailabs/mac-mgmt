@@ -220,10 +220,15 @@ impl RemoteSshState {
                 tracing::info!("restart-daemon: sending SIGTERM to self for graceful restart");
                 std::thread::spawn(|| {
                     std::thread::sleep(std::time::Duration::from_secs(1));
-                    unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
+                    unsafe {
+                        libc::kill(libc::getpid(), libc::SIGTERM);
+                    }
                 });
                 VirtualOutput {
-                    lines: vec![("stdout".into(), "Daemon shutting down gracefully for restart...".into())],
+                    lines: vec![(
+                        "stdout".into(),
+                        "Daemon shutting down gracefully for restart...".into(),
+                    )],
                     exit_code: 0,
                 }
             }),

@@ -164,9 +164,7 @@ async fn aggregate_remote_skills(
     let mut by_sc: HashMap<Uuid, Vec<(String, String)>> = HashMap::new();
 
     for r in direct {
-        if let (Some(sc_id), Some(slug), Some(channel)) =
-            (r.skill_center_id, r.slug, r.channel)
-        {
+        if let (Some(sc_id), Some(slug), Some(channel)) = (r.skill_center_id, r.slug, r.channel) {
             by_sc.entry(sc_id).or_default().push((slug, channel));
         }
     }
@@ -399,9 +397,7 @@ async fn resolve_remote_skill_mcp_deps(
     // Group (slug, channel) by skill_center_id.
     let mut by_sc: HashMap<Uuid, Vec<(String, String)>> = HashMap::new();
     for r in direct {
-        if let (Some(sc_id), Some(slug), Some(channel)) =
-            (r.skill_center_id, r.slug, r.channel)
-        {
+        if let (Some(sc_id), Some(slug), Some(channel)) = (r.skill_center_id, r.slug, r.channel) {
             by_sc.entry(sc_id).or_default().push((slug, channel));
         }
     }
@@ -485,10 +481,7 @@ async fn resolve_remote_skill_mcp_deps(
                     }
                 }
                 Err(e) => {
-                    tracing::error!(
-                        "remote skill MCP dep resolve failed for {}: {e}",
-                        sc.url,
-                    );
+                    tracing::error!("remote skill MCP dep resolve failed for {}: {e}", sc.url,);
                 }
             }
         }
@@ -600,12 +593,8 @@ pub async fn get_mcp_servers(
 
     // Resolve transitive MCP deps from remote/builtin skill channels via
     // cached federation catalogs (mcp_server_slugs on FederationSkillChannel).
-    let remote_transitive = resolve_remote_skill_mcp_deps(
-        auth.cluster_id,
-        pool.inner(),
-        cache.inner(),
-    )
-    .await;
+    let remote_transitive =
+        resolve_remote_skill_mcp_deps(auth.cluster_id, pool.inner(), cache.inner()).await;
     for (slug, entry) in remote_transitive {
         // Transitive has lowest precedence (0) — don't override existing.
         if !result.contains_key(&slug) {
@@ -619,7 +608,8 @@ pub async fn get_mcp_servers(
         .collect();
 
     // Aggregate MCP servers from remote skill centers
-    let mut merged = aggregate_remote_mcp_servers(auth.cluster_id, pool.inner(), cache.inner()).await;
+    let mut merged =
+        aggregate_remote_mcp_servers(auth.cluster_id, pool.inner(), cache.inner()).await;
     // Local overlays remote (local wins on slug collision)
     for (slug, entry) in local_result {
         merged.insert(slug, entry);
@@ -681,7 +671,9 @@ pub async fn get_packages(
             packages
                 .entry(pkg.clone())
                 .or_default()
-                .push(PackageSource::McpServer { slug: row.slug.clone() });
+                .push(PackageSource::McpServer {
+                    slug: row.slug.clone(),
+                });
         }
     }
 
@@ -706,13 +698,16 @@ pub async fn get_packages(
                 packages
                     .entry(pkg.clone())
                     .or_default()
-                    .push(PackageSource::McpServer { slug: row.slug.clone() });
+                    .push(PackageSource::McpServer {
+                        slug: row.slug.clone(),
+                    });
             }
         }
     }
 
     // Remote MCP server packages (from federation)
-    let remote_mcp = aggregate_remote_mcp_servers(auth.cluster_id, pool.inner(), cache.inner()).await;
+    let remote_mcp =
+        aggregate_remote_mcp_servers(auth.cluster_id, pool.inner(), cache.inner()).await;
     for (slug, entry) in &remote_mcp {
         for pkg in &entry.nix_packages {
             packages
@@ -740,7 +735,9 @@ pub async fn get_packages(
                 packages
                     .entry(pkg.clone())
                     .or_default()
-                    .push(PackageSource::Skill { slug: row.slug.clone() });
+                    .push(PackageSource::Skill {
+                        slug: row.slug.clone(),
+                    });
             }
         }
     }
@@ -801,12 +798,14 @@ pub async fn get_packages(
                     if let Some(bundle) = cached.catalog.bundles.iter().find(|fb| fb.id == rid) {
                         for skill in &bundle.skills {
                             for sc in &cached.catalog.skill_channels {
-                                if sc.skill_slug == skill.skill_slug && sc.channel == skill.channel {
+                                if sc.skill_slug == skill.skill_slug && sc.channel == skill.channel
+                                {
                                     for pkg in &sc.nix_packages {
-                                        packages
-                                            .entry(pkg.clone())
-                                            .or_default()
-                                            .push(PackageSource::Skill { slug: skill.skill_slug.clone() });
+                                        packages.entry(pkg.clone()).or_default().push(
+                                            PackageSource::Skill {
+                                                slug: skill.skill_slug.clone(),
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -818,19 +817,15 @@ pub async fn get_packages(
     }
 
     // ── 3. Manual cluster packages ──
-    let manual: Vec<String> = sqlx::query_scalar(
-        "SELECT package FROM cluster_packages WHERE cluster_id = $1",
-    )
-    .bind(auth.cluster_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let manual: Vec<String> =
+        sqlx::query_scalar("SELECT package FROM cluster_packages WHERE cluster_id = $1")
+            .bind(auth.cluster_id)
+            .fetch_all(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
 
     for pkg in manual {
-        packages
-            .entry(pkg)
-            .or_default()
-            .push(PackageSource::Manual);
+        packages.entry(pkg).or_default().push(PackageSource::Manual);
     }
 
     // Deduplicate sources per package
@@ -877,16 +872,12 @@ pub async fn get_config(
 
             // Inject the cluster's p2p PSK into relay.cluster_psk.
             // Generate one if it doesn't exist yet.
-            if let Ok(psk_hex) =
-                ensure_cluster_psk(pool.inner(), auth.cluster_id).await
-            {
-                let relay = json
-                    .as_object_mut()
-                    .and_then(|o| {
-                        o.entry("relay")
-                            .or_insert_with(|| serde_json::json!({}))
-                            .as_object_mut()
-                    });
+            if let Ok(psk_hex) = ensure_cluster_psk(pool.inner(), auth.cluster_id).await {
+                let relay = json.as_object_mut().and_then(|o| {
+                    o.entry("relay")
+                        .or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                });
                 if let Some(relay) = relay {
                     relay.insert(
                         "cluster_psk".to_string(),
@@ -902,17 +893,13 @@ pub async fn get_config(
 }
 
 /// Fetch or generate the cluster's p2p pre-shared key (32 bytes, hex-encoded).
-async fn ensure_cluster_psk(
-    pool: &PgPool,
-    cluster_id: uuid::Uuid,
-) -> Result<String, sqlx::Error> {
+async fn ensure_cluster_psk(pool: &PgPool, cluster_id: uuid::Uuid) -> Result<String, sqlx::Error> {
     // Try to read existing PSK.
-    let existing: Option<Vec<u8>> = sqlx::query_scalar(
-        "SELECT p2p_psk FROM clusters WHERE id = $1",
-    )
-    .bind(cluster_id)
-    .fetch_optional(pool)
-    .await?;
+    let existing: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT p2p_psk FROM clusters WHERE id = $1")
+            .bind(cluster_id)
+            .fetch_optional(pool)
+            .await?;
 
     if let Some(Some(psk)) = existing.map(Some) {
         if !psk.is_empty() {
@@ -1024,8 +1011,9 @@ pub async fn get_update_target(
 
 /// Cached rolling nixpkgs commit resolved from the GitLab CI API.
 /// Tuple: (commit SHA, resolved at).
-static ROLLING_NIXPKGS: std::sync::OnceLock<tokio::sync::RwLock<Option<(String, std::time::Instant)>>> =
-    std::sync::OnceLock::new();
+static ROLLING_NIXPKGS: std::sync::OnceLock<
+    tokio::sync::RwLock<Option<(String, std::time::Instant)>>,
+> = std::sync::OnceLock::new();
 
 /// Resolve the latest successful CI pipeline commit for the configured
 /// nixpkgs branch. Caches the result for 5 minutes.
@@ -1172,9 +1160,7 @@ struct NixCacheEntry {
     ),
 )]
 #[rocket::get("/nix-caches")]
-pub async fn get_nix_caches(
-    _auth: SyncAuth,
-) -> Json<NixCachesResponse> {
+pub async fn get_nix_caches(_auth: SyncAuth) -> Json<NixCachesResponse> {
     let cfg = crate::config::config();
     let mut caches = Vec::new();
     if let Some(ref xzar) = cfg.xzar {
@@ -1308,7 +1294,8 @@ pub async fn get_skills(
     let local_result = crate::xzar::resolve_store_paths(&pins, &skills, &arch);
 
     // Aggregate skills from remote skill centers
-    let remote_skills = aggregate_remote_skills(auth.cluster_id, pool.inner(), cache.inner(), &arch).await;
+    let remote_skills =
+        aggregate_remote_skills(auth.cluster_id, pool.inner(), cache.inner(), &arch).await;
     // Remote items go in first, then local overlays (local wins on slug collision)
     let mut merged = remote_skills;
     for (slug, path) in local_result {
@@ -2244,15 +2231,13 @@ pub async fn setting_remove_package(
     id: &str,
 ) -> Result<Status, Status> {
     let id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    let deleted = sqlx::query(
-        "DELETE FROM cluster_packages WHERE id = $1 AND cluster_id = $2",
-    )
-    .bind(id)
-    .bind(auth.cluster_id)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?
-    .rows_affected();
+    let deleted = sqlx::query("DELETE FROM cluster_packages WHERE id = $1 AND cluster_id = $2")
+        .bind(id)
+        .bind(auth.cluster_id)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?
+        .rows_affected();
 
     if deleted == 0 {
         return Err(Status::NotFound);
@@ -3387,8 +3372,7 @@ const VALID_SCOPES: &[&str] = &[
 
 /// Check if a scope string is valid (exact match from VALID_SCOPES, or tcp:{name}).
 fn is_valid_scope(s: &str) -> bool {
-    VALID_SCOPES.contains(&s)
-        || (s.starts_with("tcp:") && s.len() > 4 && s != "tcp:*")
+    VALID_SCOPES.contains(&s) || (s.starts_with("tcp:") && s.len() > 4 && s != "tcp:*")
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -3455,9 +3439,7 @@ pub async fn create_proxy_token(
             if !parent_scopes.is_empty() {
                 for scope in &body.scopes {
                     let allowed = parent_scopes.iter().any(|ps| {
-                        ps == "*"
-                            || ps == scope
-                            || (scope.starts_with("tcp:") && ps == "tcp:*")
+                        ps == "*" || ps == scope || (scope.starts_with("tcp:") && ps == "tcp:*")
                     });
                     if !allowed {
                         return Err((Status::Forbidden, "scope exceeds parent token"));
@@ -3661,13 +3643,12 @@ pub async fn admin_get_skill_nix_packages(
     skill_channel_id: &str,
 ) -> Result<Json<Vec<String>>, Status> {
     let sc_id: Uuid = skill_channel_id.parse().map_err(|_| Status::BadRequest)?;
-    let pkgs: Vec<String> = sqlx::query_scalar(
-        "SELECT unnest(nix_packages) FROM skill_channels WHERE id = $1",
-    )
-    .bind(sc_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let pkgs: Vec<String> =
+        sqlx::query_scalar("SELECT unnest(nix_packages) FROM skill_channels WHERE id = $1")
+            .bind(sc_id)
+            .fetch_all(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
 
     Ok(Json(pkgs))
 }
@@ -3689,7 +3670,10 @@ pub(crate) struct SetNixPackagesBody {
         (status = 404, description = "Skill channel not found"),
     ),
 )]
-#[rocket::put("/admin/skill-channels/<skill_channel_id>/nix-packages", data = "<body>")]
+#[rocket::put(
+    "/admin/skill-channels/<skill_channel_id>/nix-packages",
+    data = "<body>"
+)]
 pub async fn admin_set_skill_nix_packages(
     _auth: AdminAuth,
     pool: &State<PgPool>,
@@ -3699,14 +3683,12 @@ pub async fn admin_set_skill_nix_packages(
     body: Json<SetNixPackagesBody>,
 ) -> Result<Status, Status> {
     let sc_id: Uuid = skill_channel_id.parse().map_err(|_| Status::BadRequest)?;
-    let res = sqlx::query(
-        "UPDATE skill_channels SET nix_packages = $1 WHERE id = $2",
-    )
-    .bind(&body.packages)
-    .bind(sc_id)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let res = sqlx::query("UPDATE skill_channels SET nix_packages = $1 WHERE id = $2")
+        .bind(&body.packages)
+        .bind(sc_id)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     if res.rows_affected() == 0 {
         return Err(Status::NotFound);
@@ -4258,11 +4240,13 @@ pub async fn admin_remove_client_cert(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = false")
-        .bind(uuid)
-        .execute(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
+    sqlx::query(
+        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = false",
+    )
+    .bind(uuid)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
     Ok(Status::NoContent)
 }
 
@@ -4361,11 +4345,13 @@ pub async fn admin_remove_client_ca(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = true")
-        .bind(uuid)
-        .execute(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
+    sqlx::query(
+        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = true",
+    )
+    .bind(uuid)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
     Ok(Status::NoContent)
 }
 
@@ -4781,14 +4767,11 @@ async fn build_cert_auth_response(
 /// Validate a client certificate PEM against stored CA certificates.
 /// Returns matching scopes (like a fingerprint match would).
 #[cfg(any(feature = "server", feature = "server-api-only"))]
-async fn validate_against_cas(
-    pool: &PgPool,
-    client_pem: &str,
-) -> Result<Vec<CertMatch>, Status> {
+async fn validate_against_cas(pool: &PgPool, client_pem: &str) -> Result<Vec<CertMatch>, Status> {
     // Parse client certificate.
     let client_der = self::pem_to_der(client_pem).map_err(|_| Status::BadRequest)?;
-    let (_, client_cert) = x509_parser::parse_x509_certificate(&client_der)
-        .map_err(|_| Status::BadRequest)?;
+    let (_, client_cert) =
+        x509_parser::parse_x509_certificate(&client_der).map_err(|_| Status::BadRequest)?;
 
     // Load all CA certificates.
     #[derive(sqlx::FromRow)]
@@ -5474,15 +5457,21 @@ pub async fn admin_create_rollout(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    let name = body.name.as_ref().map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
-    sqlx::query("INSERT INTO rollouts (id, name, target_version, nixpkgs_commit) VALUES ($1, $2, $3, $4)")
-        .bind(rollout_id)
-        .bind(&name)
-        .bind(&target_version)
-        .bind(&nixpkgs_commit)
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| Status::InternalServerError)?;
+    let name = body
+        .name
+        .as_ref()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty());
+    sqlx::query(
+        "INSERT INTO rollouts (id, name, target_version, nixpkgs_commit) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(rollout_id)
+    .bind(&name)
+    .bind(&target_version)
+    .bind(&nixpkgs_commit)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
 
     if body.group_ids.is_empty() {
         return Err(Status::UnprocessableEntity);
@@ -6335,7 +6324,9 @@ pub async fn get_nixpkgs_archive(commit: &str) -> Result<BinaryDownload, Status>
             } else {
                 // Generate the tarball.
                 generated_by_us = true;
-                if let Err(e) = generate_nixpkgs_archive(commit, &repo_path, &partial_path, &cache_path).await {
+                if let Err(e) =
+                    generate_nixpkgs_archive(commit, &repo_path, &partial_path, &cache_path).await
+                {
                     let _ = lock_file.unlock();
                     return Err(e);
                 }
@@ -6894,15 +6885,12 @@ pub async fn admin_create_federation_token(
     let raw_token = format!("fed_{}", hex::encode(rand::random::<[u8; 32]>()));
     let hash = hex::encode(sha2::Sha256::digest(raw_token.as_bytes()));
 
-    sqlx::query(
-        "INSERT INTO tokens (token_hash, label, kind) VALUES ($1, $2, 'federation')",
-    )
-    .bind(&hash)
-    .bind(&body.label)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    sqlx::query("INSERT INTO tokens (token_hash, label, kind) VALUES ($1, $2, 'federation')")
+        .bind(&hash)
+        .bind(&body.label)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     Ok(Json(CreatedToken { token: raw_token }))
 }
-

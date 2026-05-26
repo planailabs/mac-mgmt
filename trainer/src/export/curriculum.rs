@@ -12,10 +12,10 @@ use burn::record::CompactRecorder;
 use burn::tensor::backend::Backend;
 use serde::{Deserialize, Serialize};
 
+use super::ExportedSession;
 use super::dataset::EmbedderBatcher;
 use super::features;
 use super::tokenizer::Vocabulary;
-use super::ExportedSession;
 use crate::models::common::SessionEncoderConfig;
 use crate::models::embedder::{SessionEmbedder, SessionEmbedderConfig};
 

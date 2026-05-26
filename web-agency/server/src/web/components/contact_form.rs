@@ -60,7 +60,12 @@ pub fn ContactForm() -> Element {
     let mut address1 = use_signal(String::new);
     let mut city = use_signal(String::new);
     let mut country = use_signal(|| "US".to_string());
-    let mut org_id = use_signal(|| org_list.first().map(|o| o.id.to_string()).unwrap_or_default());
+    let mut org_id = use_signal(|| {
+        org_list
+            .first()
+            .map(|o| o.id.to_string())
+            .unwrap_or_default()
+    });
     let mut error = use_signal(|| None::<String>);
     let mut saving = use_signal(|| false);
     let nav = use_navigator();

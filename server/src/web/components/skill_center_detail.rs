@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
 #[cfg(feature = "server")]
 use crate::web::user::WebUserExt;
+use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use super::skill_center_list::SkillCenterRow;
@@ -26,9 +26,7 @@ async fn get_catalog_summary(id: String) -> Result<CatalogSummary, ServerFnError
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
 
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid UUID"))?;
+    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
 
     let cache = crate::skill_center_cache::SkillCenterCache::global()
         .ok_or_else(|| ServerFnError::new("cache not available"))?;
@@ -52,9 +50,7 @@ async fn sync_skill_center_now(id: String) -> Result<CatalogSummary, ServerFnErr
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid UUID"))?;
+    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
 
     let cache = crate::skill_center_cache::SkillCenterCache::global()
         .ok_or_else(|| ServerFnError::new("cache not available"))?;
@@ -68,14 +64,13 @@ async fn sync_skill_center_now(id: String) -> Result<CatalogSummary, ServerFnErr
         name: String,
     }
 
-    let sc: ScRow = sqlx::query_as(
-        "SELECT id, url, federation_token, name FROM skill_centers WHERE id = $1",
-    )
-    .bind(uuid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("query failed: {e}")))?
-    .ok_or_else(|| ServerFnError::new("skill center not found"))?;
+    let sc: ScRow =
+        sqlx::query_as("SELECT id, url, federation_token, name FROM skill_centers WHERE id = $1")
+            .bind(uuid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(format!("query failed: {e}")))?
+            .ok_or_else(|| ServerFnError::new("skill center not found"))?;
 
     let catalog = if sc.url.starts_with(crate::builtin_skill_center::BUILTIN_URL) {
         crate::builtin_skill_center::builtin_catalog()
@@ -109,9 +104,7 @@ async fn get_skill_center(id: String) -> Result<Option<SkillCenterRow>, ServerFn
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid UUID"))?;
+    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
 
     let row = sqlx::query_as::<_, SkillCenterRow>(
         "SELECT id, name, url, priority, enabled, created_at, updated_at \
@@ -138,9 +131,7 @@ async fn update_skill_center(
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid UUID"))?;
+    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
 
     if crate::builtin_skill_center::is_builtin(&uuid) {
         return Err(ServerFnError::new("cannot edit the built-in skill center"));
@@ -186,12 +177,12 @@ async fn delete_skill_center(id: String) -> Result<(), ServerFnError> {
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid UUID"))?;
+    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
 
     if crate::builtin_skill_center::is_builtin(&uuid) {
-        return Err(ServerFnError::new("cannot delete the built-in skill center"));
+        return Err(ServerFnError::new(
+            "cannot delete the built-in skill center",
+        ));
     }
 
     sqlx::query("DELETE FROM skill_centers WHERE id = $1")

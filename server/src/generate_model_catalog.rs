@@ -5,21 +5,35 @@
 //! Each provider is only fetched if its API key is provided (except Ollama and
 //! OpenRouter which are public).
 
-use crate::model_catalog_fetch::{
-    self, ModelCatalog,
-};
+use crate::model_catalog_fetch::{self, ModelCatalog};
 use mac_mgmt_common::model_source::ModelSource;
 
 /// Known cloud providers with their default base URLs.
 const CLOUD_PROVIDERS: &[(&str, &str, &str)] = &[
-    ("anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com/v1"),
+    (
+        "anthropic",
+        "ANTHROPIC_API_KEY",
+        "https://api.anthropic.com/v1",
+    ),
     ("openai", "OPENAI_API_KEY", "https://api.openai.com/v1"),
-    ("google", "GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta"),
+    (
+        "google",
+        "GEMINI_API_KEY",
+        "https://generativelanguage.googleapis.com/v1beta",
+    ),
     ("mistral", "MISTRAL_API_KEY", "https://api.mistral.ai/v1"),
     ("groq", "GROQ_API_KEY", "https://api.groq.com/openai/v1"),
     ("xai", "XAI_API_KEY", "https://api.x.ai/v1"),
-    ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com/v1"),
-    ("together", "TOGETHER_API_KEY", "https://api.together.xyz/v1"),
+    (
+        "deepseek",
+        "DEEPSEEK_API_KEY",
+        "https://api.deepseek.com/v1",
+    ),
+    (
+        "together",
+        "TOGETHER_API_KEY",
+        "https://api.together.xyz/v1",
+    ),
 ];
 
 pub async fn run(args: &crate::GenerateModelCatalogArgs) {
@@ -45,7 +59,11 @@ pub async fn run(args: &crate::GenerateModelCatalogArgs) {
             .openclaw_token
             .clone()
             .or_else(|| std::env::var("OPENCLAW_TOKEN").ok());
-        tracing::info!("fetching openclaw ({}:{})...", args.openclaw_host, args.openclaw_port);
+        tracing::info!(
+            "fetching openclaw ({}:{})...",
+            args.openclaw_host,
+            args.openclaw_port
+        );
         match model_catalog_fetch::fetch_openclaw_models(
             &args.openclaw_host,
             args.openclaw_port,
@@ -139,7 +157,11 @@ pub async fn run(args: &crate::GenerateModelCatalogArgs) {
 }
 
 /// Resolve an API key: CLI arg takes precedence over env var.
-fn resolve_key(args: &crate::GenerateModelCatalogArgs, provider: &str, env_var: &str) -> Option<String> {
+fn resolve_key(
+    args: &crate::GenerateModelCatalogArgs,
+    provider: &str,
+    env_var: &str,
+) -> Option<String> {
     let cli_key = match provider {
         "anthropic" => args.anthropic_key.as_deref(),
         "openai" => args.openai_key.as_deref(),

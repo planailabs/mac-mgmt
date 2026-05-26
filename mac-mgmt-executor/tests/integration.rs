@@ -5,9 +5,9 @@
 //!
 //! Requires `incus` CLI available and working on the host.
 
+use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use rmcp::transport::TokioChildProcess;
-use rmcp::ServiceExt;
 use serde_json::json;
 
 fn build_child() -> TokioChildProcess {
@@ -16,9 +16,7 @@ fn build_child() -> TokioChildProcess {
 }
 
 async fn connect() -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
-    ().serve(build_child())
-        .await
-        .expect("MCP handshake failed")
+    ().serve(build_child()).await.expect("MCP handshake failed")
 }
 
 fn call(name: &str, args: serde_json::Value) -> CallToolRequestParams {
@@ -45,12 +43,27 @@ async fn test_list_tools() {
     let tools = client.list_tools(Default::default()).await.unwrap();
     let names: Vec<&str> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(names.contains(&"os_list"), "missing os_list tool");
-    assert!(names.contains(&"system_create"), "missing system_create tool");
-    assert!(names.contains(&"system_execute"), "missing system_execute tool");
-    assert!(names.contains(&"system_destroy"), "missing system_destroy tool");
+    assert!(
+        names.contains(&"system_create"),
+        "missing system_create tool"
+    );
+    assert!(
+        names.contains(&"system_execute"),
+        "missing system_execute tool"
+    );
+    assert!(
+        names.contains(&"system_destroy"),
+        "missing system_destroy tool"
+    );
     assert!(names.contains(&"system_list"), "missing system_list tool");
-    assert!(names.contains(&"system_file_write"), "missing system_file_write tool");
-    assert!(names.contains(&"system_file_read"), "missing system_file_read tool");
+    assert!(
+        names.contains(&"system_file_write"),
+        "missing system_file_write tool"
+    );
+    assert!(
+        names.contains(&"system_file_read"),
+        "missing system_file_read tool"
+    );
     assert_eq!(names.len(), 7);
     client.cancel().await.unwrap();
 }
@@ -161,7 +174,10 @@ async fn test_full_lifecycle() {
 
     // Execute a command.
     let result = client
-        .call_tool(call("system_execute", json!({"command": "cat /etc/os-release"})))
+        .call_tool(call(
+            "system_execute",
+            json!({"command": "cat /etc/os-release"}),
+        ))
         .await
         .unwrap();
     let text = result_text(&result);
@@ -224,10 +240,7 @@ async fn test_full_lifecycle() {
         .await
         .unwrap();
     let text = result_text(&result);
-    assert!(
-        text.contains("destroyed"),
-        "destroy should succeed: {text}"
-    );
+    assert!(text.contains("destroyed"), "destroy should succeed: {text}");
 
     // Verify it's gone from the list.
     let result = client

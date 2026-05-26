@@ -6,8 +6,8 @@ use crate::config;
 
 // Re-export items used by main.rs router setup.
 pub use plan_ai_auth::{
-    build_auth_layers, login_page, logout_handler, require_auth, set_user_resolver, AuthLayer,
-    IMPERSONATE_COOKIE,
+    AuthLayer, IMPERSONATE_COOKIE, build_auth_layers, login_page, logout_handler, require_auth,
+    set_user_resolver,
 };
 
 /// Application-specific user resolver backed by PostgreSQL.
@@ -18,10 +18,7 @@ pub struct PgUserResolver {
 
 impl PgUserResolver {
     pub fn new(pool: sqlx::PgPool, admin_emails: Vec<String>) -> Arc<Self> {
-        Arc::new(Self {
-            pool,
-            admin_emails,
-        })
+        Arc::new(Self { pool, admin_emails })
     }
 }
 
@@ -62,12 +59,11 @@ impl plan_ai_auth::UserResolver for PgUserResolver {
 
         // Auto-join organizations for this provider (idempotent).
         for org_name in auto_join_orgs {
-            let org_id = sqlx::query_scalar::<_, Uuid>(
-                "SELECT id FROM organizations WHERE name = $1",
-            )
-            .bind(org_name)
-            .fetch_optional(&self.pool)
-            .await?;
+            let org_id =
+                sqlx::query_scalar::<_, Uuid>("SELECT id FROM organizations WHERE name = $1")
+                    .bind(org_name)
+                    .fetch_optional(&self.pool)
+                    .await?;
 
             if let Some(org_id) = org_id {
                 sqlx::query(
@@ -167,9 +163,8 @@ pub async fn start_impersonation(
     let real_admin = user.impersonating_from.unwrap_or(user.id);
     tracing::info!(real_admin = %real_admin, target = %target_id, "impersonation started");
 
-    let cookie = format!(
-        "{IMPERSONATE_COOKIE}={target_id}; Path=/; HttpOnly; Secure; SameSite=Strict"
-    );
+    let cookie =
+        format!("{IMPERSONATE_COOKIE}={target_id}; Path=/; HttpOnly; Secure; SameSite=Strict");
     let mut response = (axum::http::StatusCode::NO_CONTENT, ()).into_response();
     if let Ok(value) = axum::http::HeaderValue::from_str(&cookie) {
         response
@@ -188,9 +183,8 @@ pub async fn stop_impersonation(request: Request<Body>) -> impl IntoResponse {
     let real_admin = user.impersonating_from.unwrap_or(user.id);
     tracing::info!(real_admin = %real_admin, "impersonation stopped");
 
-    let cookie = format!(
-        "{IMPERSONATE_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0"
-    );
+    let cookie =
+        format!("{IMPERSONATE_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
     let mut response = (axum::http::StatusCode::NO_CONTENT, ()).into_response();
     if let Ok(value) = axum::http::HeaderValue::from_str(&cookie) {
         response

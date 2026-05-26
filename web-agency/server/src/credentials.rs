@@ -56,11 +56,9 @@ pub async fn cf_client_with_account(
     if configured.is_empty() && !account_id.is_empty() {
         let mut updated = data.clone();
         updated["account_id"] = serde_json::Value::String(account_id.clone());
-        if let Ok(encrypted) = crate::crypto::encrypt(
-            serde_json::to_vec(&updated)
-                .unwrap_or_default()
-                .as_slice(),
-        ) {
+        if let Ok(encrypted) =
+            crate::crypto::encrypt(serde_json::to_vec(&updated).unwrap_or_default().as_slice())
+        {
             let _ = sqlx::query(
                 "UPDATE credentials SET encrypted_data = $1, updated_at = now() WHERE id = $2",
             )
@@ -76,10 +74,7 @@ pub async fn cf_client_with_account(
 }
 
 /// Fetch the server URL and token from a mac-mgmt credential.
-pub async fn mac_mgmt_credential(
-    pool: &PgPool,
-    cred_id: Uuid,
-) -> anyhow::Result<(String, String)> {
+pub async fn mac_mgmt_credential(pool: &PgPool, cred_id: Uuid) -> anyhow::Result<(String, String)> {
     let data = credential_json(pool, cred_id, "mac-mgmt").await?;
     let server_url = data["server_url"]
         .as_str()
@@ -124,7 +119,10 @@ pub async fn changedetection_client(
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
 
-    Ok((changedetection_api::Client::new_with_client(api_url, http), group))
+    Ok((
+        changedetection_api::Client::new_with_client(api_url, http),
+        group,
+    ))
 }
 
 /// Build a Spaceship API client from a stored credential.

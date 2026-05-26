@@ -8,22 +8,20 @@ pub mod assessment;
 pub mod canary;
 pub mod cmd;
 pub mod config;
-pub mod embed_write;
 #[cfg(feature = "services")]
 pub mod config_providers;
 pub mod config_watch;
 #[cfg(feature = "services")]
 pub mod connectors;
 pub mod crash;
-pub mod dashboard;
 pub mod daemon;
+pub mod dashboard;
+pub mod embed_write;
 pub mod events;
 #[cfg(feature = "relay")]
 pub mod file_tunnels;
 #[cfg(feature = "healer")]
 pub mod healer_bridge;
-#[cfg(feature = "memvault")]
-pub mod memvault;
 pub mod host_keys;
 pub mod local_client;
 pub mod log_buffer;
@@ -32,7 +30,8 @@ pub mod logs;
 #[cfg(feature = "services")]
 pub mod managed_service;
 pub mod mcp_servers;
-pub mod packages;
+#[cfg(feature = "memvault")]
+pub mod memvault;
 pub mod metrics;
 pub mod metrics_server;
 pub mod nix;
@@ -40,6 +39,7 @@ pub mod notify;
 pub mod os_mgmt;
 #[cfg(feature = "relay")]
 pub mod p2p;
+pub mod packages;
 #[cfg(feature = "relay")]
 pub mod remote_ssh;
 pub mod scripts;
@@ -59,9 +59,9 @@ pub mod shell_tunnels;
 pub mod skills;
 pub mod status;
 pub mod systemctl;
-pub mod validator;
 #[cfg(feature = "services")]
 pub mod unmanaged;
+pub mod validator;
 
 /// Git commit this binary was built from. Captured at build time by
 /// build.rs (GIT_SHA env or `git rev-parse HEAD`); "unknown" when

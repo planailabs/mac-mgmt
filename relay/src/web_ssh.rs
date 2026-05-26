@@ -7,11 +7,11 @@
 
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
 
@@ -46,9 +46,13 @@ async fn verify_access(
 ) -> Result<(), Response> {
     // Try client certificate first.
     if let Some(cert) = cert_info {
-        if crate::auth::validate_cert(server_api_url, &cert.fingerprint_sha256, &cert.certificate_pem)
-            .await
-            .is_ok()
+        if crate::auth::validate_cert(
+            server_api_url,
+            &cert.fingerprint_sha256,
+            &cert.certificate_pem,
+        )
+        .await
+        .is_ok()
         {
             return Ok(());
         }
@@ -137,7 +141,10 @@ async fn handle_ssh_ws(socket: WebSocket, instance_id: String, state: WebSshStat
 }
 
 /// Send a status update to the client overlay.
-async fn send_status(ws_tx: &Mutex<futures_util::stream::SplitSink<WebSocket, Message>>, msg: &str) {
+async fn send_status(
+    ws_tx: &Mutex<futures_util::stream::SplitSink<WebSocket, Message>>,
+    msg: &str,
+) {
     let json = serde_json::json!({ "type": "status", "message": msg });
     let mut tx = ws_tx.lock().await;
     let _ = tx.send(Message::Text(json.to_string().into())).await;
@@ -154,10 +161,9 @@ async fn do_ssh_bridge(
 
     // Resolve instance to a connected daemon.
     send_status(&ws_tx, "Resolving instance...").await;
-    let full_id = state
-        .registry
-        .resolve_prefix(instance_id)
-        .ok_or_else(|| anyhow::anyhow!("instance '{instance_id}' not found — daemon may be offline"))?;
+    let full_id = state.registry.resolve_prefix(instance_id).ok_or_else(|| {
+        anyhow::anyhow!("instance '{instance_id}' not found — daemon may be offline")
+    })?;
 
     let peer_id = state
         .registry
@@ -171,13 +177,13 @@ async fn do_ssh_bridge(
         state.relay_swarm.open_tunnel_stream(peer_id),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("tunnel to '{full_id}' timed out — daemon may be unreachable"))??;
+    .map_err(|_| {
+        anyhow::anyhow!("tunnel to '{full_id}' timed out — daemon may be unreachable")
+    })??;
 
     let handshake = serde_json::json!({ "type": "ssh" });
     let data = serde_json::to_vec(&handshake)?;
-    tunnel
-        .write_all(&(data.len() as u32).to_be_bytes())
-        .await?;
+    tunnel.write_all(&(data.len() as u32).to_be_bytes()).await?;
     tunnel.write_all(&data).await?;
     tunnel.flush().await?;
 
@@ -191,8 +197,7 @@ async fn do_ssh_bridge(
         ..Default::default()
     });
     let client_handler = SshClientHandler;
-    let mut session =
-        russh::client::connect_stream(config, compat_stream, client_handler).await?;
+    let mut session = russh::client::connect_stream(config, compat_stream, client_handler).await?;
 
     // Authenticate as "root" (the daemon doesn't care about the username,
     // only the public key).
@@ -201,9 +206,7 @@ async fn do_ssh_bridge(
         Arc::new(state.ssh_identity.private_key.clone()),
         None,
     );
-    let auth_result = session
-        .authenticate_publickey("root", key_with_alg)
-        .await?;
+    let auth_result = session.authenticate_publickey("root", key_with_alg).await?;
     if !matches!(auth_result, russh::client::AuthResult::Success) {
         anyhow::bail!("SSH key auth rejected — relay key may not be authorized on daemon");
     }
@@ -234,14 +237,22 @@ async fn do_ssh_bridge(
             match msg {
                 russh::ChannelMsg::Data { data } => {
                     let mut tx = ws_tx_for_ssh.lock().await;
-                    if tx.send(Message::Binary(data.to_vec().into())).await.is_err() {
+                    if tx
+                        .send(Message::Binary(data.to_vec().into()))
+                        .await
+                        .is_err()
+                    {
                         tracing::debug!("[{instance_tag}] ssh→ws: WebSocket send failed");
                         break;
                     }
                 }
                 russh::ChannelMsg::ExtendedData { data, .. } => {
                     let mut tx = ws_tx_for_ssh.lock().await;
-                    if tx.send(Message::Binary(data.to_vec().into())).await.is_err() {
+                    if tx
+                        .send(Message::Binary(data.to_vec().into()))
+                        .await
+                        .is_err()
+                    {
                         tracing::debug!("[{instance_tag}] ssh→ws: WebSocket send failed");
                         break;
                     }
@@ -282,20 +293,15 @@ async fn do_ssh_bridge(
                         if ctrl["type"].as_str() == Some("resize") {
                             let cols = ctrl["cols"].as_u64().unwrap_or(80) as u32;
                             let rows = ctrl["rows"].as_u64().unwrap_or(24) as u32;
-                            if let Err(e) = channel_write
-                                .window_change(cols, rows, 0, 0)
-                                .await
-                            {
-                                tracing::warn!("[{instance_tag2}] ws→ssh: window_change failed: {e}");
+                            if let Err(e) = channel_write.window_change(cols, rows, 0, 0).await {
+                                tracing::warn!(
+                                    "[{instance_tag2}] ws→ssh: window_change failed: {e}"
+                                );
                             }
                         }
                     } else {
                         // Treat plain text as terminal input.
-                        if channel_write
-                            .data(text.as_bytes())
-                            .await
-                            .is_err()
-                        {
+                        if channel_write.data(text.as_bytes()).await.is_err() {
                             tracing::debug!("[{instance_tag2}] ws→ssh: channel write failed");
                             break;
                         }
@@ -323,7 +329,9 @@ async fn do_ssh_bridge(
         }
     }
 
-    let _ = session.disconnect(russh::Disconnect::ByApplication, "", "en").await;
+    let _ = session
+        .disconnect(russh::Disconnect::ByApplication, "", "en")
+        .await;
     tracing::info!("SSH WS bridge for {instance_id} closed");
     Ok(())
 }

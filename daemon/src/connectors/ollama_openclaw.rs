@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::{ConnectorPhase, Connector};
+use super::{Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::openclaw::{config_path, merge_and_validate};
 
@@ -34,7 +34,10 @@ impl Connector for OllamaOpenClaw {
     ) -> Result<()> {
         let model = &self.default_model;
         let base_url = format!("http://{}:{}", self.host, self.port);
-        tracing::info!("connecting ollama to openclaw (baseUrl={base_url}, model={model}, default={})", self.set_default);
+        tracing::info!(
+            "connecting ollama to openclaw (baseUrl={base_url}, model={model}, default={})",
+            self.set_default
+        );
         sentry_ext::breadcrumb(
             "connector",
             &format!("ollama→openclaw baseUrl={base_url} model={model}"),
@@ -71,8 +74,7 @@ impl Connector for OllamaOpenClaw {
         });
 
         if self.set_default {
-            patch["agents"] =
-                serde_json::json!({ "defaults": { "model": { "primary": format!("ollama/{model}") } } });
+            patch["agents"] = serde_json::json!({ "defaults": { "model": { "primary": format!("ollama/{model}") } } });
         }
 
         merge_and_validate(&path, &patch)?;

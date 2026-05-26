@@ -4,7 +4,7 @@
 
 use rocket::http::Status;
 use rocket::serde::json::Json;
-use rocket::{delete, get, post, State};
+use rocket::{State, delete, get, post};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -128,12 +128,11 @@ pub async fn list_sources(
     _auth: AdminAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<SourceRow>>, Status> {
-    let rows: Vec<SourceRow> = sqlx::query_as(
-        "SELECT * FROM import_sources ORDER BY created_at DESC",
-    )
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let rows: Vec<SourceRow> =
+        sqlx::query_as("SELECT * FROM import_sources ORDER BY created_at DESC")
+            .fetch_all(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
 
     Ok(Json(rows))
 }
@@ -150,13 +149,12 @@ pub async fn delete_source(
 
     if remove {
         // Delete skills that were imported by this source
-        let slugs: Vec<String> = sqlx::query_scalar(
-            "SELECT skill_slug FROM import_source_skills WHERE source_id = $1",
-        )
-        .bind(id)
-        .fetch_all(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
+        let slugs: Vec<String> =
+            sqlx::query_scalar("SELECT skill_slug FROM import_source_skills WHERE source_id = $1")
+                .bind(id)
+                .fetch_all(pool.inner())
+                .await
+                .map_err(|_| Status::InternalServerError)?;
 
         if !slugs.is_empty() {
             // Delete skill_channels and skills for these slugs
@@ -197,22 +195,19 @@ pub async fn sync_source(
     let id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
 
     // Verify source exists
-    let source: SourceRow =
-        sqlx::query_as("SELECT * FROM import_sources WHERE id = $1")
-            .bind(id)
-            .fetch_optional(pool.inner())
-            .await
-            .map_err(|_| Status::InternalServerError)?
-            .ok_or(Status::NotFound)?;
+    let source: SourceRow = sqlx::query_as("SELECT * FROM import_sources WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?
+        .ok_or(Status::NotFound)?;
 
     // Create job
-    let job: JobRow = sqlx::query_as(
-        "INSERT INTO import_jobs (source_id) VALUES ($1) RETURNING *",
-    )
-    .bind(id)
-    .fetch_one(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let job: JobRow = sqlx::query_as("INSERT INTO import_jobs (source_id) VALUES ($1) RETURNING *")
+        .bind(id)
+        .fetch_one(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     let job_id = job.id;
     let pool = pool.inner().clone();
@@ -221,7 +216,10 @@ pub async fn sync_source(
     tokio::spawn(async move {
         let result = run_sync(&pool, &source, job_id).await;
         let (status, extra_log) = match result {
-            Ok(count) => ("done".to_string(), format!("\nCompleted: {count} skill(s) imported")),
+            Ok(count) => (
+                "done".to_string(),
+                format!("\nCompleted: {count} skill(s) imported"),
+            ),
             Err(e) => ("failed".to_string(), format!("\nError: {e}")),
         };
 
@@ -244,12 +242,11 @@ pub async fn list_jobs(
     _auth: AdminAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<JobRow>>, Status> {
-    let rows: Vec<JobRow> = sqlx::query_as(
-        "SELECT * FROM import_jobs ORDER BY created_at DESC LIMIT 50",
-    )
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let rows: Vec<JobRow> =
+        sqlx::query_as("SELECT * FROM import_jobs ORDER BY created_at DESC LIMIT 50")
+            .fetch_all(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
 
     Ok(Json(rows))
 }
@@ -262,32 +259,25 @@ pub async fn get_job(
 ) -> Result<Json<JobRow>, Status> {
     let id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
 
-    let row: JobRow =
-        sqlx::query_as("SELECT * FROM import_jobs WHERE id = $1")
-            .bind(id)
-            .fetch_optional(pool.inner())
-            .await
-            .map_err(|_| Status::InternalServerError)?
-            .ok_or(Status::NotFound)?;
+    let row: JobRow = sqlx::query_as("SELECT * FROM import_jobs WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?
+        .ok_or(Status::NotFound)?;
 
     Ok(Json(row))
 }
 
 #[get("/admin/import/search/clawhub?<q>")]
-pub async fn search_clawhub(
-    _auth: AdminAuth,
-    q: &str,
-) -> Result<Json<Vec<SearchHit>>, Status> {
+pub async fn search_clawhub(_auth: AdminAuth, q: &str) -> Result<Json<Vec<SearchHit>>, Status> {
     let cfg = crate::config::config();
     let importer = cfg.importer.as_ref().ok_or(Status::ServiceUnavailable)?;
     let client = crate::clawhub_client::ClawHubClient::new(&importer.clawhub_url);
-    let results = client
-        .search(q, 20)
-        .await
-        .map_err(|e| {
-            tracing::error!("clawhub search failed: {e}");
-            Status::BadGateway
-        })?;
+    let results = client.search(q, 20).await.map_err(|e| {
+        tracing::error!("clawhub search failed: {e}");
+        Status::BadGateway
+    })?;
 
     let hits: Vec<SearchHit> = results
         .into_iter()
@@ -305,24 +295,28 @@ pub async fn search_clawhub(
 // ── Sync logic ─────────────────────────────────────────────────────────
 
 /// Run a sync for a source. Public so the web UI can trigger it.
-pub async fn run_sync_public(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32, String> {
+pub async fn run_sync_public(
+    pool: &PgPool,
+    source: &SourceRow,
+    job_id: Uuid,
+) -> Result<u32, String> {
     run_sync(pool, source, job_id).await
 }
 
 async fn run_sync(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32, String> {
     // Mark job as running
-    let _ = sqlx::query("UPDATE import_jobs SET status = 'running', updated_at = now() WHERE id = $1")
-        .bind(job_id)
-        .execute(pool)
-        .await;
+    let _ =
+        sqlx::query("UPDATE import_jobs SET status = 'running', updated_at = now() WHERE id = $1")
+            .bind(job_id)
+            .execute(pool)
+            .await;
 
     let cfg = crate::config::config();
     let xzar = cfg.xzar.as_ref().ok_or("xzar not configured")?;
     let importer = cfg.importer.as_ref().ok_or("importer not configured")?;
 
-    let source_config: SourceConfig =
-        serde_json::from_value(source.source_config.clone())
-            .map_err(|e| format!("invalid source config: {e}"))?;
+    let source_config: SourceConfig = serde_json::from_value(source.source_config.clone())
+        .map_err(|e| format!("invalid source config: {e}"))?;
 
     let count = match source_config {
         SourceConfig::Git {
@@ -370,11 +364,18 @@ async fn run_sync(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32
     append_log(pool, job_id, "Syncing skills from xzar pins to DB...").await;
     match crate::xzar::sync_skills_db(pool).await {
         Ok(sync) => {
-            append_log(pool, job_id, &format!(
-                "DB sync: +{} skills, +{} channels, -{} channels, -{} skills",
-                sync.created_skills, sync.created_channels,
-                sync.removed_channels, sync.removed_skills,
-            )).await;
+            append_log(
+                pool,
+                job_id,
+                &format!(
+                    "DB sync: +{} skills, +{} channels, -{} channels, -{} skills",
+                    sync.created_skills,
+                    sync.created_channels,
+                    sync.removed_channels,
+                    sync.removed_skills,
+                ),
+            )
+            .await;
         }
         Err(e) => {
             append_log(pool, job_id, &format!("WARN: DB sync failed: {e}")).await;
@@ -388,11 +389,13 @@ async fn run_sync(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32
         .await;
 
     // Update job skills_imported count
-    let _ = sqlx::query("UPDATE import_jobs SET skills_imported = $1, updated_at = now() WHERE id = $2")
-        .bind(count as i32)
-        .bind(job_id)
-        .execute(pool)
-        .await;
+    let _ = sqlx::query(
+        "UPDATE import_jobs SET skills_imported = $1, updated_at = now() WHERE id = $2",
+    )
+    .bind(count as i32)
+    .bind(job_id)
+    .execute(pool)
+    .await;
 
     Ok(count)
 }
@@ -453,7 +456,12 @@ async fn run_git_sync(
         .filter(|p| p.is_dir())
         .collect();
 
-    append_log(pool, job_id, &format!("Glob matched {} directories", matched.len())).await;
+    append_log(
+        pool,
+        job_id,
+        &format!("Glob matched {} directories", matched.len()),
+    )
+    .await;
 
     let mut imported = 0u32;
     for dir in &matched {
@@ -473,7 +481,12 @@ async fn run_git_sync(
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            append_log(pool, job_id, &format!("  SKIP {slug}: nix-store --add failed: {stderr}")).await;
+            append_log(
+                pool,
+                job_id,
+                &format!("  SKIP {slug}: nix-store --add failed: {stderr}"),
+            )
+            .await;
             continue;
         }
 
@@ -557,7 +570,12 @@ async fn run_clawhub_sync(
         .map_err(|e| format!("failed to create work dir: {e}"))?;
 
     // Download zip from ClawHub
-    append_log(pool, job_id, &format!("Downloading {clawhub_slug} from ClawHub...")).await;
+    append_log(
+        pool,
+        job_id,
+        &format!("Downloading {clawhub_slug} from ClawHub..."),
+    )
+    .await;
     let client = crate::clawhub_client::ClawHubClient::new(clawhub_url);
     let zip_bytes = client.download(clawhub_slug, version).await?;
 
@@ -574,8 +592,7 @@ async fn run_clawhub_sync(
     let skill_dir_clone = skill_dir.clone();
     tokio::task::spawn_blocking(move || {
         let cursor = std::io::Cursor::new(zip_bytes);
-        let mut archive =
-            zip::ZipArchive::new(cursor).map_err(|e| format!("invalid zip: {e}"))?;
+        let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("invalid zip: {e}"))?;
         archive
             .extract(&skill_dir_clone)
             .map_err(|e| format!("zip extraction failed: {e}"))?;
@@ -585,7 +602,12 @@ async fn run_clawhub_sync(
     .map_err(|e| format!("zip extraction task panicked: {e}"))??;
 
     // nix-store --add
-    append_log(pool, job_id, &format!("Adding {skill_slug} to nix store...")).await;
+    append_log(
+        pool,
+        job_id,
+        &format!("Adding {skill_slug} to nix store..."),
+    )
+    .await;
     let output = tokio::process::Command::new("nix-store")
         .args(["--add", &skill_dir])
         .output()
@@ -669,8 +691,6 @@ async fn nix_content_hash(store_path: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-
-
 // ── Periodic sync loop ─────────────────────────────────────────────────
 
 /// Background loop that periodically syncs auto_sync sources.
@@ -693,18 +713,17 @@ pub async fn sync_loop(pool: PgPool) {
 
         tracing::debug!("import sync loop: checking auto-sync sources");
 
-        let sources: Vec<SourceRow> = match sqlx::query_as(
-            "SELECT * FROM import_sources WHERE auto_sync = true",
-        )
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                tracing::error!("import sync loop: failed to fetch sources: {e}");
-                continue;
-            }
-        };
+        let sources: Vec<SourceRow> =
+            match sqlx::query_as("SELECT * FROM import_sources WHERE auto_sync = true")
+                .fetch_all(&pool)
+                .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    tracing::error!("import sync loop: failed to fetch sources: {e}");
+                    continue;
+                }
+            };
 
         for source in sources {
             // Skip if a job is already running for this source
@@ -717,22 +736,27 @@ pub async fn sync_loop(pool: PgPool) {
             .unwrap_or(true);
 
             if running {
-                tracing::debug!("import sync loop: skipping {} (job in progress)", source.name);
+                tracing::debug!(
+                    "import sync loop: skipping {} (job in progress)",
+                    source.name
+                );
                 continue;
             }
 
             // Create job and run sync
-            let job: Result<JobRow, _> = sqlx::query_as(
-                "INSERT INTO import_jobs (source_id) VALUES ($1) RETURNING *",
-            )
-            .bind(source.id)
-            .fetch_one(&pool)
-            .await;
+            let job: Result<JobRow, _> =
+                sqlx::query_as("INSERT INTO import_jobs (source_id) VALUES ($1) RETURNING *")
+                    .bind(source.id)
+                    .fetch_one(&pool)
+                    .await;
 
             let job = match job {
                 Ok(j) => j,
                 Err(e) => {
-                    tracing::error!("import sync loop: failed to create job for {}: {e}", source.name);
+                    tracing::error!(
+                        "import sync loop: failed to create job for {}: {e}",
+                        source.name
+                    );
                     continue;
                 }
             };
@@ -743,7 +767,10 @@ pub async fn sync_loop(pool: PgPool) {
             tokio::spawn(async move {
                 let result = run_sync(&pool_clone, &source, job_id).await;
                 let (status, extra_log) = match result {
-                    Ok(count) => ("done".to_string(), format!("\nCompleted: {count} skill(s) imported")),
+                    Ok(count) => (
+                        "done".to_string(),
+                        format!("\nCompleted: {count} skill(s) imported"),
+                    ),
                     Err(e) => ("failed".to_string(), format!("\nError: {e}")),
                 };
 

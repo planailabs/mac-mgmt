@@ -161,12 +161,7 @@ async fn main() -> Result<()> {
             target.agent_name.as_deref().unwrap_or("-"),
             &target.instance_id[..12.min(target.instance_id.len())],
         );
-        return connect_via_websocket_with_token(
-            &relay_url,
-            &token,
-            &target.instance_id,
-        )
-        .await;
+        return connect_via_websocket_with_token(&relay_url, &token, &target.instance_id).await;
     };
 
     let host = relay_url
@@ -227,10 +222,13 @@ async fn connect_via_websocket_with_token(
             "Sec-WebSocket-Key",
             tokio_tungstenite::tungstenite::handshake::client::generate_key(),
         )
-        .header("Host", http::Uri::try_from(&ws_url)
-            .ok()
-            .and_then(|u| u.host().map(String::from))
-            .unwrap_or_default())
+        .header(
+            "Host",
+            http::Uri::try_from(&ws_url)
+                .ok()
+                .and_then(|u| u.host().map(String::from))
+                .unwrap_or_default(),
+        )
         .body(())
         .context("failed to build WS request")?;
 
@@ -349,8 +347,8 @@ async fn connect_via_websocket(
     // Load client cert + key.
     let cert_pem = std::fs::read(cert_path)
         .with_context(|| format!("failed to read cert from {cert_path}"))?;
-    let key_pem = std::fs::read(key_path)
-        .with_context(|| format!("failed to read key from {key_path}"))?;
+    let key_pem =
+        std::fs::read(key_path).with_context(|| format!("failed to read key from {key_path}"))?;
 
     let certs: Vec<_> = rustls_pemfile::certs(&mut &cert_pem[..])
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -378,14 +376,9 @@ async fn connect_via_websocket(
     eprintln!("Connecting to {ws_url} with client certificate...");
 
     let (ws_stream, _resp) =
-        tokio_tungstenite::connect_async_tls_with_config(
-            &ws_url,
-            None,
-            false,
-            Some(connector),
-        )
-        .await
-        .context("WebSocket connection failed")?;
+        tokio_tungstenite::connect_async_tls_with_config(&ws_url, None, false, Some(connector))
+            .await
+            .context("WebSocket connection failed")?;
 
     eprintln!("Connected. Bridging to local SSH...");
 

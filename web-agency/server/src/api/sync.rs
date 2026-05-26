@@ -69,7 +69,9 @@ async fn sync_cloudflare_dns(pool: &PgPool) {
         if let Err(e) = sync_dns_for_domain(pool, *domain_id, domain_name, zone_id, *cred_id).await
         {
             tracing::warn!("DNS sync failed for {domain_name}: {e}");
-            super::counters::COUNTERS.sync_dns_errors.fetch_add(1, Ordering::Relaxed);
+            super::counters::COUNTERS
+                .sync_dns_errors
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
     tracing::info!("synced DNS for {} domains", domains.len());
@@ -182,9 +184,13 @@ async fn sync_dns_for_domain(
     .await?;
     if !acme_sub_ids.is_empty() {
         sqlx::query("DELETE FROM dns_records WHERE subdomain_id = ANY($1)")
-            .bind(&acme_sub_ids).execute(pool).await?;
+            .bind(&acme_sub_ids)
+            .execute(pool)
+            .await?;
         sqlx::query("DELETE FROM subdomains WHERE id = ANY($1)")
-            .bind(&acme_sub_ids).execute(pool).await?;
+            .bind(&acme_sub_ids)
+            .execute(pool)
+            .await?;
     }
 
     Ok(())
@@ -193,19 +199,20 @@ async fn sync_dns_for_domain(
 // ── Domain expiry sync ───────────────────────────────────────────────
 
 async fn sync_domain_expiry(pool: &PgPool) {
-    let domains = match sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, Option<Uuid>)>(
-        "SELECT id, name, registrar_type, registrar_credential_id, cloudflare_credential_id \
+    let domains =
+        match sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, Option<Uuid>)>(
+            "SELECT id, name, registrar_type, registrar_credential_id, cloudflare_credential_id \
          FROM domains WHERE registrar_type IS NOT NULL",
-    )
-    .fetch_all(pool)
-    .await
-    {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("failed to list domains for expiry sync: {e}");
-            return;
-        }
-    };
+        )
+        .fetch_all(pool)
+        .await
+        {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!("failed to list domains for expiry sync: {e}");
+                return;
+            }
+        };
 
     let mut updated = 0usize;
     for (domain_id, domain_name, registrar_type, reg_cred_id, cf_cred_id) in &domains {
@@ -231,7 +238,9 @@ async fn sync_domain_expiry(pool: &PgPool) {
             Ok(false) => {}
             Err(e) => {
                 tracing::warn!("expiry sync failed for {domain_name}: {e}");
-                super::counters::COUNTERS.sync_expiry_errors.fetch_add(1, Ordering::Relaxed);
+                super::counters::COUNTERS
+                    .sync_expiry_errors
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -340,11 +349,22 @@ async fn sync_nameserver_status(pool: &PgPool) {
 
     let mut checked = 0usize;
     for (domain_id, domain_name, zone_id, cf_cred_id, ss_cred_id) in &domains {
-        match check_ns_match(pool, *domain_id, &domain_name, zone_id, *cf_cred_id, *ss_cred_id).await {
+        match check_ns_match(
+            pool,
+            *domain_id,
+            &domain_name,
+            zone_id,
+            *cf_cred_id,
+            *ss_cred_id,
+        )
+        .await
+        {
             Ok(()) => checked += 1,
             Err(e) => {
                 tracing::warn!("NS status check failed for {domain_name}: {e}");
-                super::counters::COUNTERS.sync_ns_errors.fetch_add(1, Ordering::Relaxed);
+                super::counters::COUNTERS
+                    .sync_ns_errors
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -373,10 +393,7 @@ async fn check_ns_match(
     // Get current NS from Spaceship
     let ss_client = crate::credentials::spaceship_client(pool, ss_cred_id).await?;
     let info = ss_client.get_domain_info(domain_name).await?;
-    let mut actual: Vec<String> = info
-        .nameservers
-        .and_then(|ns| ns.hosts)
-        .unwrap_or_default();
+    let mut actual: Vec<String> = info.nameservers.and_then(|ns| ns.hosts).unwrap_or_default();
     actual.sort();
 
     let ns_ok = actual == expected;
@@ -413,11 +430,16 @@ async fn sync_bot_protection(pool: &PgPool) {
             Ok(()) => updated += 1,
             Err(e) => {
                 tracing::warn!("bot protection sync failed for {domain_name}: {e}");
-                super::counters::COUNTERS.sync_bot_errors.fetch_add(1, Ordering::Relaxed);
+                super::counters::COUNTERS
+                    .sync_bot_errors
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
     }
-    tracing::info!("synced bot protection for {updated}/{} domains", domains.len());
+    tracing::info!(
+        "synced bot protection for {updated}/{} domains",
+        domains.len()
+    );
 }
 
 async fn sync_bot_for_domain(
@@ -463,35 +485,29 @@ async fn sync_changedetection(pool: &PgPool) {
 
     let mut synced = 0usize;
     // Cache clients per credential to avoid re-creating them.
-    let mut client_cache: std::collections::HashMap<
-        Uuid,
-        (changedetection_api::Client, String),
-    > = std::collections::HashMap::new();
+    let mut client_cache: std::collections::HashMap<Uuid, (changedetection_api::Client, String)> =
+        std::collections::HashMap::new();
 
     for (ws_id, ws_name, cred_id) in &webspaces {
         // Get or create the client for this credential.
         let (client, group_name) = match client_cache.get(cred_id) {
             Some(entry) => (entry.0.clone(), entry.1.clone()),
-            None => {
-                match crate::credentials::changedetection_client(pool, *cred_id).await {
-                    Ok(entry) => {
-                        client_cache.insert(*cred_id, entry.clone());
-                        entry
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            webspace = ws_name.as_str(),
-                            "failed to get changedetection client: {e}"
-                        );
-                        continue;
-                    }
+            None => match crate::credentials::changedetection_client(pool, *cred_id).await {
+                Ok(entry) => {
+                    client_cache.insert(*cred_id, entry.clone());
+                    entry
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(
+                        webspace = ws_name.as_str(),
+                        "failed to get changedetection client: {e}"
+                    );
+                    continue;
+                }
+            },
         };
 
-        match sync_changedetection_for_webspace(pool, *ws_id, ws_name, &client, &group_name)
-            .await
-        {
+        match sync_changedetection_for_webspace(pool, *ws_id, ws_name, &client, &group_name).await {
             Ok(()) => synced += 1,
             Err(e) => {
                 tracing::warn!("changedetection sync failed for webspace {ws_name}: {e}");
@@ -501,7 +517,10 @@ async fn sync_changedetection(pool: &PgPool) {
             }
         }
     }
-    tracing::info!("synced changedetection for {synced}/{} webspaces", webspaces.len());
+    tracing::info!(
+        "synced changedetection for {synced}/{} webspaces",
+        webspaces.len()
+    );
 
     // Garbage-collect orphaned watches and tags.
     gc_changedetection(pool).await;
@@ -534,7 +553,10 @@ async fn sync_changedetection_for_webspace(
         .bind(&secret)
         .execute(pool)
         .await?;
-        tracing::info!(webspace = ws_name, "auto-created / sub-URL for changedetection");
+        tracing::info!(
+            webspace = ws_name,
+            "auto-created / sub-URL for changedetection"
+        );
         sqlx::query_as::<_, (Uuid, String, Option<Uuid>, String, serde_json::Value)>(
             "SELECT id, path, tag_id, secret, tag_settings \
              FROM changedetection_suburls WHERE webspace_id = $1 ORDER BY path",
@@ -672,9 +694,9 @@ async fn sync_changedetection_for_suburl(
     for url in &expected_urls {
         let title_str = url.strip_prefix("https://").unwrap_or(url);
 
-        let existing_entry = watches.iter().find(|(_, w)| {
-            w.url.as_deref() == Some(url.as_str())
-        });
+        let existing_entry = watches
+            .iter()
+            .find(|(_, w)| w.url.as_deref() == Some(url.as_str()));
 
         if let Some((uuid_str, watch)) = existing_entry {
             let title_ok = watch
@@ -694,14 +716,18 @@ async fn sync_changedetection_for_suburl(
                     "title": title_str,
                     "tags": &watch_tags_json,
                 });
-                let update: changedetection_api::types::UpdateWatch =
-                    serde_json::from_value(body)
-                        .map_err(|e| anyhow::anyhow!("failed to build UpdateWatch: {e}"))?;
+                let update: changedetection_api::types::UpdateWatch = serde_json::from_value(body)
+                    .map_err(|e| anyhow::anyhow!("failed to build UpdateWatch: {e}"))?;
                 client
                     .update_watch(&watch_uuid, &update)
                     .await
                     .map_err(|e| anyhow::anyhow!("update_watch for {url} failed: {e}"))?;
-                tracing::info!(webspace = ws_name, path, url, "updated changedetection watch");
+                tracing::info!(
+                    webspace = ws_name,
+                    path,
+                    url,
+                    "updated changedetection watch"
+                );
             }
         } else {
             let body = serde_json::json!({
@@ -709,14 +735,18 @@ async fn sync_changedetection_for_suburl(
                 "title": title_str,
                 "tags": &watch_tags_json,
             });
-            let create: changedetection_api::types::CreateWatch =
-                serde_json::from_value(body)
-                    .map_err(|e| anyhow::anyhow!("failed to build CreateWatch: {e}"))?;
+            let create: changedetection_api::types::CreateWatch = serde_json::from_value(body)
+                .map_err(|e| anyhow::anyhow!("failed to build CreateWatch: {e}"))?;
             client
                 .create_watch(&create)
                 .await
                 .map_err(|e| anyhow::anyhow!("create_watch for {url} failed: {e}"))?;
-            tracing::info!(webspace = ws_name, path, url, "created changedetection watch");
+            tracing::info!(
+                webspace = ws_name,
+                path,
+                url,
+                "created changedetection watch"
+            );
         }
     }
 
@@ -802,9 +832,8 @@ async fn resolve_or_create_suburl_tag(
                 let current_title = tag.title.as_deref().map(|t| t.as_str());
                 if current_title != Some(tag_title) {
                     let body = serde_json::json!({ "title": tag_title });
-                    let update: changedetection_api::types::Tag =
-                        serde_json::from_value(body)
-                            .map_err(|e| anyhow::anyhow!("failed to build Tag update: {e}"))?;
+                    let update: changedetection_api::types::Tag = serde_json::from_value(body)
+                        .map_err(|e| anyhow::anyhow!("failed to build Tag update: {e}"))?;
                     client
                         .update_tag(&id, &update)
                         .await
@@ -854,13 +883,11 @@ async fn resolve_or_create_suburl_tag(
 
 /// Persist the resolved tag UUID in the changedetection_suburls table.
 async fn cache_suburl_tag_id(pool: &PgPool, suburl_id: Uuid, tag_id: Uuid) {
-    if let Err(e) = sqlx::query(
-        "UPDATE changedetection_suburls SET tag_id = $1 WHERE id = $2",
-    )
-    .bind(tag_id)
-    .bind(suburl_id)
-    .execute(pool)
-    .await
+    if let Err(e) = sqlx::query("UPDATE changedetection_suburls SET tag_id = $1 WHERE id = $2")
+        .bind(tag_id)
+        .bind(suburl_id)
+        .execute(pool)
+        .await
     {
         tracing::warn!(%suburl_id, %tag_id, "failed to cache changedetection suburl tag id: {e}");
     }
@@ -885,9 +912,8 @@ async fn sync_tag_settings(
 
     // Build the update body from the stored settings.
     // We use serde_json::Value directly since the fields map 1:1 to the Tag API.
-    let update: changedetection_api::types::Tag =
-        serde_json::from_value(tag_settings_json.clone())
-            .map_err(|e| anyhow::anyhow!("failed to build Tag from tag_settings: {e}"))?;
+    let update: changedetection_api::types::Tag = serde_json::from_value(tag_settings_json.clone())
+        .map_err(|e| anyhow::anyhow!("failed to build Tag from tag_settings: {e}"))?;
     client
         .update_tag(&tag_uuid, &update)
         .await
@@ -958,7 +984,10 @@ async fn sync_tag_notifications(
         .map_err(|e| anyhow::anyhow!("get_tag for notification sync failed: {e}"))?
         .into_inner();
 
-    let already_set = tag.notification_urls.iter().any(|u| u.as_str() == webhook_url);
+    let already_set = tag
+        .notification_urls
+        .iter()
+        .any(|u| u.as_str() == webhook_url);
     if already_set {
         return Ok(());
     }
@@ -1002,31 +1031,31 @@ async fn gc_changedetection(pool: &PgPool) {
 }
 
 async fn gc_for_credential(pool: &PgPool, cred_id: Uuid) -> anyhow::Result<()> {
-    let (client, group_name) =
-        crate::credentials::changedetection_client(pool, cred_id).await?;
+    let (client, group_name) = crate::credentials::changedetection_client(pool, cred_id).await?;
 
     // Build valid watch URLs from suburls joined with domain bindings.
-    let valid_urls: std::collections::HashSet<String> = sqlx::query_as::<_, (String, Option<String>, String)>(
-        "SELECT d.name, s.name, cs.path \
+    let valid_urls: std::collections::HashSet<String> =
+        sqlx::query_as::<_, (String, Option<String>, String)>(
+            "SELECT d.name, s.name, cs.path \
          FROM changedetection_suburls cs \
          JOIN webspaces w ON w.id = cs.webspace_id \
          JOIN webspace_domains wd ON wd.webspace_id = w.id \
          JOIN domains d ON d.id = wd.domain_id \
          LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
          WHERE w.changedetection_credential_id = $1",
-    )
-    .bind(cred_id)
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|(domain, sub, path)| {
-        let hostname = match sub.as_deref() {
-            Some(s) if s != "@" => format!("{s}.{domain}"),
-            _ => domain,
-        };
-        format!("https://{hostname}{path}")
-    })
-    .collect();
+        )
+        .bind(cred_id)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|(domain, sub, path)| {
+            let hostname = match sub.as_deref() {
+                Some(s) if s != "@" => format!("{s}.{domain}"),
+                _ => domain,
+            };
+            format!("https://{hostname}{path}")
+        })
+        .collect();
 
     // Collect valid webspace names and their sub-URL paths.
     let valid_ws_names: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
@@ -1069,7 +1098,10 @@ async fn gc_for_credential(pool: &PgPool, cred_id: Uuid) -> anyhow::Result<()> {
                 if let Err(e) = client.delete_watch(&uuid).await {
                     tracing::warn!(url = watch_url, "gc: failed to delete orphaned watch: {e}");
                 } else {
-                    tracing::info!(url = watch_url, "gc: deleted orphaned changedetection watch");
+                    tracing::info!(
+                        url = watch_url,
+                        "gc: deleted orphaned changedetection watch"
+                    );
                 }
             }
         }
@@ -1126,4 +1158,3 @@ async fn gc_for_credential(pool: &PgPool, cred_id: Uuid) -> anyhow::Result<()> {
 
     Ok(())
 }
-

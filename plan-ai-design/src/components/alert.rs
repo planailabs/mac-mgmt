@@ -12,10 +12,10 @@ pub enum AlertVariant {
 impl AlertVariant {
     fn class(self) -> &'static str {
         match self {
-            Self::Info    => "alert-info",
+            Self::Info => "alert-info",
             Self::Success => "alert-success",
-            Self::Warn    => "alert-warn",
-            Self::Danger  => "alert-danger",
+            Self::Warn => "alert-warn",
+            Self::Danger => "alert-danger",
         }
     }
 }

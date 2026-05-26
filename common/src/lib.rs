@@ -983,7 +983,9 @@ impl LmsConfig {
             return Err(ValidationError("lms.port must be > 0".into()));
         }
         if self.models.iter().any(|m| m.is_empty()) {
-            return Err(ValidationError("lms.models contains an empty string".into()));
+            return Err(ValidationError(
+                "lms.models contains an empty string".into(),
+            ));
         }
         Ok(())
     }
@@ -1133,7 +1135,9 @@ pub struct CloudConfig {
 impl CloudConfig {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.default_model.is_empty() {
-            return Err(ValidationError("cloud.default_model must not be empty".into()));
+            return Err(ValidationError(
+                "cloud.default_model must not be empty".into(),
+            ));
         }
         Ok(())
     }
@@ -1293,7 +1297,9 @@ pub struct HermesConfig {
     #[schemars(description = "Telegram bot integration")]
     #[serde(default)]
     pub telegram: Option<HermesTelegramConfig>,
-    #[schemars(description = "Working directory for agent terminal sessions (maps to terminal.cwd in config.yaml)")]
+    #[schemars(
+        description = "Working directory for agent terminal sessions (maps to terminal.cwd in config.yaml)"
+    )]
     #[serde(default)]
     pub cwd: Option<String>,
     #[schemars(
@@ -1375,11 +1381,9 @@ pub struct HermesWebuiConfig {
     #[schemars(description = "WebUI listen address")]
     #[serde(default = "default_gateway_host")]
     pub host: String,
-    #[schemars(
-        description = "Optional password for the WebUI. When set, written to \
+    #[schemars(description = "Optional password for the WebUI. When set, written to \
                        $HERMES_HOME/webui/.env as HERMES_WEBUI_PASSWORD so the \
-                       login flow gates browser access."
-    )]
+                       login flow gates browser access.")]
     #[serde(default)]
     pub password: Option<Secret>,
     #[schemars(
@@ -1514,9 +1518,7 @@ fn default_budget_window() -> String {
 }
 
 /// Concrete wrapper for `AiProxyKeyConfig` lists.
-fn deserialize_ai_proxy_key_list<'de, D>(
-    deserializer: D,
-) -> Result<Vec<AiProxyKeyConfig>, D::Error>
+fn deserialize_ai_proxy_key_list<'de, D>(deserializer: D) -> Result<Vec<AiProxyKeyConfig>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -1579,7 +1581,9 @@ pub struct AiProxyKeyConfig {
         description = "Hex-encoded multihash of the API key (the raw key is only shown once on generation)"
     )]
     pub key_hash: String,
-    #[schemars(description = "Maximum total tokens (input+output) within the budget window. 0 = unlimited")]
+    #[schemars(
+        description = "Maximum total tokens (input+output) within the budget window. 0 = unlimited"
+    )]
     #[serde(default)]
     pub token_budget: i64,
     #[schemars(
@@ -1614,7 +1618,10 @@ impl AiProxyKeyConfig {
         }
         if !self.budget_window.is_empty() {
             humantime::parse_duration(&self.budget_window).map_err(|e| {
-                ValidationError(format!("invalid budget_window '{}': {e}", self.budget_window))
+                ValidationError(format!(
+                    "invalid budget_window '{}': {e}",
+                    self.budget_window
+                ))
             })?;
         }
         Ok(())
@@ -1644,7 +1651,9 @@ pub struct HealerClusterConfig {
     #[schemars(description = "Model for the fix-model (remediation phase)")]
     #[serde(default)]
     pub fix_model: Option<String>,
-    #[schemars(description = "Fine-tuned Ollama model name (e.g. 'mac-mgmt-healer'). Preferred over ollama_model when present in Ollama.")]
+    #[schemars(
+        description = "Fine-tuned Ollama model name (e.g. 'mac-mgmt-healer'). Preferred over ollama_model when present in Ollama."
+    )]
     #[serde(default)]
     pub fine_tuned_model: Option<String>,
 }
@@ -1676,7 +1685,9 @@ pub struct BackupConfig {
     #[schemars(description = "How often to run backups (e.g. \"6h\", \"1d\")")]
     #[serde(default = "default_backup_interval")]
     pub interval: String,
-    #[schemars(description = "Retention policy: keep snapshots from the last N duration (e.g. \"7d\", \"30d\")")]
+    #[schemars(
+        description = "Retention policy: keep snapshots from the last N duration (e.g. \"7d\", \"30d\")"
+    )]
     #[serde(default = "default_backup_keep")]
     pub keep_within: String,
     #[schemars(description = "Extra paths to include in backups (beyond auto-detected service paths)", extend("x-advanced" = true))]
@@ -1744,10 +1755,14 @@ fn default_nix_gc_disk_threshold() -> u8 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NixGcConfig {
-    #[schemars(description = "How often to run nix-collect-garbage --delete-old (e.g. \"1d\", \"12h\")")]
+    #[schemars(
+        description = "How often to run nix-collect-garbage --delete-old (e.g. \"1d\", \"12h\")"
+    )]
     #[serde(default = "default_nix_gc_interval")]
     pub interval: String,
-    #[schemars(description = "Run GC immediately when any tracked mount exceeds this usage percent (0–100). 0 disables the threshold check.")]
+    #[schemars(
+        description = "Run GC immediately when any tracked mount exceeds this usage percent (0–100). 0 disables the threshold check."
+    )]
     #[serde(default = "default_nix_gc_disk_threshold")]
     pub disk_threshold_percent: u8,
 }
@@ -1967,9 +1982,7 @@ pub struct RelayConfig {
     #[schemars(description = "Whether remote SSH access is enabled on startup")]
     #[serde(default)]
     pub remote_ssh_enabled: bool,
-    #[schemars(
-        description = "Whether to expose service tunnels (TCP, file, shell) via the relay"
-    )]
+    #[schemars(description = "Whether to expose service tunnels (TCP, file, shell) via the relay")]
     #[serde(default = "default_true")]
     pub tunnels_enabled: bool,
     #[schemars(
@@ -2118,10 +2131,7 @@ impl DaemonConfig {
         for cs in &config.custom_services {
             cs.validate().map_err(|e| e.to_string())?;
             if !seen_names.insert(&cs.name) {
-                return Err(format!(
-                    "custom-service: duplicate name '{}'",
-                    cs.name
-                ));
+                return Err(format!("custom-service: duplicate name '{}'", cs.name));
             }
         }
         Ok(config)
@@ -2695,8 +2705,7 @@ upgrade_window = "bogus"
     fn secret_resolve_vault() {
         let mut s = Secret::new("secret:my-secret");
         let env = std::collections::HashMap::new();
-        let vault =
-            std::collections::HashMap::from([("my-secret".into(), "vault-value".into())]);
+        let vault = std::collections::HashMap::from([("my-secret".into(), "vault-value".into())]);
         s.resolve(&env, &vault).unwrap();
         assert_eq!(s.expose(), "vault-value");
     }
@@ -2742,9 +2751,18 @@ bot_token = "secret:tg-token"
         let env = std::collections::HashMap::from([("ANT_KEY".into(), "sk-ant-xxx".into())]);
         let vault = std::collections::HashMap::from([("tg-token".into(), "123:ABC".into())]);
         config.resolve_secrets(&env, &vault).unwrap();
-        assert_eq!(config.cloud[0].api_key.as_ref().unwrap().expose(), "sk-ant-xxx");
         assert_eq!(
-            config.openclaw.telegram.as_ref().unwrap().bot_token.expose(),
+            config.cloud[0].api_key.as_ref().unwrap().expose(),
+            "sk-ant-xxx"
+        );
+        assert_eq!(
+            config
+                .openclaw
+                .telegram
+                .as_ref()
+                .unwrap()
+                .bot_token
+                .expose(),
             "123:ABC"
         );
     }

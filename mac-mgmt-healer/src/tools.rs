@@ -1055,7 +1055,10 @@ healer_tool! {
 ///
 /// When `diagnosis_only` is true, mutating tools (write_file, run_command,
 /// run_cluster_command) are omitted — the agent can only observe.
-pub fn all_tools_with_risk(ctx: ToolContext, diagnosis_only: bool) -> Vec<(Box<dyn Tool>, ToolRisk)> {
+pub fn all_tools_with_risk(
+    ctx: ToolContext,
+    diagnosis_only: bool,
+) -> Vec<(Box<dyn Tool>, ToolRisk)> {
     let has_cluster = ctx.cluster.is_some();
     let has_metrics = ctx.metrics_url.is_some();
 

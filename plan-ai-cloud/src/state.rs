@@ -47,7 +47,10 @@ impl SharedState {
         self.inner.litellm_key.as_deref()
     }
     pub fn ollama_url(&self) -> String {
-        format!("http://{}:{}", self.inner.ollama_host, self.inner.ollama_port)
+        format!(
+            "http://{}:{}",
+            self.inner.ollama_host, self.inner.ollama_port
+        )
     }
     pub fn cleaner_dir(&self) -> &std::path::Path {
         &self.inner.cleaner_dir

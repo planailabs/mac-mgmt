@@ -46,7 +46,9 @@ pub struct InboxListParams {
     #[serde(default = "default_true")]
     pub only_pending: bool,
 }
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CidParam {
@@ -93,7 +95,10 @@ impl ShareAgentServer {
         if hex::decode(&params.proposal_cid).is_err() {
             return format!("Error: invalid hex CID '{}'", params.proposal_cid);
         }
-        format!("Proposal {} — inspection details would appear here.", params.proposal_cid)
+        format!(
+            "Proposal {} — inspection details would appear here.",
+            params.proposal_cid
+        )
     }
 
     #[tool(
@@ -120,8 +125,15 @@ impl ShareAgentServer {
             Ok(c) => c,
             Err(e) => return format!("Error: bad hex: {e}"),
         };
-        match self.client.share_decide(&cid, false, Some(&params.reason)).await {
-            Ok(_) => format!("Rejected proposal {}: {}", params.proposal_cid, params.reason),
+        match self
+            .client
+            .share_decide(&cid, false, Some(&params.reason))
+            .await
+        {
+            Ok(_) => format!(
+                "Rejected proposal {}: {}",
+                params.proposal_cid, params.reason
+            ),
             Err(e) => format!("Error: {e}"),
         }
     }

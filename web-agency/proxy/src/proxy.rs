@@ -85,15 +85,12 @@ impl WebAgencyProxy {
         }
 
         // Return 401
-        let mut resp = pingora::http::ResponseHeader::build(401, None)
-            .map_err(|e| pingora::Error::because(
-                pingora::ErrorType::InternalError, "build 401 response", e,
-            ))?;
+        let mut resp = pingora::http::ResponseHeader::build(401, None).map_err(|e| {
+            pingora::Error::because(pingora::ErrorType::InternalError, "build 401 response", e)
+        })?;
         let _ = resp.insert_header("WWW-Authenticate", "Basic realm=\"Protected\"");
         let _ = resp.insert_header("Content-Type", "text/plain");
-        session
-            .write_response_header(Box::new(resp), false)
-            .await?;
+        session.write_response_header(Box::new(resp), false).await?;
         session
             .write_response_body(Some(bytes::Bytes::from_static(b"Unauthorized")), true)
             .await?;
@@ -131,10 +128,14 @@ impl WebAgencyProxy {
                         let clean_url = strip_gate_params(&path_query);
                         let cookie_value = self.make_gate_cookie(org_id);
                         let location = format!("https://{host}{clean_url}");
-                        let mut resp = pingora::http::ResponseHeader::build(302, None)
-                            .map_err(|e| pingora::Error::because(
-                                pingora::ErrorType::InternalError, "build 302 response", e,
-                            ))?;
+                        let mut resp =
+                            pingora::http::ResponseHeader::build(302, None).map_err(|e| {
+                                pingora::Error::because(
+                                    pingora::ErrorType::InternalError,
+                                    "build 302 response",
+                                    e,
+                                )
+                            })?;
                         let _ = resp.insert_header("Location", &location);
                         let _ = resp.insert_header(
                             "Set-Cookie",
@@ -142,9 +143,7 @@ impl WebAgencyProxy {
                                 "__proxy_gate={cookie_value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400"
                             ),
                         );
-                        session
-                            .write_response_header(Box::new(resp), false)
-                            .await?;
+                        session.write_response_header(Box::new(resp), false).await?;
                         session
                             .write_response_body(Some(bytes::Bytes::new()), true)
                             .await?;
@@ -161,14 +160,11 @@ impl WebAgencyProxy {
             "https://{}/proxy-gate?return_url={encoded}",
             self.agency_domain
         );
-        let mut resp = pingora::http::ResponseHeader::build(302, None)
-            .map_err(|e| pingora::Error::because(
-                pingora::ErrorType::InternalError, "build 302 response", e,
-            ))?;
+        let mut resp = pingora::http::ResponseHeader::build(302, None).map_err(|e| {
+            pingora::Error::because(pingora::ErrorType::InternalError, "build 302 response", e)
+        })?;
         let _ = resp.insert_header("Location", &redirect_url);
-        session
-            .write_response_header(Box::new(resp), false)
-            .await?;
+        session.write_response_header(Box::new(resp), false).await?;
         session
             .write_response_body(Some(bytes::Bytes::new()), true)
             .await?;
@@ -207,8 +203,12 @@ impl WebAgencyProxy {
             return false;
         }
         let (sig, oid_str, exp_str) = (parts[0], parts[1], parts[2]);
-        let Ok(org_id) = uuid::Uuid::parse_str(oid_str) else { return false };
-        let Ok(expiry_ts) = exp_str.parse::<i64>() else { return false };
+        let Ok(org_id) = uuid::Uuid::parse_str(oid_str) else {
+            return false;
+        };
+        let Ok(expiry_ts) = exp_str.parse::<i64>() else {
+            return false;
+        };
 
         if &org_id != expected_org_id {
             return false;
@@ -229,23 +229,20 @@ impl ProxyHttp for WebAgencyProxy {
         RequestCtx::default()
     }
 
-    async fn request_filter(
-        &self,
-        session: &mut Session,
-        _ctx: &mut Self::CTX,
-    ) -> Result<bool> {
+    async fn request_filter(&self, session: &mut Session, _ctx: &mut Self::CTX) -> Result<bool> {
         // Intercept .well-known/web-agency.json on any routed host (before auth)
         let path = session.req_header().uri.path();
         if path == "/.well-known/web-agency.json" {
             let body = b"{\"service\":\"web-agency-proxy\"}";
-            let mut resp = pingora::http::ResponseHeader::build(200, None)
-                .map_err(|e| pingora::Error::because(
-                    pingora::ErrorType::InternalError, "build 200 response", e,
-                ))?;
+            let mut resp = pingora::http::ResponseHeader::build(200, None).map_err(|e| {
+                pingora::Error::because(pingora::ErrorType::InternalError, "build 200 response", e)
+            })?;
             let _ = resp.insert_header("Content-Type", "application/json");
             let _ = resp.insert_header("Content-Length", &body.len().to_string());
             session.write_response_header(Box::new(resp), false).await?;
-            session.write_response_body(Some(bytes::Bytes::from_static(body)), true).await?;
+            session
+                .write_response_body(Some(bytes::Bytes::from_static(body)), true)
+                .await?;
             return Ok(true);
         }
 
@@ -272,17 +269,22 @@ impl ProxyHttp for WebAgencyProxy {
 
         let routes = self.routes.load();
         match routes.get(&host) {
-            Some((Route::Direct(upstream), _)) => {
-                Ok(Box::new(HttpPeer::new(upstream.as_str(), false, String::new())))
-            }
-            Some((Route::Relay {
-                upstream,
-                url,
-                relay_host,
-                tls,
-                sni,
-                proxy_token,
-            }, _)) => {
+            Some((Route::Direct(upstream), _)) => Ok(Box::new(HttpPeer::new(
+                upstream.as_str(),
+                false,
+                String::new(),
+            ))),
+            Some((
+                Route::Relay {
+                    upstream,
+                    url,
+                    relay_host,
+                    tls,
+                    sni,
+                    proxy_token,
+                },
+                _,
+            )) => {
                 // Store relay info in context for upstream_request_filter
                 let path_prefix = url
                     .strip_prefix("https://")
@@ -480,9 +482,8 @@ pub fn build_service(
     svc.add_tcp(&cfg.http_addr);
 
     let callback = crate::cert_store::CertStoreCallback(cert_store);
-    let mut tls_settings =
-        pingora::listeners::tls::TlsSettings::with_callbacks(Box::new(callback))
-            .expect("failed to create TLS settings");
+    let mut tls_settings = pingora::listeners::tls::TlsSettings::with_callbacks(Box::new(callback))
+        .expect("failed to create TLS settings");
     tls_settings.enable_h2();
     svc.add_tls_with_settings(&cfg.https_addr, None, tls_settings);
 

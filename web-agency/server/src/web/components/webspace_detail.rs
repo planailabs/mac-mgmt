@@ -2,7 +2,10 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td, TdMuted, Th};
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td,
+    TdMuted, Th,
+};
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -117,12 +120,29 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
-    let (id, name, hosting_type, cf_project, cf_cred_id, runtime, local_status, org_id, relay_url, auth_mode, auth_basic_list_id, cd_cred_id) = row;
+    let (
+        id,
+        name,
+        hosting_type,
+        cf_project,
+        cf_cred_id,
+        runtime,
+        local_status,
+        org_id,
+        relay_url,
+        auth_mode,
+        auth_basic_list_id,
+        cd_cred_id,
+    ) = row;
 
     // Fetch basic auth list name if set
     let auth_basic_list_name = if let Some(list_id) = auth_basic_list_id {
         sqlx::query_scalar::<_, String>("SELECT name FROM basic_auth_lists WHERE id = $1")
-            .bind(list_id).fetch_optional(&pool).await.ok().flatten()
+            .bind(list_id)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
     } else {
         None
     };
@@ -131,7 +151,10 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     user.require_org_read(&org_id)?;
 
     let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
-        .bind(org_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(org_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let binding_rows = sqlx::query_as::<_, (Uuid, Uuid, Option<Uuid>, String, Option<String>)>(
         "SELECT wd.id, wd.domain_id, wd.subdomain_id, d.name, s.name \
@@ -140,11 +163,17 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
          LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
          WHERE wd.webspace_id = $1 ORDER BY d.name",
     )
-    .bind(webspace_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .bind(webspace_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // For relay/tunnel webspaces the CNAME target is the agency domain
     let agency_domain = if hosting_type == "relay" || hosting_type == "tunnel" {
-        crate::config::config().proxy.as_ref().map(|p| p.agency_domain.clone())
+        crate::config::config()
+            .proxy
+            .as_ref()
+            .map(|p| p.agency_domain.clone())
     } else {
         None
     };
@@ -162,18 +191,34 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
                 "SELECT EXISTS(SELECT 1 FROM dns_records WHERE domain_id = $1 AND name = $2 \
                  AND record_type = 'CNAME' AND record_value = $3)",
             )
-            .bind(domain_id).bind(sub_name).bind(ad)
-            .fetch_one(&pool).await.unwrap_or(false)
+            .bind(domain_id)
+            .bind(sub_name)
+            .bind(ad)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(false)
         } else {
             sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM dns_records WHERE domain_id = $1 AND name = $2 \
                  AND record_type = 'CNAME' AND record_value LIKE '%.pages.dev')",
             )
-            .bind(domain_id).bind(sub_name)
-            .fetch_one(&pool).await.unwrap_or(false)
+            .bind(domain_id)
+            .bind(sub_name)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(false)
         };
 
-        bindings.push(DomainBinding { binding_id, domain_id, subdomain_id, domain_name, subdomain_name, hostname, cname_ok, cf_domain_status: None });
+        bindings.push(DomainBinding {
+            binding_id,
+            domain_id,
+            subdomain_id,
+            domain_name,
+            subdomain_name,
+            hostname,
+            cname_ok,
+            cf_domain_status: None,
+        });
     }
 
     // Fetch live CF Pages info
@@ -191,28 +236,59 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
                     let cfg = src.get("config");
                     if cfg.is_some() {
                         git_source = Some(GitRepoInfo {
-                            provider: src.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                            owner: cfg.and_then(|c| c.get("owner")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                            repo: cfg.and_then(|c| c.get("repo_name")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                            production_branch: cfg.and_then(|c| c.get("production_branch")).and_then(|v| v.as_str()).unwrap_or("main").to_string(),
+                            provider: src
+                                .get("type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            owner: cfg
+                                .and_then(|c| c.get("owner"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            repo: cfg
+                                .and_then(|c| c.get("repo_name"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            production_branch: cfg
+                                .and_then(|c| c.get("production_branch"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("main")
+                                .to_string(),
                         });
                     }
                 }
                 if let Some(bc) = &project.build_config {
                     build_config_info = Some(BuildConfigInfo {
-                        build_command: bc.get("build_command").and_then(|v| v.as_str()).map(String::from),
-                        destination_dir: bc.get("destination_dir").and_then(|v| v.as_str()).map(String::from),
-                        root_dir: bc.get("root_dir").and_then(|v| v.as_str()).map(String::from),
+                        build_command: bc
+                            .get("build_command")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        destination_dir: bc
+                            .get("destination_dir")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        root_dir: bc
+                            .get("root_dir")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
                     });
                 }
             }
 
             // Fetch custom domain verification statuses
-            match client.list_pages_custom_domains(&account_id, project_name).await {
+            match client
+                .list_pages_custom_domains(&account_id, project_name)
+                .await
+            {
                 Ok(cf_domains) => {
                     for binding in &mut bindings {
                         let hostname_lower = binding.hostname.to_lowercase();
-                        if let Some(cf_dom) = cf_domains.iter().find(|d| d.name.to_lowercase() == hostname_lower) {
+                        if let Some(cf_dom) = cf_domains
+                            .iter()
+                            .find(|d| d.name.to_lowercase() == hostname_lower)
+                        {
                             binding.cf_domain_status = cf_dom.status.clone();
                         }
                     }
@@ -227,19 +303,34 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     // Fetch changedetection credential name
     let cd_cred_name = if let Some(cid) = cd_cred_id {
         sqlx::query_scalar::<_, String>("SELECT name FROM credentials WHERE id = $1")
-            .bind(cid).fetch_optional(&pool).await.ok().flatten()
+            .bind(cid)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
     } else {
         None
     };
 
     Ok(WebspaceData {
-        id, name, hosting_type, cloudflare_pages_project: cf_project,
-        cloudflare_credential_id: cf_cred_id, runtime, local_status, relay_url,
-        organization_id: org_id, organization_name: org_name,
+        id,
+        name,
+        hosting_type,
+        cloudflare_pages_project: cf_project,
+        cloudflare_credential_id: cf_cred_id,
+        runtime,
+        local_status,
+        relay_url,
+        organization_id: org_id,
+        organization_name: org_name,
         is_org_admin: user.is_org_admin(&org_id),
-        auth_mode, auth_basic_list_name,
+        auth_mode,
+        auth_basic_list_name,
         bindings,
-        pages_subdomain, production_branch, git_source, build_config: build_config_info,
+        pages_subdomain,
+        production_branch,
+        git_source,
+        build_config: build_config_info,
         changedetection_credential_id: cd_cred_id,
         changedetection_credential_name: cd_cred_name,
     })
@@ -252,25 +343,41 @@ async fn list_cd_creds() -> Result<Vec<CredOption>, ServerFnError> {
     let rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM credentials WHERE credential_type = 'changedetection' ORDER BY name",
     )
-    .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(rows.into_iter().map(|(id, name)| CredOption { id, name }).collect())
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| CredOption { id, name })
+        .collect())
 }
 
 #[server]
-async fn set_webspace_changedetection(webspace_id: Uuid, credential_id: Option<Uuid>) -> Result<(), ServerFnError> {
+async fn set_webspace_changedetection(
+    webspace_id: Uuid,
+    credential_id: Option<Uuid>,
+) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
-    sqlx::query("UPDATE webspaces SET changedetection_credential_id = $1, updated_at = now() WHERE id = $2")
-        .bind(credential_id).bind(webspace_id)
-        .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "UPDATE webspaces SET changedetection_credential_id = $1, updated_at = now() WHERE id = $2",
+    )
+    .bind(credential_id)
+    .bind(webspace_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
 }
@@ -282,8 +389,13 @@ async fn list_cf_creds_for_pages() -> Result<Vec<CredOption>, ServerFnError> {
     let rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM credentials WHERE credential_type = 'cloudflare' ORDER BY name",
     )
-    .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(rows.into_iter().map(|(id, name)| CredOption { id, name }).collect())
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| CredOption { id, name })
+        .collect())
 }
 
 #[server]
@@ -291,26 +403,42 @@ async fn list_domains_for_binding(webspace_id: Uuid) -> Result<Vec<DomainOption>
     let _user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id).fetch_one(&pool).await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let rows = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
         "SELECT id, name, cloudflare_zone_id FROM domains WHERE organization_id = $1 ORDER BY name",
     )
-    .bind(org_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .bind(org_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let mut domains = Vec::new();
     for (id, name, cloudflare_zone_id) in rows {
         let subs = sqlx::query_as::<_, (Uuid, String)>(
             "SELECT id, name FROM subdomains WHERE domain_id = $1 ORDER BY name",
-        ).bind(id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         domains.push(DomainOption {
-            id, name, cloudflare_zone_id,
-            subdomains: subs.into_iter().map(|(sid, sname)| SubdomainOption { id: sid, name: sname }).collect(),
+            id,
+            name,
+            cloudflare_zone_id,
+            subdomains: subs
+                .into_iter()
+                .map(|(sid, sname)| SubdomainOption {
+                    id: sid,
+                    name: sname,
+                })
+                .collect(),
         });
     }
 
@@ -319,14 +447,19 @@ async fn list_domains_for_binding(webspace_id: Uuid) -> Result<Vec<DomainOption>
 
 /// Deploy a CF Pages project for this webspace.
 #[server]
-async fn deploy_pages_project(webspace_id: Uuid, credential_id: Uuid) -> Result<PagesDeployResult, ServerFnError> {
+async fn deploy_pages_project(
+    webspace_id: Uuid,
+    credential_id: Uuid,
+) -> Result<PagesDeployResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
     let row = sqlx::query_as::<_, (String, Uuid)>(
         "SELECT name, organization_id FROM webspaces WHERE id = $1",
     )
-    .bind(webspace_id).fetch_optional(&pool).await
+    .bind(webspace_id)
+    .fetch_optional(&pool)
+    .await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
@@ -393,7 +526,8 @@ async fn connect_git_repo(
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
-    let project_name = project_name.ok_or_else(|| ServerFnError::new("Pages project not deployed yet"))?;
+    let project_name =
+        project_name.ok_or_else(|| ServerFnError::new("Pages project not deployed yet"))?;
     let cred_id = cred_id.ok_or_else(|| ServerFnError::new("no Cloudflare credential"))?;
 
     let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
@@ -414,18 +548,34 @@ async fn connect_git_repo(
             }),
         }),
         build_config: Some(cloudflare_api::compat::PagesBuildConfig {
-            build_command: if build_command.is_empty() { None } else { Some(build_command) },
-            destination_dir: if destination_dir.is_empty() { None } else { Some(destination_dir) },
-            root_dir: if root_dir.is_empty() { None } else { Some(root_dir) },
+            build_command: if build_command.is_empty() {
+                None
+            } else {
+                Some(build_command)
+            },
+            destination_dir: if destination_dir.is_empty() {
+                None
+            } else {
+                Some(destination_dir)
+            },
+            root_dir: if root_dir.is_empty() {
+                None
+            } else {
+                Some(root_dir)
+            },
             build_caching: Some(true),
         }),
     };
 
-    client.update_pages_project(&account_id, &project_name, &update).await
-        .map_err(|e| ServerFnError::new(format!(
-            "failed to connect git repo: {e}. \
+    client
+        .update_pages_project(&account_id, &project_name, &update)
+        .await
+        .map_err(|e| {
+            ServerFnError::new(format!(
+                "failed to connect git repo: {e}. \
              Ensure the GitHub/GitLab integration is authorized in your Cloudflare dashboard"
-        )))?;
+            ))
+        })?;
 
     tracing::info!("connected git repo to Pages project {project_name}");
     Ok(())
@@ -459,7 +609,9 @@ async fn update_production_branch(webspace_id: Uuid, branch: String) -> Result<(
         build_config: None,
     };
 
-    client.update_pages_project(&account_id, &project_name, &update).await
+    client
+        .update_pages_project(&account_id, &project_name, &update)
+        .await
         .map_err(|e| ServerFnError::new(format!("failed to update production branch: {e}")))?;
 
     tracing::info!("updated production branch for {project_name} to {branch}");
@@ -469,14 +621,21 @@ async fn update_production_branch(webspace_id: Uuid, branch: String) -> Result<(
 /// Bind a domain (or subdomain) to this webspace.
 /// For CF Pages: adds custom domain + creates CNAME record pointing to {project}.pages.dev.
 #[server]
-async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid>, hostname: String) -> Result<(), ServerFnError> {
+async fn bind_domain(
+    webspace_id: Uuid,
+    domain_id: Uuid,
+    subdomain_id: Option<Uuid>,
+    hostname: String,
+) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
@@ -497,7 +656,11 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
 
     // For relay/tunnel: create CNAME pointing to agency_domain
     if ws_hosting_type == "relay" || ws_hosting_type == "tunnel" {
-        if let Some(agency_domain) = crate::config::config().proxy.as_ref().map(|p| &p.agency_domain) {
+        if let Some(agency_domain) = crate::config::config()
+            .proxy
+            .as_ref()
+            .map(|p| &p.agency_domain)
+        {
             create_tunnel_cname(&pool, domain_id, subdomain_id, &hostname, agency_domain).await?;
         }
     }
@@ -507,7 +670,10 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
         let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
 
         // 1. Add custom domain to Pages project
-        if let Err(e) = client.add_pages_custom_domain(&account_id, &project_name, &hostname).await {
+        if let Err(e) = client
+            .add_pages_custom_domain(&account_id, &project_name, &hostname)
+            .await
+        {
             tracing::warn!("failed to add custom domain {hostname} to Pages: {e}");
         } else {
             tracing::info!("added custom domain {hostname} to Pages project {project_name}");
@@ -520,11 +686,19 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
                 Some(sub) => sub,
                 None => return Err(ServerFnError::new("Pages project has no subdomain")),
             },
-            Err(e) => return Err(ServerFnError::new(format!("failed to fetch Pages project: {e}"))),
+            Err(e) => {
+                return Err(ServerFnError::new(format!(
+                    "failed to fetch Pages project: {e}"
+                )));
+            }
         };
         let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
             "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-        ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         if let (Some(zone_id), Some(domain_cred_id)) = domain_cf {
             let domain_client = build_domain_cf_client(&pool, domain_cred_id).await?;
@@ -540,12 +714,20 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
             };
             match domain_client.create_dns_record(&zone_id, &record).await {
                 Ok(created) => {
-                    tracing::info!("created CNAME {hostname} → {cname_target} (CF record {})", created.id);
+                    tracing::info!(
+                        "created CNAME {hostname} → {cname_target} (CF record {})",
+                        created.id
+                    );
                     // Also store in dns_records if we have a subdomain
                     if let Some(sub_id) = subdomain_id {
                         let sub_name = sqlx::query_scalar::<_, String>(
                             "SELECT name FROM subdomains WHERE id = $1",
-                        ).bind(sub_id).fetch_optional(&pool).await.ok().flatten();
+                        )
+                        .bind(sub_id)
+                        .fetch_optional(&pool)
+                        .await
+                        .ok()
+                        .flatten();
 
                         if let Some(sub_name) = sub_name {
                             let _ = sqlx::query(
@@ -586,20 +768,30 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
 /// Trigger a recheck of a custom domain's verification status on CF Pages.
 /// Uses the PATCH endpoint which retries validation per the CF API spec.
 #[server]
-async fn recheck_custom_domain(webspace_id: Uuid, hostname: String) -> Result<String, ServerFnError> {
+async fn recheck_custom_domain(
+    webspace_id: Uuid,
+    hostname: String,
+) -> Result<String, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
     let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(webspace_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let (project_name, cred_id) = match ws {
         (Some(p), Some(c)) => (p, c),
@@ -608,14 +800,20 @@ async fn recheck_custom_domain(webspace_id: Uuid, hostname: String) -> Result<St
 
     let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
 
-    match client.retry_pages_custom_domain(&account_id, &project_name, &hostname).await {
+    match client
+        .retry_pages_custom_domain(&account_id, &project_name, &hostname)
+        .await
+    {
         Ok(dom) => {
             let status = dom.status.as_deref().unwrap_or("pending").to_string();
             Ok(format!("Validation retried — status: {status}"))
         }
         Err(e) => {
             // Domain might not exist on CF yet — try adding it
-            match client.add_pages_custom_domain(&account_id, &project_name, &hostname).await {
+            match client
+                .add_pages_custom_domain(&account_id, &project_name, &hostname)
+                .await
+            {
                 Ok(dom) => {
                     let status = dom.status.as_deref().unwrap_or("pending").to_string();
                     Ok(format!("Domain added — status: {status}"))
@@ -628,20 +826,32 @@ async fn recheck_custom_domain(webspace_id: Uuid, hostname: String) -> Result<St
 
 /// Re-create the CNAME record for a Pages domain binding.
 #[server]
-async fn fix_cname(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid>, hostname: String) -> Result<(), ServerFnError> {
+async fn fix_cname(
+    webspace_id: Uuid,
+    domain_id: Uuid,
+    subdomain_id: Option<Uuid>,
+    hostname: String,
+) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
     let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(webspace_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let (project_name, cred_id) = match ws {
         (Some(p), Some(c)) => (p, c),
@@ -650,17 +860,28 @@ async fn fix_cname(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid
 
     // Use the subdomain from the API (the preview URL) as the CNAME target
     let (pages_client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
-    let cname_target = match pages_client.get_pages_project(&account_id, &project_name).await {
+    let cname_target = match pages_client
+        .get_pages_project(&account_id, &project_name)
+        .await
+    {
         Ok(project) => match project.subdomain {
             Some(sub) => sub,
             None => return Err(ServerFnError::new("Pages project has no subdomain")),
         },
-        Err(e) => return Err(ServerFnError::new(format!("failed to fetch Pages project: {e}"))),
+        Err(e) => {
+            return Err(ServerFnError::new(format!(
+                "failed to fetch Pages project: {e}"
+            )));
+        }
     };
 
     let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(domain_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let (zone_id, domain_cred_id) = match domain_cf {
         (Some(z), Some(c)) => (z, c),
@@ -680,13 +901,20 @@ async fn fix_cname(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid
         priority: None,
     };
 
-    let created = client.create_dns_record(&zone_id, &record).await
+    let created = client
+        .create_dns_record(&zone_id, &record)
+        .await
         .map_err(|e| ServerFnError::new(format!("failed to create CNAME: {e}")))?;
 
     // Store in dns_records
     let sub_name = if let Some(sid) = subdomain_id {
         sqlx::query_scalar::<_, String>("SELECT name FROM subdomains WHERE id = $1")
-            .bind(sid).fetch_optional(&pool).await.ok().flatten().unwrap_or_else(|| "@".into())
+            .bind(sid)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "@".into())
     } else {
         "@".into()
     };
@@ -698,7 +926,10 @@ async fn fix_cname(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid
         sqlx::query_scalar::<_, Uuid>(
             "INSERT INTO subdomains (domain_id, name) VALUES ($1, '@') \
              ON CONFLICT (domain_id, name) DO UPDATE SET updated_at = now() RETURNING id",
-        ).bind(domain_id).fetch_one(&pool).await
+        )
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
@@ -709,20 +940,29 @@ async fn fix_cname(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid
     .bind(sub_id).bind(domain_id).bind(&sub_name).bind(&cname_target).bind(&created.id)
     .execute(&pool).await;
 
-    tracing::info!("fixed CNAME {hostname} → {cname_target} (CF record {})", created.id);
+    tracing::info!(
+        "fixed CNAME {hostname} → {cname_target} (CF record {})",
+        created.id
+    );
     Ok(())
 }
 
 /// Remove a domain binding. For CF Pages: removes custom domain + CNAME record.
 #[server]
-async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) -> Result<(), ServerFnError> {
+async fn unbind_domain(
+    webspace_id: Uuid,
+    binding_id: Uuid,
+    hostname: String,
+) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
@@ -730,7 +970,11 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
     // Get binding details before deleting
     let binding = sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
         "SELECT domain_id, subdomain_id FROM webspace_domains WHERE id = $1",
-    ).bind(binding_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(binding_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Remove CNAME record (relay/tunnel or Pages)
     let ws = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
@@ -742,7 +986,11 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
 
     // For relay/tunnel: remove the agency-domain CNAME
     if (ws_hosting_type == "relay" || ws_hosting_type == "tunnel") && binding.is_some() {
-        if let Some(agency_domain) = crate::config::config().proxy.as_ref().map(|p| &p.agency_domain) {
+        if let Some(agency_domain) = crate::config::config()
+            .proxy
+            .as_ref()
+            .map(|p| &p.agency_domain)
+        {
             if let Some((domain_id, _)) = binding {
                 remove_tunnel_cname(&pool, domain_id, &hostname, agency_domain).await;
             }
@@ -752,7 +1000,9 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
     if let (Some(project_name), Some(cred_id)) = (&ws_project, &ws_cred_id) {
         if let Ok((client, account_id)) = build_cf_pages_client(&pool, *cred_id).await {
             // Remove custom domain from Pages
-            let _ = client.remove_pages_custom_domain(&account_id, project_name, &hostname).await;
+            let _ = client
+                .remove_pages_custom_domain(&account_id, project_name, &hostname)
+                .await;
 
             // Remove the CNAME record from the domain's CF zone
             if let Some((domain_id, _)) = binding {
@@ -768,15 +1018,20 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
                             for rec in records {
                                 if rec.record_type == "CNAME"
                                     && rec.content.as_deref() == Some(&cname_target)
-                                    && (rec.name == hostname || rec.name.ends_with(&format!(".{hostname}")))
+                                    && (rec.name == hostname
+                                        || rec.name.ends_with(&format!(".{hostname}")))
                                 {
-                                    let _ = domain_client.delete_dns_record(&zone_id, &rec.id).await;
+                                    let _ =
+                                        domain_client.delete_dns_record(&zone_id, &rec.id).await;
                                     tracing::info!("removed CNAME {} → {cname_target}", rec.name);
 
                                     // Also remove from dns_records table
                                     let _ = sqlx::query(
                                         "DELETE FROM dns_records WHERE cloudflare_record_id = $1",
-                                    ).bind(&rec.id).execute(&pool).await;
+                                    )
+                                    .bind(&rec.id)
+                                    .execute(&pool)
+                                    .await;
                                     break;
                                 }
                             }
@@ -788,7 +1043,10 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
     }
 
     sqlx::query("DELETE FROM webspace_domains WHERE id = $1")
-        .bind(binding_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(binding_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     crate::api::internal::notify_proxy_reload();
     Ok(())
@@ -805,7 +1063,11 @@ async fn create_tunnel_cname(
 ) -> Result<(), ServerFnError> {
     let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_one(pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(domain_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let (zone_id, domain_cred_id) = match domain_cf {
         (Some(z), Some(c)) => (z, c),
@@ -826,7 +1088,10 @@ async fn create_tunnel_cname(
 
     match client.create_dns_record(&zone_id, &record).await {
         Ok(created) => {
-            tracing::info!("created CNAME {hostname} → {cname_target} (CF record {})", created.id);
+            tracing::info!(
+                "created CNAME {hostname} → {cname_target} (CF record {})",
+                created.id
+            );
             // Ensure subdomain entity exists
             let sub_id = if let Some(sid) = subdomain_id {
                 sid
@@ -834,13 +1099,21 @@ async fn create_tunnel_cname(
                 sqlx::query_scalar::<_, Uuid>(
                     "INSERT INTO subdomains (domain_id, name) VALUES ($1, '@') \
                      ON CONFLICT (domain_id, name) DO UPDATE SET updated_at = now() RETURNING id",
-                ).bind(domain_id).fetch_one(pool).await
+                )
+                .bind(domain_id)
+                .fetch_one(pool)
+                .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?
             };
 
             let sub_name = if let Some(sid) = subdomain_id {
                 sqlx::query_scalar::<_, String>("SELECT name FROM subdomains WHERE id = $1")
-                    .bind(sid).fetch_optional(pool).await.ok().flatten().unwrap_or_else(|| "@".into())
+                    .bind(sid)
+                    .fetch_optional(pool)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "@".into())
             } else {
                 "@".into()
             };
@@ -870,7 +1143,12 @@ async fn remove_tunnel_cname(
 ) {
     let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_optional(pool).await.ok().flatten();
+    )
+    .bind(domain_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
 
     if let Some((Some(zone_id), Some(domain_cred_id))) = domain_cf {
         if let Ok(client) = build_domain_cf_client(pool, domain_cred_id).await {
@@ -882,8 +1160,11 @@ async fn remove_tunnel_cname(
                     {
                         let _ = client.delete_dns_record(&zone_id, &rec.id).await;
                         tracing::info!("removed CNAME {} → {agency_domain}", rec.name);
-                        let _ = sqlx::query("DELETE FROM dns_records WHERE cloudflare_record_id = $1")
-                            .bind(&rec.id).execute(pool).await;
+                        let _ =
+                            sqlx::query("DELETE FROM dns_records WHERE cloudflare_record_id = $1")
+                                .bind(&rec.id)
+                                .execute(pool)
+                                .await;
                         break;
                     }
                 }
@@ -894,18 +1175,28 @@ async fn remove_tunnel_cname(
 
 /// Re-create the CNAME record for a relay/tunnel domain binding.
 #[server]
-async fn fix_cname_tunnel(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid>, hostname: String) -> Result<(), ServerFnError> {
+async fn fix_cname_tunnel(
+    webspace_id: Uuid,
+    domain_id: Uuid,
+    subdomain_id: Option<Uuid>,
+    hostname: String,
+) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
-    let agency_domain = crate::config::config().proxy.as_ref()
+    let agency_domain = crate::config::config()
+        .proxy
+        .as_ref()
         .map(|p| p.agency_domain.clone())
         .ok_or_else(|| ServerFnError::new("no proxy config with agency_domain"))?;
 
@@ -913,14 +1204,22 @@ async fn fix_cname_tunnel(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Opti
 }
 
 #[cfg(feature = "server")]
-async fn build_cf_pages_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<(cloudflare_api::compat::SimpleClient, String), ServerFnError> {
-    crate::credentials::cf_client_with_account(pool, cred_id).await
+async fn build_cf_pages_client(
+    pool: &sqlx::PgPool,
+    cred_id: Uuid,
+) -> Result<(cloudflare_api::compat::SimpleClient, String), ServerFnError> {
+    crate::credentials::cf_client_with_account(pool, cred_id)
+        .await
         .map_err(|e| ServerFnError::new(format!("{e}")))
 }
 
 #[cfg(feature = "server")]
-async fn build_domain_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflare_api::compat::SimpleClient, ServerFnError> {
-    crate::credentials::cf_client(pool, cred_id).await
+async fn build_domain_cf_client(
+    pool: &sqlx::PgPool,
+    cred_id: Uuid,
+) -> Result<cloudflare_api::compat::SimpleClient, ServerFnError> {
+    crate::credentials::cf_client(pool, cred_id)
+        .await
         .map_err(|e| ServerFnError::new(format!("{e}")))
 }
 
@@ -931,19 +1230,27 @@ async fn list_deployments(webspace_id: Uuid) -> Result<Vec<DeploymentRow>, Serve
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<i64>, chrono::DateTime<chrono::Utc>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<i64>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         "SELECT id, status, error_message, tarball_size, created_at \
          FROM deployments WHERE webspace_id = $1 ORDER BY created_at DESC LIMIT 20",
     )
@@ -954,13 +1261,15 @@ async fn list_deployments(webspace_id: Uuid) -> Result<Vec<DeploymentRow>, Serve
 
     Ok(rows
         .into_iter()
-        .map(|(id, status, error_message, tarball_size, created_at)| DeploymentRow {
-            id,
-            status,
-            error_message,
-            tarball_size,
-            created_at: created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-        })
+        .map(
+            |(id, status, error_message, tarball_size, created_at)| DeploymentRow {
+                id,
+                status,
+                error_message,
+                tarball_size,
+                created_at: created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            },
+        )
         .collect())
 }
 
@@ -978,17 +1287,18 @@ async fn create_deploy_token(
     user.require_org_admin(&org_id)?;
 
     // Verify the webspace belongs to this org.
-    let ws_org = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
+    let ws_org =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
     if ws_org != org_id {
-        return Err(ServerFnError::new("webspace does not belong to this organization"));
+        return Err(ServerFnError::new(
+            "webspace does not belong to this organization",
+        ));
     }
 
     use rand::Rng;
@@ -1395,9 +1705,17 @@ fn GitRepoSection(
 fn PagesDeploySection(webspace_id: Uuid) -> Element {
     let mut refresh: Signal<u32> = use_context();
     let creds = use_server_future(list_cf_creds_for_pages)?;
-    let cred_list = match &*creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
+    let cred_list = match &*creds.read() {
+        Some(Ok(c)) => c.clone(),
+        _ => vec![],
+    };
 
-    let mut cred_id = use_signal(|| cred_list.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let mut cred_id = use_signal(|| {
+        cred_list
+            .first()
+            .map(|c| c.id.to_string())
+            .unwrap_or_default()
+    });
     let mut mode = use_signal(|| "direct".to_string()); // "direct" or "git"
     // Git fields
     let mut git_provider = use_signal(|| "github".to_string());
@@ -1540,10 +1858,20 @@ fn PagesDeploySection(webspace_id: Uuid) -> Element {
 
 /// Display for a git-connected Pages project.
 #[component]
-fn GitSourceDisplay(git_source: GitRepoInfo, build_config: Option<BuildConfigInfo>, pages_subdomain: Option<String>) -> Element {
+fn GitSourceDisplay(
+    git_source: GitRepoInfo,
+    build_config: Option<BuildConfigInfo>,
+    pages_subdomain: Option<String>,
+) -> Element {
     let repo_url = match git_source.provider.as_str() {
-        "github" => format!("https://github.com/{}/{}", git_source.owner, git_source.repo),
-        "gitlab" => format!("https://gitlab.com/{}/{}", git_source.owner, git_source.repo),
+        "github" => format!(
+            "https://github.com/{}/{}",
+            git_source.owner, git_source.repo
+        ),
+        "gitlab" => format!(
+            "https://gitlab.com/{}/{}",
+            git_source.owner, git_source.repo
+        ),
         _ => format!("{}/{}", git_source.owner, git_source.repo),
     };
 
@@ -1587,7 +1915,12 @@ fn GitSourceDisplay(git_source: GitRepoInfo, build_config: Option<BuildConfigInf
 
 /// Display for a direct-upload Pages project with deploy API instructions.
 #[component]
-fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, production_branch: String, pages_subdomain: Option<String>) -> Element {
+fn DirectUploadDisplay(
+    webspace_id: Uuid,
+    project_name: String,
+    production_branch: String,
+    pages_subdomain: Option<String>,
+) -> Element {
     let mut refresh: Signal<u32> = use_context();
     let ws_id = webspace_id.to_string();
 
@@ -1702,7 +2035,9 @@ fn DeploymentsSection(webspace_id: Uuid) -> Element {
 
     let rows = match &*deploys.read() {
         Some(Ok(r)) => r.clone(),
-        Some(Err(e)) => return rsx! { Card { div { class: "p-4 text-danger text-sm", "Error: {e}" } } },
+        Some(Err(e)) => {
+            return rsx! { Card { div { class: "p-4 text-danger text-sm", "Error: {e}" } } };
+        }
         None => return rsx! { Card { div { class: "p-4 text-fg-muted text-sm", "Loading..." } } },
     };
 
@@ -1823,16 +2158,21 @@ async fn move_webspace(webspace_id: Uuid, target_org_id: Uuid) -> Result<(), Ser
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
     user.require_org_write(&target_org_id)?;
 
     if org_id == target_org_id {
-        return Err(ServerFnError::new("webspace is already in that organization"));
+        return Err(ServerFnError::new(
+            "webspace is already in that organization",
+        ));
     }
 
     // Check for name conflicts in target org
@@ -1840,11 +2180,17 @@ async fn move_webspace(webspace_id: Uuid, target_org_id: Uuid) -> Result<(), Ser
         "SELECT EXISTS(SELECT 1 FROM webspaces WHERE organization_id = $1 AND name = (SELECT name FROM webspaces WHERE id = $2))",
     ).bind(target_org_id).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
     if conflict {
-        return Err(ServerFnError::new("a webspace with the same name already exists in the target organization"));
+        return Err(ServerFnError::new(
+            "a webspace with the same name already exists in the target organization",
+        ));
     }
 
     sqlx::query("UPDATE webspaces SET organization_id = $1 WHERE id = $2")
-        .bind(target_org_id).bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(target_org_id)
+        .bind(webspace_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
 }
@@ -1856,9 +2202,12 @@ async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
@@ -1889,14 +2238,13 @@ async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
                     }
                 }
                 // Delete the webspace-level tag ("group:ws_name").
-                let ws_name = sqlx::query_scalar::<_, String>(
-                    "SELECT name FROM webspaces WHERE id = $1",
-                )
-                .bind(webspace_id)
-                .fetch_optional(&pool)
-                .await
-                .ok()
-                .flatten();
+                let ws_name =
+                    sqlx::query_scalar::<_, String>("SELECT name FROM webspaces WHERE id = $1")
+                        .bind(webspace_id)
+                        .fetch_optional(&pool)
+                        .await
+                        .ok()
+                        .flatten();
                 if let Some(ws_name) = ws_name {
                     let ws_tag_title = format!("{group_name}:{ws_name}");
                     if let Ok(tags) = client.list_tags().await {
@@ -1920,15 +2268,24 @@ async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
 
     // Remove domain bindings
     sqlx::query("DELETE FROM webspace_domains WHERE webspace_id = $1")
-        .bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(webspace_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Remove deployments
     sqlx::query("DELETE FROM deployments WHERE webspace_id = $1")
-        .bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(webspace_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Delete the webspace
     sqlx::query("DELETE FROM webspaces WHERE id = $1")
-        .bind(webspace_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(webspace_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     crate::api::internal::notify_proxy_reload();
     Ok(())
@@ -1947,7 +2304,10 @@ fn MoveWebspaceSection(webspace_id: Uuid, current_org_id: Uuid) -> Element {
         _ => vec![],
     };
 
-    let targets: Vec<_> = org_list.into_iter().filter(|o| o.id != current_org_id).collect();
+    let targets: Vec<_> = org_list
+        .into_iter()
+        .filter(|o| o.id != current_org_id)
+        .collect();
     if targets.is_empty() {
         return rsx! {};
     }
@@ -2048,7 +2408,11 @@ fn DeleteWebspaceSection(webspace_id: Uuid) -> Element {
 // ── Webspace settings (name, upstream URL) ──────────────────────────
 
 #[server]
-async fn update_webspace_settings(webspace_id: Uuid, name: String, relay_url: Option<String>) -> Result<(), ServerFnError> {
+async fn update_webspace_settings(
+    webspace_id: Uuid,
+    name: String,
+    relay_url: Option<String>,
+) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
@@ -2065,14 +2429,17 @@ async fn update_webspace_settings(webspace_id: Uuid, name: String, relay_url: Op
     if hosting_type == "cloudflare_pages" {
         if let (Some(old_project), Some(cred_id)) = (&cf_project, cf_cred_id) {
             if old_project != &name {
-                let (client, account_id) = crate::credentials::cf_client_with_account(&pool, cred_id).await
-                    .map_err(|e| ServerFnError::new(format!("{e}")))?;
+                let (client, account_id) =
+                    crate::credentials::cf_client_with_account(&pool, cred_id)
+                        .await
+                        .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
                 // CF Pages doesn't support rename — create new project, but that's disruptive.
                 // Instead just update local name; the Pages project name stays the same.
                 // The name field in our DB is for display purposes.
                 tracing::info!(
-                    old = old_project, new = &name,
+                    old = old_project,
+                    new = &name,
                     "renaming webspace (Pages project name unchanged: {old_project})"
                 );
                 let _ = (client, account_id); // suppress unused warning
@@ -2080,11 +2447,13 @@ async fn update_webspace_settings(webspace_id: Uuid, name: String, relay_url: Op
         }
     }
 
-    sqlx::query(
-        "UPDATE webspaces SET name = $1, relay_url = $2, updated_at = now() WHERE id = $3",
-    )
-    .bind(&name).bind(&relay_url).bind(webspace_id)
-    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("UPDATE webspaces SET name = $1, relay_url = $2, updated_at = now() WHERE id = $3")
+        .bind(&name)
+        .bind(&relay_url)
+        .bind(webspace_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     crate::api::internal::notify_proxy_reload();
     Ok(())
@@ -2184,18 +2553,31 @@ async fn load_basic_auth_lists(org_id: Uuid) -> Result<Vec<BasicAuthListOption>,
     let rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM basic_auth_lists WHERE organization_id = $1 ORDER BY name",
     )
-    .bind(org_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(rows.into_iter().map(|(id, name)| BasicAuthListOption { id, name }).collect())
+    .bind(org_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| BasicAuthListOption { id, name })
+        .collect())
 }
 
 #[server]
-async fn update_webspace_auth(webspace_id: Uuid, auth_mode: String, auth_basic_list_id: Option<Uuid>) -> Result<(), ServerFnError> {
+async fn update_webspace_auth(
+    webspace_id: Uuid,
+    auth_mode: String,
+    auth_basic_list_id: Option<Uuid>,
+) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+            .bind(webspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
@@ -2211,12 +2593,23 @@ async fn update_webspace_auth(webspace_id: Uuid, auth_mode: String, auth_basic_l
 }
 
 #[component]
-fn ChangeDetectionSection(webspace_id: Uuid, current_credential_id: Option<Uuid>, current_credential_name: Option<String>) -> Element {
+fn ChangeDetectionSection(
+    webspace_id: Uuid,
+    current_credential_id: Option<Uuid>,
+    current_credential_name: Option<String>,
+) -> Element {
     let mut refresh: Signal<u32> = use_context();
     let cd_creds = use_server_future(list_cd_creds)?;
-    let cred_list: Vec<CredOption> = match &*cd_creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
+    let cred_list: Vec<CredOption> = match &*cd_creds.read() {
+        Some(Ok(c)) => c.clone(),
+        _ => vec![],
+    };
 
-    let mut selected_cred = use_signal(move || current_credential_id.map(|id| id.to_string()).unwrap_or_default());
+    let mut selected_cred = use_signal(move || {
+        current_credential_id
+            .map(|id| id.to_string())
+            .unwrap_or_default()
+    });
     let mut saving = use_signal(|| false);
     let mut result_msg = use_signal(|| None::<String>);
 
@@ -2283,7 +2676,12 @@ fn ChangeDetectionSection(webspace_id: Uuid, current_credential_id: Option<Uuid>
 }
 
 #[component]
-fn AuthSettingsSection(webspace_id: Uuid, organization_id: Uuid, current_mode: String, current_list_name: Option<String>) -> Element {
+fn AuthSettingsSection(
+    webspace_id: Uuid,
+    organization_id: Uuid,
+    current_mode: String,
+    current_list_name: Option<String>,
+) -> Element {
     let mut refresh: Signal<u32> = use_context();
     let lists = use_server_future(move || {
         let oid = organization_id;
@@ -2295,7 +2693,12 @@ fn AuthSettingsSection(webspace_id: Uuid, organization_id: Uuid, current_mode: S
     };
 
     let mut auth_mode = use_signal(move || current_mode.clone());
-    let mut basic_list_id = use_signal(|| basic_auth_lists.first().map(|b| b.id.to_string()).unwrap_or_default());
+    let mut basic_list_id = use_signal(|| {
+        basic_auth_lists
+            .first()
+            .map(|b| b.id.to_string())
+            .unwrap_or_default()
+    });
     let mut saving = use_signal(|| false);
     let mut message = use_signal(|| None::<String>);
 
@@ -2376,7 +2779,12 @@ fn AuthSettingsSection(webspace_id: Uuid, organization_id: Uuid, current_mode: S
 
 /// Domain bindings list + add form.
 #[component]
-fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pages: bool, #[props(default = String::new())] hosting_type: String) -> Element {
+fn DomainBindingsSection(
+    webspace_id: Uuid,
+    bindings: Vec<DomainBinding>,
+    is_pages: bool,
+    #[props(default = String::new())] hosting_type: String,
+) -> Element {
     let mut refresh: Signal<u32> = use_context();
     let is_tunnel = hosting_type == "relay" || hosting_type == "tunnel";
     let show_cname = is_pages || is_tunnel;

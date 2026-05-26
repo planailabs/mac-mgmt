@@ -18,21 +18,15 @@ use std::collections::HashMap;
 use tokio::sync::oneshot;
 
 /// Protocol for the persistent RPC stream.
-pub const RPC_PROTOCOL: libp2p::StreamProtocol =
-    libp2p::StreamProtocol::new("/mac-mgmt/rpc/1.0.0");
+pub const RPC_PROTOCOL: libp2p::StreamProtocol = libp2p::StreamProtocol::new("/mac-mgmt/rpc/1.0.0");
 
 /// An incoming RPC message (either a relay-initiated request or a response).
 #[derive(Debug)]
 pub enum RpcMessage {
     /// A response to a request we sent (matched by id).
-    Response {
-        id: u64,
-        payload: serde_json::Value,
-    },
+    Response { id: u64, payload: serde_json::Value },
     /// An unsolicited request from the relay (id=0).
-    Request {
-        payload: serde_json::Value,
-    },
+    Request { payload: serde_json::Value },
 }
 
 /// Persistent RPC connection over a libp2p stream.
@@ -61,10 +55,7 @@ impl RpcStream {
     }
 
     /// Send a request and wait for the response.
-    pub async fn call(
-        &mut self,
-        mut request: serde_json::Value,
-    ) -> Result<serde_json::Value> {
+    pub async fn call(&mut self, mut request: serde_json::Value) -> Result<serde_json::Value> {
         let id = self.next_id;
         self.next_id += 1;
         request["id"] = serde_json::Value::Number(id.into());

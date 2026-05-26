@@ -21,10 +21,7 @@ impl Connector for BackupConnector {
         &["backup", "backup_paths"]
     }
 
-    fn connect(
-        &self,
-        configs: &HashMap<String, serde_json::Value>,
-    ) -> Result<()> {
+    fn connect(&self, configs: &HashMap<String, serde_json::Value>) -> Result<()> {
         let paths = configs
             .get("backup_paths")
             .and_then(|v| v.as_array())

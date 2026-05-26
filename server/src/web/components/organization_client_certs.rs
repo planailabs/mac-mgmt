@@ -3,7 +3,7 @@ use dioxus_i18n::t;
 
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
@@ -59,7 +59,9 @@ async fn add_org_cert(
     } else if !fingerprint.trim().is_empty() {
         (fingerprint.trim().to_lowercase(), None)
     } else {
-        return Err(ServerFnError::new("fingerprint or certificate PEM required"));
+        return Err(ServerFnError::new(
+            "fingerprint or certificate PEM required",
+        ));
     };
 
     sqlx::query(

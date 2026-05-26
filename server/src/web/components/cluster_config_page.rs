@@ -6,7 +6,7 @@ use crate::web::components::ui::{
     Button, ButtonSize, ErrorText, HelpText, PageHeader, SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[cfg(feature = "server")]
 fn encrypt_secret_value(plaintext: &[u8]) -> Result<Vec<u8>, String> {
@@ -14,7 +14,10 @@ fn encrypt_secret_value(plaintext: &[u8]) -> Result<Vec<u8>, String> {
     use aes_gcm::{AeadCore, Aes256Gcm, Key};
 
     let cfg = crate::config::config();
-    let secrets = cfg.secrets.as_ref().ok_or_else(|| "secrets not configured".to_string())?;
+    let secrets = cfg
+        .secrets
+        .as_ref()
+        .ok_or_else(|| "secrets not configured".to_string())?;
     let key_b64 = &secrets.encryption_key;
     let key_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_b64)
         .map_err(|e| format!("invalid encryption key: {e}"))?;
@@ -233,13 +236,12 @@ async fn delete_secret(cluster_id: String, name: String) -> Result<(), ServerFnE
         }
     }
 
-    let result =
-        sqlx::query("DELETE FROM cluster_secrets WHERE cluster_id = $1 AND name = $2")
-            .bind(uuid)
-            .bind(&name)
-            .execute(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let result = sqlx::query("DELETE FROM cluster_secrets WHERE cluster_id = $1 AND name = $2")
+        .bind(uuid)
+        .bind(&name)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     if result.rows_affected() == 0 {
         return Err(ServerFnError::new("secret not found"));
@@ -276,7 +278,10 @@ pub fn ClusterConfigPage(id: String) -> Element {
     // Publish the cluster name to TopbarMeta so the breadcrumb's
     // `parent_dyn` for `ClusterDetail` resolves to the cluster's name
     // instead of repeating the static "Clusters" label twice.
-    use_topbar(name.clone(), Some(t!("cluster-detail-tab-config").to_string()));
+    use_topbar(
+        name.clone(),
+        Some(t!("cluster-detail-tab-config").to_string()),
+    );
 
     rsx! {
         // The trailing `pb-32` reserves vertical space below the last

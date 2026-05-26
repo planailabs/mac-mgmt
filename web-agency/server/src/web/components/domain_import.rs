@@ -2,7 +2,9 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th};
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th,
+};
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -19,10 +21,10 @@ struct CredOption {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DiscoveredDomain {
     name: String,
-    zone_id: Option<String>,       // Cloudflare zone ID
-    status: Option<String>,        // zone status or lifecycle status
+    zone_id: Option<String>, // Cloudflare zone ID
+    status: Option<String>,  // zone status or lifecycle status
     expires_at: Option<String>,
-    already_imported: bool,         // true if domain already exists in this org
+    already_imported: bool, // true if domain already exists in this org
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,17 +46,29 @@ async fn list_orgs_and_creds() -> Result<(Vec<OrgOption>, Vec<CredOption>), Serv
     let creds = sqlx::query_as::<_, (Uuid, String, String)>(
         "SELECT id, name, credential_type FROM credentials ORDER BY name",
     )
-    .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok((
         orgs,
-        creds.into_iter().map(|(id, name, credential_type)| CredOption { id, name, credential_type }).collect(),
+        creds
+            .into_iter()
+            .map(|(id, name, credential_type)| CredOption {
+                id,
+                name,
+                credential_type,
+            })
+            .collect(),
     ))
 }
 
 /// Discover domains from a credential (Cloudflare zones or Spaceship domains).
 #[server]
-async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<DiscoveredDomain>, ServerFnError> {
+async fn discover_domains(
+    credential_id: Uuid,
+    org_id: Uuid,
+) -> Result<Vec<DiscoveredDomain>, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
@@ -73,22 +87,24 @@ async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<Disco
     let (cred_type, _encrypted_data) = cred;
 
     // Load existing domains in this org for deduplication
-    let existing: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM domains WHERE organization_id = $1",
-    )
-    .bind(org_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let existing: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM domains WHERE organization_id = $1")
+            .bind(org_id)
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let mut discovered = Vec::new();
 
     match cred_type.as_str() {
         "cloudflare" => {
-            let client = crate::credentials::cf_client(&pool, credential_id).await
+            let client = crate::credentials::cf_client(&pool, credential_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
-            let zones = client.list_zones(None).await
+            let zones = client
+                .list_zones(None)
+                .await
                 .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
 
             for zone in zones {
@@ -102,10 +118,13 @@ async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<Disco
             }
         }
         "spaceship" => {
-            let client = crate::credentials::spaceship_client(&pool, credential_id).await
+            let client = crate::credentials::spaceship_client(&pool, credential_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
-            let domains = client.list_all_domains().await
+            let domains = client
+                .list_all_domains()
+                .await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API error: {e}")))?;
 
             for domain in domains {
@@ -153,9 +172,12 @@ async fn import_domains(
     let registrar_type = cred_type.as_str();
 
     if registrar_type == "cloudflare" {
-        let client = crate::credentials::cf_client(&pool, credential_id).await
+        let client = crate::credentials::cf_client(&pool, credential_id)
+            .await
             .map_err(|e| ServerFnError::new(format!("{e}")))?;
-        let zones = client.list_zones(None).await
+        let zones = client
+            .list_zones(None)
+            .await
             .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
         for zone in zones {
             zone_map.insert(zone.name.clone(), zone.id);
@@ -183,7 +205,11 @@ async fn import_domains(
         }
 
         let zone_id = zone_map.get(domain_name).cloned();
-        let cf_cred = if registrar_type == "cloudflare" { Some(credential_id) } else { None };
+        let cf_cred = if registrar_type == "cloudflare" {
+            Some(credential_id)
+        } else {
+            None
+        };
         let reg_cred = match registrar_type {
             "spaceship" => Some(credential_id),
             _ => None,
@@ -209,7 +235,11 @@ async fn import_domains(
         }
     }
 
-    Ok(ImportResult { imported, skipped, errors })
+    Ok(ImportResult {
+        imported,
+        skipped,
+        errors,
+    })
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -222,7 +252,12 @@ pub fn DomainImport() -> Element {
         _ => (vec![], vec![]),
     };
 
-    let mut org_id = use_signal(|| org_list.first().map(|o| o.id.to_string()).unwrap_or_default());
+    let mut org_id = use_signal(|| {
+        org_list
+            .first()
+            .map(|o| o.id.to_string())
+            .unwrap_or_default()
+    });
     let mut cred_id = use_signal(String::new);
     let mut discovered: Signal<Vec<DiscoveredDomain>> = use_signal(Vec::new);
     let mut selected: Signal<Vec<String>> = use_signal(Vec::new);

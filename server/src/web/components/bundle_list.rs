@@ -12,17 +12,15 @@ use crate::web::components::ui::{DataTable, ErrorText, HelpText, PageHeader};
 
 #[server]
 async fn list_bundles() -> Result<Vec<CatalogEntry>, ServerFnError> {
-    use crate::web::user::{current_user, WebUserExt};
+    use crate::web::user::{WebUserExt, current_user};
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let local = sqlx::query_as::<_, crate::models::Bundle>(
-        "SELECT * FROM bundles ORDER BY slug",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let local = sqlx::query_as::<_, crate::models::Bundle>("SELECT * FROM bundles ORDER BY slug")
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let mut entries: Vec<CatalogEntry> = local
         .into_iter()
@@ -127,13 +125,22 @@ fn CatalogTable(list: Vec<CatalogEntry>) -> Element {
         if q.is_empty() {
             list_clone.clone()
         } else {
-            list_clone.iter().filter(|b| b.matches_search(&q)).cloned().collect()
+            list_clone
+                .iter()
+                .filter(|b| b.matches_search(&q))
+                .cloned()
+                .collect()
         }
     });
 
     let total = list.len();
     let data = use_tabular(
-        (LinkColumn { header: "Slug" }, TextColumn { header: "Name" }, HiddenColumn, CreatedAtColumn),
+        (
+            LinkColumn { header: "Slug" },
+            TextColumn { header: "Name" },
+            HiddenColumn,
+            CreatedAtColumn,
+        ),
         filtered.into(),
     );
     let all_rows: Vec<_> = data.rows().collect();

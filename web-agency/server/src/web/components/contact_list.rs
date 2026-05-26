@@ -46,16 +46,27 @@ async fn list_contacts() -> Result<Vec<ContactRow>, ServerFnError> {
 
     Ok(rows
         .into_iter()
-        .map(|(id, label, first_name, last_name, email, country, spaceship_id, organization_name)| ContactRow {
-            id,
-            label,
-            first_name,
-            last_name,
-            email,
-            country,
-            spaceship_synced: spaceship_id.is_some(),
-            organization_name,
-        })
+        .map(
+            |(
+                id,
+                label,
+                first_name,
+                last_name,
+                email,
+                country,
+                spaceship_id,
+                organization_name,
+            )| ContactRow {
+                id,
+                label,
+                first_name,
+                last_name,
+                email,
+                country,
+                spaceship_synced: spaceship_id.is_some(),
+                organization_name,
+            },
+        )
         .collect())
 }
 

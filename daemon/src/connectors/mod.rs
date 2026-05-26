@@ -7,11 +7,11 @@ pub mod litellm_openclaw;
 pub mod litellm_opencode;
 pub mod lms_hermes;
 pub mod lms_openclaw;
+pub mod lms_opencode;
 #[cfg(feature = "memvault")]
 pub mod memvault_hermes;
 #[cfg(feature = "memvault")]
 pub mod memvault_openclaw;
-pub mod lms_opencode;
 pub mod ollama_hermes;
 pub mod ollama_openclaw;
 pub mod ollama_opencode;
@@ -29,17 +29,15 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::managed_service::ManagedService;
-use crate::services::{
-    ai_proxy_svc::AiProxyService, apprise::Apprise, custom_svc::CustomService, hermes::Hermes,
-    hermes_dashboard::HermesDashboard, hermes_webui::HermesWebui, litellm::Litellm, lms::Lms, mcporter::McPorter,
-    nvidia_smi::NvidiaSmi, ollama::Ollama, openclaw::OpenClaw, opencode::Opencode, restic::Restic,
-    rocm_smi::RocmSmi, unsloth::Unsloth,
-};
 #[cfg(feature = "memvault")]
 use crate::services::memvault_svc::MemvaultService;
-use mac_mgmt_common::{
-    CloudConfig, DaemonConfig, LlmProvider,
+use crate::services::{
+    ai_proxy_svc::AiProxyService, apprise::Apprise, custom_svc::CustomService, hermes::Hermes,
+    hermes_dashboard::HermesDashboard, hermes_webui::HermesWebui, litellm::Litellm, lms::Lms,
+    mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama, openclaw::OpenClaw,
+    opencode::Opencode, restic::Restic, rocm_smi::RocmSmi, unsloth::Unsloth,
 };
+use mac_mgmt_common::{CloudConfig, DaemonConfig, LlmProvider};
 
 /// When a connector runs relative to service startup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -408,7 +406,11 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
     tracing::info!(
         "built {} connector(s): [{}]",
         connectors.len(),
-        connectors.iter().map(|c| c.name()).collect::<Vec<_>>().join(", ")
+        connectors
+            .iter()
+            .map(|c| c.name())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
 
     connectors

@@ -23,13 +23,15 @@ fn status_endpoint(metrics: &State<Arc<Metrics>>) -> Json<StatusResponse> {
 
     let services = svc_list
         .into_iter()
-        .map(|(name, healthy, upgrade_pending, busy, phase)| ServiceStatus {
-            name,
-            healthy,
-            upgrade_pending,
-            busy,
-            phase: phase.to_string(),
-        })
+        .map(
+            |(name, healthy, upgrade_pending, busy, phase)| ServiceStatus {
+                name,
+                healthy,
+                upgrade_pending,
+                busy,
+                phase: phase.to_string(),
+            },
+        )
         .collect();
 
     Json(StatusResponse {

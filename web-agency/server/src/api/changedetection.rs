@@ -6,8 +6,7 @@
 //! `changedetection_suburls`).
 
 use dioxus::fullstack::axum::{
-    self as axum,
-    Router,
+    self as axum, Router,
     extract::{Path, State},
     http::StatusCode,
     routing::post,

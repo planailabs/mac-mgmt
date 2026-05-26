@@ -5,10 +5,7 @@ use super::chart::{ChartColor, Sparkline};
 /// Uppercase tertiary label that sits above page hero titles and card
 /// titles. Visual is owned by `.kicker`.
 #[component]
-pub fn Kicker(
-    #[props(default, into)] class: String,
-    children: Element,
-) -> Element {
+pub fn Kicker(#[props(default, into)] class: String, children: Element) -> Element {
     rsx! { div { class: "kicker {class}", {children} } }
 }
 
@@ -16,10 +13,7 @@ pub fn Kicker(
 /// durations, timestamps, byte counts (principle 4). Tabular-nums is
 /// applied via the global `.font-mono` rule so figures align.
 #[component]
-pub fn Mono(
-    #[props(default, into)] class: String,
-    children: Element,
-) -> Element {
+pub fn Mono(#[props(default, into)] class: String, children: Element) -> Element {
     rsx! { span { class: "font-mono {class}", {children} } }
 }
 

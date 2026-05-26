@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use mac_mgmt_common::{
-    FederationCatalog, FederationEvent, McpServerEntry, ResolveSkillsRequest,
-    ResolveMcpServersRequest, SkillResolveEntry,
+    FederationCatalog, FederationEvent, McpServerEntry, ResolveMcpServersRequest,
+    ResolveSkillsRequest, SkillResolveEntry,
 };
 use tokio::sync::mpsc;
 
@@ -63,10 +63,7 @@ impl SkillCenterClient {
 
         let resp = self
             .http
-            .post(format!(
-                "{}/api/federation/resolve-skills",
-                self.base_url
-            ))
+            .post(format!("{}/api/federation/resolve-skills", self.base_url))
             .bearer_auth(&self.token)
             .json(&body)
             .send()

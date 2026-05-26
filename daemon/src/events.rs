@@ -74,7 +74,10 @@ impl fmt::Display for DaemonEvent {
                 snapshot_id,
                 duration_secs,
             } => {
-                write!(f, "backup completed (snapshot {snapshot_id}, {duration_secs}s)")
+                write!(
+                    f,
+                    "backup completed (snapshot {snapshot_id}, {duration_secs}s)"
+                )
             }
             Self::BackupFailed { error } => {
                 write!(f, "backup failed: {error}")

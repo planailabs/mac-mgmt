@@ -33,10 +33,7 @@ impl ResolvedBackend {
 /// When `p2p_mgr` is provided and AI proxy distribution is enabled,
 /// compares local load against cluster peers and routes to the
 /// least-loaded node.
-pub async fn resolve_backend(
-    state: &Arc<AiProxyState>,
-    _model: &str,
-) -> Option<ResolvedBackend> {
+pub async fn resolve_backend(state: &Arc<AiProxyState>, _model: &str) -> Option<ResolvedBackend> {
     let backends = state.backends.read().await;
 
     // Try local backends first
@@ -57,7 +54,9 @@ pub async fn resolve_backend(
                 );
                 return Some(ResolvedBackend::Peer {
                     peer_id,
-                    backend_name: _ad.backends.first()
+                    backend_name: _ad
+                        .backends
+                        .first()
                         .map(|b| b.name.clone())
                         .unwrap_or_else(|| "unknown".into()),
                 });
@@ -71,7 +70,9 @@ pub async fn resolve_backend(
                 );
                 return Some(ResolvedBackend::Peer {
                     peer_id,
-                    backend_name: _ad.backends.first()
+                    backend_name: _ad
+                        .backends
+                        .first()
                         .map(|b| b.name.clone())
                         .unwrap_or_else(|| "unknown".into()),
                 });

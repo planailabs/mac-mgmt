@@ -6,11 +6,9 @@ use crate::models::Bundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::topbar::use_topbar;
-use crate::web::components::ui::{
-    Button, ButtonKind, ErrorText, FormField, PageHeader,
-};
+use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[server]
 async fn create_bundle(
@@ -52,7 +50,9 @@ pub fn BundleForm() -> Element {
         spawn(async move {
             match create_bundle(slug_val, name_val, desc_val).await {
                 Ok(bundle) => {
-                    nav.push(Route::BundleDetail { id: bundle.id.to_string() });
+                    nav.push(Route::BundleDetail {
+                        id: bundle.id.to_string(),
+                    });
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));

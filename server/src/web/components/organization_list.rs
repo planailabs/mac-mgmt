@@ -25,7 +25,7 @@ impl Searchable for OrgRow {
 
 #[server]
 async fn list_organizations() -> Result<Vec<OrgRow>, ServerFnError> {
-    use crate::web::user::{current_user, WebUserExt};
+    use crate::web::user::{WebUserExt, current_user};
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
@@ -93,7 +93,11 @@ fn OrgTable(list: Vec<OrgRow>) -> Element {
         if q.is_empty() {
             list_clone.clone()
         } else {
-            list_clone.iter().filter(|o| o.matches_search(&q)).cloned().collect()
+            list_clone
+                .iter()
+                .filter(|o| o.matches_search(&q))
+                .cloned()
+                .collect()
         }
     });
 

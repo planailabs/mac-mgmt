@@ -7,7 +7,10 @@ use rmcp::ServiceExt;
 use plan_ai_memvault_share_agent::ShareAgentServer;
 
 #[derive(Parser, Debug)]
-#[command(name = "plan-ai-memvault-share-agent", about = "MCP server for cross-cluster share proposal review")]
+#[command(
+    name = "plan-ai-memvault-share-agent",
+    about = "MCP server for cross-cluster share proposal review"
+)]
 struct Cli {
     /// Memvault HTTP API URL.
     #[arg(long, env = "MEMVAULT_URL", default_value = "http://127.0.0.1:8401")]

@@ -12,7 +12,7 @@ use crate::web::components::ui::{
     TdMuted, Th,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RolloutEntry {
@@ -176,27 +176,32 @@ async fn delete_rollout(id: String) -> Result<(), ServerFnError> {
 impl Searchable for RolloutEntry {
     fn matches_search(&self, query: &str) -> bool {
         self.id.to_string().to_lowercase().contains(query)
-            || self.name.as_deref().unwrap_or("").to_lowercase().contains(query)
+            || self
+                .name
+                .as_deref()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains(query)
             || self.status.to_lowercase().contains(query)
     }
 }
 
 fn status_variant(status: &str) -> (BadgeVariant, String) {
     match status {
-        "rolling"   => (BadgeVariant::Info,    t!("rollout-status-rolling")),
+        "rolling" => (BadgeVariant::Info, t!("rollout-status-rolling")),
         "completed" => (BadgeVariant::Success, t!("rollout-status-completed")),
-        "paused"    => (BadgeVariant::Warn,    t!("rollout-status-paused")),
-        "failed"    => (BadgeVariant::Danger,  t!("rollout-status-failed")),
-        _           => (BadgeVariant::Neutral, t!("rollout-status-pending")),
+        "paused" => (BadgeVariant::Warn, t!("rollout-status-paused")),
+        "failed" => (BadgeVariant::Danger, t!("rollout-status-failed")),
+        _ => (BadgeVariant::Neutral, t!("rollout-status-pending")),
     }
 }
 
 fn health_variant(state: &str) -> (BadgeVariant, String) {
     match state {
-        "pass"  => (BadgeVariant::Success, t!("rollout-health-pass")),
-        "fail"  => (BadgeVariant::Danger,  t!("rollout-health-fail")),
-        "grace" => (BadgeVariant::Warn,    t!("rollout-health-grace")),
-        _       => (BadgeVariant::Neutral, t!("rollout-health-no-data")),
+        "pass" => (BadgeVariant::Success, t!("rollout-health-pass")),
+        "fail" => (BadgeVariant::Danger, t!("rollout-health-fail")),
+        "grace" => (BadgeVariant::Warn, t!("rollout-health-grace")),
+        _ => (BadgeVariant::Neutral, t!("rollout-health-no-data")),
     }
 }
 
@@ -249,12 +254,20 @@ fn RolloutsTable(
         let mut items: Vec<RolloutEntry> = if q.is_empty() {
             list_clone.clone()
         } else {
-            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
+            list_clone
+                .iter()
+                .filter(|e| e.matches_search(&q))
+                .cloned()
+                .collect()
         };
         let (key, asc) = sort.read().clone();
         items.sort_by(|a, b| {
             let ord = match key.as_str() {
-                "name" => a.name.as_deref().unwrap_or("").cmp(b.name.as_deref().unwrap_or("")),
+                "name" => a
+                    .name
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.name.as_deref().unwrap_or("")),
                 "status" => a.status.cmp(&b.status),
                 "stages" => a.stage_count.cmp(&b.stage_count),
                 _ => a.created_at.cmp(&b.created_at),

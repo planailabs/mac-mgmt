@@ -29,7 +29,9 @@ async fn list_basic_auth_lists() -> Result<Vec<BasicAuthListRow>, ServerFnError>
              FROM basic_auth_lists b JOIN organizations o ON o.id = b.organization_id \
              ORDER BY b.name",
         )
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, (Uuid, String, String, i64)>(
             "SELECT b.id, b.name, o.name, \
@@ -39,12 +41,22 @@ async fn list_basic_auth_lists() -> Result<Vec<BasicAuthListRow>, ServerFnError>
              ORDER BY b.name",
         )
         .bind(&org_ids)
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
-    Ok(rows.into_iter().map(|(id, name, organization_name, credential_count)| {
-        BasicAuthListRow { id, name, organization_name, credential_count }
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, name, organization_name, credential_count)| BasicAuthListRow {
+                id,
+                name,
+                organization_name,
+                credential_count,
+            },
+        )
+        .collect())
 }
 
 #[component]

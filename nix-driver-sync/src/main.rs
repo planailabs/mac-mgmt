@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -64,8 +64,7 @@ fn save_state(path: &PathBuf, state: &State) -> Result<()> {
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -109,14 +108,9 @@ fn main() -> Result<()> {
 
     // 4. Process each project
     for project in &cli.projects {
-        let json = run(Command::new("incus").args([
-            "list",
-            "--project",
-            project,
-            "--format",
-            "json",
-        ]))
-        .with_context(|| format!("incus list --project {project} failed"))?;
+        let json =
+            run(Command::new("incus").args(["list", "--project", project, "--format", "json"]))
+                .with_context(|| format!("incus list --project {project} failed"))?;
 
         let containers: Vec<IncusContainer> =
             serde_json::from_str(&json).context("failed to parse incus list output")?;

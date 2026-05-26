@@ -9,20 +9,20 @@ use super::components::bundle_form::BundleForm;
 use super::components::bundle_list::BundleList;
 use super::components::cluster_config_page::ClusterConfigPage;
 use super::components::cluster_detail::ClusterDetail;
-use super::components::cluster_packages::ClusterPackagesPage;
 use super::components::cluster_form::ClusterForm;
 use super::components::cluster_list::ClusterList;
+use super::components::cluster_packages::ClusterPackagesPage;
 use super::components::daemon_version_detail::DaemonVersionDetail;
 use super::components::daemon_version_list::DaemonVersionList;
 use super::components::docs::{DocList, DocPage};
 use super::components::easy_access::EasyAccess;
-use super::components::skill_center_detail::SkillCenterDetail;
-use super::components::skill_center_form::SkillCenterForm;
-use super::components::skill_center_list::SkillCenterList;
 use super::components::file_editor::FleetFiles;
 use super::components::fleet_dashboard::FleetDashboard;
 use super::components::fleet_detail::FleetDetail;
 use super::components::healer_page::{FleetHealer, FleetHealerSession};
+use super::components::import_sources::{
+    ImportSourceDetail, ImportSourceEdit, ImportSources, ImportSourcesSearch,
+};
 use super::components::layout::Layout;
 use super::components::log_viewer::FleetLogs;
 use super::components::mcp_bundle_detail::McpBundleDetail;
@@ -41,9 +41,11 @@ use super::components::rollout_group_detail::RolloutGroupDetail;
 use super::components::rollout_group_list::RolloutGroupList;
 use super::components::rollout_list::RolloutList;
 use super::components::shell_commands::FleetShell;
+use super::components::skill_center_detail::SkillCenterDetail;
+use super::components::skill_center_form::SkillCenterForm;
+use super::components::skill_center_list::SkillCenterList;
 use super::components::skill_detail::SkillDetail;
 use super::components::skill_list::SkillList;
-use super::components::import_sources::{ImportSourceDetail, ImportSourceEdit, ImportSources, ImportSourcesSearch};
 use super::components::staff_pings_page::StaffPings;
 use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
@@ -115,7 +117,10 @@ pub enum Route {
     #[route("/fleet/:instance_id/healer")]
     FleetHealer { instance_id: String },
     #[route("/fleet/:instance_id/healer/:session_id")]
-    FleetHealerSession { instance_id: String, session_id: String },
+    FleetHealerSession {
+        instance_id: String,
+        session_id: String,
+    },
     #[route("/staff-pings")]
     StaffPings {},
     #[route("/rollout-groups")]
@@ -147,7 +152,10 @@ pub enum Route {
     #[route("/skill-centers/:id")]
     SkillCenterDetail { id: String },
     #[route("/import-sources?:prefill_slug&:prefill_name")]
-    ImportSources { prefill_slug: Option<String>, prefill_name: Option<String> },
+    ImportSources {
+        prefill_slug: Option<String>,
+        prefill_name: Option<String>,
+    },
     #[route("/import-sources/search")]
     ImportSourcesSearch {},
     #[route("/import-sources/:id/edit")]
@@ -186,10 +194,20 @@ pub fn App() -> Element {
     let mut i18n = use_init_i18n(|| {
         // Concatenate shared (plan-ai-design) + app-specific translations.
         let en: &'static str = Box::leak(
-            format!("{}\n{}", plan_ai_design::i18n::EN_US, include_str!("./en-US.ftl")).into_boxed_str(),
+            format!(
+                "{}\n{}",
+                plan_ai_design::i18n::EN_US,
+                include_str!("./en-US.ftl")
+            )
+            .into_boxed_str(),
         );
         let de: &'static str = Box::leak(
-            format!("{}\n{}", plan_ai_design::i18n::DE_DE, include_str!("./de-DE.ftl")).into_boxed_str(),
+            format!(
+                "{}\n{}",
+                plan_ai_design::i18n::DE_DE,
+                include_str!("./de-DE.ftl")
+            )
+            .into_boxed_str(),
         );
         I18nConfig::new(langid!("en-US"))
             .with_locale(Locale::new_static(langid!("en-US"), en))

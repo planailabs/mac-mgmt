@@ -67,10 +67,8 @@ impl ManagedService for CustomService {
             return Ok(true);
         };
         let timeout = Duration::from_secs(hc.timeout_secs);
-        let out = crate::cmd::output_with_timeout(
-            Command::new(&hc.command).args(&hc.args),
-            timeout,
-        )?;
+        let out =
+            crate::cmd::output_with_timeout(Command::new(&hc.command).args(&hc.args), timeout)?;
         Ok(out.status.success())
     }
 
@@ -168,21 +166,15 @@ impl ManagedService for CustomService {
             .collect()
     }
 
-    fn service_inventory(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Vec<InventoryEntry>> + Send + '_>> {
+    fn service_inventory(&self) -> Pin<Box<dyn Future<Output = Vec<InventoryEntry>> + Send + '_>> {
         Box::pin(async move { collect_inventory_entries(&self.config.inventory).await })
     }
 
-    fn service_sample(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Vec<InventoryEntry>> + Send + '_>> {
+    fn service_sample(&self) -> Pin<Box<dyn Future<Output = Vec<InventoryEntry>> + Send + '_>> {
         Box::pin(async move { collect_inventory_entries(&self.config.samples).await })
     }
 
-    fn service_security(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Vec<SecurityFinding>> + Send + '_>> {
+    fn service_security(&self) -> Pin<Box<dyn Future<Output = Vec<SecurityFinding>> + Send + '_>> {
         Box::pin(async move { collect_security_findings(&self.config.security).await })
     }
 }
@@ -242,8 +234,7 @@ async fn resolve_inventory_value(def: &CustomInventoryDef) -> Option<serde_json:
         InventoryValueType::Number => {
             if let Ok(n) = raw.parse::<f64>() {
                 serde_json::Value::Number(
-                    serde_json::Number::from_f64(n)
-                        .unwrap_or_else(|| serde_json::Number::from(0)),
+                    serde_json::Number::from_f64(n).unwrap_or_else(|| serde_json::Number::from(0)),
                 )
             } else {
                 serde_json::Value::String(raw)

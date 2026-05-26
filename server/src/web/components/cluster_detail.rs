@@ -9,13 +9,13 @@ use crate::web::components::ui::{
     Kicker, SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
+use super::cluster_client_cas::ClusterClientCas;
+use super::cluster_client_certs::ClusterClientCerts;
 use super::cluster_healer_settings::ClusterHealerSettings;
 use super::cluster_mcp_servers::ClusterMcpServers;
 use super::cluster_skills::ClusterSkills;
-use super::cluster_client_cas::ClusterClientCas;
-use super::cluster_client_certs::ClusterClientCerts;
 use super::cluster_ssh_keys::ClusterSshKeys;
 use super::setting_token_list::SettingTokenList;
 use super::token_list::SyncTokenList;
@@ -181,9 +181,9 @@ async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnEr
             shas.insert(current.clone());
         }
         let counts = crate::commit_count::nixpkgs_commit_counts(&shas).await;
-        let new_count = counts.get(&c).ok_or_else(|| {
-            ServerFnError::new(format!("unknown nixpkgs commit {c}"))
-        })?;
+        let new_count = counts
+            .get(&c)
+            .ok_or_else(|| ServerFnError::new(format!("unknown nixpkgs commit {c}")))?;
         if let Some(ref current) = current_commit {
             let cur_count = counts.get(current).ok_or_else(|| {
                 ServerFnError::new(format!("cannot resolve commit count for current {current}"))

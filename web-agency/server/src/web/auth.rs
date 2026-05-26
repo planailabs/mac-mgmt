@@ -60,12 +60,11 @@ impl plan_ai_auth::UserResolver for PgUserResolver {
 
         // Auto-join organizations for this provider (idempotent).
         for org_name in auto_join_orgs {
-            let org_id = sqlx::query_scalar::<_, Uuid>(
-                "SELECT id FROM organizations WHERE name = $1",
-            )
-            .bind(org_name)
-            .fetch_optional(&self.pool)
-            .await?;
+            let org_id =
+                sqlx::query_scalar::<_, Uuid>("SELECT id FROM organizations WHERE name = $1")
+                    .bind(org_name)
+                    .fetch_optional(&self.pool)
+                    .await?;
 
             if let Some(org_id) = org_id {
                 sqlx::query(

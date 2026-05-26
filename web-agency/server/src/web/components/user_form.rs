@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
-use crate::web::app::Route;
 use super::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
+use crate::web::app::Route;
 
 #[server]
 async fn create_user(email: String, name: String, is_admin: bool) -> Result<String, ServerFnError> {

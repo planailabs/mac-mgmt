@@ -103,8 +103,8 @@ async fn run_acme_flow(
     zone_id: &str,
 ) -> anyhow::Result<(String, String)> {
     use instant_acme::{
-        Account, AuthorizationStatus, ChallengeType, Identifier, LetsEncrypt, NewAccount,
-        NewOrder, OrderStatus,
+        Account, AuthorizationStatus, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
+        OrderStatus,
     };
 
     let cfg = crate::config::config();

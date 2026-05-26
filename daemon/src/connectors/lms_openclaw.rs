@@ -30,11 +30,19 @@ impl Connector for LmsOpenClaw {
         _configs: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<()> {
         let base_url = format!("http://{}:{}/v1", self.host, self.port);
-        tracing::info!("connecting lms to openclaw (baseUrl={base_url}, model={}, default={})", self.default_model, self.set_default);
+        tracing::info!(
+            "connecting lms to openclaw (baseUrl={base_url}, model={}, default={})",
+            self.default_model,
+            self.set_default
+        );
         sentry_ext::breadcrumb(
             "connector",
             &format!("lms→openclaw baseUrl={base_url}"),
-            &[("connector", "lms→openclaw"), ("base_url", &base_url), ("model", &self.default_model)],
+            &[
+                ("connector", "lms→openclaw"),
+                ("base_url", &base_url),
+                ("model", &self.default_model),
+            ],
         );
 
         let path = config_path()?;
@@ -57,8 +65,7 @@ impl Connector for LmsOpenClaw {
         });
 
         if self.set_default {
-            patch["agents"] =
-                serde_json::json!({ "defaults": { "model": { "primary": format!("lms/{model_id}") } } });
+            patch["agents"] = serde_json::json!({ "defaults": { "model": { "primary": format!("lms/{model_id}") } } });
         }
 
         merge_and_validate(&path, &patch)?;

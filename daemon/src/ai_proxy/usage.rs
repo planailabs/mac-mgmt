@@ -140,9 +140,7 @@ impl UsageTracker {
     }
 
     fn maybe_rotate(&self) {
-        let size = std::fs::metadata(&self.path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size = std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
         if size > MAX_FILE_SIZE {
             let backup = self.path.with_extension("jsonl.1");
             let _ = std::fs::rename(&self.path, &backup);
@@ -173,7 +171,11 @@ impl UsageTracker {
                 }
             }
         }
-        tracing::info!("loaded {} usage events from {}", events.len(), path.display());
+        tracing::info!(
+            "loaded {} usage events from {}",
+            events.len(),
+            path.display()
+        );
         events
     }
 }

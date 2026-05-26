@@ -11,9 +11,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 
-use mac_mgmt_healer::instance_access::{
-    FileReadResult, InstanceAccess, ShellLine, ShellOutput,
-};
+use mac_mgmt_healer::instance_access::{FileReadResult, InstanceAccess, ShellLine, ShellOutput};
 use mac_mgmt_healer::instance_data::InstanceDataSource;
 use mac_mgmt_healer::store::{
     ClusterInstance, Inventory, ProbeHistoryEntry, ProbeStatus, ServiceState, SystemSample,
@@ -51,11 +49,7 @@ impl LocalInstanceAccess {
 
 #[async_trait]
 impl InstanceAccess for LocalInstanceAccess {
-    async fn file_list(
-        &self,
-        tunnel_name: &str,
-        path: Option<&str>,
-    ) -> Result<serde_json::Value> {
+    async fn file_list(&self, tunnel_name: &str, path: Option<&str>) -> Result<serde_json::Value> {
         let tunnel = {
             let registry = self.file_tunnels.read().await;
             registry
@@ -107,11 +101,7 @@ impl InstanceAccess for LocalInstanceAccess {
         Ok(serde_json::json!({ "status": 200, "mtime": mtime }))
     }
 
-    async fn shell_exec(
-        &self,
-        command_name: &str,
-        user_arg: Option<&str>,
-    ) -> Result<ShellOutput> {
+    async fn shell_exec(&self, command_name: &str, user_arg: Option<&str>) -> Result<ShellOutput> {
         use tokio::io::AsyncBufReadExt;
 
         let (tunnel, virtual_handler) = {
@@ -312,10 +302,7 @@ impl InstanceDataSource for LocalInstanceDataSource {
         }))
     }
 
-    async fn get_cluster_instances(
-        &self,
-        _cluster_id: uuid::Uuid,
-    ) -> Result<Vec<ClusterInstance>> {
+    async fn get_cluster_instances(&self, _cluster_id: uuid::Uuid) -> Result<Vec<ClusterInstance>> {
         Ok(Vec::new())
     }
 

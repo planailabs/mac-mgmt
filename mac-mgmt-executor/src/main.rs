@@ -41,8 +41,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let backend_type =
-        std::env::var("INCUS_BACKEND").unwrap_or_else(|_| "unix".to_string());
+    let backend_type = std::env::var("INCUS_BACKEND").unwrap_or_else(|_| "unix".to_string());
 
     let backend: Arc<dyn IncusBackend> = match backend_type.as_str() {
         "unix" => {

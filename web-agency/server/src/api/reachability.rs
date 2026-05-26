@@ -50,18 +50,20 @@ async fn run_checks(pool: &PgPool) -> anyhow::Result<()> {
 
     let webspace_hosts: Vec<WebspaceHost> = hosts
         .into_iter()
-        .map(|(webspace_id, organization_id, domain, subdomain, hosting_type)| {
-            let hostname = match subdomain.as_deref() {
-                Some(sub) if sub != "@" => format!("{sub}.{domain}"),
-                _ => domain,
-            };
-            WebspaceHost {
-                webspace_id,
-                organization_id,
-                hostname,
-                hosting_type,
-            }
-        })
+        .map(
+            |(webspace_id, organization_id, domain, subdomain, hosting_type)| {
+                let hostname = match subdomain.as_deref() {
+                    Some(sub) if sub != "@" => format!("{sub}.{domain}"),
+                    _ => domain,
+                };
+                WebspaceHost {
+                    webspace_id,
+                    organization_id,
+                    hostname,
+                    hosting_type,
+                }
+            },
+        )
         .collect();
 
     let current_hostnames: HashSet<String> =
@@ -95,12 +97,10 @@ async fn run_checks(pool: &PgPool) -> anyhow::Result<()> {
     // Clean up stale entries for removed webspaces/domains
     if !current_hostnames.is_empty() {
         let hostnames_vec: Vec<&str> = current_hostnames.iter().map(|s| s.as_str()).collect();
-        sqlx::query(
-            "DELETE FROM reachability_results WHERE hostname != ALL($1)",
-        )
-        .bind(&hostnames_vec)
-        .execute(&pool)
-        .await?;
+        sqlx::query("DELETE FROM reachability_results WHERE hostname != ALL($1)")
+            .bind(&hostnames_vec)
+            .execute(&pool)
+            .await?;
     }
 
     // Prune stale relay mint results
@@ -177,7 +177,11 @@ async fn check_host(
     }
 
     // Check .well-known/web-agency.json (use the client appropriate for SSL status)
-    let wk_client = if ssl_ok { strict_client } else { fallback_client };
+    let wk_client = if ssl_ok {
+        strict_client
+    } else {
+        fallback_client
+    };
     match wk_client.get(&well_known_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             if let Ok(body) = resp.text().await {

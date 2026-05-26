@@ -2,10 +2,16 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td, Th};
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td, Th,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CredOption { id: Uuid, name: String, credential_type: String }
+struct CredOption {
+    id: Uuid,
+    name: String,
+    credential_type: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AvailabilityResult {
@@ -25,7 +31,9 @@ async fn list_registrar_creds() -> Result<Vec<CredOption>, ServerFnError> {
             "SELECT id, name, credential_type FROM credentials \
              WHERE credential_type IN ('cloudflare', 'spaceship') ORDER BY name",
         )
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         let org_ids = user.org_ids();
         sqlx::query_as::<_, (Uuid, String, String)>(
@@ -34,31 +42,52 @@ async fn list_registrar_creds() -> Result<Vec<CredOption>, ServerFnError> {
              AND (organization_id = ANY($1) OR organization_id IS NULL) ORDER BY name",
         )
         .bind(&org_ids)
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
     };
-    Ok(rows.into_iter().map(|(id, name, credential_type)| CredOption { id, name, credential_type }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, credential_type)| CredOption {
+            id,
+            name,
+            credential_type,
+        })
+        .collect())
 }
 
 #[server]
-async fn check_domain_availability(credential_id: Uuid, domain: String) -> Result<AvailabilityResult, ServerFnError> {
+async fn check_domain_availability(
+    credential_id: Uuid,
+    domain: String,
+) -> Result<AvailabilityResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
     crate::web::user::require_credential_read(&user, &pool, credential_id).await?;
 
-    let cred_type = sqlx::query_scalar::<_, String>(
-        "SELECT credential_type FROM credentials WHERE id = $1",
-    ).bind(credential_id).fetch_optional(&pool).await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("credential not found"))?;
+    let cred_type =
+        sqlx::query_scalar::<_, String>("SELECT credential_type FROM credentials WHERE id = $1")
+            .bind(credential_id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("credential not found"))?;
 
     match cred_type.as_str() {
         "cloudflare" => {
-            let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id).await
-                .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let results = client.check_domains(&account_id, &[domain.clone()]).await
+            let (client, account_id) =
+                crate::credentials::cf_client_with_account(&pool, credential_id)
+                    .await
+                    .map_err(|e| ServerFnError::new(format!("{e}")))?;
+            let results = client
+                .check_domains(&account_id, &[domain.clone()])
+                .await
                 .map_err(|e| ServerFnError::new(format!("CF API: {e}")))?;
-            let r = results.into_iter().next().ok_or_else(|| ServerFnError::new("no result"))?;
+            let r = results
+                .into_iter()
+                .next()
+                .ok_or_else(|| ServerFnError::new("no result"))?;
             Ok(AvailabilityResult {
                 domain: r.name,
                 available: r.registrable,
@@ -68,9 +97,12 @@ async fn check_domain_availability(credential_id: Uuid, domain: String) -> Resul
             })
         }
         "spaceship" => {
-            let client = crate::credentials::spaceship_client(&pool, credential_id).await
+            let client = crate::credentials::spaceship_client(&pool, credential_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let r = client.check_availability(&domain).await
+            let r = client
+                .check_availability(&domain)
+                .await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API: {e}")))?;
             let available = r.status.as_deref() == Some("available");
             let reg_price = r.premium_pricing.iter().find(|p| p.operation == "register");
@@ -95,7 +127,12 @@ pub fn DomainRegister() -> Element {
     };
 
     let mut domain = use_signal(String::new);
-    let mut cred_id = use_signal(|| cred_list.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let mut cred_id = use_signal(|| {
+        cred_list
+            .first()
+            .map(|c| c.id.to_string())
+            .unwrap_or_default()
+    });
     let mut checking = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let mut result = use_signal(|| None::<AvailabilityResult>);

@@ -33,7 +33,8 @@ impl OverrideResponse {
 /// A closure that inspects the request path and headers, optionally returning
 /// a synthetic response. `Some(response)` short-circuits proxying; `None`
 /// passes through to the normal proxy.
-pub type OverrideFn = Arc<dyn Fn(&str, &[(String, String)]) -> Option<OverrideResponse> + Send + Sync>;
+pub type OverrideFn =
+    Arc<dyn Fn(&str, &[(String, String)]) -> Option<OverrideResponse> + Send + Sync>;
 
 /// An override that can intercept requests before proxying.
 pub struct TunnelOverride {
@@ -73,10 +74,7 @@ fn rewrite_url_origin(value: &str, target: &TunnelTarget) -> Option<String> {
 /// Apply fake_origin_local rewrites to a raw `HeaderMap`.
 /// Sets Host and Referer to the local target, strips all other
 /// origin-revealing headers. Used by both HTTP and WS proxy paths.
-pub fn apply_fake_origin(
-    headers: &mut reqwest::header::HeaderMap,
-    target: &TunnelTarget,
-) {
+pub fn apply_fake_origin(headers: &mut reqwest::header::HeaderMap, target: &TunnelTarget) {
     let local_origin = format!("http://{}:{}", target.host, target.port);
 
     // Set Host.

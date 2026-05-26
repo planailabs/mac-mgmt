@@ -17,8 +17,7 @@ pub struct VirtualOutput {
 /// Takes the user arg and returns output synchronously (called from async context
 /// via block_in_place).
 #[cfg(feature = "services")]
-pub type VirtualHandler =
-    Arc<dyn Fn(Option<&str>) -> VirtualOutput + Send + Sync>;
+pub type VirtualHandler = Arc<dyn Fn(Option<&str>) -> VirtualOutput + Send + Sync>;
 
 // ── Registry ────────────────────────────────────────────────────────────
 

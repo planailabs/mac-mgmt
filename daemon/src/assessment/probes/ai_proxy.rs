@@ -175,4 +175,3 @@ impl Probe for AiProxyFunctionalProbe {
         timed(|| self.run_impl(ctx)).await
     }
 }
-

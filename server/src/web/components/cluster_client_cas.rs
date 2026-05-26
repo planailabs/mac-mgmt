@@ -3,7 +3,7 @@ use dioxus_i18n::t;
 
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
@@ -109,11 +109,13 @@ async fn remove_cluster_ca(cert_id: String) -> Result<(), ServerFnError> {
             return Err(ServerFnError::new("organization admin access required"));
         }
     }
-    sqlx::query("DELETE FROM client_certificates WHERE id = $1 AND scope = 'cluster' AND is_ca = true")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'cluster' AND is_ca = true",
+    )
+    .bind(uuid)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
 

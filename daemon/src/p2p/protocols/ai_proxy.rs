@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use libp2p::request_response;
 use libp2p::StreamProtocol;
+use libp2p::request_response;
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_NAME: StreamProtocol = StreamProtocol::new("/mac-mgmt/ai-proxy/1.0.0");
@@ -41,28 +41,46 @@ impl request_response::Codec for AiProxyCodec {
     type Request = AiProxyRequest;
     type Response = AiProxyResponse;
 
-    async fn read_request<T>(&mut self, _: &StreamProtocol, io: &mut T) -> std::io::Result<Self::Request>
+    async fn read_request<T>(
+        &mut self,
+        _: &StreamProtocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Request>
     where
         T: AsyncRead + Unpin + Send,
     {
         read_lp_json(io).await
     }
 
-    async fn read_response<T>(&mut self, _: &StreamProtocol, io: &mut T) -> std::io::Result<Self::Response>
+    async fn read_response<T>(
+        &mut self,
+        _: &StreamProtocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Response>
     where
         T: AsyncRead + Unpin + Send,
     {
         read_lp_json(io).await
     }
 
-    async fn write_request<T>(&mut self, _: &StreamProtocol, io: &mut T, req: Self::Request) -> std::io::Result<()>
+    async fn write_request<T>(
+        &mut self,
+        _: &StreamProtocol,
+        io: &mut T,
+        req: Self::Request,
+    ) -> std::io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
         write_lp_json(io, &req).await
     }
 
-    async fn write_response<T>(&mut self, _: &StreamProtocol, io: &mut T, resp: Self::Response) -> std::io::Result<()>
+    async fn write_response<T>(
+        &mut self,
+        _: &StreamProtocol,
+        io: &mut T,
+        resp: Self::Response,
+    ) -> std::io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
@@ -86,7 +104,8 @@ where
     }
     let mut buf = vec![0u8; len as usize];
     io.read_exact(&mut buf).await?;
-    serde_json::from_slice(&buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    serde_json::from_slice(&buf)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 async fn write_lp_json<T, M>(io: &mut T, msg: &M) -> std::io::Result<()>

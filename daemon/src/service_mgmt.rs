@@ -549,7 +549,10 @@ impl ServiceManager {
             }
             let name = &state.name;
             if let Some(status) = running_services.get(name.as_str()) {
-                tracing::info!("{name} already running in supervisor (pid {:?}), adopting", status.pid);
+                tracing::info!(
+                    "{name} already running in supervisor (pid {:?}), adopting",
+                    status.pid
+                );
                 state.registered = true;
                 state.phase = ServicePhase::Starting;
 
@@ -559,7 +562,10 @@ impl ServiceManager {
                 // installed a new store path for the same program name).
                 let mut desired_spec = state.service.spawn_spec();
                 for (k, v) in &state.connector_env {
-                    desired_spec.env.entry(k.clone()).or_insert_with(|| v.clone());
+                    desired_spec
+                        .env
+                        .entry(k.clone())
+                        .or_insert_with(|| v.clone());
                 }
                 if let Some(running_spec) = &status.spec {
                     if *running_spec != desired_spec {
@@ -571,13 +577,16 @@ impl ServiceManager {
                     let desired_resolved = which::which(&desired_spec.program)
                         .ok()
                         .and_then(|p| std::fs::canonicalize(p).ok());
-                    let running_resolved = status.resolved_program.as_deref()
+                    let running_resolved = status
+                        .resolved_program
+                        .as_deref()
                         .map(std::path::PathBuf::from);
                     if let (Some(desired), Some(running)) = (&desired_resolved, &running_resolved) {
                         if desired != running {
                             tracing::info!(
                                 "{name} binary changed ({} -> {}), scheduling upgrade",
-                                running.display(), desired.display(),
+                                running.display(),
+                                desired.display(),
                             );
                             state.upgrade_pending = true;
                         }
@@ -693,10 +702,11 @@ impl ServiceManager {
                         s.consecutive_crashes += 1;
                         s.post_start_done = false;
                         // Exponential backoff: 5s, 10s, 20s, … capped at 60s.
-                        let delay = Duration::from_secs(
-                            5u64.saturating_mul(1 << s.consecutive_crashes.min(4).saturating_sub(1)),
-                        )
-                        .min(Duration::from_secs(60));
+                        let delay =
+                            Duration::from_secs(5u64.saturating_mul(
+                                1 << s.consecutive_crashes.min(4).saturating_sub(1),
+                            ))
+                            .min(Duration::from_secs(60));
                         s.restart_at = Some(Instant::now() + delay);
                         s.phase = ServicePhase::CrashBackoff;
                         tracing::info!(
@@ -762,7 +772,10 @@ impl ServiceManager {
         if self.services.is_empty() {
             return;
         }
-        let has_managed = self.services.iter().any(|s| s.service.service_mode() == ServiceMode::Managed);
+        let has_managed = self
+            .services
+            .iter()
+            .any(|s| s.service.service_mode() == ServiceMode::Managed);
         let client_ok = if has_managed {
             self.ensure_client().await
         } else {
@@ -846,7 +859,10 @@ impl ServiceManager {
             // Supervisor-managed lifecycle (restart, upgrade, binary drift)
             // does not apply to integrated services.
             if !integrated {
-                if !state.restart_pending && state.phase.is_healthy() && state.service.needs_restart() {
+                if !state.restart_pending
+                    && state.phase.is_healthy()
+                    && state.service.needs_restart()
+                {
                     tracing::info!("{name} needs restart (external change detected)");
                     state.restart_pending = true;
                 }
@@ -864,7 +880,9 @@ impl ServiceManager {
                     let current_store = crate::nix::binary_store_path(state.service.binary_name());
                     if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
                         if old != new {
-                            tracing::info!("{name} binary changed ({old} → {new}), scheduling upgrade");
+                            tracing::info!(
+                                "{name} binary changed ({old} → {new}), scheduling upgrade"
+                            );
                             state.upgrade_pending = true;
                         }
                     }
@@ -1345,14 +1363,23 @@ impl ServiceManager {
         use mac_mgmt_common::ServiceInventory;
 
         let timeout = std::time::Duration::from_secs(30);
-        let mut futs: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Option<ServiceInventory>> + Send>>> = Vec::new();
+        let mut futs: Vec<
+            std::pin::Pin<Box<dyn std::future::Future<Output = Option<ServiceInventory>> + Send>>,
+        > = Vec::new();
 
         for s in &self.services {
             let name = s.name.clone();
             let fut = s.service.service_inventory();
             futs.push(Box::pin(async move {
                 let entries = tokio::time::timeout(timeout, fut).await.unwrap_or_default();
-                if entries.is_empty() { None } else { Some(ServiceInventory { service: name, entries }) }
+                if entries.is_empty() {
+                    None
+                } else {
+                    Some(ServiceInventory {
+                        service: name,
+                        entries,
+                    })
+                }
             }));
         }
         for svc in &self.install_only {
@@ -1360,7 +1387,14 @@ impl ServiceManager {
             let fut = svc.service_inventory();
             futs.push(Box::pin(async move {
                 let entries = tokio::time::timeout(timeout, fut).await.unwrap_or_default();
-                if entries.is_empty() { None } else { Some(ServiceInventory { service: name, entries }) }
+                if entries.is_empty() {
+                    None
+                } else {
+                    Some(ServiceInventory {
+                        service: name,
+                        entries,
+                    })
+                }
             }));
         }
 
@@ -1377,14 +1411,23 @@ impl ServiceManager {
         use mac_mgmt_common::ServiceSecurity;
 
         let timeout = std::time::Duration::from_secs(30);
-        let mut futs: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Option<ServiceSecurity>> + Send>>> = Vec::new();
+        let mut futs: Vec<
+            std::pin::Pin<Box<dyn std::future::Future<Output = Option<ServiceSecurity>> + Send>>,
+        > = Vec::new();
 
         for s in &self.services {
             let name = s.name.clone();
             let fut = s.service.service_security();
             futs.push(Box::pin(async move {
                 let findings = tokio::time::timeout(timeout, fut).await.unwrap_or_default();
-                if findings.is_empty() { None } else { Some(ServiceSecurity { service: name, findings }) }
+                if findings.is_empty() {
+                    None
+                } else {
+                    Some(ServiceSecurity {
+                        service: name,
+                        findings,
+                    })
+                }
             }));
         }
         for svc in &self.install_only {
@@ -1392,7 +1435,14 @@ impl ServiceManager {
             let fut = svc.service_security();
             futs.push(Box::pin(async move {
                 let findings = tokio::time::timeout(timeout, fut).await.unwrap_or_default();
-                if findings.is_empty() { None } else { Some(ServiceSecurity { service: name, findings }) }
+                if findings.is_empty() {
+                    None
+                } else {
+                    Some(ServiceSecurity {
+                        service: name,
+                        findings,
+                    })
+                }
             }));
         }
 
@@ -1569,7 +1619,8 @@ fn daemon_system_shell_tunnels() -> Vec<ShellTunnel> {
                 name: "service-restart".into(),
                 command: String::new(), // virtual — not spawned
                 args: Vec::new(),
-                description: "Restart a managed service via the supervisor (e.g. ollama, openclaw)".into(),
+                description: "Restart a managed service via the supervisor (e.g. ollama, openclaw)"
+                    .into(),
                 arg_template: Some(ShellArgTemplate {
                     label: "Service name".into(),
                     placeholder: "ollama".into(),
@@ -1584,7 +1635,9 @@ fn daemon_system_shell_tunnels() -> Vec<ShellTunnel> {
                 name: "restart-daemon".into(),
                 command: String::new(), // virtual — not spawned
                 args: Vec::new(),
-                description: "Stop the mac-mgmt daemon (the service manager will restart it automatically)".into(),
+                description:
+                    "Stop the mac-mgmt daemon (the service manager will restart it automatically)"
+                        .into(),
                 arg_template: None,
                 timeout_secs: None,
             },

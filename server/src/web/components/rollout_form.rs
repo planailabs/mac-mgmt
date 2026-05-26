@@ -5,12 +5,10 @@ use uuid::Uuid;
 
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
-use crate::web::components::ui::{
-    Button, ButtonSize, ErrorText, FormField, HelpText, PageHeader,
-};
+use crate::web::components::ui::{Button, ButtonSize, ErrorText, FormField, HelpText, PageHeader};
 use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 const ALL_CLUSTERS_SENTINEL: &str = "__all__";
 
@@ -199,9 +197,9 @@ async fn create_rollout(
         all_shas.extend(current_commits.iter().cloned());
         let counts = crate::commit_count::nixpkgs_commit_counts(&all_shas).await;
 
-        let new_count = counts.get(nix).ok_or_else(|| {
-            ServerFnError::new(format!("unknown nixpkgs commit {nix}"))
-        })?;
+        let new_count = counts
+            .get(nix)
+            .ok_or_else(|| ServerFnError::new(format!("unknown nixpkgs commit {nix}")))?;
         for cur in &current_commits {
             let cur_count = counts.get(cur).ok_or_else(|| {
                 ServerFnError::new(format!("cannot resolve commit count for current {cur}"))
@@ -218,14 +216,16 @@ async fn create_rollout(
 
     let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
     let rollout_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO rollouts (id, name, target_version, nixpkgs_commit) VALUES ($1, $2, $3, $4)")
-        .bind(rollout_id)
-        .bind(&name)
-        .bind(&target_version)
-        .bind(&nixpkgs_commit)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "INSERT INTO rollouts (id, name, target_version, nixpkgs_commit) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(rollout_id)
+    .bind(&name)
+    .bind(&target_version)
+    .bind(&nixpkgs_commit)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let gate_json: Option<serde_json::Value> = gate.as_ref().and_then(|g| g.to_json());
 

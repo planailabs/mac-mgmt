@@ -120,10 +120,8 @@ impl Validator {
                 serde_json::from_str(content).map_err(|e| format!("invalid JSON: {e}"))
             }
             ConfigFormat::Toml => {
-                let tv: toml::Value =
-                    content.parse().map_err(|e| format!("invalid TOML: {e}"))?;
-                serde_json::to_value(tv)
-                    .map_err(|e| format!("TOML→JSON conversion failed: {e}"))
+                let tv: toml::Value = content.parse().map_err(|e| format!("invalid TOML: {e}"))?;
+                serde_json::to_value(tv).map_err(|e| format!("TOML→JSON conversion failed: {e}"))
             }
             ConfigFormat::Yaml => {
                 yaml_serde::from_str(content).map_err(|e| format!("invalid YAML: {e}"))
@@ -136,8 +134,9 @@ impl Validator {
         match self.format {
             ConfigFormat::Json => serde_json::to_string_pretty(value)
                 .map_err(|e| format!("JSON serialization failed: {e}")),
-            ConfigFormat::Yaml => yaml_serde::to_string(value)
-                .map_err(|e| format!("YAML serialization failed: {e}")),
+            ConfigFormat::Yaml => {
+                yaml_serde::to_string(value).map_err(|e| format!("YAML serialization failed: {e}"))
+            }
             ConfigFormat::Toml => {
                 Err("TOML round-trip serialization from JSON Value is not supported".into())
             }
@@ -431,10 +430,7 @@ fn cache_store_exec(command: &[String]) {
             );
         }
         Err(e) => {
-            tracing::warn!(
-                "schema command {} failed to run: {e}",
-                command.join(" ")
-            );
+            tracing::warn!("schema command {} failed to run: {e}", command.join(" "));
         }
     }
 }
@@ -486,8 +482,8 @@ fn validate_with_cached_schema(key: &str, value: &serde_json::Value) -> Result<(
 fn validate_with_file_schema(path: &str, value: &serde_json::Value) -> Result<(), String> {
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("failed to read schema {path}: {e}"))?;
-    let schema: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("failed to parse schema {path}: {e}"))?;
+    let schema: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("failed to parse schema {path}: {e}"))?;
     run_jsonschema(&schema, value)
 }
 

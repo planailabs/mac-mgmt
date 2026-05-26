@@ -15,7 +15,10 @@ async fn list_orgs_for_cred() -> Result<CredFormData, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
     let orgs = crate::web::user::list_user_write_orgs(&user, &pool).await?;
-    Ok(CredFormData { orgs, is_admin: user.is_admin })
+    Ok(CredFormData {
+        orgs,
+        is_admin: user.is_admin,
+    })
 }
 
 #[server]
@@ -61,26 +64,31 @@ async fn test_credential(credential_id: Uuid) -> Result<String, ServerFnError> {
     let pool = crate::server_pool()?;
     crate::web::user::require_credential_read(&user, &pool, credential_id).await?;
 
-    let cred_type = sqlx::query_scalar::<_, String>(
-        "SELECT credential_type FROM credentials WHERE id = $1",
-    )
-    .bind(credential_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let cred_type =
+        sqlx::query_scalar::<_, String>("SELECT credential_type FROM credentials WHERE id = $1")
+            .bind(credential_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     match cred_type.as_str() {
         "cloudflare" => {
-            let client = crate::credentials::cf_client(&pool, credential_id).await
+            let client = crate::credentials::cf_client(&pool, credential_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let zones = client.list_zones(None).await
+            let zones = client
+                .list_zones(None)
+                .await
                 .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
             Ok(format!("OK - {} zone(s) accessible", zones.len()))
         }
         "spaceship" => {
-            let client = crate::credentials::spaceship_client(&pool, credential_id).await
+            let client = crate::credentials::spaceship_client(&pool, credential_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let domains = client.list_domains(0, 1).await
+            let domains = client
+                .list_domains(0, 1)
+                .await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API error: {e}")))?;
             Ok(format!(
                 "OK - {} domain(s) in account",
@@ -88,9 +96,12 @@ async fn test_credential(credential_id: Uuid) -> Result<String, ServerFnError> {
             ))
         }
         "changedetection" => {
-            let (client, _group) = crate::credentials::changedetection_client(&pool, credential_id).await
+            let (client, _group) = crate::credentials::changedetection_client(&pool, credential_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let info = client.get_system_info().await
+            let info = client
+                .get_system_info()
+                .await
                 .map_err(|e| ServerFnError::new(format!("ChangeDetection API error: {e}")))?;
             let info = info.into_inner();
             Ok(format!(

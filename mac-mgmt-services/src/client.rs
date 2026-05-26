@@ -99,7 +99,12 @@ impl Client {
         self.writer.flush().await.context("flush")?;
         tokio::time::timeout(Self::RPC_TIMEOUT, self.resp_rx.recv())
             .await
-            .map_err(|_| anyhow::anyhow!("supervisor RPC timed out ({}s)", Self::RPC_TIMEOUT.as_secs()))?
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "supervisor RPC timed out ({}s)",
+                    Self::RPC_TIMEOUT.as_secs()
+                )
+            })?
             .context("supervisor closed connection")
     }
 

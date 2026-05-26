@@ -71,10 +71,7 @@ impl OpenClaw {
             "running openclaw daemon uninstall",
             &[("service", "openclaw")],
         );
-        match openclaw_cmd()
-            .args(["daemon", "uninstall"])
-            .output()
-        {
+        match openclaw_cmd().args(["daemon", "uninstall"]).output() {
             Ok(o) if o.status.success() => {
                 tracing::info!("openclaw daemon uninstall completed");
             }
@@ -531,7 +528,9 @@ impl ManagedService for OpenClaw {
 
     fn service_inventory(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         use mac_mgmt_common::{InventoryEntry, InventoryValueType};
         Box::pin(async move {
             let mut entries = Vec::new();
@@ -557,7 +556,9 @@ impl ManagedService for OpenClaw {
 
     fn service_sample(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         use mac_mgmt_common::{InventoryEntry, InventoryValueType};
         Box::pin(async move {
             let count = Self::active_session_count();
@@ -572,7 +573,9 @@ impl ManagedService for OpenClaw {
 
     fn service_security(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>,
+    > {
         use mac_mgmt_common::{FindingSeverity, SecurityFinding};
         Box::pin(async move {
             let mut findings = Vec::new();
@@ -583,7 +586,8 @@ impl ManagedService for OpenClaw {
             if let Ok(contents) = std::fs::read_to_string(&config_path) {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
                     // Check for auth: none
-                    let auth = json.pointer("/gateway/auth")
+                    let auth = json
+                        .pointer("/gateway/auth")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     let auth_none = auth.eq_ignore_ascii_case("none");
@@ -599,7 +603,8 @@ impl ManagedService for OpenClaw {
                     });
 
                     // Check for gateway token presence
-                    let has_token = json.pointer("/gateway/auth/token")
+                    let has_token = json
+                        .pointer("/gateway/auth/token")
                         .and_then(|v| v.as_str())
                         .is_some_and(|t| !t.is_empty());
                     if !auth_none {

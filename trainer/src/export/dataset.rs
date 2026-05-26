@@ -1,8 +1,11 @@
 use std::path::Path;
 
-use burn::data::dataset::Dataset;
-use super::features::{EmbedderSample, IssueClassifierSample, OutcomeSample, ToolSelectorSample, MAX_SEQ_LEN, TOOL_HISTORY_LEN};
+use super::features::{
+    EmbedderSample, IssueClassifierSample, MAX_SEQ_LEN, OutcomeSample, TOOL_HISTORY_LEN,
+    ToolSelectorSample,
+};
 use super::tokenizer;
+use burn::data::dataset::Dataset;
 
 /// Dataset of tool selector samples loaded from JSONL.
 #[derive(Debug, Clone)]
@@ -115,7 +118,8 @@ impl<B: burn::tensor::backend::Backend> ToolSelectorBatcher<B> {
     }
 }
 
-impl<B: burn::tensor::backend::Backend> burn::data::dataloader::batcher::Batcher<ToolSelectorSample, ToolSelectorBatch<B>>
+impl<B: burn::tensor::backend::Backend>
+    burn::data::dataloader::batcher::Batcher<ToolSelectorSample, ToolSelectorBatch<B>>
     for ToolSelectorBatcher<B>
 {
     fn batch(&self, items: Vec<ToolSelectorSample>) -> ToolSelectorBatch<B> {
@@ -135,7 +139,12 @@ impl<B: burn::tensor::backend::Backend> burn::data::dataloader::batcher::Batcher
                 roles_data[i * MAX_SEQ_LEN + j] = sample.context_roles[j] as i64;
                 mask_data[i * MAX_SEQ_LEN + j] = 1.0;
             }
-            for (j, &h) in sample.tool_history.iter().enumerate().take(TOOL_HISTORY_LEN) {
+            for (j, &h) in sample
+                .tool_history
+                .iter()
+                .enumerate()
+                .take(TOOL_HISTORY_LEN)
+            {
                 history_data[i * TOOL_HISTORY_LEN + j] = h as i64;
             }
             phase_data[i] = sample.phase as i64;
@@ -192,8 +201,8 @@ impl<B: burn::tensor::backend::Backend> OutcomeBatcher<B> {
     }
 }
 
-impl<B: burn::tensor::backend::Backend> burn::data::dataloader::batcher::Batcher<OutcomeSample, OutcomeBatch<B>>
-    for OutcomeBatcher<B>
+impl<B: burn::tensor::backend::Backend>
+    burn::data::dataloader::batcher::Batcher<OutcomeSample, OutcomeBatch<B>> for OutcomeBatcher<B>
 {
     fn batch(&self, items: Vec<OutcomeSample>) -> OutcomeBatch<B> {
         let batch_size = items.len();
@@ -257,8 +266,12 @@ impl IssueClassifierDataset {
         let split_idx = ((1.0 - validation_fraction) * self.samples.len() as f64) as usize;
         let (train, val) = self.samples.split_at(split_idx);
         (
-            Self { samples: train.to_vec() },
-            Self { samples: val.to_vec() },
+            Self {
+                samples: train.to_vec(),
+            },
+            Self {
+                samples: val.to_vec(),
+            },
         )
     }
 }
@@ -292,7 +305,8 @@ impl<B: burn::tensor::backend::Backend> IssueClassifierBatcher<B> {
     }
 }
 
-impl<B: burn::tensor::backend::Backend> burn::data::dataloader::batcher::Batcher<IssueClassifierSample, IssueClassifierBatch<B>>
+impl<B: burn::tensor::backend::Backend>
+    burn::data::dataloader::batcher::Batcher<IssueClassifierSample, IssueClassifierBatch<B>>
     for IssueClassifierBatcher<B>
 {
     fn batch(&self, items: Vec<IssueClassifierSample>) -> IssueClassifierBatch<B> {
@@ -357,8 +371,12 @@ impl EmbedderDataset {
         let split_idx = ((1.0 - validation_fraction) * self.samples.len() as f64) as usize;
         let (train, val) = self.samples.split_at(split_idx);
         (
-            Self { samples: train.to_vec() },
-            Self { samples: val.to_vec() },
+            Self {
+                samples: train.to_vec(),
+            },
+            Self {
+                samples: val.to_vec(),
+            },
         )
     }
 }
@@ -393,7 +411,8 @@ impl<B: burn::tensor::backend::Backend> EmbedderBatcher<B> {
     }
 }
 
-impl<B: burn::tensor::backend::Backend> burn::data::dataloader::batcher::Batcher<EmbedderSample, EmbedderBatch<B>>
+impl<B: burn::tensor::backend::Backend>
+    burn::data::dataloader::batcher::Batcher<EmbedderSample, EmbedderBatch<B>>
     for EmbedderBatcher<B>
 {
     fn batch(&self, items: Vec<EmbedderSample>) -> EmbedderBatch<B> {

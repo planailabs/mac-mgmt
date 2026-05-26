@@ -44,7 +44,9 @@ impl MemvaultHandle {
         let client = Arc::new(memvault_api::LocalClient::new(
             Arc::clone(&store),
             Arc::new(RwLock::new(memvault_query::TextIndex::new())),
-            Arc::new(RwLock::new(memvault_query::QuotaManager::new(Default::default()))),
+            Arc::new(RwLock::new(memvault_query::QuotaManager::new(
+                Default::default(),
+            ))),
             Arc::new(memvault_api::EventBus::new(256)),
             peer_id,
             cluster_id_from_dir(&data_dir),
@@ -67,7 +69,9 @@ impl MemvaultHandle {
                 auth_token,
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
-            memvault_web::ui::state::set_client(Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>);
+            memvault_web::ui::state::set_client(
+                Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>
+            );
             let router = memvault_web::build_fullstack_router(app_state);
             let handle = tokio::spawn(async move {
                 let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
@@ -159,8 +163,7 @@ impl MemvaultHandle {
 }
 
 fn load_or_generate_token(data_dir: &std::path::Path) -> Result<String> {
-    memvault_web::load_or_generate_token(data_dir)
-        .map_err(|e| anyhow::anyhow!("token: {e}"))
+    memvault_web::load_or_generate_token(data_dir).map_err(|e| anyhow::anyhow!("token: {e}"))
 }
 
 fn default_data_dir() -> PathBuf {

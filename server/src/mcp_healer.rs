@@ -13,8 +13,8 @@ use std::sync::Arc;
 use mac_mgmt_healer::instance_access::DynClusterAccess;
 use mac_mgmt_healer::instance_data::DynInstanceData;
 use mac_mgmt_healer::relay_client::{RelayClient, RelayClusterAccess, RelayInstanceAccess};
-use mac_mgmt_healer::store::pg::PgHealerStore;
 use mac_mgmt_healer::store::HealerStore;
+use mac_mgmt_healer::store::pg::PgHealerStore;
 use mac_mgmt_healer::tools::{PushFn, ToolContext, ToolRisk};
 use rmcp::handler::server::tool::{ToolCallContext, ToolRouter};
 use rmcp::handler::server::wrapper::Parameters;
@@ -24,7 +24,7 @@ use rmcp::{Peer, RoleServer, ServerHandler, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use swiftide::chat_completion::{Tool as SwiftideTool, ToolCall, ToolOutput};
-use swiftide::traits::{ToolFeedback};
+use swiftide::traits::ToolFeedback;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -133,27 +133,15 @@ fn swiftide_spec_to_rmcp_tool(
     };
 
     let annotations = match risk {
-        ToolRisk::ReadOnly => Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false),
-        ),
+        ToolRisk::ReadOnly => Some(ToolAnnotations::new().read_only(true).destructive(false)),
         ToolRisk::SessionLocal => Some(
             ToolAnnotations::new()
                 .read_only(false)
                 .destructive(false)
                 .idempotent(true),
         ),
-        ToolRisk::Mutating => Some(
-            ToolAnnotations::new()
-                .read_only(false)
-                .destructive(false),
-        ),
-        ToolRisk::Destructive => Some(
-            ToolAnnotations::new()
-                .read_only(false)
-                .destructive(true),
-        ),
+        ToolRisk::Mutating => Some(ToolAnnotations::new().read_only(false).destructive(false)),
+        ToolRisk::Destructive => Some(ToolAnnotations::new().read_only(false).destructive(true)),
     };
 
     rmcp::model::Tool {
@@ -448,16 +436,15 @@ impl HealerMcpServer {
             .ok_or_else(|| "Error: instance has no relay proxy URL".to_string())?
             .clone();
 
-        let cluster_name = sqlx::query_as::<_, ClusterNameRow>(
-            "SELECT name FROM clusters WHERE id = $1",
-        )
-        .bind(cluster_id)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten()
-        .map(|r| r.name)
-        .unwrap_or_else(|| cluster_id.to_string());
+        let cluster_name =
+            sqlx::query_as::<_, ClusterNameRow>("SELECT name FROM clusters WHERE id = $1")
+                .bind(cluster_id)
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten()
+                .map(|r| r.name)
+                .unwrap_or_else(|| cluster_id.to_string());
 
         // Mint proxy token
         let healer_scopes: &[&str] = &["files:read", "files:write", "shell:exec", "logs:read"];
@@ -470,8 +457,9 @@ impl HealerMcpServer {
         // Build relay access
         let relay_client = Arc::new(RelayClient::new(relay_url.clone(), proxy_token));
         let instance_prefix: String = instance_id.chars().take(12).collect();
-        let instance_access: mac_mgmt_healer::instance_access::DynInstanceAccess =
-            Arc::new(RelayInstanceAccess::new(relay_client.clone(), instance_prefix.clone()));
+        let instance_access: mac_mgmt_healer::instance_access::DynInstanceAccess = Arc::new(
+            RelayInstanceAccess::new(relay_client.clone(), instance_prefix.clone()),
+        );
         let cluster_access: Option<DynClusterAccess> =
             Some(Arc::new(RelayClusterAccess::new(relay_client)));
 
@@ -482,7 +470,10 @@ impl HealerMcpServer {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        let file_tunnels_full = hb.file_tunnels.clone().unwrap_or(serde_json::Value::Array(vec![]));
+        let file_tunnels_full = hb
+            .file_tunnels
+            .clone()
+            .unwrap_or(serde_json::Value::Array(vec![]));
         let file_tunnel_names: Vec<String> = match &file_tunnels_full {
             serde_json::Value::Array(arr) => arr
                 .iter()
@@ -491,7 +482,10 @@ impl HealerMcpServer {
             _ => vec![],
         };
 
-        let shell_tunnels_full = hb.shell_tunnels.clone().unwrap_or(serde_json::Value::Array(vec![]));
+        let shell_tunnels_full = hb
+            .shell_tunnels
+            .clone()
+            .unwrap_or(serde_json::Value::Array(vec![]));
         let shell_command_names: Vec<String> = match &shell_tunnels_full {
             serde_json::Value::Array(arr) => arr
                 .iter()
@@ -526,8 +520,10 @@ impl HealerMcpServer {
             })
             .collect();
 
-        let cluster_instance_prefixes: Vec<String> =
-            peer_instances.iter().map(|i| i.instance_prefix.clone()).collect();
+        let cluster_instance_prefixes: Vec<String> = peer_instances
+            .iter()
+            .map(|i| i.instance_prefix.clone())
+            .collect();
 
         // Build ToolContext
         let (events_tx, _) = tokio::sync::broadcast::channel(64);
@@ -594,10 +590,7 @@ impl HealerMcpServer {
         name = "list_instances",
         description = "List fleet instances with their status. Returns instance_id, cluster_id, hostname, relay availability, and last heartbeat time. Use cluster_id to filter."
     )]
-    async fn list_instances(
-        &self,
-        Parameters(params): Parameters<ListInstancesParams>,
-    ) -> String {
+    async fn list_instances(&self, Parameters(params): Parameters<ListInstancesParams>) -> String {
         let rows = if let Some(cid) = &params.cluster_id {
             let cid: Uuid = match cid.parse() {
                 Ok(id) => id,
@@ -655,10 +648,7 @@ impl HealerMcpServer {
         name = "create_session",
         description = "Create a healer session targeting a specific instance. This populates the tool list with ~40 healer tools for diagnosing and remediating the instance. Call list_instances first to find available targets."
     )]
-    async fn create_session(
-        &self,
-        Parameters(params): Parameters<CreateSessionParams>,
-    ) -> String {
+    async fn create_session(&self, Parameters(params): Parameters<CreateSessionParams>) -> String {
         // If a warm session is already active for the same instance, return it.
         // For a different instance, end the old session first.
         {
@@ -678,7 +668,11 @@ impl HealerMcpServer {
         if let Some(old_ctx) = self.session_ctx.write().await.take() {
             let _ = self
                 .store
-                .transition_state(old_ctx.session_id, &mac_mgmt_healer::session::models::SessionState::Done, &serde_json::json!({}))
+                .transition_state(
+                    old_ctx.session_id,
+                    &mac_mgmt_healer::session::models::SessionState::Done,
+                    &serde_json::json!({}),
+                )
                 .await;
             self.tools.write().await.clear();
             self.tool_descriptors.write().await.clear();
@@ -792,7 +786,7 @@ impl HealerMcpServer {
                 &ctx.file_tunnels,
                 &ctx.shell_commands,
                 None, // resume_context
-                "", // metrics_summary (fetched on demand via get_metrics tool)
+                "",   // metrics_summary (fetched on demand via get_metrics tool)
             ),
             None => "No active session. Call create_session first.".to_string(),
         }
@@ -878,10 +872,7 @@ impl HealerMcpServer {
         name = "get_staff_ping",
         description = "Get a single staff ping by ID with full details."
     )]
-    async fn get_staff_ping(
-        &self,
-        Parameters(params): Parameters<GetStaffPingParams>,
-    ) -> String {
+    async fn get_staff_ping(&self, Parameters(params): Parameters<GetStaffPingParams>) -> String {
         let pid: Uuid = match params.ping_id.parse() {
             Ok(id) => id,
             Err(_) => return "Error: invalid ping_id UUID".to_string(),
@@ -1045,9 +1036,9 @@ impl ServerHandler for HealerMcpServer {
                     .await
                 {
                     Ok(n) => tracing::info!(tools = n, "warm session restored"),
-                    Err(e) => tracing::warn!(
-                        "warm session restore failed (instance offline?): {e}"
-                    ),
+                    Err(e) => {
+                        tracing::warn!("warm session restore failed (instance offline?): {e}")
+                    }
                 }
             }
 
@@ -1093,16 +1084,16 @@ impl ServerHandler for HealerMcpServer {
             // Check if it's a meta-tool
             if self.meta_router.has_route(tool_name) {
                 let ctx = ToolCallContext::new(self, request, context);
-                return self.meta_router.call(ctx).await.map_err(|e| {
-                    McpError::internal_error(e.to_string(), None)
-                });
+                return self
+                    .meta_router
+                    .call(ctx)
+                    .await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None));
             }
 
             // Otherwise, try healer tools
             let tools = self.tools.read().await;
-            let tool = tools
-                .iter()
-                .find(|(t, _)| t.name() == tool_name);
+            let tool = tools.iter().find(|(t, _)| t.name() == tool_name);
 
             match tool {
                 Some((tool, _risk)) => {
@@ -1142,8 +1133,7 @@ pub fn build_mcp_service(
     push_fn: Option<PushFn>,
 ) -> rmcp::transport::streamable_http_server::StreamableHttpService<HealerMcpServer> {
     use rmcp::transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService,
-        session::local::LocalSessionManager,
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
 
     StreamableHttpService::new(

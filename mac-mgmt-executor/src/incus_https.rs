@@ -21,15 +21,13 @@ pub struct HttpsBackend {
 impl HttpsBackend {
     pub fn from_env(project: Option<String>) -> Result<Self> {
         let base = std::env::var("INCUS_URL").context("INCUS_URL not set")?;
-        let cert_path =
-            std::env::var("INCUS_CLIENT_CERT").context("INCUS_CLIENT_CERT not set")?;
-        let key_path =
-            std::env::var("INCUS_CLIENT_KEY").context("INCUS_CLIENT_KEY not set")?;
+        let cert_path = std::env::var("INCUS_CLIENT_CERT").context("INCUS_CLIENT_CERT not set")?;
+        let key_path = std::env::var("INCUS_CLIENT_KEY").context("INCUS_CLIENT_KEY not set")?;
 
         let cert_pem = std::fs::read(&cert_path)
             .with_context(|| format!("reading client cert: {cert_path}"))?;
-        let key_pem = std::fs::read(&key_path)
-            .with_context(|| format!("reading client key: {key_path}"))?;
+        let key_pem =
+            std::fs::read(&key_path).with_context(|| format!("reading client key: {key_path}"))?;
 
         let mut combined = cert_pem;
         combined.push(b'\n');
@@ -41,8 +39,8 @@ impl HttpsBackend {
         let mut builder = reqwest::Client::builder().identity(identity);
 
         if let Ok(ca_path) = std::env::var("INCUS_SERVER_CA") {
-            let ca_pem = std::fs::read(&ca_path)
-                .with_context(|| format!("reading server CA: {ca_path}"))?;
+            let ca_pem =
+                std::fs::read(&ca_path).with_context(|| format!("reading server CA: {ca_path}"))?;
             builder = builder.add_root_certificate(
                 Certificate::from_pem(&ca_pem).context("parsing server CA PEM")?,
             );
@@ -96,10 +94,8 @@ impl HttpsBackend {
 impl IncusBackend for HttpsBackend {
     async fn launch(&self, image: &str, name: &str) -> Result<()> {
         let body = launch_body(image, name);
-        self.send_and_unwrap(
-            self.http.post(self.url("/1.0/instances")).json(&body),
-        )
-        .await?;
+        self.send_and_unwrap(self.http.post(self.url("/1.0/instances")).json(&body))
+            .await?;
         wait_for_running(self, name).await
     }
 

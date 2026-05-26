@@ -28,7 +28,10 @@ impl Connector for OllamaOpencode {
         _configs: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<()> {
         let model = &self.default_model;
-        tracing::info!("connecting ollama to opencode (model={model}, default={})", self.set_default);
+        tracing::info!(
+            "connecting ollama to opencode (model={model}, default={})",
+            self.set_default
+        );
         sentry_ext::breadcrumb(
             "connector",
             &format!("ollama→opencode model={model}"),

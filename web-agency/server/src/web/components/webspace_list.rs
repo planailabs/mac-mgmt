@@ -2,7 +2,9 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th};
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WebspaceRow {
@@ -58,7 +60,20 @@ async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
               ) \
         )";
 
-    type Row = (Uuid, String, String, Option<String>, Option<String>, Option<String>, Option<String>, String, i64, String, bool, bool);
+    type Row = (
+        Uuid,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        i64,
+        String,
+        bool,
+        bool,
+    );
     let rows = if user.is_admin {
         sqlx::query_as::<_, Row>(
             &format!(
@@ -89,9 +104,37 @@ async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, auth_mode, domain_count, organization_name, has_changedetection, has_missing_cname)| {
-            WebspaceRow { id, name, hosting_type, runtime, local_status, cloudflare_pages_project, relay_url, auth_mode, domain_count, organization_name, has_changedetection, has_missing_cname }
-        })
+        .map(
+            |(
+                id,
+                name,
+                hosting_type,
+                runtime,
+                local_status,
+                cloudflare_pages_project,
+                relay_url,
+                auth_mode,
+                domain_count,
+                organization_name,
+                has_changedetection,
+                has_missing_cname,
+            )| {
+                WebspaceRow {
+                    id,
+                    name,
+                    hosting_type,
+                    runtime,
+                    local_status,
+                    cloudflare_pages_project,
+                    relay_url,
+                    auth_mode,
+                    domain_count,
+                    organization_name,
+                    has_changedetection,
+                    has_missing_cname,
+                }
+            },
+        )
         .collect())
 }
 
@@ -108,15 +151,27 @@ async fn list_cd_creds_for_bulk() -> Result<Vec<CdCredOption>, ServerFnError> {
         sqlx::query_as::<_, (Uuid, String)>(
             "SELECT id, name FROM credentials WHERE credential_type = 'changedetection' \
              AND (organization_id = ANY($1) OR organization_id IS NULL) ORDER BY name",
-        ).bind(&org_ids).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+        )
+        .bind(&org_ids)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
     };
-    Ok(rows.into_iter().map(|(id, name)| CdCredOption { id, name }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| CdCredOption { id, name })
+        .collect())
 }
 
 #[server]
-async fn bulk_assign_changedetection(webspace_ids: Vec<Uuid>, credential_id: Uuid) -> Result<BulkOpResult, ServerFnError> {
+async fn bulk_assign_changedetection(
+    webspace_ids: Vec<Uuid>,
+    credential_id: Uuid,
+) -> Result<BulkOpResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
-    if !user.is_admin { return Err(ServerFnError::new("admin required")); }
+    if !user.is_admin {
+        return Err(ServerFnError::new("admin required"));
+    }
     let pool = crate::server_pool()?;
 
     let result = sqlx::query(
@@ -126,13 +181,20 @@ async fn bulk_assign_changedetection(webspace_ids: Vec<Uuid>, credential_id: Uui
     .bind(&webspace_ids)
     .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(BulkOpResult { succeeded: result.rows_affected() as usize, failed: 0 })
+    Ok(BulkOpResult {
+        succeeded: result.rows_affected() as usize,
+        failed: 0,
+    })
 }
 
 #[server]
-async fn bulk_remove_changedetection(webspace_ids: Vec<Uuid>) -> Result<BulkOpResult, ServerFnError> {
+async fn bulk_remove_changedetection(
+    webspace_ids: Vec<Uuid>,
+) -> Result<BulkOpResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
-    if !user.is_admin { return Err(ServerFnError::new("admin required")); }
+    if !user.is_admin {
+        return Err(ServerFnError::new("admin required"));
+    }
     let pool = crate::server_pool()?;
 
     let result = sqlx::query(
@@ -140,9 +202,14 @@ async fn bulk_remove_changedetection(webspace_ids: Vec<Uuid>) -> Result<BulkOpRe
          WHERE id = ANY($1) AND changedetection_credential_id IS NOT NULL",
     )
     .bind(&webspace_ids)
-    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(BulkOpResult { succeeded: result.rows_affected() as usize, failed: 0 })
+    Ok(BulkOpResult {
+        succeeded: result.rows_affected() as usize,
+        failed: 0,
+    })
 }
 
 #[component]
@@ -154,20 +221,40 @@ pub fn WebspaceList() -> Element {
         Some(Ok(r)) => r.clone(),
         _ => vec![],
     };
-    let cred_list: Vec<CdCredOption> = match &*cd_creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
+    let cred_list: Vec<CdCredOption> = match &*cd_creds.read() {
+        Some(Ok(c)) => c.clone(),
+        _ => vec![],
+    };
 
     let mut selected: Signal<Vec<Uuid>> = use_signal(Vec::new);
     let mut bulk_result = use_signal(|| None::<BulkOpResult>);
     let mut running = use_signal(|| false);
-    let mut cd_cred_id = use_signal(|| cred_list.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let mut cd_cred_id = use_signal(|| {
+        cred_list
+            .first()
+            .map(|c| c.id.to_string())
+            .unwrap_or_default()
+    });
     let mut filter = use_signal(|| "all".to_string());
 
     // Apply filter
     let filtered_rows: Vec<&WebspaceRow> = match filter.read().as_str() {
-        "pages" => all_rows.iter().filter(|r| r.hosting_type == "cloudflare_pages").collect(),
-        "local" => all_rows.iter().filter(|r| r.hosting_type == "local").collect(),
-        "relay" => all_rows.iter().filter(|r| r.hosting_type == "relay").collect(),
-        "tunnel" => all_rows.iter().filter(|r| r.hosting_type == "tunnel").collect(),
+        "pages" => all_rows
+            .iter()
+            .filter(|r| r.hosting_type == "cloudflare_pages")
+            .collect(),
+        "local" => all_rows
+            .iter()
+            .filter(|r| r.hosting_type == "local")
+            .collect(),
+        "relay" => all_rows
+            .iter()
+            .filter(|r| r.hosting_type == "relay")
+            .collect(),
+        "tunnel" => all_rows
+            .iter()
+            .filter(|r| r.hosting_type == "tunnel")
+            .collect(),
         "missing_cname" => all_rows.iter().filter(|r| r.has_missing_cname).collect(),
         "no_cd" => all_rows.iter().filter(|r| !r.has_changedetection).collect(),
         "has_cd" => all_rows.iter().filter(|r| r.has_changedetection).collect(),
@@ -179,15 +266,19 @@ pub fn WebspaceList() -> Element {
     let filtered_count = filtered_rows.len();
 
     // Count selected webspaces without CD for assign
-    let no_cd_selected: Vec<Uuid> = filtered_rows.iter()
+    let no_cd_selected: Vec<Uuid> = filtered_rows
+        .iter()
         .filter(|r| sel.contains(&r.id) && !r.has_changedetection)
-        .map(|r| r.id).collect();
+        .map(|r| r.id)
+        .collect();
     let no_cd_count = no_cd_selected.len();
 
     // Count selected webspaces with CD for remove
-    let has_cd_selected: Vec<Uuid> = filtered_rows.iter()
+    let has_cd_selected: Vec<Uuid> = filtered_rows
+        .iter()
         .filter(|r| sel.contains(&r.id) && r.has_changedetection)
-        .map(|r| r.id).collect();
+        .map(|r| r.id)
+        .collect();
     let has_cd_count = has_cd_selected.len();
 
     let filtered_ids: Vec<Uuid> = filtered_rows.iter().map(|r| r.id).collect();

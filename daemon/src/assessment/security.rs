@@ -33,7 +33,13 @@ fn collect_blocking() -> Vec<SecurityFinding> {
 
 // ── Helper to build a finding from an Option<bool> check ──
 
-fn bool_finding(id: &str, severity: FindingSeverity, msg_pass: &str, msg_fail: &str, value: Option<bool>) -> Option<SecurityFinding> {
+fn bool_finding(
+    id: &str,
+    severity: FindingSeverity,
+    msg_pass: &str,
+    msg_fail: &str,
+    value: Option<bool>,
+) -> Option<SecurityFinding> {
     let pass = value?;
     Some(SecurityFinding {
         id: id.to_string(),
@@ -50,7 +56,8 @@ fn collect_macos() -> Vec<SecurityFinding> {
     let mut findings = Vec::new();
 
     if let Some(f) = bool_finding(
-        "macos_sip", FindingSeverity::High,
+        "macos_sip",
+        FindingSeverity::High,
         "System Integrity Protection enabled",
         "System Integrity Protection disabled",
         csrutil_enabled(),
@@ -59,7 +66,8 @@ fn collect_macos() -> Vec<SecurityFinding> {
     }
 
     if let Some(f) = bool_finding(
-        "macos_filevault", FindingSeverity::High,
+        "macos_filevault",
+        FindingSeverity::High,
         "FileVault encryption enabled",
         "FileVault encryption disabled",
         fdesetup_enabled(),
@@ -68,7 +76,8 @@ fn collect_macos() -> Vec<SecurityFinding> {
     }
 
     if let Some(f) = bool_finding(
-        "macos_firewall", FindingSeverity::Medium,
+        "macos_firewall",
+        FindingSeverity::Medium,
         "Application Firewall enabled",
         "Application Firewall disabled",
         alf_enabled(),
@@ -77,7 +86,8 @@ fn collect_macos() -> Vec<SecurityFinding> {
     }
 
     if let Some(f) = bool_finding(
-        "macos_gatekeeper", FindingSeverity::Medium,
+        "macos_gatekeeper",
+        FindingSeverity::Medium,
         "Gatekeeper assessments enabled",
         "Gatekeeper assessments disabled",
         spctl_enabled(),
@@ -181,7 +191,8 @@ fn collect_linux() -> Vec<SecurityFinding> {
     }
 
     if let Some(f) = bool_finding(
-        "linux_ufw", FindingSeverity::Medium,
+        "linux_ufw",
+        FindingSeverity::Medium,
         "ufw firewall active",
         "ufw firewall inactive",
         ufw_active(),
@@ -193,7 +204,11 @@ fn collect_linux() -> Vec<SecurityFinding> {
         let pass = count > 0;
         findings.push(SecurityFinding {
             id: "linux_nftables".to_string(),
-            severity: if pass { FindingSeverity::Info } else { FindingSeverity::Medium },
+            severity: if pass {
+                FindingSeverity::Info
+            } else {
+                FindingSeverity::Medium
+            },
             message: if pass {
                 format!("{count} nftables rules loaded")
             } else {
@@ -204,7 +219,8 @@ fn collect_linux() -> Vec<SecurityFinding> {
     }
 
     if let Some(f) = bool_finding(
-        "linux_fde", FindingSeverity::High,
+        "linux_fde",
+        FindingSeverity::High,
         "Full-disk encryption detected on root",
         "No full-disk encryption on root",
         luks_present_on_root(),

@@ -4,7 +4,7 @@ use dioxus_i18n::t;
 use super::mcp_bundle_detail::McpServerOption;
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 /// Direct MCP server assignment display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -384,8 +384,7 @@ async fn add_cluster_mcp_server(
             .ok_or_else(|| ServerFnError::new("remote_id required for remote MCP server"))?
             .parse()
             .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-        let slug =
-            slug.ok_or_else(|| ServerFnError::new("slug required for remote MCP server"))?;
+        let slug = slug.ok_or_else(|| ServerFnError::new("slug required for remote MCP server"))?;
         sqlx::query(
             "INSERT INTO cluster_mcp_servers (cluster_id, skill_center_id, remote_id, slug, mcp_name) \
              VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
@@ -403,14 +402,12 @@ async fn add_cluster_mcp_server(
             .ok_or_else(|| ServerFnError::new("mcp_server_id required for local MCP server"))?
             .parse()
             .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-        sqlx::query(
-            "INSERT INTO cluster_mcp_servers (cluster_id, mcp_server_id) VALUES ($1, $2)",
-        )
-        .bind(cid)
-        .bind(msid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        sqlx::query("INSERT INTO cluster_mcp_servers (cluster_id, mcp_server_id) VALUES ($1, $2)")
+            .bind(cid)
+            .bind(msid)
+            .execute(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     }
     crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncMcpServers).await;
     Ok(())
@@ -486,8 +483,7 @@ async fn add_cluster_mcp_bundle(
             .ok_or_else(|| ServerFnError::new("remote_id required for remote MCP bundle"))?
             .parse()
             .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-        let slug =
-            slug.ok_or_else(|| ServerFnError::new("slug required for remote MCP bundle"))?;
+        let slug = slug.ok_or_else(|| ServerFnError::new("slug required for remote MCP bundle"))?;
         sqlx::query(
             "INSERT INTO cluster_mcp_bundles (cluster_id, skill_center_id, remote_id, slug, bundle_name) \
              VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",

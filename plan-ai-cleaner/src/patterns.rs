@@ -164,9 +164,10 @@ mod tests {
     #[test]
     fn detect_aws_key() {
         let matches = scan_text("key: AKIAIOSFODNN7EXAMPLE");
-        assert!(matches
-            .iter()
-            .any(|m| m.text == "AKIAIOSFODNN7EXAMPLE" && matches!(m.category, EntityCategory::ApiKey)));
+        assert!(
+            matches.iter().any(|m| m.text == "AKIAIOSFODNN7EXAMPLE"
+                && matches!(m.category, EntityCategory::ApiKey))
+        );
     }
 
     #[test]
@@ -178,15 +179,20 @@ mod tests {
     #[test]
     fn detect_credit_card() {
         let matches = scan_text("Card: 4111-1111-1111-1111");
-        assert!(matches
-            .iter()
-            .any(|m| m.text == "4111-1111-1111-1111" && matches!(m.category, EntityCategory::CreditCard)));
+        assert!(
+            matches.iter().any(|m| m.text == "4111-1111-1111-1111"
+                && matches!(m.category, EntityCategory::CreditCard))
+        );
     }
 
     #[test]
     fn detect_github_token() {
         let matches = scan_text("token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij");
-        assert!(matches.iter().any(|m| matches!(m.category, EntityCategory::ApiKey)));
+        assert!(
+            matches
+                .iter()
+                .any(|m| matches!(m.category, EntityCategory::ApiKey))
+        );
     }
 
     #[test]
@@ -198,33 +204,40 @@ mod tests {
     #[test]
     fn detect_ipv6_full() {
         let matches = scan_text("addr: 2001:0db8:85a3:0000:0000:8a2e:0370:7334");
-        assert!(matches
-            .iter()
-            .any(|m| m.text == "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
-                && matches!(m.category, EntityCategory::IpAddress)));
+        assert!(
+            matches
+                .iter()
+                .any(|m| m.text == "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+                    && matches!(m.category, EntityCategory::IpAddress))
+        );
     }
 
     #[test]
     fn detect_ipv6_compressed() {
         let matches = scan_text("addr: 2001:db8::8a2e:370:7334");
-        assert!(matches
-            .iter()
-            .any(|m| matches!(m.category, EntityCategory::IpAddress)));
+        assert!(
+            matches
+                .iter()
+                .any(|m| matches!(m.category, EntityCategory::IpAddress))
+        );
     }
 
     #[test]
     fn detect_credential_url() {
         let matches = scan_text("url: https://admin:s3cret@internal.corp.com/api");
-        assert!(matches
-            .iter()
-            .any(|m| m.text.contains("admin:s3cret@") && matches!(m.category, EntityCategory::ApiKey)));
+        assert!(
+            matches.iter().any(|m| m.text.contains("admin:s3cret@")
+                && matches!(m.category, EntityCategory::ApiKey))
+        );
     }
 
     #[test]
     fn detect_public_ipv4() {
         let matches = scan_text("server at 203.0.113.42");
-        assert!(matches
-            .iter()
-            .any(|m| m.text == "203.0.113.42" && matches!(m.category, EntityCategory::IpAddress)));
+        assert!(
+            matches.iter().any(
+                |m| m.text == "203.0.113.42" && matches!(m.category, EntityCategory::IpAddress)
+            )
+        );
     }
 }

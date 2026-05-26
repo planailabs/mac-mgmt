@@ -1,8 +1,8 @@
 use burn::config::Config;
 use burn::module::Module;
 use burn::nn::{Dropout, DropoutConfig, Embedding, EmbeddingConfig, Linear, LinearConfig};
-use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::Tensor;
+use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::train::{ClassificationOutput, TrainOutput, TrainStep, ValidStep};
 
 use crate::export::dataset::ToolSelectorBatch;
@@ -39,8 +39,7 @@ impl ToolSelectorConfig {
         let d_model = self.encoder.d_model;
         let encoder = self.encoder.init(device);
         // +1 for PAD tool index (NUM_TOOLS is used as padding)
-        let tool_history_embedding =
-            EmbeddingConfig::new(NUM_TOOLS + 1, d_model).init(device);
+        let tool_history_embedding = EmbeddingConfig::new(NUM_TOOLS + 1, d_model).init(device);
         let phase_embedding = EmbeddingConfig::new(self.n_phases, d_model).init(device);
         let history_projection =
             LinearConfig::new(d_model * TOOL_HISTORY_LEN, d_model).init(device);
@@ -72,7 +71,9 @@ impl<B: Backend> ToolSelector<B> {
         let context_vec = self.encoder.pool(encoded, batch.mask.clone()); // [batch, d_model]
 
         // 2. Encode tool history
-        let tool_emb = self.tool_history_embedding.forward(batch.tool_history.clone());
+        let tool_emb = self
+            .tool_history_embedding
+            .forward(batch.tool_history.clone());
         // [batch, TOOL_HISTORY_LEN, d_model] → [batch, TOOL_HISTORY_LEN * d_model]
         let [batch_size, _, _] = tool_emb.dims();
         let tool_flat = tool_emb.reshape([batch_size, TOOL_HISTORY_LEN * d_model]);
@@ -89,10 +90,7 @@ impl<B: Backend> ToolSelector<B> {
         self.classifier.forward(combined) // [batch, NUM_TOOLS]
     }
 
-    pub fn forward_classification(
-        &self,
-        batch: &ToolSelectorBatch<B>,
-    ) -> ClassificationOutput<B> {
+    pub fn forward_classification(&self, batch: &ToolSelectorBatch<B>) -> ClassificationOutput<B> {
         let logits = self.forward(batch);
         let targets = batch.targets.clone();
         let loss = burn::nn::loss::CrossEntropyLossConfig::new()
@@ -116,9 +114,7 @@ impl<B: AutodiffBackend> TrainStep<ToolSelectorBatch<B>, ClassificationOutput<B>
     }
 }
 
-impl<B: Backend> ValidStep<ToolSelectorBatch<B>, ClassificationOutput<B>>
-    for ToolSelector<B>
-{
+impl<B: Backend> ValidStep<ToolSelectorBatch<B>, ClassificationOutput<B>> for ToolSelector<B> {
     fn step(&self, batch: ToolSelectorBatch<B>) -> ClassificationOutput<B> {
         self.forward_classification(&batch)
     }

@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 use plan_ai_design::{LanguagePicker, ThemeToggle};
 use serde::{Deserialize, Serialize};
 
-use crate::web::app::Route;
 use super::navbar::Sidebar;
+use crate::web::app::Route;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct UserInfo {

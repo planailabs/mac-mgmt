@@ -1,11 +1,11 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::web::app::Route;
 use super::ui::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
     SectionHeading,
 };
+use crate::web::app::Route;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UserInfo {
@@ -39,9 +39,16 @@ async fn get_user(id: String) -> Result<UserInfo, ServerFnError> {
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    let row = sqlx::query_as::<_, (uuid::Uuid, String, String, bool, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, email, name, is_admin, created_at FROM users WHERE id = $1",
-    )
+    let row = sqlx::query_as::<
+        _,
+        (
+            uuid::Uuid,
+            String,
+            String,
+            bool,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >("SELECT id, email, name, is_admin, created_at FROM users WHERE id = $1")
     .bind(uid)
     .fetch_one(&pool)
     .await

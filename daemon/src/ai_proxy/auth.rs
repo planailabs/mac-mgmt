@@ -27,12 +27,7 @@ impl<'r> FromRequest<'r> for AuthedKey {
         // Extract Bearer token
         let auth_header = match request.headers().get_one("Authorization") {
             Some(h) => h,
-            None => {
-                return Outcome::Error((
-                    Status::Unauthorized,
-                    "missing Authorization header",
-                ))
-            }
+            None => return Outcome::Error((Status::Unauthorized, "missing Authorization header")),
         };
 
         let token = match auth_header.strip_prefix("Bearer ") {
@@ -41,7 +36,7 @@ impl<'r> FromRequest<'r> for AuthedKey {
                 return Outcome::Error((
                     Status::Unauthorized,
                     "Authorization must use Bearer scheme",
-                ))
+                ));
             }
         };
 
@@ -64,9 +59,11 @@ impl<'r> FromRequest<'r> for AuthedKey {
         }
 
         // Check sliding window budget
-        let remaining = state
-            .usage_tracker
-            .remaining_budget(&entry.key_hash, entry.token_budget, entry.budget_window);
+        let remaining = state.usage_tracker.remaining_budget(
+            &entry.key_hash,
+            entry.token_budget,
+            entry.budget_window,
+        );
 
         if remaining <= 0 {
             return Outcome::Error((Status::TooManyRequests, "token budget exceeded"));

@@ -88,9 +88,8 @@ async fn tick(
             .as_ref()
             .and_then(|v| v.as_array())
             .map(|arr| {
-                arr.iter().any(|svc| {
-                    svc.get("healthy").and_then(|h| h.as_bool()) == Some(false)
-                })
+                arr.iter()
+                    .any(|svc| svc.get("healthy").and_then(|h| h.as_bool()) == Some(false))
             })
             .unwrap_or(false);
 
@@ -135,7 +134,6 @@ async fn tick(
 
     // 5. For each, try to spawn a session
     for (instance_id, cluster_id) in to_trigger {
-
         // Skip if last session ended in needs_human_attention
         let needs_human = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM healer_sessions \
@@ -238,16 +236,16 @@ async fn build_spawn_request(
     let (proxy_token, proxy_expires) = pg_store
         .mint_proxy_token_scoped(cluster_id, None, Some(healer_scopes))
         .await?;
-    let relay_client = std::sync::Arc::new(
-        mac_mgmt_healer::relay_client::RelayClient::new(relay_url.clone(), proxy_token),
-    );
+    let relay_client = std::sync::Arc::new(mac_mgmt_healer::relay_client::RelayClient::new(
+        relay_url.clone(),
+        proxy_token,
+    ));
     let instance_prefix: String = instance_id.chars().take(12).collect();
-    let instance_access: mac_mgmt_healer::DynInstanceAccess = std::sync::Arc::new(
-        mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
+    let instance_access: mac_mgmt_healer::DynInstanceAccess =
+        std::sync::Arc::new(mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
             relay_client.clone(),
             instance_prefix,
-        ),
-    );
+        ));
     let cluster_access: Option<mac_mgmt_healer::DynClusterAccess> = Some(std::sync::Arc::new(
         mac_mgmt_healer::relay_client::RelayClusterAccess::new(relay_client),
     ));
@@ -305,16 +303,28 @@ async fn build_spawn_request(
         cluster_name,
         hostname: hb.hostname.unwrap_or_default(),
         skip_cooldown: false,
-        provider: Some(cluster_healer.auto_trigger_provider.clone().unwrap_or_else(|| config.provider.clone())),
-        model: cluster_healer.auto_trigger_model.clone().or_else(|| config.model.clone()),
+        provider: Some(
+            cluster_healer
+                .auto_trigger_provider
+                .clone()
+                .unwrap_or_else(|| config.provider.clone()),
+        ),
+        model: cluster_healer
+            .auto_trigger_model
+            .clone()
+            .or_else(|| config.model.clone()),
         label: Some("auto-triggered".to_string()),
         token_budget: None,
         proxy_expires: Some(proxy_expires),
         // Priority: cluster config > server global
         auto_approve: cluster_healer.auto_approve.unwrap_or(true),
-        fix_provider: cluster_healer.fix_provider.clone()
+        fix_provider: cluster_healer
+            .fix_provider
+            .clone()
             .or_else(|| crate::config::load().healer.fix_provider.clone()),
-        fix_model: cluster_healer.fix_model.clone()
+        fix_model: cluster_healer
+            .fix_model
+            .clone()
             .or_else(|| crate::config::load().healer.fix_model.clone()),
         validator_provider: None,
         validator_model: None,

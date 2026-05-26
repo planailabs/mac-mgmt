@@ -22,22 +22,38 @@ async fn get_dashboard_stats() -> Result<DashboardStats, ServerFnError> {
 
     if user.is_admin {
         let domains = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM domains")
-            .fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
         let domains_expiring_soon = sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM domains WHERE expires_at IS NOT NULL AND expires_at < now() + interval '30 days'",
         ).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
         let webspaces = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM webspaces")
-            .fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
         let credentials = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM credentials")
-            .fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
         let organizations = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM organizations")
-            .fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-        let billing_total_cents = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT sum(amount_cents) FROM billing_entries",
-        ).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?.unwrap_or(0);
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let billing_total_cents =
+            sqlx::query_scalar::<_, Option<i64>>("SELECT sum(amount_cents) FROM billing_entries")
+                .fetch_one(&pool)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?
+                .unwrap_or(0);
 
         Ok(DashboardStats {
-            is_admin: true, domains, domains_expiring_soon, webspaces, credentials, organizations,
+            is_admin: true,
+            domains,
+            domains_expiring_soon,
+            webspaces,
+            credentials,
+            organizations,
             billing_total_cents: Some(billing_total_cents),
         })
     } else {
@@ -48,13 +64,21 @@ async fn get_dashboard_stats() -> Result<DashboardStats, ServerFnError> {
 
         let domains = sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM domains WHERE organization_id = ANY($1)",
-        ).bind(&org_ids).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(&org_ids)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
         let domains_expiring_soon = sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM domains WHERE organization_id = ANY($1) AND expires_at IS NOT NULL AND expires_at < now() + interval '30 days'",
         ).bind(&org_ids).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
         let webspaces = sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM webspaces WHERE organization_id = ANY($1)",
-        ).bind(&org_ids).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(&org_ids)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
         let credentials = sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM credentials WHERE organization_id = ANY($1) OR organization_id IS NULL",
         ).bind(&org_ids).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -64,10 +88,18 @@ async fn get_dashboard_stats() -> Result<DashboardStats, ServerFnError> {
             "SELECT sum(b.amount_cents) FROM billing_entries b \
              JOIN organizations o ON o.id = b.organization_id \
              WHERE b.organization_id = ANY($1) AND o.show_billing = true",
-        ).bind(&org_ids).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(&org_ids)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         Ok(DashboardStats {
-            is_admin: false, domains, domains_expiring_soon, webspaces, credentials,
+            is_admin: false,
+            domains,
+            domains_expiring_soon,
+            webspaces,
+            credentials,
             organizations: 0,
             billing_total_cents,
         })

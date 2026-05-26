@@ -99,10 +99,29 @@ impl Vocabulary {
         let mut id_to_token = Vec::new();
 
         // 1. Special tokens
-        let specials = ["<pad>", "<unk>", "<cls>", "<sep>",
-            "<system>", "<user>", "<assistant>", "<tool_result>", "<pin>", "<summary>",
-            "<created>", "<initializing>", "<diagnosing>", "<remediating>", "<verifying>",
-            "<done>", "<completed>", "<failed>", "<cancelled>", "<paused>", "<needs_human>"];
+        let specials = [
+            "<pad>",
+            "<unk>",
+            "<cls>",
+            "<sep>",
+            "<system>",
+            "<user>",
+            "<assistant>",
+            "<tool_result>",
+            "<pin>",
+            "<summary>",
+            "<created>",
+            "<initializing>",
+            "<diagnosing>",
+            "<remediating>",
+            "<verifying>",
+            "<done>",
+            "<completed>",
+            "<failed>",
+            "<cancelled>",
+            "<paused>",
+            "<needs_human>",
+        ];
 
         for tok in &specials {
             let id = id_to_token.len() as u32;

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::components::ui::{Alert, AlertVariant, Button, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 // ── Wire types ─────────────────────────────────────────────────────────
 

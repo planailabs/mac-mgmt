@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 
 use crate::managed_service::{ManagedService, TunnelDef};
 use crate::sentry_ext;
-pub use mac_mgmt_common::LitellmConfig;
 use mac_mgmt_common::CloudConfig;
+pub use mac_mgmt_common::LitellmConfig;
 
 const CONFIG_FILENAME: &str = "litellm-config.yaml";
 
@@ -88,8 +88,12 @@ impl Litellm {
     }
 
     async fn check_health_impl(&self) -> Result<bool> {
-        match super::http_get(self.effective_host(), self.effective_port(), "/health/liveliness")
-            .await
+        match super::http_get(
+            self.effective_host(),
+            self.effective_port(),
+            "/health/liveliness",
+        )
+        .await
         {
             Ok(body) if body.contains("\"status\"") => {
                 tracing::debug!("litellm is healthy");
@@ -227,22 +231,25 @@ impl ManagedService for Litellm {
 
     fn service_inventory(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         Box::pin(async { Vec::new() })
     }
 
     fn service_sample(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         Box::pin(async { Vec::new() })
     }
 
     fn service_security(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>,
+    > {
         Box::pin(async { Vec::new() })
     }
 }

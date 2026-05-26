@@ -28,7 +28,11 @@ pub async fn get_model_catalog(source_id: String) -> Result<ModelSource, ServerF
             ServerFnError::new(format!(
                 "source '{}' not found in catalog (available: {})",
                 source_id,
-                sources.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(", ")
+                sources
+                    .iter()
+                    .map(|s| s.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ))
         })
 }
@@ -91,9 +95,8 @@ fn ModelSelectModalInner(
     form_values: Signal<serde_json::Value>,
     json_text: Signal<String>,
 ) -> Element {
-    let mut selected: Signal<HashSet<String>> = use_signal(|| {
-        req.current.iter().cloned().collect::<HashSet<_>>()
-    });
+    let mut selected: Signal<HashSet<String>> =
+        use_signal(|| req.current.iter().cloned().collect::<HashSet<_>>());
     let mut custom_models: Signal<Vec<String>> = use_signal(Vec::new);
     let mut custom_input: Signal<String> = use_signal(String::new);
     let mut filter: Signal<String> = use_signal(String::new);

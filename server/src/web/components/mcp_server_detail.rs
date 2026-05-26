@@ -12,7 +12,7 @@ use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, FormField, HelpText, PageHeader, SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 // ── Server functions ─────────────────────────────────────────────────
 
@@ -200,7 +200,11 @@ fn McpServerFormFields(
     hide_from_public_catalog: Signal<bool>,
     slug_readonly: bool,
 ) -> Element {
-    let slug_extra_class = if slug_readonly { "bg-surface-2 text-fg-muted" } else { "" };
+    let slug_extra_class = if slug_readonly {
+        "bg-surface-2 text-fg-muted"
+    } else {
+        ""
+    };
     rsx! {
         FormField { label: t!("slug"),
             input {

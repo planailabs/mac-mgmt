@@ -5,35 +5,57 @@ use uuid::Uuid;
 use super::ui::{Button, ButtonKind, ButtonVariant, Card, FormField, PageHeader};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgOption { id: Uuid, name: String }
+struct OrgOption {
+    id: Uuid,
+    name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct WsOption { id: Uuid, name: String }
+struct WsOption {
+    id: Uuid,
+    name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct TokenCreateResult { token: String }
+struct TokenCreateResult {
+    token: String,
+}
 
 #[server]
-async fn list_orgs_and_webspaces_for_token() -> Result<(Vec<OrgOption>, Vec<WsOption>), ServerFnError> {
+async fn list_orgs_and_webspaces_for_token()
+-> Result<(Vec<OrgOption>, Vec<WsOption>), ServerFnError> {
     use crate::web::user::WebUserExt;
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let orgs = sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations ORDER BY name")
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let orgs =
+        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM organizations ORDER BY name")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     let webspaces = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM webspaces WHERE hosting_type = 'cloudflare_pages' AND cloudflare_pages_project IS NOT NULL ORDER BY name",
     ).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok((
-        orgs.into_iter().map(|(id, name)| OrgOption { id, name }).collect(),
-        webspaces.into_iter().map(|(id, name)| WsOption { id, name }).collect(),
+        orgs.into_iter()
+            .map(|(id, name)| OrgOption { id, name })
+            .collect(),
+        webspaces
+            .into_iter()
+            .map(|(id, name)| WsOption { id, name })
+            .collect(),
     ))
 }
 
 #[server]
-async fn create_token(org_id: Option<Uuid>, label: String, kind: String, webspace_id: Option<Uuid>) -> Result<TokenCreateResult, ServerFnError> {
+async fn create_token(
+    org_id: Option<Uuid>,
+    label: String,
+    kind: String,
+    webspace_id: Option<Uuid>,
+) -> Result<TokenCreateResult, ServerFnError> {
     use crate::web::user::WebUserExt;
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
@@ -43,7 +65,7 @@ async fn create_token(org_id: Option<Uuid>, label: String, kind: String, webspac
     let token_bytes: [u8; 32] = rand::rng().random();
     let token = hex::encode(token_bytes);
 
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
     let scopes = if kind == "deploy" {

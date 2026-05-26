@@ -154,28 +154,19 @@ pub fn TableToolbar(
 
 /// Standard body cell. `<td class="td">{children}</td>`.
 #[component]
-pub fn Td(
-    #[props(default, into)] class: String,
-    children: Element,
-) -> Element {
+pub fn Td(#[props(default, into)] class: String, children: Element) -> Element {
     rsx! { td { class: "td {class}", {children} } }
 }
 
 /// Muted (secondary) body cell.
 #[component]
-pub fn TdMuted(
-    #[props(default, into)] class: String,
-    children: Element,
-) -> Element {
+pub fn TdMuted(#[props(default, into)] class: String, children: Element) -> Element {
     rsx! { td { class: "td-muted {class}", {children} } }
 }
 
 /// Monospace body cell (small text).
 #[component]
-pub fn TdMono(
-    #[props(default, into)] class: String,
-    children: Element,
-) -> Element {
+pub fn TdMono(#[props(default, into)] class: String, children: Element) -> Element {
     rsx! { td { class: "td-mono {class}", {children} } }
 }
 

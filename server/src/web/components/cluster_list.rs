@@ -10,10 +10,12 @@ use crate::web::components::ui::{
     Dash, DataTable, ErrorText, PageHeader, SortState, SortableTh, Td, TdMuted,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[server]
-async fn get_cluster_nixpkgs_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
+async fn get_cluster_nixpkgs_counts(
+    shas: Vec<String>,
+) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
     let set: std::collections::HashSet<String> = shas.into_iter().collect();
     Ok(crate::commit_count::nixpkgs_commit_counts(&set).await)
 }
@@ -164,12 +166,20 @@ fn ClusterTable(list: Vec<ClusterRow>) -> Element {
         let mut items: Vec<ClusterRow> = if q.is_empty() {
             list_clone.clone()
         } else {
-            list_clone.iter().filter(|c| c.matches_search(&q)).cloned().collect()
+            list_clone
+                .iter()
+                .filter(|c| c.matches_search(&q))
+                .cloned()
+                .collect()
         };
         let (key, asc) = sort.read().clone();
         items.sort_by(|a, b| {
             let ord = match key.as_str() {
-                "organization" => a.org_names.join(", ").to_lowercase().cmp(&b.org_names.join(", ").to_lowercase()),
+                "organization" => a
+                    .org_names
+                    .join(", ")
+                    .to_lowercase()
+                    .cmp(&b.org_names.join(", ").to_lowercase()),
                 "version" => a.pinned_version.cmp(&b.pinned_version),
                 "nixpkgs" => a.nixpkgs_commit.cmp(&b.nixpkgs_commit),
                 "created" => a.created_at.cmp(&b.created_at),

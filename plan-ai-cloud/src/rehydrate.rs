@@ -29,7 +29,10 @@ struct Entity {
 pub fn load_redacted_text(cleaner_dir: &Path, session_id: &str) -> Result<String> {
     let manifest = load_manifest(cleaner_dir, session_id)?;
     if manifest.status != "approved" {
-        anyhow::bail!("session {session_id} is not yet approved (status={})", manifest.status);
+        anyhow::bail!(
+            "session {session_id} is not yet approved (status={})",
+            manifest.status
+        );
     }
     manifest
         .redacted_text
@@ -146,11 +149,7 @@ mod tests {
         data.extend_from_slice(&nonce_bytes);
         data.extend_from_slice(&ciphertext);
 
-        std::fs::write(
-            sessions_dir.join(format!("{session_id}.enc")),
-            &data,
-        )
-        .unwrap();
+        std::fs::write(sessions_dir.join(format!("{session_id}.enc")), &data).unwrap();
     }
 
     #[test]

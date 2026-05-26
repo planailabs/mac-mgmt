@@ -44,10 +44,7 @@ impl ExecutorServer {
         name = "os_list",
         description = "List available OS images for container creation. Returns image aliases (like 'ubuntu/26.04', 'alpine/3.21') with descriptions. Use the 'filter' parameter to narrow results by distro name. Call this first if unsure which OS to use. Common choices: ubuntu/26.04 (general purpose, apt), alpine/3.21 (minimal, apk), debian/12 (stable, apt), fedora/42 (cutting edge, dnf)."
     )]
-    async fn os_list(
-        &self,
-        Parameters(params): Parameters<OsListParams>,
-    ) -> String {
+    async fn os_list(&self, Parameters(params): Parameters<OsListParams>) -> String {
         let images = match self.state.get_or_fetch_images().await {
             Ok(imgs) => imgs,
             Err(e) => return format!("Error listing images: {e}"),
@@ -70,17 +67,16 @@ impl ExecutorServer {
 
         if filtered.is_empty() {
             return match &params.filter {
-                Some(f) => format!("No images matching '{f}'. Try a broader filter or omit the filter to see all images."),
+                Some(f) => format!(
+                    "No images matching '{f}'. Try a broader filter or omit the filter to see all images."
+                ),
                 None => "No images found.".to_string(),
             };
         }
 
         let mut out = format!("Available images ({} results):\n\n", filtered.len());
         for img in &filtered {
-            out.push_str(&format!(
-                "  {:<30} {}\n",
-                img.alias, img.description
-            ));
+            out.push_str(&format!("  {:<30} {}\n", img.alias, img.description));
         }
         out.push_str("\nUse the alias (first column) as the 'os' parameter in system_create.");
         out
@@ -90,10 +86,7 @@ impl ExecutorServer {
         name = "system_create",
         description = "Create a new ephemeral Incus container with the specified OS. The container starts immediately and is ready for commands. Use os_list to find valid image aliases. Ephemeral containers are automatically cleaned up when stopped or when this session ends. Returns the container name for use with system_execute."
     )]
-    async fn system_create(
-        &self,
-        Parameters(params): Parameters<SystemCreateParams>,
-    ) -> String {
+    async fn system_create(&self, Parameters(params): Parameters<SystemCreateParams>) -> String {
         let name = match params.name {
             Some(n) => {
                 let prefix = self.state.session_prefix().await;
@@ -130,10 +123,7 @@ impl ExecutorServer {
         name = "system_execute",
         description = "Execute a shell command inside a container. The command runs via 'sh -c' so pipes, redirects, and shell features work. Returns stdout, stderr, and exit code. If 'name' is omitted, uses the most recently created container. Default timeout is 120 seconds, max 600."
     )]
-    async fn system_execute(
-        &self,
-        Parameters(params): Parameters<SystemExecuteParams>,
-    ) -> String {
+    async fn system_execute(&self, Parameters(params): Parameters<SystemExecuteParams>) -> String {
         let name = match self.state.resolve_name(params.name.as_deref()).await {
             Ok(n) => n,
             Err(e) => return format!("Error: {e}"),
@@ -142,7 +132,12 @@ impl ExecutorServer {
         let timeout = params.effective_timeout();
         tracing::info!("executing in {name}: {}", params.command);
 
-        match self.state.backend.exec(&name, &params.command, timeout).await {
+        match self
+            .state
+            .backend
+            .exec(&name, &params.command, timeout)
+            .await
+        {
             Ok(output) => {
                 let mut result = String::new();
 
@@ -180,10 +175,7 @@ impl ExecutorServer {
         name = "system_destroy",
         description = "Explicitly destroy a container. Useful for freeing resources before session end. All containers are also auto-cleaned on session shutdown."
     )]
-    async fn system_destroy(
-        &self,
-        Parameters(params): Parameters<SystemDestroyParams>,
-    ) -> String {
+    async fn system_destroy(&self, Parameters(params): Parameters<SystemDestroyParams>) -> String {
         let info = self.state.remove_instance(&params.name).await;
         if info.is_none() {
             return format!("No container named '{}' in this session.", params.name);

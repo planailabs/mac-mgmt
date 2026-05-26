@@ -54,7 +54,6 @@ pub fn use_topbar(title: String, subtitle: Option<String>) {
     });
 }
 
-
 #[component]
 pub fn Topbar(
     /// Effective user's display name. Empty when unauthenticated.

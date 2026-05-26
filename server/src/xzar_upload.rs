@@ -52,9 +52,7 @@ async fn nix_query(store_path: &str, flag: &str) -> Result<String, String> {
 
 /// Extract the basename from a store path (e.g. "/nix/store/abc-foo" → "abc-foo").
 fn store_basename(store_path: &str) -> &str {
-    store_path
-        .strip_prefix("/nix/store/")
-        .unwrap_or(store_path)
+    store_path.strip_prefix("/nix/store/").unwrap_or(store_path)
 }
 
 // ── Public API ─────────────────────────────────────────────────────────

@@ -45,7 +45,10 @@ impl Unsloth {
         let health_body = match self.http_get("/api/health").await {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!("unsloth liveliness probe failed at {}: {e}", self.base_url());
+                tracing::warn!(
+                    "unsloth liveliness probe failed at {}: {e}",
+                    self.base_url()
+                );
                 return Ok(false);
             }
         };
@@ -231,8 +234,9 @@ impl ManagedService for Unsloth {
 
     fn service_inventory(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         use mac_mgmt_common::{InventoryEntry, InventoryValueType};
         let host = self.effective_host().to_string();
         let port = self.effective_port();
@@ -256,8 +260,9 @@ impl ManagedService for Unsloth {
 
     fn service_sample(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         use mac_mgmt_common::{InventoryEntry, InventoryValueType};
         let host = self.effective_host().to_string();
         let port = self.effective_port();
@@ -279,8 +284,9 @@ impl ManagedService for Unsloth {
 
     fn service_security(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>,
+    > {
         use mac_mgmt_common::{FindingSeverity, SecurityFinding};
         Box::pin(async move {
             let mut findings = Vec::new();
@@ -288,11 +294,9 @@ impl ManagedService for Unsloth {
             // Check whether the default bootstrap password is still active.
             // Unsloth stores a one-time password at this well-known path;
             // if the file still exists the admin likely never changed it.
-            let bootstrap_path = dirs::home_dir()
-                .map(|h| h.join(".unsloth/studio/auth/.bootstrap_password"));
-            let bootstrap_exists = bootstrap_path
-                .as_ref()
-                .is_some_and(|p| p.exists());
+            let bootstrap_path =
+                dirs::home_dir().map(|h| h.join(".unsloth/studio/auth/.bootstrap_password"));
+            let bootstrap_exists = bootstrap_path.as_ref().is_some_and(|p| p.exists());
 
             findings.push(SecurityFinding {
                 id: "unsloth_bootstrap_password".into(),

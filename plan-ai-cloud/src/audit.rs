@@ -24,11 +24,7 @@ use std::io::Write;
 pub fn read_recent(audit_dir: &Path, limit: u32) -> Result<Vec<AuditEntry>> {
     let mut files: Vec<_> = std::fs::read_dir(audit_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .ends_with(".jsonl")
-        })
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".jsonl"))
         .collect();
 
     // Sort by filename descending (most recent first).

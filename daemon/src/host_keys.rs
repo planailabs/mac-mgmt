@@ -37,8 +37,9 @@ pub fn load_or_generate() -> Result<PrivateKey> {
         russh::keys::ssh_key::private::KeypairData::Ed25519(
             russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed),
         ),
-        ""
-    ).context("failed to create Ed25519 key")?;
+        "",
+    )
+    .context("failed to create Ed25519 key")?;
 
     let mut pem_buf = Vec::new();
     encode_pkcs8_pem(&key, &mut pem_buf).context("failed to encode host key as PKCS8 PEM")?;

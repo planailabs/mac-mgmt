@@ -14,7 +14,8 @@ struct CredentialOption {
 }
 
 #[server]
-async fn list_orgs_and_cf_creds() -> Result<(Vec<OrgOption>, Vec<CredentialOption>), ServerFnError> {
+async fn list_orgs_and_cf_creds() -> Result<(Vec<OrgOption>, Vec<CredentialOption>), ServerFnError>
+{
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
@@ -24,11 +25,20 @@ async fn list_orgs_and_cf_creds() -> Result<(Vec<OrgOption>, Vec<CredentialOptio
         "SELECT id, name, credential_type FROM credentials \
          WHERE credential_type = 'cloudflare' ORDER BY name",
     )
-    .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok((
         orgs,
-        creds.into_iter().map(|(id, name, credential_type)| CredentialOption { id, name, credential_type }).collect(),
+        creds
+            .into_iter()
+            .map(|(id, name, credential_type)| CredentialOption {
+                id,
+                name,
+                credential_type,
+            })
+            .collect(),
     ))
 }
 
@@ -50,25 +60,34 @@ async fn add_domain(
 
     // If a Cloudflare credential is provided, try to add/find the zone
     if let Some(cred_id) = cf_credential_id {
-        let (client, account_id) = crate::credentials::cf_client_with_account(&pool, cred_id).await
+        let (client, account_id) = crate::credentials::cf_client_with_account(&pool, cred_id)
+            .await
             .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
         // Check if zone already exists
-        let existing = client.list_zones(Some(&domain_name)).await
+        let existing = client
+            .list_zones(Some(&domain_name))
+            .await
             .map_err(|e| ServerFnError::new(format!("CF API error: {e}")))?;
 
         if let Some(zone) = existing.first() {
             zone_id = Some(zone.id.clone());
             tracing::info!("domain {domain_name} already exists as zone {}", zone.id);
         } else {
-            let zone = client.create_zone(&domain_name, &account_id).await
+            let zone = client
+                .create_zone(&domain_name, &account_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("CF zone creation failed: {e}")))?;
             zone_id = Some(zone.id);
             tracing::info!("created CF zone for {domain_name}");
         }
     }
 
-    let registrar = if registrar_type.is_empty() { None } else { Some(registrar_type.as_str()) };
+    let registrar = if registrar_type.is_empty() {
+        None
+    } else {
+        Some(registrar_type.as_str())
+    };
 
     let id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO domains (organization_id, name, registrar_type, cloudflare_credential_id, cloudflare_zone_id) \
@@ -95,7 +114,12 @@ pub fn DomainAdd() -> Element {
     };
 
     let mut domain_name = use_signal(String::new);
-    let mut org_id = use_signal(|| org_list.first().map(|o| o.id.to_string()).unwrap_or_default());
+    let mut org_id = use_signal(|| {
+        org_list
+            .first()
+            .map(|o| o.id.to_string())
+            .unwrap_or_default()
+    });
     let mut cf_cred_id = use_signal(String::new);
     let mut registrar_type = use_signal(|| "external".to_string());
     let mut error = use_signal(|| None::<String>);

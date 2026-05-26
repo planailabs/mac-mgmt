@@ -7,8 +7,8 @@ use dioxus::fullstack::axum::{
     self,
     extract::{Extension, Path},
     response::{
-        sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
     },
 };
 use std::convert::Infallible;
@@ -44,7 +44,11 @@ pub async fn view_session_sse(
     let Ok(Some((session, existing_messages))) = healer.get_session(uuid).await else {
         return axum::http::StatusCode::NOT_FOUND.into_response();
     };
-    if user.require_cluster_read(&pool, session.cluster_id).await.is_err() {
+    if user
+        .require_cluster_read(&pool, session.cluster_id)
+        .await
+        .is_err()
+    {
         return axum::http::StatusCode::FORBIDDEN.into_response();
     }
 
@@ -60,8 +64,8 @@ pub async fn view_session_sse(
 
     tokio::spawn(async move {
         use super::components::healer_page::{
-            extract_pins_from_messages, healer_event_to_stream, running_tools_to_wire,
-            staff_pings_to_wire, PinInfo,
+            PinInfo, extract_pins_from_messages, healer_event_to_stream, running_tools_to_wire,
+            staff_pings_to_wire,
         };
 
         let empty = HealerStreamEvent::default;
@@ -97,9 +101,7 @@ pub async fn view_session_sse(
         }
 
         // Send staff pings
-        if let Ok(pings) =
-            healer.store().list_session_pings(uuid).await
-        {
+        if let Ok(pings) = healer.store().list_session_pings(uuid).await {
             if !pings.is_empty() {
                 let _ = tx
                     .send(Ok(event_json(&HealerStreamEvent {
@@ -139,9 +141,7 @@ pub async fn view_session_sse(
                 loop {
                     match rx_bc.recv().await {
                         Ok(event) => {
-                            if let mac_mgmt_healer::HealerEvent::Message {
-                                created_at, ..
-                            } = &event
+                            if let mac_mgmt_healer::HealerEvent::Message { created_at, .. } = &event
                             {
                                 if *created_at > last_seen_at {
                                     last_seen_at = *created_at;
@@ -195,8 +195,7 @@ pub async fn view_session_sse(
                                 }
 
                                 if role == "tool_result" && content.starts_with("staff_ping:") {
-                                    if let Ok(pings) =
-                                        healer.store().list_session_pings(uuid).await
+                                    if let Ok(pings) = healer.store().list_session_pings(uuid).await
                                     {
                                         let _ = tx
                                             .send(Ok(event_json(&HealerStreamEvent {

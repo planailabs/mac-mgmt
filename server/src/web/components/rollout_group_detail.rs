@@ -9,7 +9,7 @@ use crate::web::components::ui::{
     SortableTh, Td, Th,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct GroupInfo {
@@ -408,7 +408,10 @@ fn MembersTable(members: Vec<MemberEntry>, on_remove: EventHandler<()>) -> Eleme
         };
         let (_key, asc) = sort.read().clone();
         items.sort_by(|a, b| {
-            let ord = a.cluster_name.to_lowercase().cmp(&b.cluster_name.to_lowercase());
+            let ord = a
+                .cluster_name
+                .to_lowercase()
+                .cmp(&b.cluster_name.to_lowercase());
             if asc { ord } else { ord.reverse() }
         });
         items

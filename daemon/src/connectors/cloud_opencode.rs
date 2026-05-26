@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::{enabled_cloud_configs, non_empty_secret, resolve_model, Connector, ConnectorPhase};
+use super::{Connector, ConnectorPhase, enabled_cloud_configs, non_empty_secret, resolve_model};
 use crate::sentry_ext;
 use crate::services::opencode::{config_path, merge_and_validate};
 
@@ -62,10 +62,7 @@ impl Connector for CloudOpencode {
                     opts["baseURL"] = serde_json::json!(url);
                 }
             }
-            providers.insert(
-                provider.to_string(),
-                serde_json::json!({ "options": opts }),
-            );
+            providers.insert(provider.to_string(), serde_json::json!({ "options": opts }));
         }
 
         let mut patch = serde_json::json!({ "provider": providers });

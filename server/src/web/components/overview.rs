@@ -18,7 +18,7 @@ use crate::web::components::ui::{
     Pill, PillVariant,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 /// Snapshot delivered to the page in a single round-trip.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -38,7 +38,7 @@ struct OverviewData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OverviewActivity {
-    kind: String,   // "rollout-started" | "rollout-completed" | "cluster-online" | "ping-opened"
+    kind: String, // "rollout-started" | "rollout-completed" | "cluster-online" | "ping-opened"
     text: String,
     /// Absolute timestamp; the page formats relative-ago at render.
     at: DateTime<Utc>,
@@ -56,7 +56,7 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
     // Heartbeats. "Online" matches the fleet-dashboard threshold.
     let online_query = "SELECT COUNT(*) FROM daemon_heartbeats \
                         WHERE reported_at > now() - interval '5 minutes'";
-    let total_query  = "SELECT COUNT(*) FROM daemon_heartbeats";
+    let total_query = "SELECT COUNT(*) FROM daemon_heartbeats";
     let (instances_online, instances_total) = match accessible.as_ref() {
         Some(ids) => {
             let online: i64 = sqlx::query_scalar(
@@ -129,12 +129,11 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
 
     // Rollouts. Two scopes: currently rolling, and "completed in the
     // last 24h" so the operator gets a sense of recent throughput.
-    let active_rollouts: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM rollouts WHERE status = 'rolling'",
-    )
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let active_rollouts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM rollouts WHERE status = 'rolling'")
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     // The rollouts table tracks state transitions via updated_at —
     // there's no separate completed_at column (those live on
     // rollout_stages). updated_at moves to "now" when status flips
@@ -152,12 +151,11 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
     // version queried the wrong table (`staff_pings`) on the wrong
     // column (`resolved_at IS NULL`) and silently returned 0 via
     // unwrap_or, hiding all open pings from the dashboard.
-    let open_staff_pings: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM healer_staff_pings WHERE resolved = false",
-    )
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let open_staff_pings: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM healer_staff_pings WHERE resolved = false")
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Activity feed: union of the most recent rollout state changes
     // and the latest cluster-online heartbeats. The rollouts table
@@ -280,16 +278,19 @@ fn relative_ago(at: DateTime<Utc>) -> String {
 fn activity_kind_to_pill(kind: &str) -> PillVariant {
     match kind {
         "rollout-completed" => PillVariant::Ok,
-        "rollout-started"   => PillVariant::Accent,
-        "rollout-other"     => PillVariant::Warn,
-        "cluster-online"    => PillVariant::Info,
-        _                   => PillVariant::Muted,
+        "rollout-started" => PillVariant::Accent,
+        "rollout-other" => PillVariant::Warn,
+        "cluster-online" => PillVariant::Info,
+        _ => PillVariant::Muted,
     }
 }
 
 #[component]
 pub fn Overview() -> Element {
-    use_topbar(t!("overview-title").to_string(), Some(t!("overview-subtitle").to_string()));
+    use_topbar(
+        t!("overview-title").to_string(),
+        Some(t!("overview-subtitle").to_string()),
+    );
 
     let data = use_server_future(get_overview)?;
 
@@ -303,16 +304,23 @@ pub fn Overview() -> Element {
 fn render_overview(d: &OverviewData) -> Element {
     let online_value = format!("{} / {}", d.instances_online, d.instances_total);
     let services_value = format!("{:.1}%", d.healthy_services_pct);
-    let services_sub = format!("{} / {}", d.healthy_services_count, d.healthy_services_total);
+    let services_sub = format!(
+        "{} / {}",
+        d.healthy_services_count, d.healthy_services_total
+    );
     let rollouts_value = d.active_rollouts.to_string();
     let rollouts_sub = format!("{} completed 24h", d.rollouts_completed_24h);
     let pings_value = d.open_staff_pings.to_string();
 
-    let activity_items: Vec<ActivityItem> = d.activity.iter().map(|a| ActivityItem {
-        kind: activity_kind_to_pill(&a.kind),
-        text: a.text.clone(),
-        time: relative_ago(a.at),
-    }).collect();
+    let activity_items: Vec<ActivityItem> = d
+        .activity
+        .iter()
+        .map(|a| ActivityItem {
+            kind: activity_kind_to_pill(&a.kind),
+            text: a.text.clone(),
+            time: relative_ago(a.at),
+        })
+        .collect();
 
     rsx! {
         // ── Hero ──

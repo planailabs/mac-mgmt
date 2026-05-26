@@ -3,39 +3,39 @@ mod anthropic;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod api;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
+mod builtin_skill_center;
+#[cfg(feature = "server")]
+mod clawhub_client;
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod commit_count;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod config;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod db;
-#[cfg(any(feature = "server", feature = "server-api-only"))]
-mod mcp_schema;
-#[cfg(feature = "server")]
-mod model_catalog_fetch;
 #[cfg(feature = "server")]
 mod generate_model_catalog;
-#[cfg(feature = "webui")]
-mod models;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod healer_auto_trigger;
 #[cfg(feature = "server")]
 mod mcp_healer;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
-mod rollout_health;
+mod mcp_schema;
+#[cfg(feature = "server")]
+mod model_catalog_fetch;
 #[cfg(feature = "webui")]
-mod web;
+mod models;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
-mod builtin_skill_center;
+mod rollout_health;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod skill_center_cache;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod skill_center_client;
+#[cfg(feature = "webui")]
+mod web;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod xzar;
 #[cfg(feature = "server")]
 mod xzar_upload;
-#[cfg(feature = "server")]
-mod clawhub_client;
 
 #[cfg(all(feature = "server", feature = "webui"))]
 mod server_state {
@@ -85,21 +85,17 @@ mod server_state {
     }
 
     pub fn federation_channel() -> Result<FederationPushChannel, dioxus::prelude::ServerFnError> {
-        FEDERATION_PUSH
-            .get()
-            .cloned()
-            .ok_or_else(|| {
-                dioxus::prelude::ServerFnError::new("federation channel not initialized")
-            })
+        FEDERATION_PUSH.get().cloned().ok_or_else(|| {
+            dioxus::prelude::ServerFnError::new("federation channel not initialized")
+        })
     }
 
     pub fn healer_state() -> Option<HealerState> {
         HEALER.get().cloned()
     }
 
-    pub fn pg_healer_store(
-    ) -> Result<Arc<mac_mgmt_healer::store::pg::PgHealerStore>, dioxus::prelude::ServerFnError>
-    {
+    pub fn pg_healer_store()
+    -> Result<Arc<mac_mgmt_healer::store::pg::PgHealerStore>, dioxus::prelude::ServerFnError> {
         PG_HEALER_STORE
             .get()
             .cloned()
@@ -118,8 +114,8 @@ pub fn push_channels() -> Result<crate::api::push::PushChannels, dioxus::prelude
 }
 
 #[cfg(all(feature = "server", feature = "webui"))]
-pub fn federation_channel(
-) -> Result<crate::api::push::FederationPushChannel, dioxus::prelude::ServerFnError> {
+pub fn federation_channel()
+-> Result<crate::api::push::FederationPushChannel, dioxus::prelude::ServerFnError> {
     server_state::federation_channel()
 }
 
@@ -148,17 +144,17 @@ impl mac_mgmt_healer::SessionFactory for ServerSessionFactory {
             .mint_proxy_token_scoped(session.cluster_id, None, Some(healer_scopes))
             .await?;
 
-        let relay_client = std::sync::Arc::new(
-            mac_mgmt_healer::relay_client::RelayClient::new(relay_url.clone(), proxy_token),
-        );
+        let relay_client = std::sync::Arc::new(mac_mgmt_healer::relay_client::RelayClient::new(
+            relay_url.clone(),
+            proxy_token,
+        ));
 
         let instance_prefix: String = session.instance_id.chars().take(12).collect();
-        let instance_access: mac_mgmt_healer::DynInstanceAccess = std::sync::Arc::new(
-            mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
+        let instance_access: mac_mgmt_healer::DynInstanceAccess =
+            std::sync::Arc::new(mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
                 relay_client.clone(),
                 instance_prefix,
-            ),
-        );
+            ));
         let cluster_access: Option<mac_mgmt_healer::DynClusterAccess> = Some(std::sync::Arc::new(
             mac_mgmt_healer::relay_client::RelayClusterAccess::new(relay_client),
         ));
@@ -250,9 +246,8 @@ async fn init_server() -> (
         validator_model: None,
         fine_tuned_model: cfg.healer.fine_tuned_model.clone(),
     };
-    let pg_healer_store = std::sync::Arc::new(
-        mac_mgmt_healer::store::pg::PgHealerStore::new(pool.clone()),
-    );
+    let pg_healer_store =
+        std::sync::Arc::new(mac_mgmt_healer::store::pg::PgHealerStore::new(pool.clone()));
     let healer_store: mac_mgmt_healer::DynStore = pg_healer_store.clone();
     let healer_instance_data: mac_mgmt_healer::DynInstanceData = pg_healer_store.clone();
     let session_factory: std::sync::Arc<dyn mac_mgmt_healer::SessionFactory> =
@@ -372,7 +367,11 @@ fn init_sentry() -> Option<sentry::ClientInitGuard> {
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "mac-mgmt-server", version, about = "mac-mgmt management server")]
+#[command(
+    name = "mac-mgmt-server",
+    version,
+    about = "mac-mgmt management server"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -463,7 +462,11 @@ fn main() {
             Commands::DumpSessions { output, model } => {
                 let cfg = config::load();
                 let rt = tokio::runtime::Runtime::new().expect("failed to create runtime");
-                rt.block_on(dump_healer_sessions(&cfg.database.url, output, model.as_deref()));
+                rt.block_on(dump_healer_sessions(
+                    &cfg.database.url,
+                    output,
+                    model.as_deref(),
+                ));
                 return;
             }
             #[cfg(feature = "server")]

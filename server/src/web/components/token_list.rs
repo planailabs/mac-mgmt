@@ -7,7 +7,7 @@ use crate::web::components::ui::{
     Alert, AlertVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[server]
 async fn list_tokens(cluster_id: String) -> Result<Vec<Token>, ServerFnError> {

@@ -20,8 +20,7 @@ pub fn materialize_embedded(content: &[u8], dest: &Path) -> Result<bool> {
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    std::fs::write(dest, content)
-        .with_context(|| format!("failed to write {}", dest.display()))?;
+    std::fs::write(dest, content).with_context(|| format!("failed to write {}", dest.display()))?;
 
     Ok(false)
 }
@@ -36,7 +35,11 @@ pub fn materialize_all<E: rust_embed::Embed>(target_dir: &Path) -> Result<usize>
             let dest = target_dir.join(path.as_ref());
             let up_to_date = materialize_embedded(&file.data, &dest)?;
             if !up_to_date {
-                tracing::debug!("materialize: wrote {} ({} bytes)", dest.display(), file.data.len());
+                tracing::debug!(
+                    "materialize: wrote {} ({} bytes)",
+                    dest.display(),
+                    file.data.len()
+                );
                 written += 1;
             }
         }

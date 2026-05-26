@@ -68,8 +68,11 @@ impl Backend for LocalBackend {
     }
 
     async fn put_doc(
-        &self, body: &str, frontmatter: serde_json::Value,
-        tags: Vec<(String, String)>, visibility: Option<&str>,
+        &self,
+        body: &str,
+        frontmatter: serde_json::Value,
+        tags: Vec<(String, String)>,
+        visibility: Option<&str>,
     ) -> Result<serde_json::Value> {
         let fm: BTreeMap<String, serde_json::Value> = match frontmatter {
             serde_json::Value::Object(m) => m.into_iter().collect(),
@@ -78,7 +81,10 @@ impl Backend for LocalBackend {
         let doc = Document::new(DocId::random(), body.to_string(), fm);
         let doc_id = hex::encode(doc.id.0);
         let vis = parse_visibility(visibility);
-        let cid = self.client.put_doc(doc, tags, vis, None).await
+        let cid = self
+            .client
+            .put_doc(doc, tags, vis, None)
+            .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "cid": hex::encode(&cid), "id": doc_id }))
     }
@@ -86,23 +92,42 @@ impl Backend for LocalBackend {
     async fn get_doc(&self, id: &str) -> Result<Option<serde_json::Value>> {
         let arr = hex_to_32(id)?;
         let doc_id = DocId(arr);
-        let doc = self.client.get_doc(&doc_id).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(doc.map(|d| serde_json::json!({
-            "id": hex::encode(d.id.0),
-            "body": d.body,
-            "frontmatter": d.frontmatter,
-        })))
+        let doc = self
+            .client
+            .get_doc(&doc_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(doc.map(|d| {
+            serde_json::json!({
+                "id": hex::encode(d.id.0),
+                "body": d.body,
+                "frontmatter": d.frontmatter,
+            })
+        }))
     }
 
-    async fn search(&self, query: &str, limit: usize, _tag_filter: Option<&str>) -> Result<serde_json::Value> {
+    async fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        _tag_filter: Option<&str>,
+    ) -> Result<serde_json::Value> {
         // Tag filtering is applied at the index level. For now, use the basic search.
         // TODO: wire tag_filter through to SearchQuery when the MemvaultClient trait supports it.
-        let hits = self.client.search(query, limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(serde_json::json!(hits.iter().map(|h| serde_json::json!({
-            "doc_id": hex::encode(h.doc_id.0),
-            "score": h.score,
-            "snippet": h.snippet,
-        })).collect::<Vec<_>>()))
+        let hits = self
+            .client
+            .search(query, limit)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(
+            hits.iter()
+                .map(|h| serde_json::json!({
+                    "doc_id": hex::encode(h.doc_id.0),
+                    "score": h.score,
+                    "snippet": h.snippet,
+                }))
+                .collect::<Vec<_>>()
+        ))
     }
 
     async fn edit_doc(&self, id: &str, patch_json: serde_json::Value) -> Result<serde_json::Value> {
@@ -110,58 +135,105 @@ impl Backend for LocalBackend {
         let doc_id = DocId(arr);
         // Parse patch from JSON: { "ops": [{"Retain": n}, {"Insert": "text"}, {"Delete": n}] }
         let patch: memvault_doc::TextPatch = serde_json::from_value(patch_json)?;
-        let cid = self.client.edit_doc(&doc_id, patch).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let cid = self
+            .client
+            .edit_doc(&doc_id, patch)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "cid": hex::encode(&cid) }))
     }
 
     async fn history_of(&self, doc_id: &str) -> Result<serde_json::Value> {
         let arr = hex_to_32(doc_id)?;
         let did = DocId(arr);
-        let records = self.client.history_of(&did).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(serde_json::json!(records.iter().map(|r| serde_json::json!({
-            "cid": hex::encode(&r.cid),
-            "op_kind": format!("{:?}", r.op_kind),
-            "wall_ns": r.wall_ns,
-        })).collect::<Vec<_>>()))
+        let records = self
+            .client
+            .history_of(&did)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(
+            records
+                .iter()
+                .map(|r| serde_json::json!({
+                    "cid": hex::encode(&r.cid),
+                    "op_kind": format!("{:?}", r.op_kind),
+                    "wall_ns": r.wall_ns,
+                }))
+                .collect::<Vec<_>>()
+        ))
     }
 
-    async fn list_docs(&self, tag_ns: Option<&str>, tag_val: Option<&str>, limit: usize) -> Result<serde_json::Value> {
+    async fn list_docs(
+        &self,
+        tag_ns: Option<&str>,
+        tag_val: Option<&str>,
+        limit: usize,
+    ) -> Result<serde_json::Value> {
         let tag_filter = match (tag_ns, tag_val) {
             (Some(ns), Some(val)) => Some((ns.to_string(), val.to_string())),
             _ => None,
         };
-        let docs = self.client.list_docs(tag_filter, limit, None).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(serde_json::json!(docs.iter().map(|d| serde_json::json!({
-            "id": hex::encode(d.id.0),
-            "title": d.title,
-            "updated_ns": d.updated_ns,
-        })).collect::<Vec<_>>()))
+        let docs = self
+            .client
+            .list_docs(tag_filter, limit, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(
+            docs.iter()
+                .map(|d| serde_json::json!({
+                    "id": hex::encode(d.id.0),
+                    "title": d.title,
+                    "updated_ns": d.updated_ns,
+                }))
+                .collect::<Vec<_>>()
+        ))
     }
 
-    async fn upload_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value> {
-        let cid = self.client.upload_file(data, Some(filename), content_type, vec![], "internal", None).await
+    async fn upload_file(
+        &self,
+        data: &[u8],
+        filename: &str,
+        content_type: &str,
+    ) -> Result<serde_json::Value> {
+        let cid = self
+            .client
+            .upload_file(data, Some(filename), content_type, vec![], "internal", None)
+            .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "cid": hex::encode(&cid) }))
     }
 
     async fn download_file(&self, cid_hex: &str) -> Result<Vec<u8>> {
         let cid_bytes = hex::decode(cid_hex)?;
-        self.client.read_file(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client
+            .read_file(&cid_bytes)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn read_file_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>> {
         let cid_bytes = hex::decode(cid_hex)?;
-        self.client.read_file_range(&cid_bytes, start, end).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client
+            .read_file_range(&cid_bytes, start, end)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>> {
         let cid_bytes = hex::decode(cid_hex)?;
-        self.client.read_extracted_text(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client
+            .read_extracted_text(&cid_bytes)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn get_file_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> {
         let cid_bytes = hex::decode(cid_hex)?;
-        let data = self.client.get_file_manifest(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let data = self
+            .client
+            .get_file_manifest(&cid_bytes)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         match data {
             Some(bytes) => {
                 let val = serde_json::from_slice(&bytes)
@@ -174,15 +246,26 @@ impl Backend for LocalBackend {
 
     async fn pin_file(&self, cid_hex: &str) -> Result<()> {
         let cid_bytes = hex::decode(cid_hex)?;
-        self.client.pin_file(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client
+            .pin_file(&cid_bytes)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn unpin_file(&self, cid_hex: &str) -> Result<()> {
         let cid_bytes = hex::decode(cid_hex)?;
-        self.client.unpin_file(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client
+            .unpin_file(&cid_bytes)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
-    async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value> {
+    async fn add_entity(
+        &self,
+        kind: &str,
+        props: serde_json::Value,
+        visibility: Option<&str>,
+    ) -> Result<serde_json::Value> {
         let props_map: BTreeMap<String, serde_json::Value> = match props {
             serde_json::Value::Object(m) => m.into_iter().collect(),
             _ => BTreeMap::new(),
@@ -194,30 +277,44 @@ impl Backend for LocalBackend {
             edges_out: vec![],
         };
         let vis = parse_visibility(visibility);
-        let id = self.client.add_entity(entity, vis, None).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let id = self
+            .client
+            .add_entity(entity, vis, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "id": hex::encode(id.0) }))
     }
 
     async fn get_entity(&self, id: &str) -> Result<Option<serde_json::Value>> {
         let arr = hex_to_32(id)?;
         let eid = EntityId(arr);
-        let entity = self.client.get_entity(&eid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(entity.map(|e| serde_json::json!({
-            "id": hex::encode(e.id.0),
-            "kind": e.kind,
-            "props": e.props,
-            "edges": e.edges_out.iter().map(|edge| serde_json::json!({
-                "id": hex::encode(edge.id.0),
-                "relation": edge.relation,
-                "target": edge.target.tag_label(),
-                "weight": edge.weight,
-                "props": edge.props,
-            })).collect::<Vec<_>>(),
-        })))
+        let entity = self
+            .client
+            .get_entity(&eid)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(entity.map(|e| {
+            serde_json::json!({
+                "id": hex::encode(e.id.0),
+                "kind": e.kind,
+                "props": e.props,
+                "edges": e.edges_out.iter().map(|edge| serde_json::json!({
+                    "id": hex::encode(edge.id.0),
+                    "relation": edge.relation,
+                    "target": edge.target.tag_label(),
+                    "weight": edge.weight,
+                    "props": edge.props,
+                })).collect::<Vec<_>>(),
+            })
+        }))
     }
 
     async fn list_entities(&self, limit: usize) -> Result<serde_json::Value> {
-        let entities = self.client.list_entities(limit, None).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let entities = self
+            .client
+            .list_entities(limit, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(entities.iter().map(|e| serde_json::json!({
             "id": hex::encode(e.id.0),
             "kind": e.kind,
@@ -229,18 +326,36 @@ impl Backend for LocalBackend {
     async fn entity_history(&self, id: &str) -> Result<serde_json::Value> {
         let arr = hex_to_32(id)?;
         let eid = EntityId(arr);
-        let records = self.client.entity_history(&eid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(serde_json::json!(records.iter().map(|r| serde_json::json!({
-            "cid": hex::encode(&r.cid),
-            "op_kind": format!("{:?}", r.op_kind),
-            "wall_ns": r.wall_ns,
-        })).collect::<Vec<_>>()))
+        let records = self
+            .client
+            .entity_history(&eid)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(
+            records
+                .iter()
+                .map(|r| serde_json::json!({
+                    "cid": hex::encode(&r.cid),
+                    "op_kind": format!("{:?}", r.op_kind),
+                    "wall_ns": r.wall_ns,
+                }))
+                .collect::<Vec<_>>()
+        ))
     }
 
-    async fn traverse_from(&self, from: &str, relation: Option<&str>, max_depth: usize) -> Result<serde_json::Value> {
-        let node_ref = NodeRef::from_tag_label(from)
-            .ok_or_else(|| anyhow::anyhow!("invalid node: {from}"))?;
-        let hits = self.client.traverse_from(&node_ref, relation, max_depth).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    async fn traverse_from(
+        &self,
+        from: &str,
+        relation: Option<&str>,
+        max_depth: usize,
+    ) -> Result<serde_json::Value> {
+        let node_ref =
+            NodeRef::from_tag_label(from).ok_or_else(|| anyhow::anyhow!("invalid node: {from}"))?;
+        let hits = self
+            .client
+            .traverse_from(&node_ref, relation, max_depth)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(hits.iter().map(|h| serde_json::json!({
             "node": h.node.tag_label(),
             "depth": h.depth,
@@ -248,7 +363,14 @@ impl Backend for LocalBackend {
         })).collect::<Vec<_>>()))
     }
 
-    async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>, props: BTreeMap<String, serde_json::Value>) -> Result<serde_json::Value> {
+    async fn add_link(
+        &self,
+        source: &str,
+        target: &str,
+        relation: &str,
+        weight: Option<f32>,
+        props: BTreeMap<String, serde_json::Value>,
+    ) -> Result<serde_json::Value> {
         let source_ref = NodeRef::from_tag_label(source)
             .ok_or_else(|| anyhow::anyhow!("invalid source: {source}"))?;
         let target_ref = NodeRef::from_tag_label(target)
@@ -262,22 +384,35 @@ impl Backend for LocalBackend {
             provenance: None,
         };
         let vis = Visibility::Internal;
-        let edge_id = self.client.add_link(&source_ref, edge, vis).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let edge_id = self
+            .client
+            .add_link(&source_ref, edge, vis)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "edge_id": hex::encode(edge_id.0) }))
     }
 
     async fn edges_of(&self, node: &str) -> Result<serde_json::Value> {
-        let node_ref = NodeRef::from_tag_label(node)
-            .ok_or_else(|| anyhow::anyhow!("invalid node: {node}"))?;
-        let edges = self.client.edges_of(&node_ref).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(serde_json::json!(edges.iter().map(|(src, edge)| serde_json::json!({
-            "edge_id": hex::encode(edge.id.0),
-            "source": src.tag_label(),
-            "target": edge.target.tag_label(),
-            "relation": edge.relation,
-            "weight": edge.weight,
-            "props": edge.props,
-        })).collect::<Vec<_>>()))
+        let node_ref =
+            NodeRef::from_tag_label(node).ok_or_else(|| anyhow::anyhow!("invalid node: {node}"))?;
+        let edges = self
+            .client
+            .edges_of(&node_ref)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(
+            edges
+                .iter()
+                .map(|(src, edge)| serde_json::json!({
+                    "edge_id": hex::encode(edge.id.0),
+                    "source": src.tag_label(),
+                    "target": edge.target.tag_label(),
+                    "relation": edge.relation,
+                    "weight": edge.weight,
+                    "props": edge.props,
+                }))
+                .collect::<Vec<_>>()
+        ))
     }
 
     async fn delete_link(&self, edge_id: &str, source: &str) -> Result<serde_json::Value> {
@@ -290,131 +425,238 @@ impl Backend for LocalBackend {
         let eid = EdgeId(arr);
         let source_ref = NodeRef::from_tag_label(source)
             .ok_or_else(|| anyhow::anyhow!("invalid source: {source}"))?;
-        self.client.remove_link_from(&source_ref, &eid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.client
+            .remove_link_from(&source_ref, &eid)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "status": "removed" }))
     }
 
     async fn retract(&self, cid_hex: &str, reason: &str) -> Result<serde_json::Value> {
         let cid_bytes = hex::decode(cid_hex)?;
-        let tombstone = self.client.retract(&cid_bytes, reason).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let tombstone = self
+            .client
+            .retract(&cid_bytes, reason)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "cid": hex::encode(&tombstone) }))
     }
 
     async fn search_unified(&self, query: &str, limit: usize) -> Result<serde_json::Value> {
-        let hits = self.client.search_unified(query, limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(serde_json::json!(hits.iter().map(|h| serde_json::json!({
-            "node_id": h.node_id,
-            "node_type": h.node_type,
-            "label": h.label,
-            "score": h.score,
-            "snippet": h.snippet,
-            "match_contexts": h.match_contexts,
-        })).collect::<Vec<_>>()))
+        let hits = self
+            .client
+            .search_unified(query, limit)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(
+            hits.iter()
+                .map(|h| serde_json::json!({
+                    "node_id": h.node_id,
+                    "node_type": h.node_type,
+                    "label": h.label,
+                    "score": h.score,
+                    "snippet": h.snippet,
+                    "match_contexts": h.match_contexts,
+                }))
+                .collect::<Vec<_>>()
+        ))
     }
 
     async fn resolve_label(&self, node_id: &str) -> Result<Option<String>> {
-        self.client.resolve_label(node_id).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client
+            .resolve_label(node_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn list_all(&self, view: Option<&str>, limit: usize) -> Result<serde_json::Value> {
-        let items = self.client.list_all(view, limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(serde_json::json!(items.iter().map(|(id, nt, label, tags)| serde_json::json!({
-            "node_id": id,
-            "node_type": nt,
-            "label": label,
-            "tags": tags,
-        })).collect::<Vec<_>>()))
+        let items = self
+            .client
+            .list_all(view, limit)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(
+            items
+                .iter()
+                .map(|(id, nt, label, tags)| serde_json::json!({
+                    "node_id": id,
+                    "node_type": nt,
+                    "label": label,
+                    "tags": tags,
+                }))
+                .collect::<Vec<_>>()
+        ))
     }
 
-    async fn add_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
-        self.client.add_tags(node_id, tags).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    async fn add_tags(
+        &self,
+        node_id: &str,
+        tags: Vec<(String, String)>,
+    ) -> Result<serde_json::Value> {
+        self.client
+            .add_tags(node_id, tags)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "status": "tags_added" }))
     }
-    async fn remove_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
-        self.client.remove_tags(node_id, tags).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    async fn remove_tags(
+        &self,
+        node_id: &str,
+        tags: Vec<(String, String)>,
+    ) -> Result<serde_json::Value> {
+        self.client
+            .remove_tags(node_id, tags)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "status": "tags_removed" }))
     }
     async fn get_tags(&self, node_id: &str) -> Result<serde_json::Value> {
-        let tags = self.client.get_tags(node_id).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let tags = self
+            .client
+            .get_tags(node_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "tags": tags }))
     }
 
     async fn list_views(&self) -> Result<serde_json::Value> {
-        let views = self.client.list_views().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let views = self
+            .client
+            .list_views()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(views))
     }
 
-    async fn create_view(&self, name: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
+    async fn create_view(
+        &self,
+        name: &str,
+        tags: Vec<(String, String)>,
+    ) -> Result<serde_json::Value> {
         let view = memvault_api::View {
             name: name.to_string(),
             tags,
-            created_ns: memvault_core::wall_ns(), cid: String::new(), bucket_id: None,
+            created_ns: memvault_core::wall_ns(),
+            cid: String::new(),
+            bucket_id: None,
         };
-        self.client.create_view(view).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.client
+            .create_view(view)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "name": name, "status": "created" }))
     }
 
-    async fn update_view(&self, name: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
+    async fn update_view(
+        &self,
+        name: &str,
+        tags: Vec<(String, String)>,
+    ) -> Result<serde_json::Value> {
         let view = memvault_api::View {
             name: name.to_string(),
             tags,
-            created_ns: memvault_core::wall_ns(), cid: String::new(), bucket_id: None,
+            created_ns: memvault_core::wall_ns(),
+            cid: String::new(),
+            bucket_id: None,
         };
-        self.client.update_view(view).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.client
+            .update_view(view)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "name": name, "status": "updated" }))
     }
 
     async fn delete_view(&self, name: &str) -> Result<serde_json::Value> {
-        self.client.delete_view(name).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.client
+            .delete_view(name)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "name": name, "status": "deleted" }))
     }
 
     async fn retract_node(&self, node_id: &str, reason: &str) -> Result<serde_json::Value> {
-        self.client.retract_node(node_id, reason).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.client
+            .retract_node(node_id, reason)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "node_id": node_id, "status": "retracted" }))
     }
 
     async fn view_members(&self, name: &str) -> Result<serde_json::Value> {
-        let members = self.client.view_members(name).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let members = self
+            .client
+            .view_members(name)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "view": name, "count": members.len(), "members": members }))
     }
 
     async fn bucket_list(&self) -> Result<serde_json::Value> {
-        let buckets = self.client.bucket_list().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let buckets = self
+            .client
+            .bucket_list()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::to_value(&buckets)?)
     }
 
-    async fn bucket_create(&self, name: &str, description: Option<&str>) -> Result<serde_json::Value> {
+    async fn bucket_create(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<serde_json::Value> {
         use memvault_core::classification::Classification;
-        let id = self.client.bucket_create(name, description, Visibility::Internal, Classification::Internal).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let id = self
+            .client
+            .bucket_create(
+                name,
+                description,
+                Visibility::Internal,
+                Classification::Internal,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "bucket_id": hex::encode(id.0), "name": name }))
     }
 
     async fn bucket_get(&self, id: &str) -> Result<Option<serde_json::Value>> {
         let arr = hex_to_32(id)?;
         let bid = memvault_core::BucketId(arr);
-        let info = self.client.bucket_get(&bid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let info = self
+            .client
+            .bucket_get(&bid)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(info.map(|i| serde_json::to_value(&i).unwrap_or_default()))
     }
 
     async fn bucket_rename(&self, id: &str, new_name: &str) -> Result<serde_json::Value> {
         let arr = hex_to_32(id)?;
         let bid = memvault_core::BucketId(arr);
-        self.client.bucket_rename(&bid, new_name).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.client
+            .bucket_rename(&bid, new_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "status": "renamed" }))
     }
 
     async fn bucket_attach(&self, id: &str) -> Result<serde_json::Value> {
         let arr = hex_to_32(id)?;
         let bid = memvault_core::BucketId(arr);
-        self.client.bucket_attach(&bid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.client
+            .bucket_attach(&bid)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "status": "attached" }))
     }
 
     async fn bucket_archive(&self, id: &str, reason: &str) -> Result<serde_json::Value> {
         let arr = hex_to_32(id)?;
         let bid = memvault_core::BucketId(arr);
-        self.client.bucket_archive(&bid, reason).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.client
+            .bucket_archive(&bid, reason)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "status": "archived" }))
     }
 
@@ -433,18 +675,31 @@ impl Backend for LocalBackend {
             limit: Some(limit),
             ..Default::default()
         };
-        let records = self.client.audit(query).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(serde_json::json!(records.iter().map(|r| serde_json::json!({
-            "cid": hex::encode(&r.cid),
-            "op_kind": format!("{:?}", r.op_kind),
-            "author": hex::encode(&r.author),
-            "wall_ns": r.wall_ns,
-            "tags": r.tags,
-        })).collect::<Vec<_>>()))
+        let records = self
+            .client
+            .audit(query)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(
+            records
+                .iter()
+                .map(|r| serde_json::json!({
+                    "cid": hex::encode(&r.cid),
+                    "op_kind": format!("{:?}", r.op_kind),
+                    "author": hex::encode(&r.author),
+                    "wall_ns": r.wall_ns,
+                    "tags": r.tags,
+                }))
+                .collect::<Vec<_>>()
+        ))
     }
 
     async fn status(&self) -> Result<serde_json::Value> {
-        let s = self.client.status().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let s = self
+            .client
+            .status()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(s))
     }
 }

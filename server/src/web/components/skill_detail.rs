@@ -13,7 +13,7 @@ use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, HelpText, SectionHeading,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[server]
 async fn get_skill(id: String) -> Result<Skill, ServerFnError> {
@@ -519,21 +519,17 @@ async fn get_channel_nix_packages(channel_id: String) -> Result<Vec<String>, Ser
     let uuid: uuid::Uuid = channel_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let pkgs: Vec<String> = sqlx::query_scalar(
-        "SELECT unnest(nix_packages) FROM skill_channels WHERE id = $1",
-    )
-    .bind(uuid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let pkgs: Vec<String> =
+        sqlx::query_scalar("SELECT unnest(nix_packages) FROM skill_channels WHERE id = $1")
+            .bind(uuid)
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(pkgs)
 }
 
 #[server]
-async fn add_channel_nix_package(
-    channel_id: String,
-    package: String,
-) -> Result<(), ServerFnError> {
+async fn add_channel_nix_package(channel_id: String, package: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;

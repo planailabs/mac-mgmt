@@ -50,7 +50,8 @@ fn load_or_generate_key(path: &Path) -> Result<Keypair> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let encoded = kp.to_protobuf_encoding()
+        let encoded = kp
+            .to_protobuf_encoding()
             .map_err(|e| anyhow::anyhow!("failed to encode key: {e}"))?;
         std::fs::write(path, &encoded)?;
         #[cfg(unix)]
@@ -176,21 +177,21 @@ impl RelaySwarm {
                     .upgrade(libp2p::core::upgrade::Version::V1)
                     .authenticate(libp2p::noise::Config::new(key)?)
                     .multiplex(libp2p::yamux::Config::default())
-                    .map(|(peer, muxer), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer)));
+                    .map(|(peer, muxer), _| {
+                        (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer))
+                    });
                 Ok(ws.boxed())
             })?
             .with_behaviour(|key| {
-                let identify_cfg = identify::Config::new(
-                    "/mac-mgmt-relay/1.0.0".to_string(),
-                    key.public(),
-                )
-                .with_agent_version({
-                    use base64::Engine;
-                    let proxy_b64 = proxy_url
-                        .map(|u| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(u))
-                        .unwrap_or_default();
-                    format!("mac-mgmt-relay/{}/{proxy_b64}", env!("CARGO_PKG_VERSION"))
-                });
+                let identify_cfg =
+                    identify::Config::new("/mac-mgmt-relay/1.0.0".to_string(), key.public())
+                        .with_agent_version({
+                            use base64::Engine;
+                            let proxy_b64 = proxy_url
+                                .map(|u| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(u))
+                                .unwrap_or_default();
+                            format!("mac-mgmt-relay/{}/{proxy_b64}", env!("CARGO_PKG_VERSION"))
+                        });
 
                 let relay_server = libp2p::relay::Behaviour::new(
                     key.public().to_peer_id(),
@@ -281,7 +282,10 @@ impl RelaySwarm {
 
                 let rpc_map_cleanup = Arc::clone(&rpc_map);
                 tokio::spawn(async move {
-                    handle_daemon_rpc(peer_id, stream, registry, req_rx, server_url, gtx, ssh_bridge, ssh_id).await;
+                    handle_daemon_rpc(
+                        peer_id, stream, registry, req_rx, server_url, gtx, ssh_bridge, ssh_id,
+                    )
+                    .await;
                     rpc_map_cleanup.write().await.remove(&peer_id);
                 });
             }
@@ -429,7 +433,10 @@ async fn handle_daemon_rpc(
     let mut connected_at: Option<chrono::DateTime<chrono::Utc>> = None;
     let mut registered_cluster_id: Option<uuid::Uuid> = None;
     let mut next_outbound_id: u64 = 1;
-    let mut pending_outbound: HashMap<u64, tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>> = HashMap::new();
+    let mut pending_outbound: HashMap<
+        u64,
+        tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
+    > = HashMap::new();
 
     loop {
         // Read a frame from the daemon OR handle an outbound request from the relay.
@@ -526,7 +533,10 @@ async fn handle_daemon_rpc(
                             // Read back the allocated SSH port (set by SshBridge).
                             let ssh_port = {
                                 let daemons = registry.list_ssh_targets();
-                                daemons.iter().find(|t| t.instance_id == iid).and_then(|t| t.ssh_port)
+                                daemons
+                                    .iter()
+                                    .find(|t| t.instance_id == iid)
+                                    .and_then(|t| t.ssh_port)
                             };
                             serde_json::json!({
                                 "type": "ok",

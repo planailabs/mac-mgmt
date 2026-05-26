@@ -28,9 +28,15 @@ async fn list_organizations() -> Result<Vec<OrgRow>, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|(id, name, member_count, created_at)| OrgRow {
-        id, name, member_count, created_at: created_at.format("%Y-%m-%d").to_string(),
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, member_count, created_at)| OrgRow {
+            id,
+            name,
+            member_count,
+            created_at: created_at.format("%Y-%m-%d").to_string(),
+        })
+        .collect())
 }
 
 #[component]

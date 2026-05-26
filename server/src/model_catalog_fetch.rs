@@ -36,7 +36,10 @@ pub async fn fetch_ollama_models(base_url: &str) -> Result<ModelSource, String> 
 
         let resp = client
             .get(&url)
-            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:149.0) Gecko/20100101 Firefox/149.0")
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (X11; Linux x86_64; rv:149.0) Gecko/20100101 Firefox/149.0",
+            )
             .header("HX-Request", "true")
             .header("HX-Current-URL", format!("{base_url}/search?o=newest"))
             .header("Referer", format!("{base_url}/search?o=newest"))
@@ -92,12 +95,11 @@ pub async fn fetch_ollama_models(base_url: &str) -> Result<ModelSource, String> 
                 .next()
                 .and_then(|a| a.value().attr("href"))
                 .unwrap_or_default();
-            let model_id = href
-                .strip_prefix("/library/")
-                .unwrap_or(&name)
-                .to_string();
+            let model_id = href.strip_prefix("/library/").unwrap_or(&name).to_string();
 
-            tracing::debug!("  {model_id} sizes={sizes:?} caps={caps:?} tools={has_tools} cloud={is_cloud}");
+            tracing::debug!(
+                "  {model_id} sizes={sizes:?} caps={caps:?} tools={has_tools} cloud={is_cloud}"
+            );
 
             // Emit individual `:size` entries for each advertised size,
             // plus a base entry when there are no sizes or as the default.
@@ -127,7 +129,10 @@ pub async fn fetch_ollama_models(base_url: &str) -> Result<ModelSource, String> 
             page_count += 1;
         }
 
-        tracing::info!("ollama: page {page} yielded {page_count} models (total: {})", entries.len());
+        tracing::info!(
+            "ollama: page {page} yielded {page_count} models (total: {})",
+            entries.len()
+        );
 
         // Check for next page: look for an <li> with hx-get="/search?page=N"
         let has_next = doc.select(&next_page_sel).any(|el| {
@@ -147,7 +152,10 @@ pub async fn fetch_ollama_models(base_url: &str) -> Result<ModelSource, String> 
         tokio::time::sleep(delay).await;
     }
 
-    tracing::info!("ollama: scraped {} models total across {page} page(s)", entries.len());
+    tracing::info!(
+        "ollama: scraped {} models total across {page} page(s)",
+        entries.len()
+    );
 
     let groups = auto_group(entries, |_| vec![]);
 
@@ -262,7 +270,12 @@ pub async fn fetch_lms_models(base_url: &str) -> Result<ModelSource, String> {
                             if let Some(s) = kw.as_str() {
                                 // Model IDs contain a `/` and are lowercase
                                 // e.g. "qwen/qwen3-4b-2507", skip display patterns like "qwen/Qwen3"
-                                if s.contains('/') && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '/' | '-' | '_' | '.'))
+                                if s.contains('/')
+                                    && s.chars().all(|c| {
+                                        c.is_ascii_lowercase()
+                                            || c.is_ascii_digit()
+                                            || matches!(c, '/' | '-' | '_' | '.')
+                                    })
                                 {
                                     model_ids.push(s.to_string());
                                 }
@@ -287,7 +300,11 @@ pub async fn fetch_lms_models(base_url: &str) -> Result<ModelSource, String> {
                 ..Default::default()
             });
         } else {
-            tracing::debug!("lms: {slug}: {} variant(s): {:?}", model_ids.len(), model_ids);
+            tracing::debug!(
+                "lms: {slug}: {} variant(s): {:?}",
+                model_ids.len(),
+                model_ids
+            );
             for mid in &model_ids {
                 let short_id = mid.split('/').last().unwrap_or(mid).to_string();
                 let variant_display = if model_ids.len() == 1 {
@@ -310,7 +327,11 @@ pub async fn fetch_lms_models(base_url: &str) -> Result<ModelSource, String> {
         }
     }
 
-    tracing::info!("lms: scraped {} models from {} pages", entries.len(), slugs.len());
+    tracing::info!(
+        "lms: scraped {} models from {} pages",
+        entries.len(),
+        slugs.len()
+    );
 
     let groups = auto_group(entries, |entry| {
         // Group by org prefix (e.g. "qwen", "google", "nvidia")
@@ -356,9 +377,7 @@ pub async fn fetch_openclaw_models(
     tracing::info!("openclaw: fetching {url}");
 
     let client = reqwest::Client::new();
-    let mut req = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10));
+    let mut req = client.get(&url).timeout(std::time::Duration::from_secs(10));
     if let Some(tok) = token {
         req = req.bearer_auth(tok);
     }
@@ -677,10 +696,7 @@ pub fn auto_group(
     build_groups_recursive(items, 0)
 }
 
-fn build_groups_recursive(
-    items: Vec<(Vec<String>, ModelEntry)>,
-    depth: usize,
-) -> Vec<ModelNode> {
+fn build_groups_recursive(items: Vec<(Vec<String>, ModelEntry)>, depth: usize) -> Vec<ModelNode> {
     if items.is_empty() {
         return vec![];
     }

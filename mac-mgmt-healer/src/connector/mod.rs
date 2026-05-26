@@ -120,7 +120,6 @@ pub async fn resolve_llm(
     forced_model: Option<&str>,
     token_ctx: Option<TokenEventContext>,
 ) -> Result<LlmHandle> {
-
     let try_ollama = forced_provider.is_none() || forced_provider == Some("ollama");
     let try_anthropic = forced_provider.is_none() || forced_provider == Some("anthropic");
     let try_openrouter = forced_provider.is_none() || forced_provider == Some("openrouter");
@@ -153,8 +152,7 @@ pub async fn resolve_llm(
                     .client(ollama_client)
                     .default_prompt_model(&model)
                     .default_options(
-                        swiftide::integrations::openai::Options::builder()
-                            .temperature(0.0)
+                        swiftide::integrations::openai::Options::builder().temperature(0.0),
                     )
                     .build()
                     .context("failed to build Ollama integration")?;
@@ -214,9 +212,10 @@ pub async fn resolve_llm(
                     let input = usage.prompt_tokens;
                     let output = usage.completion_tokens;
                     Box::pin(async move {
-                        let new_total = store.append_token_event(
-                            sid, &provider, &model, input, output,
-                        ).await.unwrap_or(0);
+                        let new_total = store
+                            .append_token_event(sid, &provider, &model, input, output)
+                            .await
+                            .unwrap_or(0);
                         let budget = store.get_token_budget(sid).await.unwrap_or(0);
                         if budget > 0 && new_total >= budget {
                             notify.notify_one();
@@ -274,9 +273,10 @@ pub async fn resolve_llm(
                     let input = usage.prompt_tokens;
                     let output = usage.completion_tokens;
                     Box::pin(async move {
-                        let new_total = store.append_token_event(
-                            sid, &provider, &model, input, output,
-                        ).await.unwrap_or(0);
+                        let new_total = store
+                            .append_token_event(sid, &provider, &model, input, output)
+                            .await
+                            .unwrap_or(0);
                         let budget = store.get_token_budget(sid).await.unwrap_or(0);
                         if budget > 0 && new_total >= budget {
                             notify.notify_one();
@@ -307,10 +307,7 @@ pub async fn resolve_llm(
             .openai_compat_url
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("openai_compat requested but no base URL configured"))?;
-        let api_key = config
-            .openai_compat_api_key
-            .as_deref()
-            .unwrap_or("no-key");
+        let api_key = config.openai_compat_api_key.as_deref().unwrap_or("no-key");
 
         let model = forced_model
             .map(String::from)

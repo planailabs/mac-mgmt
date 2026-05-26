@@ -109,17 +109,11 @@ impl CloudServer {
 
         // Rehydrate if a cleaner session was used.
         if let Some(ref session_id) = params.cleaner_session_id {
-            match crate::rehydrate::rehydrate(
-                self.state.cleaner_dir(),
-                session_id,
-                &response.text,
-            ) {
+            match crate::rehydrate::rehydrate(self.state.cleaner_dir(), session_id, &response.text)
+            {
                 Ok(rehydrated) => rehydrated,
                 Err(e) => {
-                    format!(
-                        "{}\n\n[Warning: rehydration failed: {e}]",
-                        response.text
-                    )
+                    format!("{}\n\n[Warning: rehydration failed: {e}]", response.text)
                 }
             }
         } else {
@@ -144,9 +138,11 @@ impl CloudServer {
         ));
         out.push_str(&format!("Ollama fallback: {}\n", self.state.ollama_url()));
         out.push_str(&format!("Strict mode: {}\n", self.state.strict()));
-        out.push_str("\nUse model prefixes like 'anthropic/...', 'openai/...', 'google/...' \
+        out.push_str(
+            "\nUse model prefixes like 'anthropic/...', 'openai/...', 'google/...' \
                       to route through LiteLLM. Use 'ollama/...' or local model names for \
-                      direct Ollama access.");
+                      direct Ollama access.",
+        );
         out
     }
 

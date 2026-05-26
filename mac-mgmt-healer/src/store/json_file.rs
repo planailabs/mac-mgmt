@@ -18,8 +18,8 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::session::models::{HealerMessage, HealerSession, SessionState, StaffPing};
 use super::*;
+use crate::session::models::{HealerMessage, HealerSession, SessionState, StaffPing};
 
 /// On-disk format: one file per session.
 #[derive(Serialize, Deserialize)]
@@ -57,8 +57,8 @@ impl JsonFileStore {
         if !path.exists() {
             return Ok(None);
         }
-        let data = std::fs::read(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
+        let data =
+            std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
         let sf: SessionFile = serde_json::from_slice(&data)
             .with_context(|| format!("failed to parse {}", path.display()))?;
         Ok(Some(sf))
@@ -107,8 +107,7 @@ impl JsonFileStore {
 
 fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, data)
-        .with_context(|| format!("failed to write {}", tmp.display()))?;
+    std::fs::write(&tmp, data).with_context(|| format!("failed to write {}", tmp.display()))?;
     std::fs::rename(&tmp, path)
         .with_context(|| format!("failed to rename {} → {}", tmp.display(), path.display()))?;
     Ok(())
@@ -482,7 +481,9 @@ impl HealerStore for JsonFileStore {
     ) -> Result<u64> {
         let total = (input_tokens + output_tokens) as u64;
         self.mutate(session_id, |sf| {
-            let used = sf.session.state_data
+            let used = sf
+                .session
+                .state_data
                 .get("tokens_used")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0)
@@ -493,7 +494,8 @@ impl HealerStore for JsonFileStore {
     }
 
     async fn get_token_usage(&self, session_id: Uuid) -> Result<u64> {
-        Ok(self.read_file(session_id)?
+        Ok(self
+            .read_file(session_id)?
             .and_then(|sf| sf.session.state_data.get("tokens_used")?.as_u64())
             .unwrap_or(0))
     }
@@ -505,7 +507,8 @@ impl HealerStore for JsonFileStore {
     }
 
     async fn get_token_budget(&self, session_id: Uuid) -> Result<u64> {
-        Ok(self.read_file(session_id)?
+        Ok(self
+            .read_file(session_id)?
             .and_then(|sf| sf.session.state_data.get("token_budget")?.as_u64())
             .unwrap_or(0))
     }

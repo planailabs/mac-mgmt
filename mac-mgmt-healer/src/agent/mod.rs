@@ -130,7 +130,8 @@ pub fn build_system_prompt(
             "- Shell commands (use `run_command` with command_name): {}\n",
             shell_commands.join(", ")
         ));
-        prompt.push_str("  Use `list_shell_commands` to see descriptions and accepted arguments.\n");
+        prompt
+            .push_str("  Use `list_shell_commands` to see descriptions and accepted arguments.\n");
     }
     prompt.push_str("- `fetch_logs` — fetch logs, optionally filtered by service\n");
     if !other_instances.is_empty() {
@@ -150,11 +151,17 @@ pub fn build_system_prompt(
     prompt.push_str("- `wait_for_node` — wait for the node to reconnect (e.g. after a reboot)\n");
     prompt.push_str("- `get_probe_status` — query fresh health probe results and system resources from the latest heartbeat\n");
     if !diagnosis_only {
-        prompt.push_str("- `wait` — pause for N seconds (1-300). Use after config changes or restarts.\n");
-        prompt.push_str("- `request_assessment` — trigger an immediate health probe run on the instance\n\n");
+        prompt.push_str(
+            "- `wait` — pause for N seconds (1-300). Use after config changes or restarts.\n",
+        );
+        prompt.push_str(
+            "- `request_assessment` — trigger an immediate health probe run on the instance\n\n",
+        );
         prompt.push_str("### Cluster config management\n");
         prompt.push_str("- `get_config` — read the current cluster configuration\n");
-        prompt.push_str("- `patch_config` — merge a JSON patch into the config (only changed fields)\n");
+        prompt.push_str(
+            "- `patch_config` — merge a JSON patch into the config (only changed fields)\n",
+        );
         prompt.push_str("- `set_config` — replace the entire cluster config\n");
         prompt.push_str("- `list_skills` / `add_skill` / `remove_skill` — manage cluster skills\n");
         prompt.push_str("- `list_mcp_servers` / `add_mcp_server` / `remove_mcp_server` — manage cluster MCP servers\n");
@@ -256,14 +263,16 @@ pub fn build_system_prompt(
 
     // Approval mode
     if !auto_approve {
-        prompt.push_str("\n## Approval Required\n\
+        prompt.push_str(
+            "\n## Approval Required\n\
             This session requires human approval before remediation. \
             You are in diagnosis-only mode — mutating tools (write_file, run_command, \
             config changes, etc.) are not available.\n\
             Complete your diagnosis using the available read-only tools. \
             Pin your findings with the `pin` tool (use the \"diagnosis\" slot). \
             When ready, call `set_phase(\"remediating\")` to request approval. \
-            The session will pause for human review before remediation tools are unlocked.\n");
+            The session will pause for human review before remediation tools are unlocked.\n",
+        );
     }
 
     // ML model hints
@@ -272,14 +281,19 @@ pub fn build_system_prompt(
             || hints.outcome_prediction.is_some()
             || !hints.similar_sessions.is_empty();
         if has_content {
-            prompt.push_str("\n## ML Model Hints\n\
+            prompt.push_str(
+                "\n## ML Model Hints\n\
                 The following are predictions from trained models based on past session data. \
-                Use these as soft guidance — they may be wrong.\n\n");
+                Use these as soft guidance — they may be wrong.\n\n",
+            );
 
             if !hints.tool_recommendations.is_empty() {
                 prompt.push_str("**Suggested tools** (ranked by historical relevance):\n");
                 for (tool, confidence) in hints.tool_recommendations.iter().take(5) {
-                    prompt.push_str(&format!("- `{tool}` ({:.0}% confidence)\n", confidence * 100.0));
+                    prompt.push_str(&format!(
+                        "- `{tool}` ({:.0}% confidence)\n",
+                        confidence * 100.0
+                    ));
                 }
                 prompt.push('\n');
             }
@@ -371,7 +385,8 @@ pub fn build_system_prompt_external(
     if let Some(start) = prompt.find(staff_ping_section_start) {
         // Find the next section header (## )
         let rest = &prompt[start + staff_ping_section_start.len()..];
-        let section_end = rest.find("\n## ")
+        let section_end = rest
+            .find("\n## ")
             .map(|pos| start + staff_ping_section_start.len() + pos)
             .unwrap_or(prompt.len());
         let replacement = "## When to escalate to the human operator\n\
@@ -420,7 +435,10 @@ pub fn build_system_prompt_finetuned(
         prompt.push_str("## Cluster Instances\n");
         for inst in other_instances {
             let status = if inst.healthy { "healthy" } else { "UNHEALTHY" };
-            prompt.push_str(&format!("- {} ({}): {}\n", inst.instance_prefix, inst.hostname, status));
+            prompt.push_str(&format!(
+                "- {} ({}): {}\n",
+                inst.instance_prefix, inst.hostname, status
+            ));
         }
         prompt.push('\n');
     }
@@ -455,13 +473,21 @@ pub fn build_system_prompt_finetuned(
             prompt.push_str("## ML Hints\n");
             if !hints.tool_recommendations.is_empty() {
                 prompt.push_str("Suggested tools: ");
-                let tools: Vec<_> = hints.tool_recommendations.iter().take(3).map(|(t, c)| format!("`{t}` ({:.0}%)", c * 100.0)).collect();
+                let tools: Vec<_> = hints
+                    .tool_recommendations
+                    .iter()
+                    .take(3)
+                    .map(|(t, c)| format!("`{t}` ({:.0}%)", c * 100.0))
+                    .collect();
                 prompt.push_str(&tools.join(", "));
                 prompt.push('\n');
             }
             if let Some((label, prob)) = &hints.outcome_prediction {
                 if *prob > 0.6 {
-                    prompt.push_str(&format!("Outcome forecast: {label} ({:.0}%)\n", prob * 100.0));
+                    prompt.push_str(&format!(
+                        "Outcome forecast: {label} ({:.0}%)\n",
+                        prob * 100.0
+                    ));
                 }
             }
             prompt.push('\n');

@@ -7,7 +7,11 @@ pub struct PtyPair {
     pub child: Child,
 }
 
-pub fn spawn_shell(cols: u32, rows: u32, term: &str) -> Result<(pty_process::OwnedReadPty, PtyPair)> {
+pub fn spawn_shell(
+    cols: u32,
+    rows: u32,
+    term: &str,
+) -> Result<(pty_process::OwnedReadPty, PtyPair)> {
     let (pty, pts) = pty_process::open().context("failed to open PTY")?;
     pty.resize(pty_process::Size::new(rows as u16, cols as u16))
         .context("failed to set initial PTY size")?;

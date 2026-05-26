@@ -89,10 +89,7 @@ impl CleanerServer {
         }
 
         // Step 3: Build deduplicated entity list.
-        let entities = self
-            .state
-            .build_entities(&session_id, detections)
-            .await;
+        let entities = self.state.build_entities(&session_id, detections).await;
 
         if entities.is_empty() {
             return "No PII or secrets detected in the document.".to_string();

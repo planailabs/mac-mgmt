@@ -19,22 +19,22 @@ pub enum PillVariant {
 impl PillVariant {
     fn pill_class(self) -> &'static str {
         match self {
-            Self::Muted  => "pill-muted",
-            Self::Ok     => "pill-ok",
-            Self::Warn   => "pill-warn",
-            Self::Bad    => "pill-bad",
-            Self::Info   => "pill-info",
+            Self::Muted => "pill-muted",
+            Self::Ok => "pill-ok",
+            Self::Warn => "pill-warn",
+            Self::Bad => "pill-bad",
+            Self::Info => "pill-info",
             Self::Accent => "pill-accent",
         }
     }
 
     fn dot_class(self) -> &'static str {
         match self {
-            Self::Muted  => "dot-muted",
-            Self::Ok     => "dot-ok",
-            Self::Warn   => "dot-warn",
-            Self::Bad    => "dot-bad",
-            Self::Info   => "dot-info",
+            Self::Muted => "dot-muted",
+            Self::Ok => "dot-ok",
+            Self::Warn => "dot-warn",
+            Self::Bad => "dot-bad",
+            Self::Info => "dot-info",
             Self::Accent => "dot-accent",
         }
     }
@@ -59,7 +59,8 @@ pub fn Pill(
     #[props(default, into)] title: Option<String>,
     #[props(default, into)] class: String,
     /// Custom color (CSS value). Overrides variant styling with inline color + tinted background.
-    #[props(default, into)] color: Option<String>,
+    #[props(default, into)]
+    color: Option<String>,
     children: Element,
 ) -> Element {
     let mono_cls = if mono { "pill-mono" } else { "" };

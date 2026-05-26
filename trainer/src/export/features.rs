@@ -76,28 +76,29 @@ pub fn extract_tool_selector_samples(
                 .as_ref()
                 .and_then(|m| m.get("tool_name"))
                 .and_then(|v| v.as_str())
-                && let Some(tool_class) = Vocabulary::tool_class(tool_name) {
-                    // Build the sample from context accumulated so far
-                    let ctx_len = context_tokens.len().min(MAX_SEQ_LEN);
-                    let ctx_start = context_tokens.len().saturating_sub(MAX_SEQ_LEN);
+            && let Some(tool_class) = Vocabulary::tool_class(tool_name)
+        {
+            // Build the sample from context accumulated so far
+            let ctx_len = context_tokens.len().min(MAX_SEQ_LEN);
+            let ctx_start = context_tokens.len().saturating_sub(MAX_SEQ_LEN);
 
-                    let mut history = vec![tokenizer::NUM_TOOLS; TOOL_HISTORY_LEN];
-                    let hist_start = tool_history.len().saturating_sub(TOOL_HISTORY_LEN);
-                    for (i, &h) in tool_history[hist_start..].iter().enumerate() {
-                        history[i] = h;
-                    }
+            let mut history = vec![tokenizer::NUM_TOOLS; TOOL_HISTORY_LEN];
+            let hist_start = tool_history.len().saturating_sub(TOOL_HISTORY_LEN);
+            for (i, &h) in tool_history[hist_start..].iter().enumerate() {
+                history[i] = h;
+            }
 
-                    samples.push(ToolSelectorSample {
-                        context_tokens: context_tokens[ctx_start..].to_vec(),
-                        context_roles: context_roles[ctx_start..ctx_start + ctx_len].to_vec(),
-                        tool_history: history,
-                        phase: current_phase,
-                        target_tool: tool_class,
-                        session_outcome: session.state.clone(),
-                    });
+            samples.push(ToolSelectorSample {
+                context_tokens: context_tokens[ctx_start..].to_vec(),
+                context_roles: context_roles[ctx_start..ctx_start + ctx_len].to_vec(),
+                tool_history: history,
+                phase: current_phase,
+                target_tool: tool_class,
+                session_outcome: session.state.clone(),
+            });
 
-                    tool_history.push(tool_class);
-                }
+            tool_history.push(tool_class);
+        }
 
         // Track phase changes from set_phase tool results
         if msg.role == "tool_result"
@@ -106,22 +107,23 @@ pub fn extract_tool_selector_samples(
                 .as_ref()
                 .and_then(|m| m.get("tool_name"))
                 .and_then(|v| v.as_str())
-                && tool_name == "set_phase" {
-                    // Try to extract the phase from the content
-                    let content_lower = msg.content.to_lowercase();
-                    for phase in &[
-                        "diagnosing",
-                        "remediating",
-                        "verifying",
-                        "done",
-                        "needs_human_attention",
-                    ] {
-                        if content_lower.contains(phase) {
-                            current_phase = Vocabulary::phase_token(phase);
-                            break;
-                        }
-                    }
+            && tool_name == "set_phase"
+        {
+            // Try to extract the phase from the content
+            let content_lower = msg.content.to_lowercase();
+            for phase in &[
+                "diagnosing",
+                "remediating",
+                "verifying",
+                "done",
+                "needs_human_attention",
+            ] {
+                if content_lower.contains(phase) {
+                    current_phase = Vocabulary::phase_token(phase);
+                    break;
                 }
+            }
+        }
 
         // Accumulate context tokens
         let role_token = Vocabulary::role_token(&msg.role);
@@ -256,9 +258,7 @@ pub fn extract_issue_classifier_samples(
         .staff_pings
         .iter()
         .filter_map(|ping| {
-            let target = CATEGORY_NAMES
-                .iter()
-                .position(|&c| c == ping.category)?;
+            let target = CATEGORY_NAMES.iter().position(|&c| c == ping.category)?;
             Some(IssueClassifierSample {
                 tokens: tokens.clone(),
                 roles: roles.clone(),
@@ -317,19 +317,20 @@ pub fn extract_embedder_sample(
                 .as_ref()
                 .and_then(|m| m.get("tool_name"))
                 .and_then(|v| v.as_str())
-                && tool_name == "pin" {
-                    let pin_tokens = vocab.encode_text(&msg.content);
-                    for &t in &pin_tokens {
-                        if tokens.len() >= MAX_SEQ_LEN - 1 {
-                            break;
-                        }
-                        tokens.push(t);
-                        roles.push(tokenizer::ROLE_PIN);
-                    }
-                    tokens.push(tokenizer::SEP);
-                    roles.push(tokenizer::ROLE_PIN);
-                    break; // Only first pin
+            && tool_name == "pin"
+        {
+            let pin_tokens = vocab.encode_text(&msg.content);
+            for &t in &pin_tokens {
+                if tokens.len() >= MAX_SEQ_LEN - 1 {
+                    break;
                 }
+                tokens.push(t);
+                roles.push(tokenizer::ROLE_PIN);
+            }
+            tokens.push(tokenizer::SEP);
+            roles.push(tokenizer::ROLE_PIN);
+            break; // Only first pin
+        }
     }
 
     // Add first 5 tool results

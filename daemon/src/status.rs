@@ -50,7 +50,10 @@ pub async fn print_status(port: Option<u16>) -> Result<()> {
         let upgrade = if svc.upgrade_pending { "pending" } else { "-" };
         let busy = if svc.busy { "yes" } else { "-" };
         let healthy = if svc.healthy { "yes" } else { "NO" };
-        println!("{:<12} {:<10} {:<9} {:<9} {}", svc.name, phase, upgrade, busy, healthy);
+        println!(
+            "{:<12} {:<10} {:<9} {:<9} {}",
+            svc.name, phase, upgrade, busy, healthy
+        );
     }
 
     Ok(())

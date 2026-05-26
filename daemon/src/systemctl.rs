@@ -226,11 +226,7 @@ fn print_status(svc: &ServiceStatus) {
     println!("     Loaded: loaded (mac-mgmt-services; managed)");
     if is_active {
         let pid = svc.pid.unwrap();
-        let program = svc
-            .spec
-            .as_ref()
-            .map(|s| s.program.as_str())
-            .unwrap_or("?");
+        let program = svc.spec.as_ref().map(|s| s.program.as_str()).unwrap_or("?");
         println!("     Active: active (running)");
         println!("   Main PID: {pid} ({program})");
     } else {
@@ -264,9 +260,7 @@ pub fn print_list_units(services: &[ServiceStatus]) {
         );
     }
     println!();
-    println!(
-        "LEGEND: LOAD   \u{2192} Reflects whether the unit definition was properly loaded."
-    );
+    println!("LEGEND: LOAD   \u{2192} Reflects whether the unit definition was properly loaded.");
     println!(
         "        ACTIVE \u{2192} The high-level unit activation state, i.e. generalization of SUB."
     );
@@ -320,9 +314,7 @@ fn split_flags_and_units(args: &[String]) -> (Vec<String>, Vec<String>) {
         if arg.starts_with('-') {
             flags.push(arg.clone());
             // `-s` and `--signal` take a value argument.
-            if (arg == "-s" || arg == "--signal" || arg == "--kill-who")
-                && i + 1 < args.len()
-            {
+            if (arg == "-s" || arg == "--signal" || arg == "--kill-who") && i + 1 < args.len() {
                 flags.push(args[i + 1].clone());
                 skip_next = true;
             }

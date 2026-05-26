@@ -11,7 +11,7 @@ use crate::web::components::ui::{
     SortState, SortableTh, Td, TdMuted,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct GroupEntry {
@@ -146,12 +146,19 @@ fn GroupTable(list: Vec<GroupEntry>) -> Element {
         let mut items: Vec<GroupEntry> = if q.is_empty() {
             list_clone.clone()
         } else {
-            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
+            list_clone
+                .iter()
+                .filter(|e| e.matches_search(&q))
+                .cloned()
+                .collect()
         };
         let (key, asc) = sort.read().clone();
         items.sort_by(|a, b| {
             let ord = match key.as_str() {
-                "description" => a.description.to_lowercase().cmp(&b.description.to_lowercase()),
+                "description" => a
+                    .description
+                    .to_lowercase()
+                    .cmp(&b.description.to_lowercase()),
                 "members" => a.member_count.cmp(&b.member_count),
                 _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             };

@@ -73,10 +73,9 @@ impl SharedState {
             }
             None => {
                 let inner = self.inner.read().await;
-                inner
-                    .last_created
-                    .clone()
-                    .ok_or_else(|| "no container created yet -- use system_create first".to_string())
+                inner.last_created.clone().ok_or_else(|| {
+                    "no container created yet -- use system_create first".to_string()
+                })
             }
         }
     }

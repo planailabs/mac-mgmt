@@ -1,8 +1,8 @@
 use burn::config::Config;
 use burn::module::Module;
 use burn::nn::{Dropout, DropoutConfig, Linear, LinearConfig};
-use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::Tensor;
+use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::train::{ClassificationOutput, TrainOutput, TrainStep, ValidStep};
 
 use crate::export::dataset::OutcomeBatch;
@@ -43,18 +43,17 @@ impl OutcomePredictorConfig {
 
 impl<B: Backend> OutcomePredictor<B> {
     pub fn forward(&self, batch: &OutcomeBatch<B>) -> Tensor<B, 2> {
-        let encoded =
-            self.encoder
-                .forward(batch.tokens.clone(), batch.roles.clone(), batch.mask.clone());
+        let encoded = self.encoder.forward(
+            batch.tokens.clone(),
+            batch.roles.clone(),
+            batch.mask.clone(),
+        );
         let pooled = self.encoder.pool(encoded, batch.mask.clone());
         let pooled = self.dropout.forward(pooled);
         self.classifier.forward(pooled) // [batch, NUM_OUTCOMES]
     }
 
-    pub fn forward_classification(
-        &self,
-        batch: &OutcomeBatch<B>,
-    ) -> ClassificationOutput<B> {
+    pub fn forward_classification(&self, batch: &OutcomeBatch<B>) -> ClassificationOutput<B> {
         let logits = self.forward(batch);
         let targets = batch.targets.clone();
         let loss = burn::nn::loss::CrossEntropyLossConfig::new()
@@ -78,9 +77,7 @@ impl<B: AutodiffBackend> TrainStep<OutcomeBatch<B>, ClassificationOutput<B>>
     }
 }
 
-impl<B: Backend> ValidStep<OutcomeBatch<B>, ClassificationOutput<B>>
-    for OutcomePredictor<B>
-{
+impl<B: Backend> ValidStep<OutcomeBatch<B>, ClassificationOutput<B>> for OutcomePredictor<B> {
     fn step(&self, batch: OutcomeBatch<B>) -> ClassificationOutput<B> {
         self.forward_classification(&batch)
     }

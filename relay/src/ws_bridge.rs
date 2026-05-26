@@ -10,7 +10,7 @@
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
-use mac_mgmt_common::framing::{TAG_JSON as TAG_TEXT, TAG_BINARY, TAG_END as TAG_CLOSE};
+use mac_mgmt_common::framing::{TAG_BINARY, TAG_END as TAG_CLOSE, TAG_JSON as TAG_TEXT};
 
 /// Bridge an axum WebSocket to a libp2p `Stream` (tunnel substream).
 pub async fn bridge_ws_to_stream(ws: WebSocket, mut stream: libp2p::Stream) {
@@ -108,9 +108,7 @@ pub async fn bridge_ws_to_libp2p_listener(ws: WebSocket, p2p_port: u16) {
         while let Some(msg) = ws_stream.next().await {
             let tung_msg = match msg {
                 Ok(Message::Binary(data)) => tungstenite::Message::Binary(data),
-                Ok(Message::Text(text)) => {
-                    tungstenite::Message::text(text.as_str())
-                }
+                Ok(Message::Text(text)) => tungstenite::Message::text(text.as_str()),
                 Ok(Message::Ping(data)) => tungstenite::Message::Ping(data.to_vec().into()),
                 Ok(Message::Pong(data)) => tungstenite::Message::Pong(data.to_vec().into()),
                 Ok(Message::Close(_)) => {
@@ -135,9 +133,7 @@ pub async fn bridge_ws_to_libp2p_listener(ws: WebSocket, p2p_port: u16) {
         while let Some(msg) = up_stream.next().await {
             let axum_msg = match msg {
                 Ok(tungstenite::Message::Binary(data)) => Message::Binary(data),
-                Ok(tungstenite::Message::Text(text)) => {
-                    Message::Text(text.as_str().into())
-                }
+                Ok(tungstenite::Message::Text(text)) => Message::Text(text.as_str().into()),
                 Ok(tungstenite::Message::Ping(data)) => Message::Ping(data.to_vec().into()),
                 Ok(tungstenite::Message::Pong(data)) => Message::Pong(data.to_vec().into()),
                 Ok(tungstenite::Message::Close(_)) => {

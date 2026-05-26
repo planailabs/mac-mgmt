@@ -43,7 +43,10 @@ impl Connector for MemvaultOpenClaw {
             return Ok(());
         }
 
-        tracing::info!("connecting memvault plugin to openclaw (port={})", self.port);
+        tracing::info!(
+            "connecting memvault plugin to openclaw (port={})",
+            self.port
+        );
         sentry_ext::breadcrumb(
             "connector",
             &format!("memvault→openclaw port={}", self.port),
@@ -65,8 +68,14 @@ impl Connector for MemvaultOpenClaw {
         let mut load_paths: Vec<String> = Vec::new();
         let config_raw = std::fs::read_to_string(&path)?;
         if let Ok(existing) = serde_json::from_str::<serde_json::Value>(&config_raw) {
-            if let Some(arr) = existing.pointer("/plugins/load/paths").and_then(|v| v.as_array()) {
-                load_paths = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+            if let Some(arr) = existing
+                .pointer("/plugins/load/paths")
+                .and_then(|v| v.as_array())
+            {
+                load_paths = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
             }
         }
         if !load_paths.iter().any(|p| p == &ext_dir_str) {
@@ -74,8 +83,7 @@ impl Connector for MemvaultOpenClaw {
         }
 
         // Register the memvault MCP server so all tools are available.
-        let bin = std::env::current_exe()
-            .context("failed to resolve current binary path")?;
+        let bin = std::env::current_exe().context("failed to resolve current binary path")?;
         let bin_str = bin.to_string_lossy().to_string();
 
         // Compute agent identity directory for enrollment
@@ -163,23 +171,35 @@ impl Connector for MemvaultOpenClawCleanup {
         let mut changed = false;
 
         // Remove MCP server entry.
-        if let Some(servers) = config.pointer_mut("/mcp/servers").and_then(|v| v.as_object_mut()) {
+        if let Some(servers) = config
+            .pointer_mut("/mcp/servers")
+            .and_then(|v| v.as_object_mut())
+        {
             if servers.remove("plan-ai-memvault").is_some() {
                 changed = true;
             }
         }
 
         // Remove plugin entry.
-        if let Some(entries) = config.pointer_mut("/plugins/entries").and_then(|v| v.as_object_mut()) {
+        if let Some(entries) = config
+            .pointer_mut("/plugins/entries")
+            .and_then(|v| v.as_object_mut())
+        {
             if entries.remove("memvault-memory").is_some() {
                 changed = true;
             }
         }
 
         // Reset memory slot if it points to memvault-memory.
-        if let Some(slot) = config.pointer("/plugins/slots/memory").and_then(|v| v.as_str()) {
+        if let Some(slot) = config
+            .pointer("/plugins/slots/memory")
+            .and_then(|v| v.as_str())
+        {
             if slot == "memvault-memory" {
-                if let Some(slots) = config.pointer_mut("/plugins/slots").and_then(|v| v.as_object_mut()) {
+                if let Some(slots) = config
+                    .pointer_mut("/plugins/slots")
+                    .and_then(|v| v.as_object_mut())
+                {
                     slots.remove("memory");
                     changed = true;
                 }
@@ -191,7 +211,10 @@ impl Connector for MemvaultOpenClawCleanup {
             .context("HOME not set")?
             .join(".openclaw/extensions/memvault-memory");
         let ext_dir_str = ext_dir.to_string_lossy().to_string();
-        if let Some(paths) = config.pointer_mut("/plugins/load/paths").and_then(|v| v.as_array_mut()) {
+        if let Some(paths) = config
+            .pointer_mut("/plugins/load/paths")
+            .and_then(|v| v.as_array_mut())
+        {
             let before = paths.len();
             paths.retain(|p| p.as_str() != Some(&ext_dir_str));
             if paths.len() != before {

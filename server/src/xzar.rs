@@ -131,13 +131,11 @@ pub async fn sync_skills_from_pins(
             created_skills += 1;
         }
 
-        let skill_id = sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT id FROM skills WHERE slug = $1",
-        )
-        .bind(slug)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        let skill_id = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM skills WHERE slug = $1")
+            .bind(slug)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let ch_inserted = sqlx::query_scalar::<_, bool>(
             "INSERT INTO skill_channels (skill_id, channel) VALUES ($1, $2) \

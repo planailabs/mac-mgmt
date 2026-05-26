@@ -36,12 +36,7 @@ impl UnixBackend {
         append_project(path, &self.project)
     }
 
-    async fn request(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<&[u8]>,
-    ) -> Result<Envelope> {
+    async fn request(&self, method: &str, path: &str, body: Option<&[u8]>) -> Result<Envelope> {
         let url = self.url(path);
         let body_bytes = body.unwrap_or(b"");
 
@@ -122,9 +117,7 @@ impl UnixBackend {
 
     async fn get_raw(&self, path: &str) -> Result<Vec<u8>> {
         let url = self.url(path);
-        let request = format!(
-            "GET {url} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-        );
+        let request = format!("GET {url} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
 
         let mut stream = UnixStream::connect(&self.socket_path).await?;
         stream.write_all(request.as_bytes()).await?;
@@ -241,10 +234,7 @@ impl IncusBackend for UnixBackend {
 
     async fn file_push(&self, name: &str, path: &str, content: &[u8]) -> Result<()> {
         let env = self
-            .post_raw(
-                &format!("/1.0/instances/{name}/files?path={path}"),
-                content,
-            )
+            .post_raw(&format!("/1.0/instances/{name}/files?path={path}"), content)
             .await?;
 
         if env.status_code.unwrap_or_default() / 100 != 2 {

@@ -86,7 +86,15 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
                     saved.services.len()
                 );
                 for svc in saved.services {
-                    state.adopt(svc.name, svc.spec, svc.pid, svc.resolved_program, notif_tx.clone()).await;
+                    state
+                        .adopt(
+                            svc.name,
+                            svc.spec,
+                            svc.pid,
+                            svc.resolved_program,
+                            notif_tx.clone(),
+                        )
+                        .await;
                 }
             }
         } else {
@@ -180,7 +188,9 @@ pub fn reexec_self() -> ! {
     // Use argv[0] (the symlink path) instead of current_exe() (which
     // resolves symlinks). After self-update the symlink points to the
     // new binary, so exec through it picks up the new version.
-    let argv0 = std::env::args().next().unwrap_or_else(|| "mac-mgmt".to_string());
+    let argv0 = std::env::args()
+        .next()
+        .unwrap_or_else(|| "mac-mgmt".to_string());
     let args: Vec<String> = std::env::args().skip(1).collect();
     tracing::info!("supervisor exec {argv0:?} {args:?}");
     let err = std::process::Command::new(&argv0).args(&args).exec();
@@ -369,7 +379,12 @@ impl SupervisorState {
         let task_spec = spec.clone();
         let task_pid = pid.clone();
         let task = tokio::spawn(run_service(
-            task_name, task_spec, notif_tx, stop_rx, task_pid, self.socket_path.clone(),
+            task_name,
+            task_spec,
+            notif_tx,
+            stop_rx,
+            task_pid,
+            self.socket_path.clone(),
         ));
         self.services.lock().await.insert(
             name,
@@ -407,7 +422,13 @@ impl SupervisorState {
         let task_spec = spec.clone();
         let task_pid = pid_arc.clone();
         let task = tokio::spawn(monitor_adopted(
-            task_name, task_spec, pid, notif_tx, stop_rx, task_pid, self.socket_path.clone(),
+            task_name,
+            task_spec,
+            pid,
+            notif_tx,
+            stop_rx,
+            task_pid,
+            self.socket_path.clone(),
         ));
         self.services.lock().await.insert(
             name,
@@ -642,7 +663,8 @@ async fn monitor_adopted(
     // table — kill returns success for them, so we'd never detect the exit.
     // waitpid both detects AND reaps the zombie in one call.
     let exited = loop {
-        let status = unsafe { libc::waitpid(adopted_pid as i32, std::ptr::null_mut(), libc::WNOHANG) };
+        let status =
+            unsafe { libc::waitpid(adopted_pid as i32, std::ptr::null_mut(), libc::WNOHANG) };
         // status > 0: child reaped; status == 0: still running; status < 0: not our child / gone
         if status != 0 {
             break true;
@@ -1024,7 +1046,10 @@ mod tests {
         let list = c.list().await.unwrap();
         assert_eq!(list.len(), 1);
         assert!(!list[0].stopped, "should not be stopped");
-        assert!(list[0].pid.is_some() && list[0].pid != Some(0), "should have a PID");
+        assert!(
+            list[0].pid.is_some() && list[0].pid != Some(0),
+            "should have a PID"
+        );
 
         c.shutdown().await.ok();
     }
@@ -1068,7 +1093,10 @@ mod tests {
 
         let list = c.list().await.unwrap();
         assert_eq!(list.len(), 1);
-        assert!(list[0].pid.is_some() && list[0].pid != Some(0), "should be respawned");
+        assert!(
+            list[0].pid.is_some() && list[0].pid != Some(0),
+            "should be respawned"
+        );
 
         c.shutdown().await.ok();
     }

@@ -84,11 +84,17 @@ fn jwt_claims(id_token: &str) -> Option<serde_json::Value> {
 }
 
 fn email_from_id_token(id_token: &str) -> Option<String> {
-    jwt_claims(id_token)?.get("email")?.as_str().map(String::from)
+    jwt_claims(id_token)?
+        .get("email")?
+        .as_str()
+        .map(String::from)
 }
 
 fn name_from_id_token(id_token: &str) -> Option<String> {
-    jwt_claims(id_token)?.get("name")?.as_str().map(String::from)
+    jwt_claims(id_token)?
+        .get("name")?
+        .as_str()
+        .map(String::from)
 }
 
 fn issuer_from_id_token(id_token: &str) -> Option<String> {
@@ -498,9 +504,7 @@ pub async fn logout_handler(request: Request<Body>) -> Response {
             PrivateCookieJar::from_headers(request.headers(), conf.private_cookie_key.clone());
 
         if let Some(session_cookie) = jar.get(SESSION_KEY) {
-            let _ = cache
-                .invalidate_auth_session(session_cookie.value())
-                .await;
+            let _ = cache.invalidate_auth_session(session_cookie.value()).await;
         }
 
         let jar = jar.remove(

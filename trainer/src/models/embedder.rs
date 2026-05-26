@@ -1,8 +1,8 @@
 use burn::config::Config;
 use burn::module::Module;
 use burn::nn::{Linear, LinearConfig};
-use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::Tensor;
+use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::train::{TrainOutput, TrainStep, ValidStep};
 
 use crate::export::dataset::EmbedderBatch;
@@ -47,9 +47,11 @@ impl SessionEmbedderConfig {
 impl<B: Backend> SessionEmbedder<B> {
     /// Produce L2-normalized embeddings [batch, embed_dim].
     pub fn forward(&self, batch: &EmbedderBatch<B>) -> Tensor<B, 2> {
-        let encoded =
-            self.encoder
-                .forward(batch.tokens.clone(), batch.roles.clone(), batch.mask.clone());
+        let encoded = self.encoder.forward(
+            batch.tokens.clone(),
+            batch.roles.clone(),
+            batch.mask.clone(),
+        );
         let pooled = self.encoder.pool(encoded, batch.mask.clone());
         let projected = self.projection.forward(pooled);
         // L2 normalize
@@ -66,10 +68,7 @@ impl<B: Backend> SessionEmbedder<B> {
     ///
     /// Uses a simplified NT-Xent (normalized temperature-scaled cross entropy) loss.
     /// Within a batch, we treat samples with the same label as positives.
-    pub fn forward_contrastive(
-        &self,
-        batch: &EmbedderBatch<B>,
-    ) -> ContrastiveOutput<B> {
+    pub fn forward_contrastive(&self, batch: &EmbedderBatch<B>) -> ContrastiveOutput<B> {
         let embeddings = self.forward(batch);
         let labels = batch.labels.clone();
         let temperature = 0.07;

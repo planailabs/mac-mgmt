@@ -8,8 +8,7 @@
 //! - `GET  /api/internal/events`          — SSE stream (reload notifications)
 
 use dioxus::fullstack::axum::{
-    self as axum,
-    Router,
+    self as axum, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{
@@ -60,18 +59,17 @@ pub fn router(state: InternalState) -> Router<()> {
 
 fn authenticate(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
     let cfg = config::config();
-    let proxy_cfg = cfg
-        .proxy
-        .as_ref()
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "proxy not configured".into()))?;
+    let proxy_cfg = cfg.proxy.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "proxy not configured".into(),
+    ))?;
 
-    let expected_token = std::fs::read_to_string(&proxy_cfg.internal_token_path)
-        .map_err(|_| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "internal token not available".into(),
-            )
-        })?;
+    let expected_token = std::fs::read_to_string(&proxy_cfg.internal_token_path).map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "internal token not available".into(),
+        )
+    })?;
     let expected_token = expected_token.trim();
 
     let provided = headers
@@ -133,7 +131,9 @@ struct BasicCredential {
 
 /// In-memory cache for minted proxy tokens, keyed by credential ID.
 static PROXY_TOKEN_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<uuid::Uuid, (String, chrono::DateTime<chrono::Utc>)>>,
+    std::sync::Mutex<
+        std::collections::HashMap<uuid::Uuid, (String, chrono::DateTime<chrono::Utc>)>,
+    >,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 /// Get or mint a proxy token for the given mac-mgmt credential.
@@ -159,7 +159,10 @@ async fn get_or_mint_proxy_token(
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/api/proxy-token", server_url.trim_end_matches('/')))
+        .post(format!(
+            "{}/api/proxy-token",
+            server_url.trim_end_matches('/')
+        ))
         .bearer_auth(&admin_token)
         .json(&serde_json::json!({
             "scopes": ["tcp:*"],
@@ -221,7 +224,13 @@ async fn build_auth_info(
                 mode: "basic".into(),
                 org_id: None,
                 basic_credentials: Some(
-                    creds.into_iter().map(|(username, password_hash)| BasicCredential { username, password_hash }).collect(),
+                    creds
+                        .into_iter()
+                        .map(|(username, password_hash)| BasicCredential {
+                            username,
+                            password_hash,
+                        })
+                        .collect(),
                 ),
             })
         }
@@ -248,7 +257,17 @@ async fn get_routes(
     }];
 
     // Local webspace routes: domain → 127.0.0.1:local_port
-    let rows = sqlx::query_as::<_, (String, Option<String>, i32, uuid::Uuid, String, Option<uuid::Uuid>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            i32,
+            uuid::Uuid,
+            String,
+            Option<uuid::Uuid>,
+        ),
+    >(
         "SELECT d.name, s.name, w.local_port, w.organization_id, w.auth_mode, w.auth_basic_list_id \
          FROM webspace_domains wd \
          JOIN webspaces w ON w.id = wd.webspace_id \
@@ -294,18 +313,26 @@ async fn get_routes(
         };
 
         let upstream = parse_relay_upstream(&relay_url).ok_or_else(|| {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("bad relay URL: {relay_url}"))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("bad relay URL: {relay_url}"),
+            )
         })?;
 
         let proxy_token = match get_or_mint_proxy_token(&state.pool, cred_id).await {
             Ok((t, expires_at)) => {
-                super::counters::COUNTERS.relay_mint_success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                super::counters::COUNTERS
+                    .relay_mint_success
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 {
                     let mut map = super::counters::RELAY_MINT_RESULTS.lock().unwrap();
-                    map.insert(host.clone(), super::counters::MintResult {
-                        org_id,
-                        success: true,
-                    });
+                    map.insert(
+                        host.clone(),
+                        super::counters::MintResult {
+                            org_id,
+                            success: true,
+                        },
+                    );
                 }
                 earliest_token_expiry = Some(match earliest_token_expiry {
                     Some(prev) => prev.min(expires_at),
@@ -315,13 +342,18 @@ async fn get_routes(
             }
             Err(e) => {
                 tracing::error!(host = %host, "failed to mint proxy token: {e}");
-                super::counters::COUNTERS.relay_mint_failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                super::counters::COUNTERS
+                    .relay_mint_failed
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 {
                     let mut map = super::counters::RELAY_MINT_RESULTS.lock().unwrap();
-                    map.insert(host.clone(), super::counters::MintResult {
-                        org_id,
-                        success: false,
-                    });
+                    map.insert(
+                        host.clone(),
+                        super::counters::MintResult {
+                            org_id,
+                            success: false,
+                        },
+                    );
                 }
                 continue;
             }
@@ -340,7 +372,17 @@ async fn get_routes(
     }
 
     // Tunnel webspace routes: domain → upstream URL (no auth token)
-    let tunnel_rows = sqlx::query_as::<_, (String, Option<String>, String, uuid::Uuid, String, Option<uuid::Uuid>)>(
+    let tunnel_rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            String,
+            uuid::Uuid,
+            String,
+            Option<uuid::Uuid>,
+        ),
+    >(
         "SELECT d.name, s.name, w.relay_url, w.organization_id, w.auth_mode, w.auth_basic_list_id \
          FROM webspace_domains wd \
          JOIN webspaces w ON w.id = wd.webspace_id \
@@ -359,7 +401,10 @@ async fn get_routes(
         };
 
         let upstream = parse_relay_upstream(&tunnel_url).ok_or_else(|| {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("bad tunnel URL: {tunnel_url}"))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("bad tunnel URL: {tunnel_url}"),
+            )
         })?;
 
         let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
@@ -374,9 +419,8 @@ async fn get_routes(
         });
     }
 
-    let token_lifetime_secs = earliest_token_expiry.map(|exp| {
-        (exp - chrono::Utc::now()).num_seconds().max(0)
-    });
+    let token_lifetime_secs =
+        earliest_token_expiry.map(|exp| (exp - chrono::Utc::now()).num_seconds().max(0));
 
     Ok(Json(RoutesResponse {
         routes,
@@ -425,10 +469,18 @@ async fn get_certs(
 
     let mut certs = Vec::new();
     for (domain, enc_chain, enc_key) in rows {
-        let chain = crate::crypto::decrypt(&enc_chain)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("decrypt error: {e}")))?;
-        let key = crate::crypto::decrypt(&enc_key)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("decrypt error: {e}")))?;
+        let chain = crate::crypto::decrypt(&enc_chain).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("decrypt error: {e}"),
+            )
+        })?;
+        let key = crate::crypto::decrypt(&enc_key).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("decrypt error: {e}"),
+            )
+        })?;
         certs.push(CertResponse {
             domain,
             chain_pem: String::from_utf8_lossy(&chain).into_owned(),
@@ -456,13 +508,12 @@ async fn issue_cert(
     authenticate(&headers)?;
 
     // Check if already pending
-    let existing = sqlx::query_scalar::<_, String>(
-        "SELECT acme_status FROM certificates WHERE domain = $1",
-    )
-    .bind(&domain)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let existing =
+        sqlx::query_scalar::<_, String>("SELECT acme_status FROM certificates WHERE domain = $1")
+            .bind(&domain)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if existing.as_deref() == Some("pending") {
         return Ok(Json(IssueResponse {
@@ -535,8 +586,8 @@ pub async fn proxy_gate(
     axum::extract::Query(params): axum::extract::Query<ProxyGateParams>,
     axum::extract::Extension(user): axum::extract::Extension<plan_ai_auth::WebUser>,
 ) -> Result<axum::response::Redirect, (StatusCode, String)> {
-    let pool = crate::server_pool()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let pool =
+        crate::server_pool().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Parse hostname from return_url
     let return_url = &params.return_url;
@@ -562,19 +613,35 @@ pub async fn proxy_gate(
     .fetch_optional(&pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, "no OIDC-protected webspace for this host".into()))?;
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            "no OIDC-protected webspace for this host".into(),
+        )
+    })?;
 
     // Check user has org membership (any role) or is admin
     if !user.is_admin && !user.org_ids().contains(&org_id) {
-        return Err((StatusCode::FORBIDDEN, "not a member of this organization".into()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "not a member of this organization".into(),
+        ));
     }
 
     // Sign a gate token (valid for 5 minutes — the proxy will exchange it for a 24h cookie)
     let cfg = config::config();
-    let proxy_cfg = cfg.proxy.as_ref()
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "proxy not configured".into()))?;
-    let internal_token = std::fs::read_to_string(&proxy_cfg.internal_token_path)
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "internal token not available".into()))?;
+    let proxy_cfg = cfg.proxy.as_ref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "proxy not configured".into(),
+        )
+    })?;
+    let internal_token = std::fs::read_to_string(&proxy_cfg.internal_token_path).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal token not available".into(),
+        )
+    })?;
     let internal_token = internal_token.trim();
 
     let expiry_ts = chrono::Utc::now().timestamp() + 300; // 5 minutes
@@ -582,9 +649,8 @@ pub async fn proxy_gate(
 
     // Append gate params to return_url
     let separator = if return_url.contains('?') { "&" } else { "?" };
-    let redirect = format!(
-        "{return_url}{separator}__pg_token={sig}&__pg_oid={org_id}&__pg_exp={expiry_ts}"
-    );
+    let redirect =
+        format!("{return_url}{separator}__pg_token={sig}&__pg_oid={org_id}&__pg_exp={expiry_ts}");
 
     Ok(axum::response::Redirect::temporary(&redirect))
 }
@@ -594,8 +660,10 @@ pub async fn proxy_gate(
 async fn sse_events(
     State(state): State<InternalState>,
     headers: HeaderMap,
-) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>>, (StatusCode, String)>
-{
+) -> Result<
+    Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>>,
+    (StatusCode, String),
+> {
     authenticate(&headers)?;
 
     let mut rx = state.reload_tx.subscribe();

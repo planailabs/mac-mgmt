@@ -117,7 +117,14 @@ impl ToolCallHistory {
 
     pub fn recent(&self, n: usize) -> Vec<ToolCallRecord> {
         let hist = self.inner.lock().unwrap();
-        hist.iter().rev().take(n).cloned().collect::<Vec<_>>().into_iter().rev().collect()
+        hist.iter()
+            .rev()
+            .take(n)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
     }
 }
 
@@ -325,7 +332,10 @@ impl ValidatedTool {
             }
             tools.clone()
         };
-        let _ = self.config.events_tx.send(crate::session::HealerEvent::RunningTools { tools: snapshot });
+        let _ = self
+            .config
+            .events_tx
+            .send(crate::session::HealerEvent::RunningTools { tools: snapshot });
     }
 
     /// Remove a tool from the running snapshot (on rejection).
@@ -335,7 +345,10 @@ impl ValidatedTool {
             tools.retain(|t| t.name != tool_name);
             tools.clone()
         };
-        let _ = self.config.events_tx.send(crate::session::HealerEvent::RunningTools { tools: snapshot });
+        let _ = self
+            .config
+            .events_tx
+            .send(crate::session::HealerEvent::RunningTools { tools: snapshot });
     }
 }
 
@@ -371,7 +384,9 @@ impl Tool for ValidatedTool {
             self.risk,
             &history_snapshot,
         ) {
-            return Ok(ToolOutput::Fail(format!("[Validation rejected] {rejection}")));
+            return Ok(ToolOutput::Fail(format!(
+                "[Validation rejected] {rejection}"
+            )));
         }
 
         // 3. Layer 1: LLM pre-flight (Mutating/Destructive only)
@@ -490,7 +505,7 @@ impl Tool for ValidatedTool {
 // ── Swiftide-based validator LLM ──────────────────────────────────────
 
 use swiftide::chat_completion::{
-    ChatCompletion, ChatCompletionRequest, ChatMessage, ChatCompletionResponse,
+    ChatCompletion, ChatCompletionRequest, ChatCompletionResponse, ChatMessage,
 };
 
 /// Validator backed by a swiftide `ChatCompletion` provider (same as the main
@@ -502,7 +517,9 @@ pub struct SwiftideValidatorLlm {
 
 impl SwiftideValidatorLlm {
     pub fn new(llm: Box<dyn ChatCompletion>) -> Self {
-        Self { llm: Arc::from(llm) }
+        Self {
+            llm: Arc::from(llm),
+        }
     }
 }
 
@@ -539,14 +556,23 @@ fn validator_tool_specs() -> Vec<ToolSpec> {
 fn extract_verdict(response: &ChatCompletionResponse) -> Option<ValidationVerdict> {
     let tool_calls = response.tool_calls.as_ref()?;
     for tc in tool_calls {
-        let reasoning = tc.args()
+        let reasoning = tc
+            .args()
             .and_then(|args| serde_json::from_str::<serde_json::Value>(args).ok())
-            .and_then(|v| v.get("reasoning").and_then(|r| r.as_str()).map(String::from))
+            .and_then(|v| {
+                v.get("reasoning")
+                    .and_then(|r| r.as_str())
+                    .map(String::from)
+            })
             .unwrap_or_default();
 
         match tc.name() {
             "approve" => return Some(ValidationVerdict::Approved { reasoning }),
-            "reject" => return Some(ValidationVerdict::Rejected { explanation: reasoning }),
+            "reject" => {
+                return Some(ValidationVerdict::Rejected {
+                    explanation: reasoning,
+                });
+            }
             _ => {}
         }
     }
@@ -609,7 +635,7 @@ Use the `approve` or `reject` tool to record your verdict."#,
                  Evaluate whether the proposed tool call is appropriate given the agent's \
                  stated intent and recent actions. Use the `approve` tool if the call is \
                  reasonable, or the `reject` tool if it is wrong, redundant, or dangerous. \
-                 Always provide brief reasoning."
+                 Always provide brief reasoning.",
             ),
             ChatMessage::new_user(user_prompt),
         ];
@@ -621,7 +647,10 @@ Use the `approve` or `reject` tool to record your verdict."#,
             .build()
             .map_err(|e| anyhow::anyhow!("failed to build validation request: {e}"))?;
 
-        let response = self.llm.complete(&request).await
+        let response = self
+            .llm
+            .complete(&request)
+            .await
             .map_err(|e| anyhow::anyhow!("validator completion failed: {e}"))?;
 
         // Try to extract verdict from tool calls
@@ -665,11 +694,7 @@ pub fn risk_to_str(risk: ToolRisk) -> &'static str {
 }
 
 fn truncate_for_prompt(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
-    }
+    if s.len() <= max { s } else { &s[..max] }
 }
 
 // ── Builder helper ───────────────────────────────────────────────────
@@ -686,12 +711,9 @@ pub async fn build_validator_llm(
     let provider = connector_config.validator_provider.as_deref()?;
     let model = connector_config.validator_model.as_deref()?;
 
-    match crate::connector::resolve_llm(
-        connector_config,
-        Some(provider),
-        Some(model),
-        token_ctx,
-    ).await {
+    match crate::connector::resolve_llm(connector_config, Some(provider), Some(model), token_ctx)
+        .await
+    {
         Ok(handle) => {
             let llm: Box<dyn ChatCompletion> = match handle.provider {
                 crate::connector::LlmProvider::Ollama(o) => Box::new(o),
@@ -757,7 +779,12 @@ mod tests {
             timestamp: Utc::now(),
             validation: None,
         }];
-        let result = static_check("read_file", r#"{"path": "foo"}"#, ToolRisk::ReadOnly, &history);
+        let result = static_check(
+            "read_file",
+            r#"{"path": "foo"}"#,
+            ToolRisk::ReadOnly,
+            &history,
+        );
         assert!(result.is_some());
         assert!(result.unwrap().contains("Identical call"));
     }
@@ -772,7 +799,12 @@ mod tests {
             timestamp: Utc::now(),
             validation: None,
         }];
-        let result = static_check("read_file", r#"{"path": "bar"}"#, ToolRisk::ReadOnly, &history);
+        let result = static_check(
+            "read_file",
+            r#"{"path": "bar"}"#,
+            ToolRisk::ReadOnly,
+            &history,
+        );
         assert!(result.is_none());
     }
 
@@ -899,13 +931,21 @@ mod tests {
     impl MockTool {
         fn new(name: &'static str) -> (Box<dyn Tool>, Arc<std::sync::atomic::AtomicBool>) {
             let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            (Box::new(Self { name, invoked: invoked.clone() }), invoked)
+            (
+                Box::new(Self {
+                    name,
+                    invoked: invoked.clone(),
+                }),
+                invoked,
+            )
         }
     }
 
     #[async_trait]
     impl Tool for MockTool {
-        fn name(&self) -> Cow<'_, str> { Cow::Borrowed(self.name) }
+        fn name(&self) -> Cow<'_, str> {
+            Cow::Borrowed(self.name)
+        }
         fn tool_spec(&self) -> ToolSpec {
             ToolSpec::builder()
                 .name(self.name)
@@ -918,7 +958,8 @@ mod tests {
             _ctx: &dyn AgentContext,
             _call: &ToolCall,
         ) -> Result<ToolOutput, ToolError> {
-            self.invoked.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.invoked
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(ToolOutput::Text("mock result".to_string()))
         }
     }
@@ -931,7 +972,10 @@ mod tests {
 
     #[async_trait]
     impl ValidatorLlm for MockValidator {
-        async fn validate_tool_call(&self, _ctx: &ValidationContext<'_>) -> anyhow::Result<ValidationVerdict> {
+        async fn validate_tool_call(
+            &self,
+            _ctx: &ValidationContext<'_>,
+        ) -> anyhow::Result<ValidationVerdict> {
             Ok(self.verdict.clone())
         }
     }
@@ -942,7 +986,10 @@ mod tests {
 
     #[async_trait]
     impl ValidatorLlm for ErrorValidator {
-        async fn validate_tool_call(&self, _ctx: &ValidationContext<'_>) -> anyhow::Result<ValidationVerdict> {
+        async fn validate_tool_call(
+            &self,
+            _ctx: &ValidationContext<'_>,
+        ) -> anyhow::Result<ValidationVerdict> {
             anyhow::bail!("validator unavailable")
         }
     }
@@ -981,7 +1028,9 @@ mod tests {
     async fn test_validated_tool_forwards_on_approval() {
         let (mock_tool, invoked) = MockTool::new("mock_tool");
         let validator = Arc::new(MockValidator {
-            verdict: ValidationVerdict::Approved { reasoning: "looks good".to_string() },
+            verdict: ValidationVerdict::Approved {
+                reasoning: "looks good".to_string(),
+            },
         });
         let config = test_config(Some(validator));
         let history = ToolCallHistory::default();
@@ -1009,7 +1058,9 @@ mod tests {
     async fn test_validated_tool_blocks_on_rejection() {
         let (mock_tool, invoked) = MockTool::new("mock_tool");
         let validator = Arc::new(MockValidator {
-            verdict: ValidationVerdict::Rejected { explanation: "bad idea".to_string() },
+            verdict: ValidationVerdict::Rejected {
+                explanation: "bad idea".to_string(),
+            },
         });
         let config = test_config(Some(validator));
         let history = ToolCallHistory::default();

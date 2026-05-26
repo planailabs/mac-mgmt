@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
 #[cfg(feature = "server")]
 use crate::web::user::WebUserExt;
+use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::web::app::Route;
@@ -46,18 +46,38 @@ async fn list_import_sources() -> Result<Vec<ImportSourceRow>, ServerFnError> {
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
-    struct Row { id: uuid::Uuid, name: String, source_type: String, source_config: serde_json::Value, channel: String, auto_sync: bool, last_synced_at: Option<chrono::DateTime<chrono::Utc>>, created_at: chrono::DateTime<chrono::Utc> }
+    struct Row {
+        id: uuid::Uuid,
+        name: String,
+        source_type: String,
+        source_config: serde_json::Value,
+        channel: String,
+        auto_sync: bool,
+        last_synced_at: Option<chrono::DateTime<chrono::Utc>>,
+        created_at: chrono::DateTime<chrono::Utc>,
+    }
 
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, name, source_type, source_config, channel, auto_sync, \
          last_synced_at, created_at FROM import_sources ORDER BY created_at DESC",
     )
-    .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|r| ImportSourceRow {
-        id: r.id.to_string(), name: r.name, source_type: r.source_type, source_config: r.source_config,
-        channel: r.channel, auto_sync: r.auto_sync, last_synced_at: r.last_synced_at, created_at: r.created_at,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| ImportSourceRow {
+            id: r.id.to_string(),
+            name: r.name,
+            source_type: r.source_type,
+            source_config: r.source_config,
+            channel: r.channel,
+            auto_sync: r.auto_sync,
+            last_synced_at: r.last_synced_at,
+            created_at: r.created_at,
+        })
+        .collect())
 }
 
 #[server]
@@ -65,26 +85,50 @@ async fn get_import_source(id: String) -> Result<ImportSourceRow, ServerFnError>
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
-    struct Row { id: uuid::Uuid, name: String, source_type: String, source_config: serde_json::Value, channel: String, auto_sync: bool, last_synced_at: Option<chrono::DateTime<chrono::Utc>>, created_at: chrono::DateTime<chrono::Utc> }
+    struct Row {
+        id: uuid::Uuid,
+        name: String,
+        source_type: String,
+        source_config: serde_json::Value,
+        channel: String,
+        auto_sync: bool,
+        last_synced_at: Option<chrono::DateTime<chrono::Utc>>,
+        created_at: chrono::DateTime<chrono::Utc>,
+    }
 
     let r: Row = sqlx::query_as(
         "SELECT id, name, source_type, source_config, channel, auto_sync, \
          last_synced_at, created_at FROM import_sources WHERE id = $1",
     )
-    .bind(uuid).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .bind(uuid)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(ImportSourceRow {
-        id: r.id.to_string(), name: r.name, source_type: r.source_type, source_config: r.source_config,
-        channel: r.channel, auto_sync: r.auto_sync, last_synced_at: r.last_synced_at, created_at: r.created_at,
+        id: r.id.to_string(),
+        name: r.name,
+        source_type: r.source_type,
+        source_config: r.source_config,
+        channel: r.channel,
+        auto_sync: r.auto_sync,
+        last_synced_at: r.last_synced_at,
+        created_at: r.created_at,
     })
 }
 
 #[server]
 async fn create_import_source(
-    name: String, source_type: String, source_config: serde_json::Value, channel: String, auto_sync: bool,
+    name: String,
+    source_type: String,
+    source_config: serde_json::Value,
+    channel: String,
+    auto_sync: bool,
 ) -> Result<String, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
@@ -93,19 +137,31 @@ async fn create_import_source(
         "INSERT INTO import_sources (name, source_type, source_config, channel, auto_sync) \
          VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
-    .bind(&name).bind(&source_type).bind(&source_config).bind(&channel).bind(auto_sync)
-    .fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .bind(&name)
+    .bind(&source_type)
+    .bind(&source_config)
+    .bind(&channel)
+    .bind(auto_sync)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(id.to_string())
 }
 
 #[server]
 async fn update_import_source(
-    source_id: String, name: String, source_config: serde_json::Value, channel: String, auto_sync: bool,
+    source_id: String,
+    name: String,
+    source_config: serde_json::Value,
+    channel: String,
+    auto_sync: bool,
 ) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = source_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = source_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query(
         "UPDATE import_sources SET name = $1, source_config = $2, channel = $3, auto_sync = $4 WHERE id = $5",
     )
@@ -119,13 +175,28 @@ async fn trigger_sync(source_id: String) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = source_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = source_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    let job_id: uuid::Uuid = sqlx::query_scalar("INSERT INTO import_jobs (source_id) VALUES ($1) RETURNING id")
-        .bind(uuid).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let job_id: uuid::Uuid =
+        sqlx::query_scalar("INSERT INTO import_jobs (source_id) VALUES ($1) RETURNING id")
+            .bind(uuid)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
-    struct Row { id: uuid::Uuid, name: String, source_type: String, source_config: serde_json::Value, channel: String, auto_sync: bool, last_synced_at: Option<chrono::DateTime<chrono::Utc>>, created_at: chrono::DateTime<chrono::Utc> }
+    struct Row {
+        id: uuid::Uuid,
+        name: String,
+        source_type: String,
+        source_config: serde_json::Value,
+        channel: String,
+        auto_sync: bool,
+        last_synced_at: Option<chrono::DateTime<chrono::Utc>>,
+        created_at: chrono::DateTime<chrono::Utc>,
+    }
 
     let source: Row = sqlx::query_as(
         "SELECT id, name, source_type, source_config, channel, auto_sync, last_synced_at, created_at FROM import_sources WHERE id = $1",
@@ -134,17 +205,31 @@ async fn trigger_sync(source_id: String) -> Result<(), ServerFnError> {
     let pool_clone = pool.clone();
     tokio::spawn(async move {
         let source_row = crate::api::importer::SourceRow {
-            id: source.id, name: source.name, source_type: source.source_type,
-            source_config: source.source_config, channel: source.channel, auto_sync: source.auto_sync,
-            last_synced_at: source.last_synced_at, created_at: source.created_at,
+            id: source.id,
+            name: source.name,
+            source_type: source.source_type,
+            source_config: source.source_config,
+            channel: source.channel,
+            auto_sync: source.auto_sync,
+            last_synced_at: source.last_synced_at,
+            created_at: source.created_at,
         };
         let result = crate::api::importer::run_sync_public(&pool_clone, &source_row, job_id).await;
         let (status, extra_log) = match result {
-            Ok(count) => ("done".to_string(), format!("\nCompleted: {count} skill(s) imported")),
+            Ok(count) => (
+                "done".to_string(),
+                format!("\nCompleted: {count} skill(s) imported"),
+            ),
             Err(e) => ("failed".to_string(), format!("\nError: {e}")),
         };
-        let _ = sqlx::query("UPDATE import_jobs SET status = $1, log = log || $2, updated_at = now() WHERE id = $3")
-            .bind(&status).bind(&extra_log).bind(job_id).execute(&pool_clone).await;
+        let _ = sqlx::query(
+            "UPDATE import_jobs SET status = $1, log = log || $2, updated_at = now() WHERE id = $3",
+        )
+        .bind(&status)
+        .bind(&extra_log)
+        .bind(job_id)
+        .execute(&pool_clone)
+        .await;
     });
     Ok(())
 }
@@ -154,19 +239,33 @@ async fn delete_import_source(source_id: String, remove_skills: bool) -> Result<
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = source_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = source_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     if remove_skills {
-        let slugs: Vec<String> = sqlx::query_scalar("SELECT skill_slug FROM import_source_skills WHERE source_id = $1")
-            .bind(uuid).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        let slugs: Vec<String> =
+            sqlx::query_scalar("SELECT skill_slug FROM import_source_skills WHERE source_id = $1")
+                .bind(uuid)
+                .fetch_all(&pool)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
         if !slugs.is_empty() {
-            sqlx::query("DELETE FROM skills WHERE slug = ANY($1)").bind(&slugs)
-                .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+            sqlx::query("DELETE FROM skills WHERE slug = ANY($1)")
+                .bind(&slugs)
+                .execute(&pool)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
         }
     }
-    sqlx::query("DELETE FROM import_sources WHERE id = $1").bind(uuid)
-        .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    if remove_skills { crate::api::push::notify_federation_global(); }
+    sqlx::query("DELETE FROM import_sources WHERE id = $1")
+        .bind(uuid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if remove_skills {
+        crate::api::push::notify_federation_global();
+    }
     Ok(())
 }
 
@@ -175,20 +274,42 @@ async fn list_import_jobs(source_id: String) -> Result<Vec<ImportJobRow>, Server
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = source_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = source_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
-    struct Row { id: uuid::Uuid, source_id: uuid::Uuid, status: String, skills_imported: i32, log: String, created_at: chrono::DateTime<chrono::Utc>, updated_at: chrono::DateTime<chrono::Utc> }
+    struct Row {
+        id: uuid::Uuid,
+        source_id: uuid::Uuid,
+        status: String,
+        skills_imported: i32,
+        log: String,
+        created_at: chrono::DateTime<chrono::Utc>,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    }
 
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, source_id, status, skills_imported, log, created_at, updated_at \
          FROM import_jobs WHERE source_id = $1 ORDER BY created_at DESC LIMIT 20",
-    ).bind(uuid).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|r| ImportJobRow {
-        id: r.id.to_string(), source_id: r.source_id.to_string(), status: r.status,
-        skills_imported: r.skills_imported, log: r.log, created_at: r.created_at, updated_at: r.updated_at,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| ImportJobRow {
+            id: r.id.to_string(),
+            source_id: r.source_id.to_string(),
+            status: r.status,
+            skills_imported: r.skills_imported,
+            log: r.log,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        })
+        .collect())
 }
 
 #[server]
@@ -196,12 +317,24 @@ async fn search_clawhub(query: String) -> Result<Vec<ClawHubHit>, ServerFnError>
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
     let cfg = crate::config::config();
-    let importer = cfg.importer.as_ref().ok_or_else(|| ServerFnError::new("importer not configured"))?;
+    let importer = cfg
+        .importer
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("importer not configured"))?;
     let client = crate::clawhub_client::ClawHubClient::new(&importer.clawhub_url);
-    let results = client.search(&query, 20).await.map_err(|e| ServerFnError::new(e))?;
-    Ok(results.into_iter().map(|r| ClawHubHit {
-        slug: r.slug, display_name: r.display_name, summary: r.summary, version: r.version,
-    }).collect())
+    let results = client
+        .search(&query, 20)
+        .await
+        .map_err(|e| ServerFnError::new(e))?;
+    Ok(results
+        .into_iter()
+        .map(|r| ClawHubHit {
+            slug: r.slug,
+            display_name: r.display_name,
+            summary: r.summary,
+            version: r.version,
+        })
+        .collect())
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -209,10 +342,7 @@ async fn search_clawhub(query: String) -> Result<Vec<ClawHubHit>, ServerFnError>
 // ══════════════════════════════════════════════════════════════════════
 
 #[component]
-pub fn ImportSources(
-    prefill_slug: Option<String>,
-    prefill_name: Option<String>,
-) -> Element {
+pub fn ImportSources(prefill_slug: Option<String>, prefill_name: Option<String>) -> Element {
     use_topbar(t!("nav-import-sources"), None);
     let navigator = navigator();
     let has_prefill = prefill_slug.as_ref().is_some_and(|s| !s.is_empty());
@@ -249,7 +379,10 @@ pub fn ImportSources(
         let navigator = navigator.clone();
         move || {
             if has_prefill {
-                navigator.replace(Route::ImportSources { prefill_slug: None, prefill_name: None });
+                navigator.replace(Route::ImportSources {
+                    prefill_slug: None,
+                    prefill_name: None,
+                });
             }
         }
     };
@@ -409,17 +542,38 @@ pub fn ImportSourceDetail(id: String) -> Element {
             let source_name = s.name.clone();
             let source_type = s.source_type.clone();
             let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
-            let synced_label = s.last_synced_at
+            let synced_label = s
+                .last_synced_at
                 .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
                 .unwrap_or_else(|| t!("import-never-synced").to_string());
 
             let sid_sync = source_id.clone();
             let sid_del = source_id.clone();
 
-            let repo_url = s.source_config.get("repo_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let branch = s.source_config.get("branch").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let glob = s.source_config.get("glob").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let clawhub_slug = s.source_config.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let repo_url = s
+                .source_config
+                .get("repo_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let branch = s
+                .source_config
+                .get("branch")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let glob = s
+                .source_config
+                .get("glob")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let clawhub_slug = s
+                .source_config
+                .get("slug")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let channel = s.channel.clone();
             let auto_sync = s.auto_sync;
 
@@ -519,7 +673,9 @@ pub fn ImportSourceDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-danger", {t!("error-message", message: e.to_string())} } },
+        Some(Err(e)) => {
+            rsx! { p { class: "text-danger", {t!("error-message", message: e.to_string())} } }
+        }
         None => rsx! { p { {t!("loading")} } },
     }
 }
@@ -557,12 +713,36 @@ pub fn ImportSourceEdit(id: String) -> Element {
             form_auto_sync.set(s.auto_sync);
             match s.source_type.as_str() {
                 "git" => {
-                    form_repo_url.set(s.source_config.get("repo_url").and_then(|v| v.as_str()).unwrap_or("").to_string());
-                    form_branch.set(s.source_config.get("branch").and_then(|v| v.as_str()).unwrap_or("").to_string());
-                    form_glob.set(s.source_config.get("glob").and_then(|v| v.as_str()).unwrap_or("skills/*").to_string());
+                    form_repo_url.set(
+                        s.source_config
+                            .get("repo_url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    );
+                    form_branch.set(
+                        s.source_config
+                            .get("branch")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    );
+                    form_glob.set(
+                        s.source_config
+                            .get("glob")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("skills/*")
+                            .to_string(),
+                    );
                 }
                 "clawhub" => {
-                    form_clawhub_slug.set(s.source_config.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                    form_clawhub_slug.set(
+                        s.source_config
+                            .get("slug")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    );
                 }
                 _ => {}
             }
@@ -609,7 +789,9 @@ pub fn ImportSourceEdit(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-danger", {t!("error-message", message: e.to_string())} } },
+        Some(Err(e)) => {
+            rsx! { p { class: "text-danger", {t!("error-message", message: e.to_string())} } }
+        }
         None => rsx! { p { {t!("loading")} } },
     }
 }
@@ -731,19 +913,37 @@ fn render_detail_field(label: impl std::fmt::Display, value: &str) -> Element {
 fn source_description(source: &ImportSourceRow) -> String {
     match source.source_type.as_str() {
         "git" => {
-            let url = source.source_config.get("repo_url").and_then(|v| v.as_str()).unwrap_or("?");
-            let glob = source.source_config.get("glob").and_then(|v| v.as_str()).unwrap_or("*");
+            let url = source
+                .source_config
+                .get("repo_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let glob = source
+                .source_config
+                .get("glob")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*");
             format!("{url} ({glob})")
         }
         "clawhub" => {
-            let slug = source.source_config.get("slug").and_then(|v| v.as_str()).unwrap_or("?");
+            let slug = source
+                .source_config
+                .get("slug")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             format!("clawhub:{slug}")
         }
         _ => "unknown".to_string(),
     }
 }
 
-fn build_source_config(source_type: &str, repo_url: &str, branch: &str, glob: &str, clawhub_slug: &str) -> serde_json::Value {
+fn build_source_config(
+    source_type: &str,
+    repo_url: &str,
+    branch: &str,
+    glob: &str,
+    clawhub_slug: &str,
+) -> serde_json::Value {
     if source_type == "git" {
         serde_json::json!({
             "type": "git",
@@ -902,7 +1102,9 @@ fn render_jobs(jobs: &Resource<Result<Vec<ImportJobRow>, ServerFnError>>) -> Ele
                 }
             }
         },
-        Some(Err(e)) => rsx! { p { class: "text-sm text-danger", {t!("error-message", message: e.to_string())} } },
+        Some(Err(e)) => {
+            rsx! { p { class: "text-sm text-danger", {t!("error-message", message: e.to_string())} } }
+        }
         None => rsx! { p { class: "text-sm", {t!("loading")} } },
     }
 }

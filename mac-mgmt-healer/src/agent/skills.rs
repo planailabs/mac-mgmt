@@ -72,7 +72,11 @@ pub fn get_builtin_skill(slug: &str) -> Option<BuiltinSkill> {
     let raw = std::str::from_utf8(file.data.as_ref()).unwrap_or("");
     let (name, desc, content) = parse_frontmatter(raw);
     Some(BuiltinSkill {
-        name: if name.is_empty() { slug.to_string() } else { name },
+        name: if name.is_empty() {
+            slug.to_string()
+        } else {
+            name
+        },
         desc,
         slug: slug.to_string(),
         content,

@@ -30,9 +30,7 @@ pub async fn open(
 }
 
 /// Read one JSON frame (tag 0x01 + length-prefixed payload).
-pub async fn read_json_frame(
-    tunnel: &mut libp2p::Stream,
-) -> Result<serde_json::Value, StatusCode> {
+pub async fn read_json_frame(tunnel: &mut libp2p::Stream) -> Result<serde_json::Value, StatusCode> {
     match framing::read_tagged_frame(tunnel).await {
         Ok(Some(framing::TaggedFrame::Json(val))) => Ok(val),
         _ => Err(StatusCode::BAD_GATEWAY),

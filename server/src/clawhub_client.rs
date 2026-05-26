@@ -61,11 +61,7 @@ impl ClawHubClient {
     /// Search for skills.
     ///
     /// Calls `GET /api/v1/search?q={query}&limit={limit}`.
-    pub async fn search(
-        &self,
-        query: &str,
-        limit: u32,
-    ) -> Result<Vec<SearchResult>, String> {
+    pub async fn search(&self, query: &str, limit: u32) -> Result<Vec<SearchResult>, String> {
         let resp = self
             .http
             .get(format!("{}/api/v1/search", self.base_url))
@@ -109,11 +105,7 @@ impl ClawHubClient {
     /// Download a skill archive as raw bytes (zip).
     ///
     /// Calls `GET /api/v1/download?slug={slug}[&version={version}]`.
-    pub async fn download(
-        &self,
-        slug: &str,
-        version: Option<&str>,
-    ) -> Result<Vec<u8>, String> {
+    pub async fn download(&self, slug: &str, version: Option<&str>) -> Result<Vec<u8>, String> {
         let mut req = self
             .http
             .get(format!("{}/api/v1/download", self.base_url))

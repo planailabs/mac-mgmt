@@ -272,11 +272,9 @@ fn extract_cookie_token(headers: &HeaderMap) -> Option<String> {
 /// Empty scopes vec means wildcard (all scopes allowed, for backwards compat).
 fn has_scope(scopes: &[String], required: &str) -> bool {
     scopes.is_empty()
-        || scopes.iter().any(|s| {
-            s == "*"
-                || s == required
-                || (required.starts_with("tcp:") && s == "tcp:*")
-        })
+        || scopes
+            .iter()
+            .any(|s| s == "*" || s == required || (required.starts_with("tcp:") && s == "tcp:*"))
 }
 
 /// Validate the proxy token and check cluster scoping.
@@ -322,7 +320,6 @@ async fn authenticate_proxy_scoped(
     }
     Ok(())
 }
-
 
 /// Resolve the relay swarm and peer ID for an instance, or return an error response.
 fn resolve_swarm_and_peer(
@@ -634,7 +631,11 @@ async fn proxy_catchall(
     let status = hdr["status"].as_u64().unwrap_or(502) as u16;
 
     if let Some(error) = hdr["error"].as_str() {
-        return (StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY), error.to_string()).into_response();
+        return (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            error.to_string(),
+        )
+            .into_response();
     }
 
     let resp_headers: Vec<(String, String)> = hdr["headers"]
@@ -756,8 +757,7 @@ async fn file_list(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) =
-        authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await
+    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await
     {
         return resp;
     }
@@ -774,7 +774,9 @@ async fn file_list(
         "tunnel_name": tunnel_name,
         "path": query.path,
     });
-    match crate::tunnel_io::open_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(30)).await {
+    match crate::tunnel_io::open_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(30))
+        .await
+    {
         Ok(resp) => Json(resp).into_response(),
         Err(status) => status.into_response(),
     }
@@ -790,8 +792,7 @@ async fn file_read(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) =
-        authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await
+    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await
     {
         return resp;
     }
@@ -810,10 +811,11 @@ async fn file_read(
     });
 
     // Open tunnel, read stream_framing response (JSON header + binary chunks).
-    let mut tunnel = match crate::tunnel_io::open(&swarm, peer_id, &handshake, Duration::from_secs(10)).await {
-        Ok(t) => t,
-        Err(status) => return status.into_response(),
-    };
+    let mut tunnel =
+        match crate::tunnel_io::open(&swarm, peer_id, &handshake, Duration::from_secs(10)).await {
+            Ok(t) => t,
+            Err(status) => return status.into_response(),
+        };
 
     let hdr = match crate::tunnel_io::read_json_frame(&mut tunnel).await {
         Ok(h) => h,
@@ -826,7 +828,9 @@ async fn file_read(
         return axum::response::Response::builder()
             .status(status)
             .header("content-type", "application/json")
-            .body(Body::from(serde_json::json!({ "error": error }).to_string()))
+            .body(Body::from(
+                serde_json::json!({ "error": error }).to_string(),
+            ))
             .unwrap()
             .into_response();
     }
@@ -900,7 +904,9 @@ async fn file_write(
         "data": body_b64,
     });
 
-    match crate::tunnel_io::open_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(60)).await {
+    match crate::tunnel_io::open_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(60))
+        .await
+    {
         Ok(resp) => {
             let status = resp["status"].as_u64().unwrap_or(500) as u16;
             axum::response::Response::builder()
@@ -932,8 +938,7 @@ async fn shell_exec(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) =
-        authenticate_proxy_scoped(&headers, &state, &instance_id, "shell:exec").await
+    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "shell:exec").await
     {
         return resp;
     }
@@ -955,7 +960,9 @@ async fn shell_exec(
     let mut tunnel = match tokio::time::timeout(
         Duration::from_secs(10),
         swarm.open_tunnel_stream(peer_id),
-    ).await {
+    )
+    .await
+    {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
             tracing::warn!(%instance_id, "shell_exec: failed to open tunnel: {e}");
@@ -968,7 +975,10 @@ async fn shell_exec(
     {
         use futures_util::AsyncWriteExt;
         let data = serde_json::to_vec(&handshake).unwrap_or_default();
-        if tunnel.write_all(&(data.len() as u32).to_be_bytes()).await.is_err()
+        if tunnel
+            .write_all(&(data.len() as u32).to_be_bytes())
+            .await
+            .is_err()
             || tunnel.write_all(&data).await.is_err()
         {
             return StatusCode::BAD_GATEWAY.into_response();
@@ -981,14 +991,12 @@ async fn shell_exec(
     use futures_util::StreamExt;
 
     let json_stream = crate::tunnel_io::read_json_frames_stream(tunnel);
-    let sse_stream = json_stream.map(|result| {
-        match result {
-            Ok(frame) => {
-                let data = serde_json::to_string(&frame).unwrap_or_default();
-                Ok::<_, std::convert::Infallible>(Event::default().data(data))
-            }
-            Err(_) => Ok(Event::default().data("{\"error\":\"stream error\"}")),
+    let sse_stream = json_stream.map(|result| match result {
+        Ok(frame) => {
+            let data = serde_json::to_string(&frame).unwrap_or_default();
+            Ok::<_, std::convert::Infallible>(Event::default().data(data))
         }
+        Err(_) => Ok(Event::default().data("{\"error\":\"stream error\"}")),
     });
 
     Sse::new(sse_stream)
@@ -1038,8 +1046,7 @@ async fn log_proxy(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) =
-        authenticate_proxy_scoped(&headers, &state, &instance_id, "logs:read").await
+    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "logs:read").await
     {
         return resp;
     }
@@ -1075,9 +1082,7 @@ async fn log_proxy(
     match tokio::time::timeout(Duration::from_secs(30), swarm.send_request(peer_id, req)).await {
         Ok(Ok(resp)) => {
             let status = resp["status"].as_u64().unwrap_or(502) as u16;
-            let content_type = resp["content_type"]
-                .as_str()
-                .unwrap_or("application/json");
+            let content_type = resp["content_type"].as_str().unwrap_or("application/json");
             let body = resp["body"].as_str().unwrap_or("");
             axum::response::Response::builder()
                 .status(status)

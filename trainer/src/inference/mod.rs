@@ -17,7 +17,7 @@ use crate::export::tokenizer::NUM_TOOLS;
 use crate::models::common::SessionEncoderConfig;
 use crate::models::embedder::{SessionEmbedder, SessionEmbedderConfig};
 use crate::models::issue_classifier::{IssueClassifier, IssueClassifierConfig, NUM_CATEGORIES};
-use crate::models::outcome_predictor::{OutcomePredictor, OutcomePredictorConfig, NUM_OUTCOMES};
+use crate::models::outcome_predictor::{NUM_OUTCOMES, OutcomePredictor, OutcomePredictorConfig};
 use crate::models::tool_selector::{ToolSelector, ToolSelectorConfig};
 
 /// Evaluate a trained tool selector model on held-out data.
@@ -122,8 +122,7 @@ pub fn eval_outcome_predictor<B: Backend>(checkpoint_path: &str, data_dir: &str)
         .context("failed to load model checkpoint")?;
 
     let data_path = Path::new(data_dir).join("outcome.jsonl");
-    let dataset =
-        OutcomeDataset::from_jsonl(&data_path).context("failed to load outcome.jsonl")?;
+    let dataset = OutcomeDataset::from_jsonl(&data_path).context("failed to load outcome.jsonl")?;
 
     let (_train_ds, val_ds) = dataset.split(0.15);
     tracing::info!("evaluating on {} validation samples", val_ds.len());
@@ -362,7 +361,11 @@ pub fn eval_embedder<B: Backend>(checkpoint_path: &str, data_dir: &str) -> Resul
 }
 
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| *x as f64 * *y as f64).sum();
+    let dot: f64 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| *x as f64 * *y as f64)
+        .sum();
     let norm_a: f64 = a.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
     let norm_b: f64 = b.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
     if norm_a < 1e-12 || norm_b < 1e-12 {

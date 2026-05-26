@@ -26,11 +26,11 @@ pub mod breadcrumbs;
 pub mod metric;
 
 pub use plan_ai_design::{
-    ActivityFeed, ActivityItem, Alert, AlertVariant, Badge, BadgeVariant, Bars, Button, ButtonKind,
-    ButtonSize, ButtonVariant, Card, ChartColor, Dash, DataTable, Dot, ErrorText, FormField,
-    HelpText, Kicker, Mono, PageHeader, PageHero, Pill, PillVariant, SectionHeading, SortState,
-    SortableTh, Sparkline, StageItem, StageStatus, StageTimeline, StatBlock, SuccessText, Td,
-    TdMono, TdMuted, Th, TableToolbar, ActiveSessionCard, TraceStatus, TraceStep,
+    ActiveSessionCard, ActivityFeed, ActivityItem, Alert, AlertVariant, Badge, BadgeVariant, Bars,
+    Button, ButtonKind, ButtonSize, ButtonVariant, Card, ChartColor, Dash, DataTable, Dot,
+    ErrorText, FormField, HelpText, Kicker, Mono, PageHeader, PageHero, Pill, PillVariant,
+    SectionHeading, SortState, SortableTh, Sparkline, StageItem, StageStatus, StageTimeline,
+    StatBlock, SuccessText, TableToolbar, Td, TdMono, TdMuted, Th, TraceStatus, TraceStep,
 };
 
 pub use breadcrumbs::Breadcrumbs;
@@ -39,5 +39,7 @@ pub use metric::KpiCard;
 pub mod data_table {
     //! Re-export submodule so existing pages can keep using
     //! `crate::web::components::ui::data_table::SortableTh` etc.
-    pub use plan_ai_design::{Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted, Th};
+    pub use plan_ai_design::{
+        Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted, Th,
+    };
 }

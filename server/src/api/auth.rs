@@ -34,7 +34,15 @@ impl<'r> FromRequest<'r> for AuthenticatedToken {
 
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
-        let result = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>, String, Option<serde_json::Value>)>(
+        let result = sqlx::query_as::<
+            _,
+            (
+                Option<Uuid>,
+                Option<Uuid>,
+                String,
+                Option<serde_json::Value>,
+            ),
+        >(
             "SELECT cluster_id, organization_id, kind, scopes FROM tokens \
              WHERE token_hash = $1 AND NOT revoked \
              AND (expires_at IS NULL OR expires_at > now())",
@@ -45,9 +53,8 @@ impl<'r> FromRequest<'r> for AuthenticatedToken {
 
         match result {
             Ok(Some((cluster_id, organization_id, kind, scopes_json))) => {
-                let scopes = scopes_json.and_then(|v| {
-                    serde_json::from_value::<Vec<String>>(v).ok()
-                });
+                let scopes =
+                    scopes_json.and_then(|v| serde_json::from_value::<Vec<String>>(v).ok());
                 Outcome::Success(AuthenticatedToken {
                     cluster_id,
                     organization_id,
@@ -253,9 +260,7 @@ impl<'r> FromRequest<'r> for FederationAuth {
             Outcome::Success(auth) if auth.token_kind == "federation" => {
                 Outcome::Success(FederationAuth)
             }
-            Outcome::Success(_) => {
-                Outcome::Error((Status::Forbidden, "federation token required"))
-            }
+            Outcome::Success(_) => Outcome::Error((Status::Forbidden, "federation token required")),
             Outcome::Error(e) => Outcome::Error(e),
             Outcome::Forward(f) => Outcome::Forward(f),
         }
@@ -286,9 +291,7 @@ impl<'r> FromRequest<'r> for FederationOrPublic {
                     is_authenticated: true,
                 })
             }
-            Outcome::Success(_) => {
-                Outcome::Error((Status::Forbidden, "federation token required"))
-            }
+            Outcome::Success(_) => Outcome::Error((Status::Forbidden, "federation token required")),
             Outcome::Error(e) => Outcome::Error(e),
             Outcome::Forward(f) => Outcome::Forward(f),
         }

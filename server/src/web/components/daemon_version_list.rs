@@ -11,7 +11,7 @@ use crate::web::components::ui::{
     TdMono, TdMuted,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{current_user, WebUserExt};
+use crate::web::user::{WebUserExt, current_user};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DaemonVersionRow {
@@ -196,7 +196,11 @@ fn VersionsTable(list: Vec<DaemonVersionRow>) -> Element {
         let mut items: Vec<DaemonVersionRow> = if q.is_empty() {
             list_clone.clone()
         } else {
-            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
+            list_clone
+                .iter()
+                .filter(|e| e.matches_search(&q))
+                .cloned()
+                .collect()
         };
         let (key, asc) = sort.read().clone();
         items.sort_by(|a, b| {

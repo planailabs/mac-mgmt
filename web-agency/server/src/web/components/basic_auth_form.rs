@@ -14,8 +14,11 @@ async fn create_basic_auth_list(org_id: Uuid, name: String) -> Result<Uuid, Serv
     let id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO basic_auth_lists (organization_id, name) VALUES ($1, $2) RETURNING id",
     )
-    .bind(org_id).bind(&name)
-    .fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    .bind(org_id)
+    .bind(&name)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(id)
 }
@@ -36,7 +39,12 @@ pub fn BasicAuthForm() -> Element {
     };
 
     let mut name = use_signal(String::new);
-    let mut org_id = use_signal(|| org_list.first().map(|o| o.id.to_string()).unwrap_or_default());
+    let mut org_id = use_signal(|| {
+        org_list
+            .first()
+            .map(|o| o.id.to_string())
+            .unwrap_or_default()
+    });
     let mut error = use_signal(|| None::<String>);
     let mut saving = use_signal(|| false);
     let nav = use_navigator();

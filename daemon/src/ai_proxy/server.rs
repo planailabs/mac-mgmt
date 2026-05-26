@@ -4,11 +4,11 @@ use rocket::serde::json::Json;
 use rocket::{Either, State, get, post, routes};
 use std::sync::Arc;
 
+use super::AiProxyState;
 use super::auth::AuthedKey;
 use super::backend::{self, ProxyError};
 use super::types::*;
 use super::usage::UsageEvent;
-use super::AiProxyState;
 
 #[post("/v1/chat/completions", data = "<body>")]
 async fn chat_completions(
@@ -209,10 +209,7 @@ async fn chat_completions(
 }
 
 #[get("/v1/models")]
-async fn models(
-    _auth: AuthedKey,
-    state: &State<Arc<AiProxyState>>,
-) -> Json<ModelsResponse> {
+async fn models(_auth: AuthedKey, state: &State<Arc<AiProxyState>>) -> Json<ModelsResponse> {
     let data = backend::list_models(state).await;
     Json(ModelsResponse {
         object: "list".to_string(),
@@ -221,10 +218,7 @@ async fn models(
 }
 
 #[get("/v1/usage")]
-async fn usage(
-    auth: AuthedKey,
-    state: &State<Arc<AiProxyState>>,
-) -> Json<UsageResponse> {
+async fn usage(auth: AuthedKey, state: &State<Arc<AiProxyState>>) -> Json<UsageResponse> {
     let recent = state
         .usage_tracker
         .recent_events(&auth.key_hash, auth.budget_window, 50);
@@ -333,18 +327,27 @@ async fn health(state: &State<Arc<AiProxyState>>) -> (Status, Json<HealthRespons
         Status::Ok
     };
 
-    (http_status, Json(HealthResponse { status, backends: entries }))
+    (
+        http_status,
+        Json(HealthResponse {
+            status,
+            backends: entries,
+        }),
+    )
 }
 
 fn proxy_error_to_status(err: ProxyError) -> (Status, Json<ErrorResponse>) {
     match err {
         ProxyError::Backend(msg) => (
             Status::BadGateway,
-            Json(ErrorResponse::new(msg, "server_error", Some("backend_error"))),
+            Json(ErrorResponse::new(
+                msg,
+                "server_error",
+                Some("backend_error"),
+            )),
         ),
         ProxyError::BackendStatus(status, body) => {
-            let rocket_status =
-                Status::from_code(status).unwrap_or(Status::InternalServerError);
+            let rocket_status = Status::from_code(status).unwrap_or(Status::InternalServerError);
             (
                 rocket_status,
                 Json(ErrorResponse::new(body, "upstream_error", None)),
@@ -385,8 +388,5 @@ pub fn build_rocket(
 
     rocket::custom(config)
         .manage(state)
-        .mount(
-            "/",
-            routes![chat_completions, models, usage, health],
-        )
+        .mount("/", routes![chat_completions, models, usage, health])
 }

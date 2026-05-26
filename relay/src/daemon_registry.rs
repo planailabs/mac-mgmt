@@ -355,10 +355,7 @@ impl DaemonRegistry {
             }
         }
         daemons.insert(id.clone(), conn);
-        tracing::info!(
-            "registered daemon {id} (total: {})",
-            daemons.len()
-        );
+        tracing::info!("registered daemon {id} (total: {})", daemons.len());
     }
 
     /// Unregister a daemon, but only if its `connected_at` matches.
@@ -371,9 +368,7 @@ impl DaemonRegistry {
             .get(instance_id)
             .is_some_and(|c| c.connected_at != connected_at);
         if dominated {
-            tracing::info!(
-                "skipping unregister for {instance_id}: newer connection exists"
-            );
+            tracing::info!("skipping unregister for {instance_id}: newer connection exists");
             return None;
         }
         if let Some(conn) = daemons.remove(instance_id) {

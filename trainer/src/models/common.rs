@@ -1,6 +1,9 @@
 use burn::config::Config;
 use burn::module::Module;
-use burn::nn::{Dropout, DropoutConfig, Embedding, EmbeddingConfig, LayerNorm, LayerNormConfig, Linear, LinearConfig};
+use burn::nn::{
+    Dropout, DropoutConfig, Embedding, EmbeddingConfig, LayerNorm, LayerNormConfig, Linear,
+    LinearConfig,
+};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
@@ -51,8 +54,7 @@ impl SessionEncoderConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> SessionEncoder<B> {
         let token_embedding = EmbeddingConfig::new(self.vocab_size, self.d_model).init(device);
         let role_embedding = EmbeddingConfig::new(self.n_roles, self.d_model).init(device);
-        let position_embedding =
-            EmbeddingConfig::new(self.max_seq_len, self.d_model).init(device);
+        let position_embedding = EmbeddingConfig::new(self.max_seq_len, self.d_model).init(device);
 
         let layers = (0..self.n_layers)
             .map(|_| {
@@ -177,9 +179,9 @@ impl<B: Backend> TransformerLayer<B> {
         // Pre-norm feed-forward
         let residual = x.clone();
         let x_norm = self.norm2.forward(x);
-        let ff = self.ff2.forward(burn::tensor::activation::gelu(
-            self.ff1.forward(x_norm),
-        ));
+        let ff = self
+            .ff2
+            .forward(burn::tensor::activation::gelu(self.ff1.forward(x_norm)));
         residual + self.dropout.forward(ff)
     }
 

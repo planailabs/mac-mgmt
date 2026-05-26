@@ -123,8 +123,8 @@ fn cache_nixpkgs_pin(sha: &str) -> std::io::Result<()> {
 
 /// Tarball URL for a pinned commit, served by the mac-mgmt server.
 fn nixpkgs_tarball_url(commit: &str) -> String {
-    let url = current_nixpkgs_server_url()
-        .expect("server URL must be set before nixpkgs operations");
+    let url =
+        current_nixpkgs_server_url().expect("server URL must be set before nixpkgs operations");
     format!("{}/api/nixpkgs-archive/{commit}", url.trim_end_matches('/'))
 }
 

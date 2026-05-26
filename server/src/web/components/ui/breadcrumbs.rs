@@ -31,19 +31,35 @@ struct Entry {
 }
 
 const fn cat(key: &'static str) -> Entry {
-    Entry { label_key: key, link: None, dynamic: false }
+    Entry {
+        label_key: key,
+        link: None,
+        dynamic: false,
+    }
 }
 
 fn parent(key: &'static str, route: Route) -> Entry {
-    Entry { label_key: key, link: Some(route), dynamic: false }
+    Entry {
+        label_key: key,
+        link: Some(route),
+        dynamic: false,
+    }
 }
 
 const fn cur(key: &'static str) -> Entry {
-    Entry { label_key: key, link: None, dynamic: false }
+    Entry {
+        label_key: key,
+        link: None,
+        dynamic: false,
+    }
 }
 
 const fn cur_dyn(fallback: &'static str) -> Entry {
-    Entry { label_key: fallback, link: None, dynamic: true }
+    Entry {
+        label_key: fallback,
+        link: None,
+        dynamic: true,
+    }
 }
 
 /// Clickable parent crumb whose label resolves from `TopbarMeta.title`
@@ -51,7 +67,11 @@ const fn cur_dyn(fallback: &'static str) -> Entry {
 /// (e.g. a specific cluster) and we want the entity's name in the chain
 /// rather than the static category label "Clusters" repeated twice.
 fn parent_dyn(fallback: &'static str, route: Route) -> Entry {
-    Entry { label_key: fallback, link: Some(route), dynamic: true }
+    Entry {
+        label_key: fallback,
+        link: Some(route),
+        dynamic: true,
+    }
 }
 
 /// Build the chain for a given route. Categories use the existing
@@ -148,18 +168,36 @@ fn chain_keys(route: &Route) -> Vec<Entry> {
         ImportSources { .. } => vec![cat("nav-import"), cur("nav-import-sources")],
         ImportSourcesSearch {} => vec![
             cat("nav-import"),
-            parent("nav-import-sources", ImportSources { prefill_slug: None, prefill_name: None }),
+            parent(
+                "nav-import-sources",
+                ImportSources {
+                    prefill_slug: None,
+                    prefill_name: None,
+                },
+            ),
             cur("breadcrumb-search"),
         ],
         ImportSourceEdit { id } => vec![
             cat("nav-import"),
-            parent("nav-import-sources", ImportSources { prefill_slug: None, prefill_name: None }),
+            parent(
+                "nav-import-sources",
+                ImportSources {
+                    prefill_slug: None,
+                    prefill_name: None,
+                },
+            ),
             parent("nav-import-sources", ImportSourceDetail { id: id.clone() }),
             cur("breadcrumb-edit"),
         ],
         ImportSourceDetail { .. } => vec![
             cat("nav-import"),
-            parent("nav-import-sources", ImportSources { prefill_slug: None, prefill_name: None }),
+            parent(
+                "nav-import-sources",
+                ImportSources {
+                    prefill_slug: None,
+                    prefill_name: None,
+                },
+            ),
             cur_dyn("nav-import-sources"),
         ],
 

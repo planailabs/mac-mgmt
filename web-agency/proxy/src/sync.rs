@@ -110,11 +110,13 @@ async fn reload_routes(
                     };
 
                     let auth = match entry.auth {
-                        Some(a) if a.mode == "oidc" => {
-                            AuthMode::Oidc { org_id: a.org_id.unwrap_or_default() }
-                        }
+                        Some(a) if a.mode == "oidc" => AuthMode::Oidc {
+                            org_id: a.org_id.unwrap_or_default(),
+                        },
                         Some(a) if a.mode == "basic" => {
-                            let creds = a.basic_credentials.unwrap_or_default()
+                            let creds = a
+                                .basic_credentials
+                                .unwrap_or_default()
                                 .into_iter()
                                 .map(|c| (c.username, c.password_hash))
                                 .collect();
@@ -158,11 +160,7 @@ async fn reload_routes(
 
 /// Fetch certs from server and update the cert store in memory.
 /// Returns `true` on success.
-async fn reload_certs(
-    client: &reqwest::Client,
-    server_url: &str,
-    cert_store: &CertStore,
-) -> bool {
+async fn reload_certs(client: &reqwest::Client, server_url: &str, cert_store: &CertStore) -> bool {
     match client
         .get(format!("{server_url}/api/internal/certs"))
         .send()
@@ -243,7 +241,9 @@ pub async fn initial_load(
     let token = cfg.internal_token();
     let client = build_client(&token);
     loop {
-        let routes_ok = reload_routes(&client, &cfg.server_url, routes).await.is_some();
+        let routes_ok = reload_routes(&client, &cfg.server_url, routes)
+            .await
+            .is_some();
         let certs_ok = reload_certs(&client, &cfg.server_url, cert_store).await;
         if routes_ok && certs_ok {
             trigger_missing_certs(&client, &cfg.server_url, routes, cert_store).await;

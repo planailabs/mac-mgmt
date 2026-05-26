@@ -88,20 +88,23 @@ pub fn render(metrics: &Arc<Metrics>, assessor: &Arc<Assessor>) -> String {
     let tpl = ramhorns::Template::new(TEMPLATE).expect("dashboard template parse");
 
     let (version, uptime_secs, svc_list) = metrics.status();
-    let uptime = humantime::format_duration(std::time::Duration::from_secs(uptime_secs)).to_string();
+    let uptime =
+        humantime::format_duration(std::time::Duration::from_secs(uptime_secs)).to_string();
     let hostname = hostname::get()
         .map(|h| h.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown".into());
 
     let services: Vec<ServiceRow> = svc_list
         .into_iter()
-        .map(|(name, healthy, upgrade_pending, busy, _phase)| ServiceRow {
-            name,
-            healthy,
-            unhealthy: !healthy,
-            upgrade_pending,
-            busy,
-        })
+        .map(
+            |(name, healthy, upgrade_pending, busy, _phase)| ServiceRow {
+                name,
+                healthy,
+                unhealthy: !healthy,
+                upgrade_pending,
+                busy,
+            },
+        )
         .collect();
 
     let probe_states = assessor.latest_probes_snapshot();
@@ -133,90 +136,100 @@ pub fn render(metrics: &Arc<Metrics>, assessor: &Arc<Assessor>) -> String {
         .collect();
 
     let sample = assessor.latest_sample_snapshot();
-    let (has_sample, cpu_load, mem_used, mem_total, mem_pct, swap_used, process_count, thermal_state, disks, gpus, net_rx, net_tx) =
-        if let Some(s) = sample {
-            let mem_pct = if s.mem_total_bytes > 0 {
-                format!("{}%", s.mem_used_bytes * 100 / s.mem_total_bytes)
-            } else {
-                "—".into()
-            };
-            let disk_rows: Vec<DiskRow> = s
-                .disk_free
-                .iter()
-                .map(|d| {
-                    let used_pct = if d.total_bytes > 0 {
-                        format!(
-                            "{}%",
-                            ((d.total_bytes - d.free_bytes) * 100 / d.total_bytes).min(100)
-                        )
-                    } else {
-                        "—".into()
-                    };
-                    DiskRow {
-                        mount: d.mount.clone(),
-                        free: human_bytes(d.free_bytes),
-                        total: human_bytes(d.total_bytes),
-                        used_pct,
-                    }
-                })
-                .collect();
-            let gpu_rows: Vec<GpuRow> = s
-                .gpus
-                .iter()
-                .map(|g| GpuRow {
-                    index: g.index.to_string(),
-                    name: String::new(), // name comes from inventory, not sample
-                    vram_used: g
-                        .vram_used_bytes
-                        .map(human_bytes)
-                        .unwrap_or_else(|| "—".into()),
-                    vram_total: String::new(),
-                    utilization: g
-                        .utilization_pct
-                        .map(|v| format!("{v}%"))
-                        .unwrap_or_else(|| "—".into()),
-                    temperature: g
-                        .temperature_c
-                        .map(|v| format!("{v} °C"))
-                        .unwrap_or_else(|| "—".into()),
-                    power: g
-                        .power_watts
-                        .map(|v| format!("{v:.0} W"))
-                        .unwrap_or_else(|| "—".into()),
-                })
-                .collect();
-            (
-                true,
-                format!("{:.2}", s.cpu_load_1m),
-                human_bytes(s.mem_used_bytes),
-                human_bytes(s.mem_total_bytes),
-                mem_pct,
-                human_bytes(s.swap_used_bytes),
-                s.process_count.to_string(),
-                s.thermal_state
-                    .clone()
-                    .unwrap_or_else(|| "nominal".into()),
-                disk_rows,
-                gpu_rows,
-                human_bytes(s.net_rx_bytes),
-                human_bytes(s.net_tx_bytes),
-            )
+    let (
+        has_sample,
+        cpu_load,
+        mem_used,
+        mem_total,
+        mem_pct,
+        swap_used,
+        process_count,
+        thermal_state,
+        disks,
+        gpus,
+        net_rx,
+        net_tx,
+    ) = if let Some(s) = sample {
+        let mem_pct = if s.mem_total_bytes > 0 {
+            format!("{}%", s.mem_used_bytes * 100 / s.mem_total_bytes)
         } else {
-            (
-                false,
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                Vec::new(),
-                Vec::new(),
-                String::new(),
-                String::new(),
-            )
+            "—".into()
         };
+        let disk_rows: Vec<DiskRow> = s
+            .disk_free
+            .iter()
+            .map(|d| {
+                let used_pct = if d.total_bytes > 0 {
+                    format!(
+                        "{}%",
+                        ((d.total_bytes - d.free_bytes) * 100 / d.total_bytes).min(100)
+                    )
+                } else {
+                    "—".into()
+                };
+                DiskRow {
+                    mount: d.mount.clone(),
+                    free: human_bytes(d.free_bytes),
+                    total: human_bytes(d.total_bytes),
+                    used_pct,
+                }
+            })
+            .collect();
+        let gpu_rows: Vec<GpuRow> = s
+            .gpus
+            .iter()
+            .map(|g| GpuRow {
+                index: g.index.to_string(),
+                name: String::new(), // name comes from inventory, not sample
+                vram_used: g
+                    .vram_used_bytes
+                    .map(human_bytes)
+                    .unwrap_or_else(|| "—".into()),
+                vram_total: String::new(),
+                utilization: g
+                    .utilization_pct
+                    .map(|v| format!("{v}%"))
+                    .unwrap_or_else(|| "—".into()),
+                temperature: g
+                    .temperature_c
+                    .map(|v| format!("{v} °C"))
+                    .unwrap_or_else(|| "—".into()),
+                power: g
+                    .power_watts
+                    .map(|v| format!("{v:.0} W"))
+                    .unwrap_or_else(|| "—".into()),
+            })
+            .collect();
+        (
+            true,
+            format!("{:.2}", s.cpu_load_1m),
+            human_bytes(s.mem_used_bytes),
+            human_bytes(s.mem_total_bytes),
+            mem_pct,
+            human_bytes(s.swap_used_bytes),
+            s.process_count.to_string(),
+            s.thermal_state.clone().unwrap_or_else(|| "nominal".into()),
+            disk_rows,
+            gpu_rows,
+            human_bytes(s.net_rx_bytes),
+            human_bytes(s.net_tx_bytes),
+        )
+    } else {
+        (
+            false,
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            String::new(),
+            String::new(),
+        )
+    };
 
     let data = Dashboard {
         version,

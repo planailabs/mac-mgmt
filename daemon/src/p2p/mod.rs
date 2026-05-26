@@ -13,8 +13,8 @@ pub mod proxy_helpers;
 pub mod relay_state;
 pub mod rpc;
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -25,7 +25,7 @@ use tokio::sync::{RwLock, mpsc};
 use behaviour::{ClusterBehaviour, ClusterBehaviourEvent};
 use discovery::{BackendAdvertisement, PeerRegistry};
 use protocols::ai_proxy;
-use relay_state::{RelayState, RelayEvent, RelayAction};
+use relay_state::{RelayAction, RelayEvent, RelayState};
 
 /// Commands the daemon event loop can send to the P2pManager.
 #[derive(Debug)]
@@ -48,10 +48,7 @@ pub enum P2pEvent {
         request: ai_proxy::AiProxyRequest,
     },
     /// A peer discovered or lost.
-    PeerUpdate {
-        peer: PeerId,
-        connected: bool,
-    },
+    PeerUpdate { peer: PeerId, connected: bool },
 }
 
 /// Configuration for the P2pManager.
@@ -96,10 +93,7 @@ pub struct P2pManager {
 
 impl P2pManager {
     /// Create and start the P2p swarm.
-    pub async fn new(
-        host_key: &russh::keys::PrivateKey,
-        config: P2pConfig,
-    ) -> Result<Self> {
+    pub async fn new(host_key: &russh::keys::PrivateKey, config: P2pConfig) -> Result<Self> {
         let keypair =
             identity::keypair_from_russh(host_key).context("failed to convert host key")?;
         let local_peer_id = keypair.public().to_peer_id();
@@ -156,19 +150,18 @@ impl P2pManager {
                     .upgrade(libp2p::core::upgrade::Version::V1)
                     .authenticate(libp2p::noise::Config::new(key)?)
                     .multiplex(libp2p::yamux::Config::default())
-                    .map(|(peer, muxer), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer)));
+                    .map(|(peer, muxer), _| {
+                        (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer))
+                    });
                 Ok(ws.boxed())
             })?
-            .with_relay_client(
-                libp2p::noise::Config::new,
-                || libp2p::yamux::Config::default(),
-            )?
+            .with_relay_client(libp2p::noise::Config::new, || {
+                libp2p::yamux::Config::default()
+            })?
             .with_behaviour(move |key, relay_client| {
-                let identify_config = identify::Config::new(
-                    "/mac-mgmt/1.0.0".to_string(),
-                    key.public(),
-                )
-                .with_agent_version(agent_version.clone());
+                let identify_config =
+                    identify::Config::new("/mac-mgmt/1.0.0".to_string(), key.public())
+                        .with_agent_version(agent_version.clone());
 
                 let mdns_behaviour =
                     mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())
@@ -186,15 +179,17 @@ impl P2pManager {
                 .expect("gossipsub behaviour");
 
                 let ai_proxy_behaviour = request_response::Behaviour::new(
-                    [(ai_proxy::PROTOCOL_NAME, request_response::ProtocolSupport::Full)],
+                    [(
+                        ai_proxy::PROTOCOL_NAME,
+                        request_response::ProtocolSupport::Full,
+                    )],
                     request_response::Config::default()
                         .with_request_timeout(Duration::from_secs(600)),
                 );
 
                 Ok(ClusterBehaviour {
                     ping: libp2p::ping::Behaviour::new(
-                        libp2p::ping::Config::new()
-                            .with_interval(Duration::from_secs(15)),
+                        libp2p::ping::Config::new().with_interval(Duration::from_secs(15)),
                     ),
                     identify: identify::Behaviour::new(identify_config),
                     mdns: mdns_behaviour,
@@ -217,13 +212,19 @@ impl P2pManager {
             .parse()
             .context("invalid QUIC listen address")?;
         if let Err(e) = swarm.listen_on(quic_v4) {
-            tracing::warn!("failed to listen on QUIC IPv4 (port {}): {e}", config.p2p_port);
+            tracing::warn!(
+                "failed to listen on QUIC IPv4 (port {}): {e}",
+                config.p2p_port
+            );
         }
         let quic_v6: Multiaddr = format!("/ip6/::/udp/{}/quic-v1", config.p2p_port)
             .parse()
             .context("invalid QUIC IPv6 listen address")?;
         if let Err(e) = swarm.listen_on(quic_v6) {
-            tracing::warn!("failed to listen on QUIC IPv6 (port {}): {e}", config.p2p_port);
+            tracing::warn!(
+                "failed to listen on QUIC IPv6 (port {}): {e}",
+                config.p2p_port
+            );
         }
 
         // TCP listeners on the same port — fallback for peers that cannot
@@ -232,13 +233,19 @@ impl P2pManager {
             .parse()
             .context("invalid TCP listen address")?;
         if let Err(e) = swarm.listen_on(tcp_v4) {
-            tracing::warn!("failed to listen on TCP IPv4 (port {}): {e}", config.p2p_port);
+            tracing::warn!(
+                "failed to listen on TCP IPv4 (port {}): {e}",
+                config.p2p_port
+            );
         }
         let tcp_v6: Multiaddr = format!("/ip6/::/tcp/{}", config.p2p_port)
             .parse()
             .context("invalid TCP listen address")?;
         if let Err(e) = swarm.listen_on(tcp_v6) {
-            tracing::warn!("failed to listen on TCP IPv6 (port {}): {e}", config.p2p_port);
+            tracing::warn!(
+                "failed to listen on TCP IPv6 (port {}): {e}",
+                config.p2p_port
+            );
         }
 
         // Connect to relay if configured
@@ -254,8 +261,14 @@ impl P2pManager {
         let peer_registry = Arc::new(RwLock::new(PeerRegistry::default()));
         let active_jobs = Arc::new(AtomicU32::new(0));
         let relay_proxy_url = Arc::new(RwLock::new(None));
-        let swarm_listening = config.swarm_listening.clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-        let relay_registered = config.relay_registered.clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        let swarm_listening = config
+            .swarm_listening
+            .clone()
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        let relay_registered = config
+            .relay_registered
+            .clone()
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
 
         // Extract stream control for opening RPC streams.
         let stream_control = swarm.behaviour().streams.new_control();
@@ -360,7 +373,8 @@ async fn swarm_loop(
     let mut ad_interval = tokio::time::interval(Duration::from_secs(30));
     let mut evict_interval = tokio::time::interval(Duration::from_secs(15));
     let mut relay_tick = tokio::time::interval(Duration::from_secs(10));
-    let mut authorized_cluster_peers: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
+    let mut authorized_cluster_peers: std::collections::HashSet<PeerId> =
+        std::collections::HashSet::new();
 
     // Initialize relay state machine.
     let mut relay = RelayState::new(config.relay_multiaddr.clone());
@@ -619,14 +633,12 @@ async fn execute_relay_actions(
                 authorized_cluster_peers.remove(&peer_id);
                 relay_registered.store(false, Ordering::Relaxed);
             }
-            RelayAction::Log(level, msg) => {
-                match level {
-                    tracing::Level::INFO => tracing::info!("{msg}"),
-                    tracing::Level::WARN => tracing::warn!("{msg}"),
-                    tracing::Level::DEBUG => tracing::debug!("{msg}"),
-                    _ => tracing::trace!("{msg}"),
-                }
-            }
+            RelayAction::Log(level, msg) => match level {
+                tracing::Level::INFO => tracing::info!("{msg}"),
+                tracing::Level::WARN => tracing::warn!("{msg}"),
+                tracing::Level::DEBUG => tracing::debug!("{msg}"),
+                _ => tracing::trace!("{msg}"),
+            },
         }
     }
 }
@@ -645,13 +657,23 @@ async fn handle_general_event(
             for (peer_id, addr) in peers {
                 tracing::info!(%peer_id, %addr, "mDNS discovered peer");
                 swarm.add_peer_address(peer_id, addr);
-                let _ = event_tx.send(P2pEvent::PeerUpdate { peer: peer_id, connected: true }).await;
+                let _ = event_tx
+                    .send(P2pEvent::PeerUpdate {
+                        peer: peer_id,
+                        connected: true,
+                    })
+                    .await;
             }
         }
         SwarmEvent::Behaviour(ClusterBehaviourEvent::Mdns(mdns::Event::Expired(peers))) => {
             for (peer_id, _addr) in peers {
                 peer_registry.write().await.remove(&peer_id);
-                let _ = event_tx.send(P2pEvent::PeerUpdate { peer: peer_id, connected: false }).await;
+                let _ = event_tx
+                    .send(P2pEvent::PeerUpdate {
+                        peer: peer_id,
+                        connected: false,
+                    })
+                    .await;
             }
         }
         // Control requests are now handled via the persistent RPC stream,
@@ -659,7 +681,10 @@ async fn handle_general_event(
         SwarmEvent::Behaviour(ClusterBehaviourEvent::AiProxy(
             request_response::Event::Message {
                 peer,
-                message: request_response::Message::Request { channel, request, .. },
+                message:
+                    request_response::Message::Request {
+                        channel, request, ..
+                    },
                 ..
             },
         )) => {
@@ -667,11 +692,18 @@ async fn handle_general_event(
                 tracing::warn!(%peer, "rejecting AI proxy request from unauthorized peer");
                 return;
             }
-            let _ = event_tx.send(P2pEvent::AiProxyRequest { peer, channel, request }).await;
+            let _ = event_tx
+                .send(P2pEvent::AiProxyRequest {
+                    peer,
+                    channel,
+                    request,
+                })
+                .await;
         }
-        SwarmEvent::Behaviour(ClusterBehaviourEvent::Gossipsub(
-            gossipsub::Event::Message { message, .. },
-        )) => {
+        SwarmEvent::Behaviour(ClusterBehaviourEvent::Gossipsub(gossipsub::Event::Message {
+            message,
+            ..
+        })) => {
             if let Ok(ad) = serde_json::from_slice::<BackendAdvertisement>(&message.data) {
                 if let Ok(peer_id) = ad.peer_id.parse::<PeerId>() {
                     peer_registry.write().await.update(peer_id, ad);
@@ -685,7 +717,6 @@ async fn handle_general_event(
         _ => {}
     }
 }
-
 
 async fn handle_command(
     cmd: P2pCommand,
@@ -783,14 +814,12 @@ async fn handle_tunnel_stream(
         "metrics" => {
             handle_streamed_metrics(handshake, &mut stream, handler_state).await;
         }
-        "file_list" | "file_read" | "file_write" => {
-            match msg_type {
-                "file_list" => handle_file_list_stream(handshake, &mut stream, handler_state).await,
-                "file_read" => handle_file_read_stream(handshake, &mut stream, handler_state).await,
-                "file_write" => handle_file_write_stream(handshake, &mut stream, handler_state).await,
-                _ => unreachable!(),
-            }
-        }
+        "file_list" | "file_read" | "file_write" => match msg_type {
+            "file_list" => handle_file_list_stream(handshake, &mut stream, handler_state).await,
+            "file_read" => handle_file_read_stream(handshake, &mut stream, handler_state).await,
+            "file_write" => handle_file_write_stream(handshake, &mut stream, handler_state).await,
+            _ => unreachable!(),
+        },
         #[cfg(feature = "services")]
         "shell" => {
             handle_streamed_shell(handshake, &mut stream, handler_state).await;
@@ -855,10 +884,10 @@ async fn handle_streamed_proxy(
         // Bridge: tunnel substream (framed messages from relay) ↔ local WS.
         // Uses the same tag+length framing protocol as relay's ws_bridge:
         //   0x01 + len + data = Text, 0x02 + len + data = Binary, 0x03 = Close.
-        use futures_util::{SinkExt, StreamExt, AsyncWriteExt as _};
+        use futures_util::{AsyncWriteExt as _, SinkExt, StreamExt};
         use tokio_tungstenite::tungstenite;
 
-        use mac_mgmt_common::framing::{TAG_JSON as TAG_TEXT, TAG_BINARY, TAG_END as TAG_CLOSE};
+        use mac_mgmt_common::framing::{TAG_BINARY, TAG_END as TAG_CLOSE, TAG_JSON as TAG_TEXT};
 
         let (mut ws_sink, mut ws_stream) = local_ws.split();
 
@@ -994,10 +1023,15 @@ async fn handle_streamed_proxy(
         path,
         handler_state.fake_origin_local,
     );
-    let req = proxy_helpers::apply_headers_vec(req, &headers, handler_state.fake_origin_local, &target);
+    let req =
+        proxy_helpers::apply_headers_vec(req, &headers, handler_state.fake_origin_local, &target);
     let req = proxy_helpers::apply_body_b64(req, body_b64);
 
-    match req.timeout(std::time::Duration::from_secs(300)).send().await {
+    match req
+        .timeout(std::time::Duration::from_secs(300))
+        .send()
+        .await
+    {
         Ok(resp) => {
             let status = resp.status().as_u16();
             let resp_headers: Vec<(String, String)> = resp
@@ -1141,10 +1175,14 @@ async fn handle_file_read_stream(
                 "size": content.len(),
                 "mtime": mtime.unwrap_or(0),
             });
-            if stream_framing::write_json(stream, &header).await.is_err() { return; }
+            if stream_framing::write_json(stream, &header).await.is_err() {
+                return;
+            }
             // Stream content in chunks.
             for chunk in content.chunks(1024 * 1024) {
-                if stream_framing::write_binary(stream, chunk).await.is_err() { return; }
+                if stream_framing::write_binary(stream, chunk).await.is_err() {
+                    return;
+                }
             }
             let _ = stream_framing::write_end(stream).await;
         }
@@ -1201,21 +1239,45 @@ async fn handle_file_write_stream(
 }
 
 #[cfg(not(feature = "services"))]
-async fn handle_file_list_stream(_: serde_json::Value, stream: &mut libp2p::Stream, _: &Arc<handler::HandlerState>) {
+async fn handle_file_list_stream(
+    _: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    _: &Arc<handler::HandlerState>,
+) {
     use mac_mgmt_common::framing as stream_framing;
-    let _ = stream_framing::write_json(stream, &serde_json::json!({ "status": 501, "error": "services not enabled" })).await;
+    let _ = stream_framing::write_json(
+        stream,
+        &serde_json::json!({ "status": 501, "error": "services not enabled" }),
+    )
+    .await;
     let _ = stream_framing::write_end(stream).await;
 }
 #[cfg(not(feature = "services"))]
-async fn handle_file_read_stream(_: serde_json::Value, stream: &mut libp2p::Stream, _: &Arc<handler::HandlerState>) {
+async fn handle_file_read_stream(
+    _: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    _: &Arc<handler::HandlerState>,
+) {
     use mac_mgmt_common::framing as stream_framing;
-    let _ = stream_framing::write_json(stream, &serde_json::json!({ "status": 501, "error": "services not enabled" })).await;
+    let _ = stream_framing::write_json(
+        stream,
+        &serde_json::json!({ "status": 501, "error": "services not enabled" }),
+    )
+    .await;
     let _ = stream_framing::write_end(stream).await;
 }
 #[cfg(not(feature = "services"))]
-async fn handle_file_write_stream(_: serde_json::Value, stream: &mut libp2p::Stream, _: &Arc<handler::HandlerState>) {
+async fn handle_file_write_stream(
+    _: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    _: &Arc<handler::HandlerState>,
+) {
     use mac_mgmt_common::framing as stream_framing;
-    let _ = stream_framing::write_json(stream, &serde_json::json!({ "status": 501, "error": "services not enabled" })).await;
+    let _ = stream_framing::write_json(
+        stream,
+        &serde_json::json!({ "status": 501, "error": "services not enabled" }),
+    )
+    .await;
     let _ = stream_framing::write_end(stream).await;
 }
 
@@ -1251,7 +1313,10 @@ async fn handle_streamed_shell(
             return;
         }
 
-        let timeout = tunnel.def.timeout_secs.unwrap_or(crate::shell_tunnels::DEFAULT_EXEC_SECS);
+        let timeout = tunnel
+            .def
+            .timeout_secs
+            .unwrap_or(crate::shell_tunnels::DEFAULT_EXEC_SECS);
         let cmd = crate::shell_tunnels::build_command(tunnel, user_arg);
         (virtual_handler, timeout, cmd)
     };
@@ -1260,7 +1325,9 @@ async fn handle_streamed_shell(
         let output = handler(user_arg);
         for (strm, data) in &output.lines {
             let msg = serde_json::json!({ "stream": strm, "data": data });
-            if stream_framing::write_json(stream, &msg).await.is_err() { return; }
+            if stream_framing::write_json(stream, &msg).await.is_err() {
+                return;
+            }
         }
         let msg = serde_json::json!({ "exit_code": output.exit_code });
         let _ = stream_framing::write_json(stream, &msg).await;
@@ -1370,10 +1437,7 @@ async fn handle_streamed_shell(
 
 /// Handle an SSH session over a tunnel substream.
 /// The substream acts as the transport for the russh SSH server.
-async fn handle_ssh_session(
-    stream: libp2p::Stream,
-    handler_state: &Arc<handler::HandlerState>,
-) {
+async fn handle_ssh_session(stream: libp2p::Stream, handler_state: &Arc<handler::HandlerState>) {
     use tokio_util::compat::FuturesAsyncReadCompatExt;
 
     // Load authorized SSH keys from all sources.
@@ -1394,10 +1458,7 @@ async fn handle_ssh_session(
     };
 
     let config = std::sync::Arc::new(russh::server::Config {
-        keys: vec![
-            crate::host_keys::load_or_generate()
-                .expect("failed to load host key for SSH"),
-        ],
+        keys: vec![crate::host_keys::load_or_generate().expect("failed to load host key for SSH")],
         ..Default::default()
     });
 
@@ -1434,21 +1495,27 @@ fn build_insecure_ws_tls_config() -> libp2p::websocket::tls::Config {
 
     impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
         fn verify_server_cert(
-            &self, _: &rustls::pki_types::CertificateDer<'_>,
+            &self,
+            _: &rustls::pki_types::CertificateDer<'_>,
             _: &[rustls::pki_types::CertificateDer<'_>],
-            _: &rustls::pki_types::ServerName<'_>, _: &[u8],
+            _: &rustls::pki_types::ServerName<'_>,
+            _: &[u8],
             _: rustls::pki_types::UnixTime,
         ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         }
         fn verify_tls12_signature(
-            &self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>,
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
             _: &rustls::DigitallySignedStruct,
         ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
             Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
         }
         fn verify_tls13_signature(
-            &self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>,
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
             _: &rustls::DigitallySignedStruct,
         ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
             Ok(rustls::client::danger::HandshakeSignatureValid::assertion())

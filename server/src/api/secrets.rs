@@ -1,6 +1,6 @@
+use rocket::State;
 use rocket::http::Status;
 use rocket::serde::json::Json;
-use rocket::State;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -89,19 +89,17 @@ pub async fn get_secrets(
     auth: SyncAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<HashMap<String, String>>, Status> {
-    let rows: Vec<(String, Vec<u8>)> = sqlx::query_as(
-        "SELECT name, encrypted_value FROM cluster_secrets WHERE cluster_id = $1",
-    )
-    .bind(auth.cluster_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let rows: Vec<(String, Vec<u8>)> =
+        sqlx::query_as("SELECT name, encrypted_value FROM cluster_secrets WHERE cluster_id = $1")
+            .bind(auth.cluster_id)
+            .fetch_all(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
 
     let mut secrets = HashMap::with_capacity(rows.len());
     for (name, encrypted) in rows {
         let plaintext = decrypt(&encrypted)?;
-        let value =
-            String::from_utf8(plaintext).map_err(|_| Status::InternalServerError)?;
+        let value = String::from_utf8(plaintext).map_err(|_| Status::InternalServerError)?;
         secrets.insert(name, value);
     }
     Ok(Json(secrets))
@@ -225,14 +223,12 @@ pub async fn delete_secret(
     channels: &State<PushChannels>,
     name: &str,
 ) -> Result<Status, Status> {
-    let result = sqlx::query(
-        "DELETE FROM cluster_secrets WHERE cluster_id = $1 AND name = $2",
-    )
-    .bind(auth.cluster_id)
-    .bind(name)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let result = sqlx::query("DELETE FROM cluster_secrets WHERE cluster_id = $1 AND name = $2")
+        .bind(auth.cluster_id)
+        .bind(name)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     if result.rows_affected() == 0 {
         return Err(Status::NotFound);
@@ -264,9 +260,7 @@ mod tests {
 
         // Decrypt
         let decrypted_nonce = Nonce::from_slice(&combined[..12]);
-        let decrypted = cipher
-            .decrypt(decrypted_nonce, &combined[12..])
-            .unwrap();
+        let decrypted = cipher.decrypt(decrypted_nonce, &combined[12..]).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 }

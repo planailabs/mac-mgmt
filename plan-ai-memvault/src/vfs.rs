@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use tokio::sync::OnceCell;
 
@@ -99,7 +99,10 @@ impl<'a> Vfs<'a> {
                 candidates.push(id.to_string());
             }
             // Fallback: detect root by name="/" prop (in case tags are stale).
-            let name_prop = e.get("props").and_then(|p| p.get("name")).and_then(|v| v.as_str())
+            let name_prop = e
+                .get("props")
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
                 .or_else(|| e.get("label").and_then(|v| v.as_str()));
             if name_prop == Some("/") && kind_match {
                 fallback_candidates.push(id.to_string());
@@ -115,9 +118,13 @@ impl<'a> Vfs<'a> {
             fallback_candidates.sort();
             let id = fallback_candidates.into_iter().next().unwrap();
             let node_id = ensure_entity_id(&id);
-            let _ = self.backend.add_tags(&node_id, vec![
-                (VFS_ROOT_TAG.0.to_string(), VFS_ROOT_TAG.1.to_string()),
-            ]).await;
+            let _ = self
+                .backend
+                .add_tags(
+                    &node_id,
+                    vec![(VFS_ROOT_TAG.0.to_string(), VFS_ROOT_TAG.1.to_string())],
+                )
+                .await;
             return Ok(id);
         }
 
@@ -259,12 +266,7 @@ impl<'a> Vfs<'a> {
         Ok(bare_hex(raw).to_string())
     }
 
-    async fn create_child_edge(
-        &self,
-        parent: &str,
-        child: &str,
-        name: &str,
-    ) -> Result<String> {
+    async fn create_child_edge(&self, parent: &str, child: &str, name: &str) -> Result<String> {
         if self.find_child(parent, name).await?.is_some() {
             bail!("entry '{name}' already exists in directory");
         }
@@ -346,10 +348,7 @@ impl<'a> Vfs<'a> {
 
     /// Move/rename: unlink from old path, link at new path.
     pub async fn mv(&self, from: &str, to: &str) -> Result<()> {
-        let (node_id, _) = self
-            .resolve(from)
-            .await?
-            .context("source path not found")?;
+        let (node_id, _) = self.resolve(from).await?.context("source path not found")?;
         self.unlink(from).await?;
         self.link(to, &node_id).await?;
         Ok(())
@@ -400,7 +399,9 @@ impl<'a> Vfs<'a> {
                     .to_string();
                 match seen.get(&name) {
                     Some((_, existing_eid)) if *existing_eid <= edge_id => {}
-                    _ => { seen.insert(name, (target, edge_id)); }
+                    _ => {
+                        seen.insert(name, (target, edge_id));
+                    }
                 }
             }
             let mut entries = Vec::new();
@@ -581,4 +582,3 @@ fn has_tag_inline(tags: &[serde_json::Value], scope: &str, label: &str) -> bool 
     }
     false
 }
-

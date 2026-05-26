@@ -2,7 +2,9 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td, Th};
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td, Th,
+};
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -50,7 +52,10 @@ struct DnsRecordRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CfCredOption { id: Uuid, name: String }
+struct CfCredOption {
+    id: Uuid,
+    name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DeployResult {
@@ -76,13 +81,29 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("domain not found"))?;
 
-    let (id, name, registrar_type, registrar_credential_id, ssl_mode, dnssec_enabled, cloudflare_zone_id, cf_cred_id, registered_at, expires_at, org_id, ai_bots_protection) = row;
+    let (
+        id,
+        name,
+        registrar_type,
+        registrar_credential_id,
+        ssl_mode,
+        dnssec_enabled,
+        cloudflare_zone_id,
+        cf_cred_id,
+        registered_at,
+        expires_at,
+        org_id,
+        ai_bots_protection,
+    ) = row;
 
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
 
     let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
-        .bind(org_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(org_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Fetch live zone info + DNSSEC details
     let mut cf_status = None;
@@ -113,34 +134,71 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
     // Load subdomains with their records
     let sub_rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM subdomains WHERE domain_id = $1 ORDER BY name",
-    ).bind(domain_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(domain_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let mut subdomains = Vec::new();
     for (sub_id, sub_name) in sub_rows {
-        let records = sqlx::query_as::<_, (Uuid, String, String, Option<i32>, bool, Option<String>)>(
-            "SELECT id, record_type, record_value, ttl, proxied, cloudflare_record_id \
+        let records =
+            sqlx::query_as::<_, (Uuid, String, String, Option<i32>, bool, Option<String>)>(
+                "SELECT id, record_type, record_value, ttl, proxied, cloudflare_record_id \
              FROM dns_records WHERE subdomain_id = $1 ORDER BY record_type, record_value",
-        ).bind(sub_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+            )
+            .bind(sub_id)
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         subdomains.push(SubdomainData {
             id: sub_id,
             name: sub_name,
-            records: records.into_iter().map(|(id, record_type, record_value, ttl, proxied, cloudflare_record_id)| {
-                DnsRecordRow { id, record_type, record_value, ttl, proxied, cloudflare_record_id }
-            }).collect(),
+            records: records
+                .into_iter()
+                .map(
+                    |(id, record_type, record_value, ttl, proxied, cloudflare_record_id)| {
+                        DnsRecordRow {
+                            id,
+                            record_type,
+                            record_value,
+                            ttl,
+                            proxied,
+                            cloudflare_record_id,
+                        }
+                    },
+                )
+                .collect(),
         });
     }
 
-    let can_set_ns = registrar_type.as_deref() == Some("spaceship") && registrar_credential_id.is_some();
+    let can_set_ns =
+        registrar_type.as_deref() == Some("spaceship") && registrar_credential_id.is_some();
 
     Ok(DomainData {
-        id, name, registrar_type, registrar_credential_id, ssl_mode, dnssec_enabled,
-        cloudflare_zone_id, cloudflare_credential_id: cf_cred_id,
-        cloudflare_zone_status: cf_status, cloudflare_nameservers: cf_nameservers,
+        id,
+        name,
+        registrar_type,
+        registrar_credential_id,
+        ssl_mode,
+        dnssec_enabled,
+        cloudflare_zone_id,
+        cloudflare_credential_id: cf_cred_id,
+        cloudflare_zone_status: cf_status,
+        cloudflare_nameservers: cf_nameservers,
         registered_at: registered_at.map(|d| d.format("%Y-%m-%d").to_string()),
         expires_at: expires_at.map(|d| d.format("%Y-%m-%d").to_string()),
-        organization_id: org_id, organization_name: org_name, subdomains, can_set_nameservers: can_set_ns,
-        ai_bots_protection, dnssec_ds, dnssec_key_tag, dnssec_algorithm, dnssec_digest_type, dnssec_digest,
+        organization_id: org_id,
+        organization_name: org_name,
+        subdomains,
+        can_set_nameservers: can_set_ns,
+        ai_bots_protection,
+        dnssec_ds,
+        dnssec_key_tag,
+        dnssec_algorithm,
+        dnssec_digest_type,
+        dnssec_digest,
     })
 }
 
@@ -150,18 +208,30 @@ async fn list_cf_credentials() -> Result<Vec<CfCredOption>, ServerFnError> {
     let pool = crate::server_pool()?;
     let rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM credentials WHERE credential_type = 'cloudflare' ORDER BY name",
-    ).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(rows.into_iter().map(|(id, name)| CfCredOption { id, name }).collect())
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| CfCredOption { id, name })
+        .collect())
 }
 
 #[server]
-async fn deploy_to_cloudflare(domain_id: Uuid, credential_id: Uuid) -> Result<DeployResult, ServerFnError> {
+async fn deploy_to_cloudflare(
+    domain_id: Uuid,
+    credential_id: Uuid,
+) -> Result<DeployResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
     let (domain_name, org_id) = sqlx::query_as::<_, (String, Uuid)>(
         "SELECT name, organization_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_optional(&pool).await
+    )
+    .bind(domain_id)
+    .fetch_optional(&pool)
+    .await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("domain not found"))?;
 
@@ -171,13 +241,17 @@ async fn deploy_to_cloudflare(domain_id: Uuid, credential_id: Uuid) -> Result<De
     let client = build_cf_client(&pool, credential_id).await?;
     let account_id = get_cf_account_id(&pool, credential_id).await?;
 
-    let existing = client.list_zones(Some(&domain_name)).await
+    let existing = client
+        .list_zones(Some(&domain_name))
+        .await
         .map_err(|e| ServerFnError::new(format!("CF API: {e}")))?;
 
     let zone = if let Some(z) = existing.into_iter().find(|z| z.name == domain_name) {
         z
     } else {
-        client.create_zone(&domain_name, &account_id).await
+        client
+            .create_zone(&domain_name, &account_id)
+            .await
             .map_err(|e| ServerFnError::new(format!("zone creation failed: {e}")))?
     };
 
@@ -191,12 +265,19 @@ async fn deploy_to_cloudflare(domain_id: Uuid, credential_id: Uuid) -> Result<De
 
     let mut ns_set = false;
     if !nameservers.is_empty() {
-        if let Ok(true) = try_set_registrar_nameservers(&pool, domain_id, &domain_name, &nameservers).await {
+        if let Ok(true) =
+            try_set_registrar_nameservers(&pool, domain_id, &domain_name, &nameservers).await
+        {
             ns_set = true;
         }
     }
 
-    Ok(DeployResult { zone_id, status, nameservers, nameservers_set_at_registrar: ns_set })
+    Ok(DeployResult {
+        zone_id,
+        status,
+        nameservers,
+        nameservers_set_at_registrar: ns_set,
+    })
 }
 
 #[server]
@@ -213,12 +294,17 @@ async fn update_ssl_mode(domain_id: Uuid, ssl_mode: String) -> Result<(), Server
 
     if let (Some(zone_id), Some(cred_id)) = (&zone_id, cred_id) {
         let client = build_cf_client(&pool, cred_id).await?;
-        client.set_ssl_mode(zone_id, "custom").await
+        client
+            .set_ssl_mode(zone_id, "custom")
+            .await
             .map_err(|e| ServerFnError::new(format!("CF SSL: {e}")))?;
     }
 
     sqlx::query("UPDATE domains SET ssl_mode = $1, updated_at = now() WHERE id = $2")
-        .bind(&ssl_mode).bind(domain_id).execute(&pool).await
+        .bind(&ssl_mode)
+        .bind(domain_id)
+        .execute(&pool)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
@@ -237,12 +323,17 @@ async fn toggle_dnssec(domain_id: Uuid, enable: bool) -> Result<(), ServerFnErro
 
     if let (Some(zone_id), Some(cred_id)) = (&zone_id, cred_id) {
         let client = build_cf_client(&pool, cred_id).await?;
-        client.set_dnssec(zone_id, if enable { "active" } else { "disabled" }).await
+        client
+            .set_dnssec(zone_id, if enable { "active" } else { "disabled" })
+            .await
             .map_err(|e| ServerFnError::new(format!("CF DNSSEC: {e}")))?;
     }
 
     sqlx::query("UPDATE domains SET dnssec_enabled = $1, updated_at = now() WHERE id = $2")
-        .bind(enable).bind(domain_id).execute(&pool).await
+        .bind(enable)
+        .bind(domain_id)
+        .execute(&pool)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
@@ -261,34 +352,51 @@ async fn set_ai_bots_protection(domain_id: Uuid, value: String) -> Result<(), Se
 
     if let (Some(zone_id), Some(cred_id)) = (&zone_id, cred_id) {
         let client = build_cf_client(&pool, cred_id).await?;
-        client.set_bot_management(zone_id, &serde_json::json!({"ai_bots_protection": value})).await
+        client
+            .set_bot_management(zone_id, &serde_json::json!({"ai_bots_protection": value}))
+            .await
             .map_err(|e| ServerFnError::new(format!("CF bot management: {e}")))?;
     }
 
     sqlx::query("UPDATE domains SET ai_bots_protection = $1, updated_at = now() WHERE id = $2")
-        .bind(&value).bind(domain_id).execute(&pool).await
+        .bind(&value)
+        .bind(domain_id)
+        .execute(&pool)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
 
 #[server]
-async fn set_nameservers_at_registrar(domain_id: Uuid, nameservers: Vec<String>) -> Result<String, ServerFnError> {
+async fn set_nameservers_at_registrar(
+    domain_id: Uuid,
+    nameservers: Vec<String>,
+) -> Result<String, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
     let (_, _, org_id) = sqlx::query_as::<_, (String, Option<Uuid>, Uuid)>(
         "SELECT name, registrar_credential_id, organization_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(domain_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
     let domain_name = sqlx::query_scalar::<_, String>("SELECT name FROM domains WHERE id = $1")
-        .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     match try_set_registrar_nameservers(&pool, domain_id, &domain_name, &nameservers).await {
         Ok(true) => Ok("Nameservers updated at registrar".into()),
-        Ok(false) => Err(ServerFnError::new("No registrar credential or unsupported registrar")),
+        Ok(false) => Err(ServerFnError::new(
+            "No registrar credential or unsupported registrar",
+        )),
         Err(e) => Err(e),
     }
 }
@@ -300,14 +408,21 @@ async fn create_subdomain(domain_id: Uuid, name: String) -> Result<Uuid, ServerF
     let pool = crate::server_pool()?;
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
-        .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO subdomains (domain_id, name) VALUES ($1, $2) \
          ON CONFLICT (domain_id, name) DO UPDATE SET updated_at = now() RETURNING id",
-    ).bind(domain_id).bind(&name).fetch_one(&pool).await
+    )
+    .bind(domain_id)
+    .bind(&name)
+    .fetch_one(&pool)
+    .await
     .map_err(|e| ServerFnError::new(format!("failed to create subdomain: {e}")))?;
 
     Ok(id)
@@ -320,18 +435,29 @@ async fn delete_subdomain(domain_id: Uuid, subdomain_id: Uuid) -> Result<(), Ser
     let pool = crate::server_pool()?;
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
-        .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
     // Delete CF records first
     let records = sqlx::query_as::<_, (Option<String>,)>(
         "SELECT cloudflare_record_id FROM dns_records WHERE subdomain_id = $1",
-    ).bind(subdomain_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(subdomain_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(domain_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     if let (Some(zone_id), Some(cred_id)) = cf {
         if let Ok(client) = build_cf_client(&pool, cred_id).await {
@@ -344,7 +470,10 @@ async fn delete_subdomain(domain_id: Uuid, subdomain_id: Uuid) -> Result<(), Ser
     }
 
     sqlx::query("DELETE FROM subdomains WHERE id = $1 AND domain_id = $2")
-        .bind(subdomain_id).bind(domain_id).execute(&pool).await
+        .bind(subdomain_id)
+        .bind(domain_id)
+        .execute(&pool)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
@@ -362,31 +491,55 @@ async fn add_dns_record(
     let pool = crate::server_pool()?;
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
-        .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
     let sub_name = sqlx::query_scalar::<_, String>("SELECT name FROM subdomains WHERE id = $1")
-        .bind(subdomain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(subdomain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let mut cf_record_id: Option<String> = None;
 
     let cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(domain_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     if let (Some(zone_id), Some(cred_id)) = cf {
         let client = build_cf_client(&pool, cred_id).await?;
         let domain_name = sqlx::query_scalar::<_, String>("SELECT name FROM domains WHERE id = $1")
-            .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+            .bind(domain_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-        let fqdn = if sub_name == "@" { domain_name } else { format!("{sub_name}.{domain_name}") };
-        let record = cloudflare_api::compat::CreateDnsRecord {
-            record_type: record_type.clone(), name: fqdn,
-            content: Some(record_value.clone()), data: None,
-            ttl: Some(1), proxied: Some(proxied), comment: None, priority: None,
+        let fqdn = if sub_name == "@" {
+            domain_name
+        } else {
+            format!("{sub_name}.{domain_name}")
         };
-        let created = client.create_dns_record(&zone_id, &record).await
+        let record = cloudflare_api::compat::CreateDnsRecord {
+            record_type: record_type.clone(),
+            name: fqdn,
+            content: Some(record_value.clone()),
+            data: None,
+            ttl: Some(1),
+            proxied: Some(proxied),
+            comment: None,
+            priority: None,
+        };
+        let created = client
+            .create_dns_record(&zone_id, &record)
+            .await
             .map_err(|e| ServerFnError::new(format!("CF DNS: {e}")))?;
         cf_record_id = Some(created.id);
     }
@@ -408,18 +561,30 @@ async fn delete_dns_record(domain_id: Uuid, record_id: Uuid) -> Result<(), Serve
     let pool = crate::server_pool()?;
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
-        .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
     let cf_id = sqlx::query_scalar::<_, Option<String>>(
         "SELECT cloudflare_record_id FROM dns_records WHERE id = $1",
-    ).bind(record_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?.flatten();
+    )
+    .bind(record_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .flatten();
 
     if let Some(cf_id) = cf_id {
         let cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
             "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-        ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        )
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         if let (Some(zone_id), Some(cred_id)) = cf {
             if let Ok(client) = build_cf_client(&pool, cred_id).await {
@@ -428,8 +593,11 @@ async fn delete_dns_record(domain_id: Uuid, record_id: Uuid) -> Result<(), Serve
         }
     }
 
-    sqlx::query("DELETE FROM dns_records WHERE id = $1").bind(record_id)
-        .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM dns_records WHERE id = $1")
+        .bind(record_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
 
@@ -442,25 +610,38 @@ async fn sync_records_from_cloudflare(domain_id: Uuid) -> Result<String, ServerF
 
     let (domain_name, org_id) = sqlx::query_as::<_, (String, Uuid)>(
         "SELECT name, organization_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(domain_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
     let (zone_id, cred_id) = match sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    )
+    .bind(domain_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         (Some(z), Some(c)) => (z, c),
         _ => return Err(ServerFnError::new("domain not deployed to Cloudflare")),
     };
 
     let client = build_cf_client(&pool, cred_id).await?;
-    let cf_records = client.list_dns_records(&zone_id).await
+    let cf_records = client
+        .list_dns_records(&zone_id)
+        .await
         .map_err(|e| ServerFnError::new(format!("CF API: {e}")))?;
 
     // Delete existing local records for this domain and re-import from CF
     sqlx::query("DELETE FROM dns_records WHERE domain_id = $1")
-        .bind(domain_id).execute(&pool).await
+        .bind(domain_id)
+        .execute(&pool)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let mut synced = 0usize;
@@ -478,7 +659,11 @@ async fn sync_records_from_cloudflare(domain_id: Uuid) -> Result<String, ServerF
         let sub_id = sqlx::query_scalar::<_, Uuid>(
             "INSERT INTO subdomains (domain_id, name) VALUES ($1, $2) \
              ON CONFLICT (domain_id, name) DO UPDATE SET updated_at = now() RETURNING id",
-        ).bind(domain_id).bind(&sub_name).fetch_one(&pool).await
+        )
+        .bind(domain_id)
+        .bind(&sub_name)
+        .fetch_one(&pool)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         let content = rec.content.as_deref().unwrap_or("");
@@ -504,7 +689,10 @@ async fn move_domain(domain_id: Uuid, target_org_id: Uuid) -> Result<(), ServerF
     let pool = crate::server_pool()?;
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
-        .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
     user.require_org_write(&target_org_id)?;
@@ -518,11 +706,17 @@ async fn move_domain(domain_id: Uuid, target_org_id: Uuid) -> Result<(), ServerF
         "SELECT EXISTS(SELECT 1 FROM domains WHERE organization_id = $1 AND name = (SELECT name FROM domains WHERE id = $2))",
     ).bind(target_org_id).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
     if conflict {
-        return Err(ServerFnError::new("a domain with the same name already exists in the target organization"));
+        return Err(ServerFnError::new(
+            "a domain with the same name already exists in the target organization",
+        ));
     }
 
     sqlx::query("UPDATE domains SET organization_id = $1 WHERE id = $2")
-        .bind(target_org_id).bind(domain_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(target_org_id)
+        .bind(domain_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
 }
@@ -533,42 +727,71 @@ async fn delete_domain(domain_id: Uuid) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
 
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM domains WHERE id = $1")
-        .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+        .bind(domain_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     use crate::web::user::WebUserExt;
     user.require_org_write(&org_id)?;
 
-    sqlx::query("DELETE FROM domains WHERE id = $1").bind(domain_id)
-        .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM domains WHERE id = $1")
+        .bind(domain_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
 #[cfg(feature = "server")]
-async fn build_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflare_api::compat::SimpleClient, ServerFnError> {
-    crate::credentials::cf_client(pool, cred_id).await.map_err(|e| ServerFnError::new(format!("{e}")))
+async fn build_cf_client(
+    pool: &sqlx::PgPool,
+    cred_id: Uuid,
+) -> Result<cloudflare_api::compat::SimpleClient, ServerFnError> {
+    crate::credentials::cf_client(pool, cred_id)
+        .await
+        .map_err(|e| ServerFnError::new(format!("{e}")))
 }
 
 #[cfg(feature = "server")]
 async fn get_cf_account_id(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<String, ServerFnError> {
-    let (_, account_id) = crate::credentials::cf_client_with_account(pool, cred_id).await
+    let (_, account_id) = crate::credentials::cf_client_with_account(pool, cred_id)
+        .await
         .map_err(|e| ServerFnError::new(format!("{e}")))?;
     Ok(account_id)
 }
 
 #[cfg(feature = "server")]
-async fn try_set_registrar_nameservers(pool: &sqlx::PgPool, domain_id: Uuid, domain_name: &str, nameservers: &[String]) -> Result<bool, ServerFnError> {
+async fn try_set_registrar_nameservers(
+    pool: &sqlx::PgPool,
+    domain_id: Uuid,
+    domain_name: &str,
+    nameservers: &[String],
+) -> Result<bool, ServerFnError> {
     let row = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT registrar_type, registrar_credential_id FROM domains WHERE id = $1",
-    ).bind(domain_id).fetch_optional(pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(domain_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     match row {
         Some((Some(ref rt), Some(cred_id))) if rt == "spaceship" => {
-            let client = crate::credentials::spaceship_client(pool, cred_id).await
+            let client = crate::credentials::spaceship_client(pool, cred_id)
+                .await
                 .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            client.set_nameservers(domain_name, &spaceship_api::compat::NameserverConfig {
-                provider: "custom".into(), hosts: Some(nameservers.to_vec()),
-            }).await.map_err(|e| ServerFnError::new(format!("Spaceship NS: {e}")))?;
+            client
+                .set_nameservers(
+                    domain_name,
+                    &spaceship_api::compat::NameserverConfig {
+                        provider: "custom".into(),
+                        hosts: Some(nameservers.to_vec()),
+                    },
+                )
+                .await
+                .map_err(|e| ServerFnError::new(format!("Spaceship NS: {e}")))?;
             Ok(true)
         }
         _ => Ok(false),
@@ -584,7 +807,12 @@ pub fn DomainDetail(id: String) -> Element {
     let domain = use_server_future(move || {
         let did = domain_id;
         let _ = *refresh.read(); // reactive dependency — bumping refresh re-runs this future
-        async move { match did { Some(id) => get_domain(id).await, None => Err(ServerFnError::new("invalid ID")) } }
+        async move {
+            match did {
+                Some(id) => get_domain(id).await,
+                None => Err(ServerFnError::new("invalid ID")),
+            }
+        }
     })?;
 
     let data = match &*domain.read() {
@@ -838,11 +1066,23 @@ fn SubdomainCard(domain_id: Uuid, subdomain: SubdomainData) -> Element {
 // ── CF deploy + NS components (same as before) ───────────────────────
 
 #[component]
-fn CloudflareDeployForm(domain_id: Uuid, domain_name: String, can_set_nameservers: bool) -> Element {
+fn CloudflareDeployForm(
+    domain_id: Uuid,
+    domain_name: String,
+    can_set_nameservers: bool,
+) -> Element {
     let mut refresh: Signal<u32> = use_context();
     let creds = use_server_future(list_cf_credentials)?;
-    let cred_list = match &*creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
-    let mut cred_id = use_signal(|| cred_list.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let cred_list = match &*creds.read() {
+        Some(Ok(c)) => c.clone(),
+        _ => vec![],
+    };
+    let mut cred_id = use_signal(|| {
+        cred_list
+            .first()
+            .map(|c| c.id.to_string())
+            .unwrap_or_default()
+    });
     let mut deploying = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
@@ -874,7 +1114,16 @@ fn CloudflareDeployForm(domain_id: Uuid, domain_name: String, can_set_nameserver
 }
 
 #[component]
-fn CloudflareDeployed(domain_id: Uuid, zone_id: String, zone_status: Option<String>, nameservers: Vec<String>, ssl_mode: String, dnssec_enabled: bool, can_set_nameservers: bool, ai_bots_protection: Option<String>) -> Element {
+fn CloudflareDeployed(
+    domain_id: Uuid,
+    zone_id: String,
+    zone_status: Option<String>,
+    nameservers: Vec<String>,
+    ssl_mode: String,
+    dnssec_enabled: bool,
+    can_set_nameservers: bool,
+    ai_bots_protection: Option<String>,
+) -> Element {
     let mut refresh: Signal<u32> = use_context();
     let mut ssl = use_signal(move || ssl_mode.clone());
     let dnssec = use_signal(move || dnssec_enabled);
@@ -1010,7 +1259,10 @@ fn MoveDomainSection(domain_id: Uuid, current_org_id: Uuid) -> Element {
     };
 
     // Filter out the current org
-    let targets: Vec<_> = org_list.into_iter().filter(|o| o.id != current_org_id).collect();
+    let targets: Vec<_> = org_list
+        .into_iter()
+        .filter(|o| o.id != current_org_id)
+        .collect();
     if targets.is_empty() {
         return rsx! {};
     }

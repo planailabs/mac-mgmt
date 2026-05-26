@@ -168,8 +168,11 @@ impl Hermes {
             if tg.enabled && !tg.bot_token.expose().is_empty() {
                 write_env_var("TELEGRAM_BOT_TOKEN", tg.bot_token.expose())?;
                 if !tg.allowed_chat_ids.is_empty() {
-                    let ids: Vec<String> =
-                        tg.allowed_chat_ids.iter().map(|id| id.to_string()).collect();
+                    let ids: Vec<String> = tg
+                        .allowed_chat_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect();
                     write_env_var("TELEGRAM_ALLOWED_USERS", &ids.join(","))?;
                 }
             }
@@ -297,10 +300,12 @@ impl ManagedService for Hermes {
         }
 
         // Create workspace directory for agent execution
-        let workspace = hh.parent().unwrap_or(Path::new("/root")).join(".hermes-workspace");
+        let workspace = hh
+            .parent()
+            .unwrap_or(Path::new("/root"))
+            .join(".hermes-workspace");
         if !workspace.exists() {
-            std::fs::create_dir_all(&workspace)
-                .context("failed to create workspace directory")?;
+            std::fs::create_dir_all(&workspace).context("failed to create workspace directory")?;
         }
 
         if !cfg_path.exists() {
@@ -393,10 +398,7 @@ impl ManagedService for Hermes {
 
         // Parse response and check for ok status
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-            let status = json
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let status = json.get("status").and_then(|v| v.as_str()).unwrap_or("");
             return Ok(status == "ok");
         }
 
@@ -408,11 +410,7 @@ impl ManagedService for Hermes {
         Self::stop_existing_gateway("repair");
 
         tracing::info!("running hermes doctor");
-        sentry_ext::breadcrumb(
-            "repair",
-            "running hermes doctor",
-            &[("service", "hermes")],
-        );
+        sentry_ext::breadcrumb("repair", "running hermes doctor", &[("service", "hermes")]);
 
         let output = crate::cmd::output_with_timeout(
             std::process::Command::new("hermes").arg("doctor"),
@@ -431,11 +429,7 @@ impl ManagedService for Hermes {
                 output.status,
                 stderr.trim()
             );
-            sentry_ext::capture_cmd_failure(
-                "hermes doctor",
-                output.status.code(),
-                stderr.trim(),
-            );
+            sentry_ext::capture_cmd_failure("hermes doctor", output.status.code(), stderr.trim());
         }
 
         if !stdout.is_empty() {
@@ -535,7 +529,9 @@ impl ManagedService for Hermes {
 
     fn service_inventory(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>,
+    > {
         use mac_mgmt_common::{InventoryEntry, InventoryValueType};
         Box::pin(async move {
             let mut entries = Vec::new();
@@ -561,7 +557,9 @@ impl ManagedService for Hermes {
 
     fn service_security(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>,
+    > {
         use mac_mgmt_common::{FindingSeverity, SecurityFinding};
         Box::pin(async move {
             let mut findings = Vec::new();

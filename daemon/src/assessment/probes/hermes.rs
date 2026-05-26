@@ -46,7 +46,11 @@ impl HermesHealthProbe {
     pub fn new(cfg: &HermesConfig) -> Self {
         let (host, port) = match &cfg.gateway {
             Some(g) => {
-                let h = if g.host.is_empty() { "127.0.0.1" } else { &g.host };
+                let h = if g.host.is_empty() {
+                    "127.0.0.1"
+                } else {
+                    &g.host
+                };
                 (h.to_string(), g.port)
             }
             None => ("127.0.0.1".to_string(), 8642),
@@ -80,10 +84,7 @@ async fn run_health(url: &str, auth_token: Option<&str>, ctx: &ProbeCtx) -> Resu
         req = req.bearer_auth(token);
     }
 
-    let resp = req
-        .send()
-        .await
-        .context("hermes health request failed")?;
+    let resp = req.send().await.context("hermes health request failed")?;
 
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
@@ -104,7 +105,11 @@ async fn run_health(url: &str, auth_token: Option<&str>, ctx: &ProbeCtx) -> Resu
     Ok(ProbeResult {
         ok,
         canary_digest: Some(digest_hex(body.trim().as_bytes())),
-        error_class: if ok { None } else { Some("bad_response".into()) },
+        error_class: if ok {
+            None
+        } else {
+            Some("bad_response".into())
+        },
         error_detail: if ok {
             None
         } else {
@@ -127,7 +132,11 @@ impl HermesProbe {
     pub fn new(cfg: &HermesConfig, canary_model: String, cloud_llm: bool) -> Self {
         let (host, port) = match &cfg.gateway {
             Some(g) => {
-                let h = if g.host.is_empty() { "127.0.0.1" } else { &g.host };
+                let h = if g.host.is_empty() {
+                    "127.0.0.1"
+                } else {
+                    &g.host
+                };
                 (h.to_string(), g.port)
             }
             None => ("127.0.0.1".to_string(), 8642),
@@ -219,7 +228,11 @@ async fn run_gateway(
         first_token_ms: Some(first_token_ms),
         model: Some(resp.model),
         canary_digest: Some(digest_hex(content.trim().as_bytes())),
-        error_class: if ok { None } else { Some("empty_response".into()) },
+        error_class: if ok {
+            None
+        } else {
+            Some("empty_response".into())
+        },
         error_detail: if ok {
             None
         } else {

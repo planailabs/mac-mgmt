@@ -53,15 +53,19 @@ async fn load_ws_form_data() -> Result<WsFormData, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
-    let basic_auth_rows = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT id, name FROM basic_auth_lists ORDER BY name",
-        ).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, (Uuid, String)>(
+    let basic_auth_rows =
+        if user.is_admin {
+            sqlx::query_as::<_, (Uuid, String)>(
+                "SELECT id, name FROM basic_auth_lists ORDER BY name",
+            )
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+        } else {
+            sqlx::query_as::<_, (Uuid, String)>(
             "SELECT id, name FROM basic_auth_lists WHERE organization_id = ANY($1) ORDER BY name",
         ).bind(&org_ids).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    };
+        };
 
     let cd_creds = if user.is_admin {
         sqlx::query_as::<_, (Uuid, String)>(
@@ -71,14 +75,21 @@ async fn load_ws_form_data() -> Result<WsFormData, ServerFnError> {
         sqlx::query_as::<_, (Uuid, String)>(
             "SELECT id, name FROM credentials WHERE credential_type = 'changedetection' \
              AND (organization_id = ANY($1) OR organization_id IS NULL) ORDER BY name",
-        ).bind(&org_ids).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
+        )
+        .bind(&org_ids)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
     // Load org defaults for changedetection
     let org_cd_defaults = sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
         "SELECT id, default_changedetection_credential_id FROM organizations WHERE id = ANY($1)",
-    ).bind(&orgs.iter().map(|o| o.id).collect::<Vec<_>>())
-    .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    )
+    .bind(&orgs.iter().map(|o| o.id).collect::<Vec<_>>())
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(WsFormData {
         orgs,
@@ -140,19 +151,41 @@ async fn create_webspace(
 #[component]
 pub fn WebspaceForm() -> Element {
     let data = use_server_future(load_ws_form_data)?;
-    let (org_list, mac_mgmt_creds, cd_creds, basic_auth_lists, org_cd_defaults) = match &*data.read() {
-        Some(Ok(d)) => (d.orgs.clone(), d.mac_mgmt_creds.clone(), d.changedetection_creds.clone(), d.basic_auth_lists.clone(), d.org_cd_defaults.clone()),
-        _ => (vec![], vec![], vec![], vec![], vec![]),
-    };
+    let (org_list, mac_mgmt_creds, cd_creds, basic_auth_lists, org_cd_defaults) =
+        match &*data.read() {
+            Some(Ok(d)) => (
+                d.orgs.clone(),
+                d.mac_mgmt_creds.clone(),
+                d.changedetection_creds.clone(),
+                d.basic_auth_lists.clone(),
+                d.org_cd_defaults.clone(),
+            ),
+            _ => (vec![], vec![], vec![], vec![], vec![]),
+        };
 
     let mut name = use_signal(String::new);
     let mut hosting_type = use_signal(|| "local".to_string());
     let mut runtime = use_signal(|| "static".to_string());
-    let mut org_id = use_signal(|| org_list.first().map(|o| o.id.to_string()).unwrap_or_default());
+    let mut org_id = use_signal(|| {
+        org_list
+            .first()
+            .map(|o| o.id.to_string())
+            .unwrap_or_default()
+    });
     let mut relay_url = use_signal(String::new);
-    let mut relay_cred_id = use_signal(|| mac_mgmt_creds.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let mut relay_cred_id = use_signal(|| {
+        mac_mgmt_creds
+            .first()
+            .map(|c| c.id.to_string())
+            .unwrap_or_default()
+    });
     let mut auth_mode = use_signal(|| "none".to_string());
-    let mut auth_basic_list_id = use_signal(|| basic_auth_lists.first().map(|b| b.id.to_string()).unwrap_or_default());
+    let mut auth_basic_list_id = use_signal(|| {
+        basic_auth_lists
+            .first()
+            .map(|b| b.id.to_string())
+            .unwrap_or_default()
+    });
     // Pre-fill changedetection from org default
     let initial_cd_cred = {
         let first_org = org_list.first().map(|o| o.id);

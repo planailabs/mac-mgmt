@@ -1,10 +1,10 @@
-mod extractor;
-pub mod tokenizer;
-pub mod features;
-pub mod dataset;
-pub mod sft;
-pub mod curriculum;
 pub mod augment;
+pub mod curriculum;
+pub mod dataset;
+mod extractor;
+pub mod features;
+pub mod sft;
+pub mod tokenizer;
 
 pub use extractor::ExportedSession;
 
@@ -151,8 +151,8 @@ pub async fn run_export_sft(
         extractor::extract_all(&pool, min_messages).await?
     } else if let Some(dir) = input_dir {
         let sessions_path = Path::new(dir).join("sessions.jsonl");
-        let content = std::fs::read_to_string(&sessions_path)
-            .context("failed to read sessions.jsonl")?;
+        let content =
+            std::fs::read_to_string(&sessions_path).context("failed to read sessions.jsonl")?;
         content
             .lines()
             .filter(|l| !l.is_empty())
@@ -171,18 +171,11 @@ pub async fn run_export_sft(
 
     // Generate curriculum (uses embedder if checkpoint provided)
     let data_dir = input_dir.unwrap_or(output_dir);
-    let curriculum = curriculum::generate_curriculum(
-        &sessions,
-        embedder_checkpoint,
-        data_dir,
-    )?;
+    let curriculum = curriculum::generate_curriculum(&sessions, embedder_checkpoint, data_dir)?;
 
     // Save curriculum
     let curriculum_path = output.join("curriculum.json");
-    std::fs::write(
-        &curriculum_path,
-        serde_json::to_string_pretty(&curriculum)?,
-    )?;
+    std::fs::write(&curriculum_path, serde_json::to_string_pretty(&curriculum)?)?;
     tracing::info!(
         "generated curriculum for {} sessions → {}",
         curriculum.entries.len(),

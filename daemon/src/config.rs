@@ -142,7 +142,10 @@ async fn fetch_secrets(url: &str, token: &str) -> std::collections::HashMap<Stri
         return crate::secrets_cache::load_cached_secrets().unwrap_or_default();
     }
 
-    match resp.json::<std::collections::HashMap<String, String>>().await {
+    match resp
+        .json::<std::collections::HashMap<String, String>>()
+        .await
+    {
         Ok(secrets) => {
             if let Err(e) = crate::secrets_cache::cache_secrets(&secrets) {
                 tracing::warn!("failed to cache secrets: {e}");

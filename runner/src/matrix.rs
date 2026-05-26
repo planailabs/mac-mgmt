@@ -77,7 +77,12 @@ pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
                         }
                     }
                     "ollama" => {
-                        cells.push(build_ollama_cell(agent, &matrix.ollama_model, &matrix.ollama_flavour, *size));
+                        cells.push(build_ollama_cell(
+                            agent,
+                            &matrix.ollama_model,
+                            &matrix.ollama_flavour,
+                            *size,
+                        ));
                     }
                     "lms" => {
                         cells.push(build_lms_cell(agent, &matrix.lms_model, *size));

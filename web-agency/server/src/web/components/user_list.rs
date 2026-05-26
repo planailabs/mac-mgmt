@@ -2,8 +2,10 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::ui::{
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, PageHeader, Td, TdMuted, Th,
+};
 use crate::web::app::Route;
-use super::ui::{Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, PageHeader, Td, TdMuted, Th};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UserRow {
@@ -28,9 +30,16 @@ async fn list_users() -> Result<Vec<UserRow>, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|(id, email, name, is_admin, created_at)| UserRow {
-        id, email, name, is_admin, created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(id, email, name, is_admin, created_at)| UserRow {
+            id,
+            email,
+            name,
+            is_admin,
+            created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
+        })
+        .collect())
 }
 
 #[component]
