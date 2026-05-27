@@ -81,12 +81,13 @@ impl MemvaultHandle {
         // Start the API server.
         let web_handle = if config.port > 0 {
             let port = config.port;
-            let admin_pubkey = memvault_web::init_web_auth(&client, &data_dir, peer_id.clone())
+            let auth = memvault_web::init_web_auth(&client, &data_dir, peer_id.clone())
                 .map_err(|e| anyhow::anyhow!("web auth init: {e}"))?;
             let app_state = Arc::new(memvault_web::AppState {
                 client: Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>,
                 event_bus: Arc::new(memvault_api::EventBus::new(256)),
-                admin_pubkey,
+                admin_pubkey: auth.admin_pubkey,
+                node_attestations: auth.node_attestations,
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
             memvault_web::ui::state::set_client(Arc::clone(&client));
