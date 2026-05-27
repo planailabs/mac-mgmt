@@ -87,7 +87,7 @@ impl MemvaultHandle {
                 client: Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>,
                 event_bus: Arc::new(memvault_api::EventBus::new(256)),
                 admin_pubkey: auth.admin_pubkey,
-                node_attestations: auth.node_attestations,
+                node_trust: auth.node_trust,
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
             memvault_web::ui::state::set_client(Arc::clone(&client));
