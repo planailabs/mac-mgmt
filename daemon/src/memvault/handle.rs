@@ -41,7 +41,9 @@ impl MemvaultHandle {
         let bridge = BlockstoreBridge::new(Arc::clone(&store));
 
         // Create the local client (used by the web API and for internal operations).
-        let client = Arc::new(memvault_api::LocalClient::new(
+        // `open` runs rebuild_if_needed so an out-of-date blockstore is migrated
+        // before the web API starts serving requests.
+        let client = Arc::new(memvault_api::LocalClient::open(
             Arc::clone(&store),
             Arc::new(RwLock::new(memvault_query::TextIndex::new())),
             Arc::new(RwLock::new(memvault_query::QuotaManager::new(
@@ -50,7 +52,7 @@ impl MemvaultHandle {
             Arc::new(memvault_api::EventBus::new(256)),
             peer_id,
             cluster_id_from_dir(&data_dir),
-        ));
+        )?);
 
         // Load or rebuild the full-text search index.
         let index_cache_path = data_dir.join("text_index.json");
