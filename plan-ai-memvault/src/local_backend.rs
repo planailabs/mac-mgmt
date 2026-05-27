@@ -33,7 +33,6 @@ impl LocalBackend {
             vec![0u8; 32], // peer_id
             cluster_id,
         )
-        .await
         .map_err(|e| anyhow::anyhow!("LocalClient open: {e}"))?;
         // Load or rebuild the text index from disk cache.
         let cache_path = db_path.with_extension("text_index.json");
