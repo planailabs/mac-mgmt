@@ -69,9 +69,7 @@ impl MemvaultHandle {
                 auth_token,
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
-            memvault_web::ui::state::set_client(
-                Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>
-            );
+            memvault_web::ui::state::set_client(Arc::clone(&client));
             let router = memvault_web::build_fullstack_router(app_state);
             let handle = tokio::spawn(async move {
                 let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
