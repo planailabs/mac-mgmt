@@ -11,7 +11,7 @@ use libp2p::identity;
 
 /// Extract the daemon's ed25519 private key bytes from a russh `PrivateKey`,
 /// returning an `ed25519_dalek::SigningKey` suitable for application-layer
-/// signing (e.g. as the cluster *node* key for `MembershipAttestation` and
+/// signing (e.g. as the cluster *node* key for `NodeAttestation` and
 /// `AgentAttestation` issuance).
 ///
 /// The daemon's russh key is its libp2p identity (`PeerId` derives from the
