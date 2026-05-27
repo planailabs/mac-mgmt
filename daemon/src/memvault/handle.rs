@@ -43,16 +43,33 @@ impl MemvaultHandle {
         // Create the local client (used by the web API and for internal operations).
         // `open` runs rebuild_if_needed so an out-of-date blockstore is migrated
         // before the web API starts serving requests.
-        let client = Arc::new(memvault_api::LocalClient::open(
+        let mut client = memvault_api::LocalClient::open(
             Arc::clone(&store),
             Arc::new(RwLock::new(memvault_query::TextIndex::new())),
             Arc::new(RwLock::new(memvault_query::QuotaManager::new(
                 Default::default(),
             ))),
             Arc::new(memvault_api::EventBus::new(256)),
-            peer_id,
+            peer_id.clone(),
             cluster_id_from_dir(&data_dir),
-        )?);
+        )?;
+
+        // Load admin signing key if available (genesis admin). Needed so the
+        // web API can issue JWTs for the built-in UI agent and verify
+        // incoming attestation signatures.
+        let admin_key_path = data_dir.join("identity").join("admin.key");
+        if admin_key_path.exists() {
+            if let Ok(key_bytes) = std::fs::read(&admin_key_path) {
+                if key_bytes.len() >= 32 {
+                    let mut seed = [0u8; 32];
+                    seed.copy_from_slice(&key_bytes[..32]);
+                    client.set_admin_signing_key(
+                        memvault_api::ed25519_dalek::SigningKey::from_bytes(&seed),
+                    );
+                }
+            }
+        }
+        let client = Arc::new(client);
 
         // Load or rebuild the full-text search index.
         let index_cache_path = data_dir.join("text_index.json");
@@ -64,11 +81,12 @@ impl MemvaultHandle {
         // Start the API server.
         let web_handle = if config.port > 0 {
             let port = config.port;
-            let auth_token = load_or_generate_token(&data_dir)?;
+            let admin_pubkey = memvault_web::init_web_auth(&client, &data_dir, peer_id.clone())
+                .map_err(|e| anyhow::anyhow!("web auth init: {e}"))?;
             let app_state = Arc::new(memvault_web::AppState {
                 client: Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>,
                 event_bus: Arc::new(memvault_api::EventBus::new(256)),
-                auth_token,
+                admin_pubkey,
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
             memvault_web::ui::state::set_client(Arc::clone(&client));
@@ -160,10 +178,6 @@ impl MemvaultHandle {
     pub fn client(&self) -> &memvault_api::LocalClient {
         &self.client
     }
-}
-
-fn load_or_generate_token(data_dir: &std::path::Path) -> Result<String> {
-    memvault_web::load_or_generate_token(data_dir).map_err(|e| anyhow::anyhow!("token: {e}"))
 }
 
 fn default_data_dir() -> PathBuf {
