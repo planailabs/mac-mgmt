@@ -16,7 +16,7 @@ default = ["services", "relay", "memvault"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
 relay = ["dep:libp2p-stream"]
-memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "memvault-web/server", "dep:memvault-query", "dep:axum", "relay"]
+memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "memvault-web/server", "dep:memvault-query", "dep:axum", "dep:serde_ipld_dagcbor", "relay"]
 healer = ["dep:mac-mgmt-healer", "services", "relay"]
 embed = ["memvault-web/embed"]
 sim = []
@@ -97,6 +97,7 @@ libp2p = { version = "0.56", default-features = false, features = [
 libp2p-stream = { version = "0.4.0-alpha", optional = true }
 memvault-core = { path = "../memvault/crates/memvault-core", optional = true }
 memvault-auth = { path = "../memvault/crates/memvault-auth", optional = true }
+serde_ipld_dagcbor = { version = "0.6", optional = true }
 memvault-store = { path = "../memvault/crates/memvault-store", optional = true }
 memvault-net = { path = "../memvault/crates/memvault-net", optional = true }
 memvault-query = { path = "../memvault/crates/memvault-query", optional = true }

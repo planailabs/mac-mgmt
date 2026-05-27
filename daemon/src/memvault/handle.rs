@@ -70,6 +70,26 @@ impl MemvaultHandle {
             }
         }
 
+        // Load the pinned AdminGenesis block (cluster root of trust),
+        // established at genesis or via a join token. Without it, peers
+        // operate in pre-genesis mode — they can't verify NodeAttestations
+        // from admin.
+        let pin_path = data_dir.join("identity").join("cluster_admin_genesis.cbor");
+        if let Ok(pin_bytes) = std::fs::read(&pin_path) {
+            match serde_ipld_dagcbor::from_slice::<memvault_auth::AdminGenesis>(&pin_bytes) {
+                Ok(g) => {
+                    if let Err(e) = g.verify_self_signature() {
+                        tracing::warn!(error = %e, "pinned admin_genesis has bad signature; ignoring");
+                    } else {
+                        client.set_pinned_admin_genesis(g);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not decode pinned admin_genesis; ignoring");
+                }
+            }
+        }
+
         // Set the node signing key (the daemon's libp2p ed25519 host key).
         // Used to sign agent attestations + revocations, and looked up by the
         // web auth bootstrap. Set before Arc-wrapping so revoke_agent etc.
