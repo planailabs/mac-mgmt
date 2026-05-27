@@ -94,13 +94,21 @@ impl MemvaultHandle {
             let port = config.port;
             let auth = memvault_web::init_web_auth(&client, &data_dir)
                 .map_err(|e| anyhow::anyhow!("web auth init: {e}"))?;
+            // We're inside async fn init() driven by the daemon's runtime;
+            // spawn the watcher here so it lives on the same runtime as the
+            // HTTP server below.
+            let _watcher = memvault_api::sigchain::spawn_sigchain_watcher(
+                Arc::clone(&client),
+                auth.admin_pubkey,
+                auth.trust_state.clone(),
+            );
             let app_state = Arc::new(memvault_web::AppState {
                 client: Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>,
                 event_bus: Arc::new(memvault_api::EventBus::new(256)),
                 admin_pubkey: auth.admin_pubkey,
-                node_trust: auth.node_trust,
-                revoked_agents: auth.revoked_agents,
-                revoked_nodes: auth.revoked_nodes,
+                node_trust: Arc::clone(&auth.trust_state.node_trust),
+                revoked_agents: Arc::clone(&auth.trust_state.revoked_agents),
+                revoked_nodes: Arc::clone(&auth.trust_state.revoked_nodes),
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
             memvault_web::ui::state::set_client(Arc::clone(&client));
