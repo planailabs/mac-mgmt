@@ -81,7 +81,15 @@ impl MemvaultHandle {
         // Start the API server.
         let web_handle = if config.port > 0 {
             let port = config.port;
-            let auth = memvault_web::init_web_auth(&client, &data_dir, peer_id.clone())
+            // Reuse the daemon's libp2p ed25519 key as the cluster node
+            // signing key (design A-1: node key = libp2p key). The same key
+            // bytes back the daemon's `peer_id`.
+            let host_key = crate::host_keys::load_or_generate()?;
+            let node_signing_key =
+                crate::p2p::identity::ed25519_dalek_signing_key_from_russh(&host_key)?;
+            let _ = peer_id; // peer_id (multihash) is computed elsewhere; we
+                             // identify the node by its ed25519 pubkey here.
+            let auth = memvault_web::init_web_auth(&client, &data_dir, node_signing_key)
                 .map_err(|e| anyhow::anyhow!("web auth init: {e}"))?;
             let app_state = Arc::new(memvault_web::AppState {
                 client: Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>,
