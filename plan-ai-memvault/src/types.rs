@@ -22,7 +22,7 @@ pub struct PutParams {
     /// Optional VFS path to place the new document at (e.g. "/notes/my-doc").
     #[serde(default)]
     pub vfs_path: Option<String>,
-    /// Optional bucket ID (hex) to scope this operation to.
+    /// Optional bucket ID (hex) to scope this operation to. Defaults to the agent bucket.
     #[serde(default)]
     pub bucket: Option<String>,
 }
@@ -47,6 +47,9 @@ pub struct SearchParams {
     /// Optional tag filter in "scope:label" format.
     #[serde(default)]
     pub tag_filter: Option<String>,
+    /// Optional bucket ID (hex). When omitted, searches all accessible buckets.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_list --
@@ -62,7 +65,7 @@ pub struct ListParams {
     /// Filter by tag label.
     #[serde(default)]
     pub tag_label: Option<String>,
-    /// Optional bucket ID (hex) to scope this operation to.
+    /// Optional bucket ID (hex). When omitted, lists across all accessible buckets.
     #[serde(default)]
     pub bucket: Option<String>,
 }
@@ -85,7 +88,7 @@ pub struct UploadFileParams {
     /// Optional VFS path to place the new file at (e.g. "/assets/logo.png").
     #[serde(default)]
     pub vfs_path: Option<String>,
-    /// Optional bucket ID (hex) to scope this operation to.
+    /// Optional bucket ID (hex). Defaults to the agent bucket.
     #[serde(default)]
     pub bucket: Option<String>,
 }
@@ -149,7 +152,7 @@ pub struct GraphAddParams {
     /// Optional VFS path to place the new entity at (e.g. "/projects/acme").
     #[serde(default)]
     pub vfs_path: Option<String>,
-    /// Optional bucket ID (hex) to scope this operation to.
+    /// Optional bucket ID (hex). Defaults to the agent bucket.
     #[serde(default)]
     pub bucket: Option<String>,
 }
@@ -170,6 +173,9 @@ pub struct GraphLinkParams {
     /// Optional edge properties (key-value map).
     #[serde(default)]
     pub props: HashMap<String, Value>,
+    /// Optional bucket ID (hex). Defaults to the agent bucket.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_graph_query --
@@ -202,6 +208,9 @@ pub struct LinkParams {
     /// Optional edge properties (key-value map).
     #[serde(default)]
     pub props: HashMap<String, Value>,
+    /// Optional bucket ID (hex). Defaults to the agent bucket.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_edges --
@@ -232,6 +241,9 @@ pub struct ListAllParams {
     /// Optional view name to filter by.
     #[serde(default)]
     pub view: Option<String>,
+    /// Optional bucket ID (hex). When omitted, lists across all accessible buckets.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_tag --
@@ -242,6 +254,9 @@ pub struct TagParams {
     pub node: String,
     /// Tags to add in "scope:label" format.
     pub tags: Vec<String>,
+    /// Optional bucket ID (hex). Defaults to the agent bucket.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_untag --
@@ -252,6 +267,9 @@ pub struct UntagParams {
     pub node: String,
     /// Tags to remove in "scope:label" format.
     pub tags: Vec<String>,
+    /// Optional bucket ID (hex). Defaults to the agent bucket.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_get_tags --
@@ -350,7 +368,7 @@ pub struct ListEntitiesParams {
     /// Maximum number of results (default: 50).
     #[serde(default)]
     pub limit: Option<usize>,
-    /// Optional bucket ID (hex) to scope this operation to.
+    /// Optional bucket ID (hex). When omitted, lists across all accessible buckets.
     #[serde(default)]
     pub bucket: Option<String>,
 }
@@ -379,6 +397,9 @@ pub struct AuditParams {
     /// Filter by operation kind (e.g. "DocCreate", "EntityCreate", "AttachFile").
     #[serde(default)]
     pub op_kind: Option<String>,
+    /// Optional bucket ID (hex). When omitted, audits across all accessible buckets.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 // -- memvault_doc_history --
@@ -399,7 +420,7 @@ pub struct RetractParams {
     pub reason: String,
 }
 
-// ── VFS tools ───────────────────────────���──────────────────────────
+// ── VFS tools ───────────────────────────────────────────────────────
 
 #[derive(Deserialize, JsonSchema)]
 pub struct VfsLsParams {
@@ -420,6 +441,9 @@ pub struct VfsResolveParams {
 pub struct VfsMkdirParams {
     /// Absolute VFS path for the new directory (e.g. "/projects/acme"). Intermediate directories are created automatically.
     pub path: String,
+    /// Optional bucket ID (hex). Defaults to the agent bucket.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -428,6 +452,9 @@ pub struct VfsLinkParams {
     pub path: String,
     /// Target node to place at the path — "doc:<hex>", "entity:<hex>", or "file:<hex>".
     pub target: String,
+    /// Optional bucket ID (hex). Defaults to the agent bucket.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -442,6 +469,9 @@ pub struct VfsMvParams {
     pub from: String,
     /// Destination VFS path.
     pub to: String,
+    /// Optional bucket ID (hex). Defaults to the agent bucket.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]

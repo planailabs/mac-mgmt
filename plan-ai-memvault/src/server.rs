@@ -1,18 +1,57 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use anyhow::Result;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 
-use crate::backend::Backend;
+use memvault_api::MemvaultClient;
+use memvault_core::{BucketId, DocId, EdgeId, EntityId, NodeRef, Visibility};
+use memvault_doc::{Document, Edge, Entity};
+use memvault_query::AuditQuery;
+
 use crate::types::*;
 use crate::vfs::Vfs;
 
-/// Ensure a node ID has the `entity:` prefix, without double-prefixing.
-/// Accepts both bare hex IDs and already-prefixed `entity:<hex>` IDs.
-fn ensure_entity_id(id: &str) -> String {
-    if let Some(hex) = id.strip_prefix("entity:") {
-        format!("entity:{hex}")
+// ── Helpers ────────────────────────────────────────────────────────
+
+fn parse_visibility(s: Option<&str>) -> Visibility {
+    match s {
+        Some("public") => Visibility::Public,
+        Some("federated") | Some("cluster") => Visibility::Federated,
+        _ => Visibility::Internal,
+    }
+}
+
+fn parse_tags(tags: &[String]) -> Vec<(String, String)> {
+    tags.iter()
+        .filter_map(|t| {
+            let mut parts = t.splitn(2, ':');
+            let scope = parts.next()?.to_string();
+            let label = parts.next().unwrap_or("").to_string();
+            Some((scope, label))
+        })
+        .collect()
+}
+
+fn hex_to_32(hex_str: &str) -> Result<[u8; 32]> {
+    let bytes = hex::decode(hex_str)?;
+    if bytes.len() != 32 {
+        anyhow::bail!("expected 32 bytes, got {}", bytes.len());
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
+fn parse_bucket_id(s: &str) -> Result<BucketId> {
+    Ok(BucketId(hex_to_32(s)?))
+}
+
+fn ensure_entity_label(id: &str) -> String {
+    if let Some(rest) = id.strip_prefix("entity:") {
+        format!("entity:{rest}")
     } else {
         format!("entity:{id}")
     }
@@ -20,24 +59,38 @@ fn ensure_entity_id(id: &str) -> String {
 
 #[derive(Clone)]
 pub struct MemvaultServer {
-    client: Arc<dyn Backend>,
+    client: Arc<dyn MemvaultClient>,
     default_tags: Vec<String>,
     default_visibility: String,
+    /// The agent's default bucket — used when a tool call omits `bucket`.
+    agent_bucket: Option<BucketId>,
     tool_router: rmcp::handler::server::tool::ToolRouter<Self>,
 }
 
 impl MemvaultServer {
     pub fn new(
-        client: Arc<dyn Backend>,
+        client: Arc<dyn MemvaultClient>,
         default_tags: Vec<String>,
         default_visibility: String,
+        agent_bucket: Option<BucketId>,
     ) -> Self {
         Self {
             client,
             default_tags,
             default_visibility,
+            agent_bucket,
             tool_router: Self::tool_router(),
         }
+    }
+
+    /// Resolve a per-call bucket: explicit override if provided, else the
+    /// startup-resolved agent bucket. Returned by value to avoid borrowing
+    /// across await points.
+    fn resolve_bucket(&self, explicit: Option<&str>) -> Result<Option<BucketId>> {
+        if let Some(s) = explicit.filter(|s| !s.is_empty()) {
+            return parse_bucket_id(s).map(Some);
+        }
+        Ok(self.agent_bucket.clone())
     }
 }
 
@@ -59,42 +112,22 @@ impl ServerHandler for MemvaultServer {
     }
 }
 
-fn parse_tags(tags: &[String]) -> Vec<(String, String)> {
-    tags.iter()
-        .filter_map(|t| {
-            let mut parts = t.splitn(2, ':');
-            let scope = parts.next()?.to_string();
-            let label = parts.next().unwrap_or("").to_string();
-            Some((scope, label))
-        })
-        .collect()
-}
-
-/// Helper: pass-through a successful JSON response, or format error.
-macro_rules! ok_or_err {
-    ($expr:expr) => {
-        match $expr {
-            Ok(v) => v.to_string(),
-            Err(e) => format!("error: {e}"),
-        }
-    };
-}
-
 #[tool_router]
 impl MemvaultServer {
     // ── Documents ──────────────────────────────────────────────────
 
     #[tool(
         name = "memvault_put",
-        description = "Store a memory (document with optional title and tags). Returns the hex-encoded CID and doc ID."
+        description = "Store a memory (document with optional title and tags). Returns the hex-encoded doc ID and CID."
     )]
     async fn put(&self, Parameters(params): Parameters<PutParams>) -> String {
-        let mut frontmatter = serde_json::Map::new();
+        let bucket = match self.resolve_bucket(params.bucket.as_deref()) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        let mut frontmatter: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         if let Some(title) = &params.title {
-            frontmatter.insert(
-                "title".to_string(),
-                serde_json::Value::String(title.clone()),
-            );
+            frontmatter.insert("title".to_string(), serde_json::json!(title));
         }
         let tags_input = if params.tags.is_empty() {
             &self.default_tags
@@ -102,35 +135,31 @@ impl MemvaultServer {
             &params.tags
         };
         let tags = parse_tags(tags_input);
-        let vis = params
-            .visibility
-            .as_deref()
-            .or(Some(self.default_visibility.as_str()));
+        let vis = parse_visibility(
+            params
+                .visibility
+                .as_deref()
+                .or(Some(self.default_visibility.as_str())),
+        );
+        let doc = Document::new(DocId::random(), params.text.clone(), frontmatter);
+        let doc_id_hex = hex::encode(doc.id.0);
+        let doc_node_id = format!("doc:{doc_id_hex}");
+
         match self
             .client
-            .put_doc(
-                &params.text,
-                serde_json::Value::Object(frontmatter),
-                tags,
-                vis,
-            )
+            .put_doc(doc, tags, vis, bucket.as_ref())
             .await
         {
-            Ok(resp) => {
-                let raw_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let node_id = if raw_id.contains(':') {
-                    raw_id.to_string()
-                } else {
-                    format!("doc:{raw_id}")
-                };
+            Ok(cid) => {
                 let mut result = serde_json::json!({
-                    "node_id": node_id,
-                    "cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
-                    "status": "stored"
+                    "node_id": doc_node_id,
+                    "doc_id": doc_id_hex,
+                    "cid": hex::encode(&cid),
+                    "status": "stored",
                 });
                 if let Some(vfs_path) = &params.vfs_path {
-                    let vfs = Vfs::new(self.client.as_ref());
-                    match vfs.link(vfs_path, &node_id).await {
+                    let vfs = Vfs::new(Arc::clone(&self.client), bucket.clone()).await;
+                    match vfs.link(vfs_path, &doc_node_id).await {
                         Ok(_) => {
                             result["vfs_path"] = serde_json::json!(vfs_path);
                         }
@@ -150,12 +179,17 @@ impl MemvaultServer {
         description = "Retrieve a memory by its hex-encoded doc ID."
     )]
     async fn get(&self, Parameters(params): Parameters<GetParams>) -> String {
-        match self.client.get_doc(&params.cid).await {
+        let id = match hex_to_32(&params.cid) {
+            Ok(arr) => DocId(arr),
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.get_doc(&id).await {
             Ok(Some(doc)) => serde_json::json!({
                 "doc_id": params.cid,
-                "title": doc.get("frontmatter").and_then(|f| f.get("title")).and_then(|t| t.as_str()),
-                "body": doc.get("body").and_then(|b| b.as_str()).unwrap_or(""),
-            }).to_string(),
+                "title": doc.frontmatter.get("title").and_then(|v| v.as_str()),
+                "body": doc.body,
+            })
+            .to_string(),
             Ok(None) => format!("error: document not found for id {}", params.cid),
             Err(e) => format!("error: {e}"),
         }
@@ -167,11 +201,18 @@ impl MemvaultServer {
     )]
     async fn search(&self, Parameters(params): Parameters<SearchParams>) -> String {
         let limit = params.limit.unwrap_or(10);
-        ok_or_err!(
-            self.client
-                .search(&params.query, limit, params.tag_filter.as_deref())
-                .await
-        )
+        match self.client.search(&params.query, limit).await {
+            Ok(hits) => serde_json::json!(hits
+                .iter()
+                .map(|h| serde_json::json!({
+                    "doc_id": hex::encode(h.doc_id.0),
+                    "score": h.score,
+                    "snippet": h.snippet,
+                }))
+                .collect::<Vec<_>>())
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -180,15 +221,26 @@ impl MemvaultServer {
     )]
     async fn list(&self, Parameters(params): Parameters<ListParams>) -> String {
         let limit = params.limit.unwrap_or(20);
-        ok_or_err!(
-            self.client
-                .list_docs(
-                    params.tag_scope.as_deref(),
-                    params.tag_label.as_deref(),
-                    limit
-                )
-                .await
-        )
+        let bucket = match self.resolve_bucket_query(params.bucket.as_deref()) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        let tag_filter = match (params.tag_scope, params.tag_label) {
+            (Some(s), Some(l)) => Some((s, l)),
+            _ => None,
+        };
+        match self.client.list_docs(tag_filter, limit, bucket.as_ref()).await {
+            Ok(docs) => serde_json::json!(docs
+                .iter()
+                .map(|d| serde_json::json!({
+                    "id": hex::encode(d.id.0),
+                    "title": d.title,
+                    "updated_ns": d.updated_ns,
+                }))
+                .collect::<Vec<_>>())
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -196,16 +248,35 @@ impl MemvaultServer {
         description = "View the operation history for a document by its hex-encoded ID."
     )]
     async fn doc_history(&self, Parameters(params): Parameters<DocHistoryParams>) -> String {
-        ok_or_err!(self.client.history_of(&params.doc_id).await)
+        let id = match hex_to_32(&params.doc_id) {
+            Ok(arr) => DocId(arr),
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.history_of(&id).await {
+            Ok(records) => serde_json::json!(records
+                .iter()
+                .map(|r| serde_json::json!({
+                    "cid": hex::encode(&r.cid),
+                    "op_kind": format!("{:?}", r.op_kind),
+                    "wall_ns": r.wall_ns,
+                }))
+                .collect::<Vec<_>>())
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
-    // ── Attachments ────────────────────────────────────────────────
+    // ── Files ──────────────────────────────────────────────────────
 
     #[tool(
         name = "memvault_upload_file",
         description = "Upload a local file to memvault by its absolute path. Returns the manifest CID."
     )]
     async fn upload_file(&self, Parameters(params): Parameters<UploadFileParams>) -> String {
+        let bucket = match self.resolve_bucket(params.bucket.as_deref()) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
         let path = std::path::Path::new(&params.path);
         let data = match std::fs::read(path) {
             Ok(d) => d,
@@ -220,20 +291,30 @@ impl MemvaultServer {
                 .first_raw()
                 .unwrap_or("application/octet-stream")
         });
-        match self.client.upload_file(&data, filename, mime_type).await {
-            Ok(resp) => {
-                let raw_cid = resp.get("cid").and_then(|v| v.as_str()).unwrap_or("");
-                let node_id = if raw_cid.contains(':') {
-                    raw_cid.to_string()
-                } else {
-                    format!("file:{raw_cid}")
-                };
+        let tags_input = params.tags.unwrap_or_else(|| self.default_tags.clone());
+        let tags = parse_tags(&tags_input);
+        let vis = params
+            .visibility
+            .as_deref()
+            .unwrap_or(self.default_visibility.as_str());
+        match self
+            .client
+            .upload_file(&data, Some(filename), mime_type, tags, vis, bucket.as_ref())
+            .await
+        {
+            Ok(cid) => {
+                let cid_hex = hex::encode(&cid);
+                let node_id = format!("file:{cid_hex}");
                 let mut result = serde_json::json!({
-                    "node_id": node_id, "filename": filename,
-                    "size": data.len(), "mime_type": mime_type, "status": "uploaded"
+                    "node_id": node_id,
+                    "cid": cid_hex,
+                    "filename": filename,
+                    "size": data.len(),
+                    "mime_type": mime_type,
+                    "status": "uploaded",
                 });
                 if let Some(vfs_path) = &params.vfs_path {
-                    let vfs = Vfs::new(self.client.as_ref());
+                    let vfs = Vfs::new(Arc::clone(&self.client), bucket.clone()).await;
                     match vfs.link(vfs_path, &node_id).await {
                         Ok(_) => {
                             result["vfs_path"] = serde_json::json!(vfs_path);
@@ -254,11 +335,11 @@ impl MemvaultServer {
         description = "Read a byte range [start, end) from a file. Returns base64-encoded bytes."
     )]
     async fn read_range(&self, Parameters(params): Parameters<ReadRangeParams>) -> String {
-        match self
-            .client
-            .read_file_range(&params.manifest_cid, params.start, params.end)
-            .await
-        {
+        let cid = match hex::decode(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: invalid hex: {e}"),
+        };
+        match self.client.read_file_range(&cid, params.start, params.end).await {
             Ok(data) => {
                 use base64::Engine;
                 serde_json::json!({
@@ -276,11 +357,16 @@ impl MemvaultServer {
         description = "Pin a file to prevent garbage collection."
     )]
     async fn pin(&self, Parameters(params): Parameters<PinParams>) -> String {
-        match self.client.pin_file(&params.manifest_cid).await {
-            Ok(()) => {
-                serde_json::json!({ "manifest_cid": params.manifest_cid, "status": "pinned" })
-                    .to_string()
-            }
+        let cid = match hex::decode(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: invalid hex: {e}"),
+        };
+        match self.client.pin_file(&cid).await {
+            Ok(()) => serde_json::json!({
+                "manifest_cid": params.manifest_cid,
+                "status": "pinned"
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -290,11 +376,16 @@ impl MemvaultServer {
         description = "Unpin a file, allowing garbage collection."
     )]
     async fn unpin(&self, Parameters(params): Parameters<UnpinParams>) -> String {
-        match self.client.unpin_file(&params.manifest_cid).await {
-            Ok(()) => {
-                serde_json::json!({ "manifest_cid": params.manifest_cid, "status": "unpinned" })
-                    .to_string()
-            }
+        let cid = match hex::decode(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: invalid hex: {e}"),
+        };
+        match self.client.unpin_file(&cid).await {
+            Ok(()) => serde_json::json!({
+                "manifest_cid": params.manifest_cid,
+                "status": "unpinned"
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -304,9 +395,21 @@ impl MemvaultServer {
         description = "Extract text from a file (PDF, DOCX, HTML, Markdown, plain text)."
     )]
     async fn extract_text(&self, Parameters(params): Parameters<ExtractTextParams>) -> String {
-        match self.client.extract_text(&params.manifest_cid).await {
-            Ok(Some(text)) => serde_json::json!({ "manifest_cid": params.manifest_cid, "text": text }).to_string(),
-            Ok(None) => serde_json::json!({ "manifest_cid": params.manifest_cid, "text": null, "note": "unsupported or failed" }).to_string(),
+        let cid = match hex::decode(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: invalid hex: {e}"),
+        };
+        match self.client.read_extracted_text(&cid).await {
+            Ok(Some(text)) => {
+                serde_json::json!({ "manifest_cid": params.manifest_cid, "text": text })
+                    .to_string()
+            }
+            Ok(None) => serde_json::json!({
+                "manifest_cid": params.manifest_cid,
+                "text": null,
+                "note": "unsupported or failed"
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -316,8 +419,15 @@ impl MemvaultServer {
         description = "Get manifest metadata for a file."
     )]
     async fn file_info(&self, Parameters(params): Parameters<FileInfoParams>) -> String {
-        match self.client.get_file_manifest(&params.manifest_cid).await {
-            Ok(Some(m)) => m.to_string(),
+        let cid = match hex::decode(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: invalid hex: {e}"),
+        };
+        match self.client.get_file_manifest(&cid).await {
+            Ok(Some(bytes)) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(v) => v.to_string(),
+                Err(e) => format!("error: corrupt manifest json: {e}"),
+            },
             Ok(None) => format!("error: manifest not found for cid {}", params.manifest_cid),
             Err(e) => format!("error: {e}"),
         }
@@ -330,18 +440,34 @@ impl MemvaultServer {
         description = "Add an entity to the knowledge graph. Returns the hex-encoded entity ID."
     )]
     async fn graph_add(&self, Parameters(params): Parameters<GraphAddParams>) -> String {
-        let vis = params
-            .visibility
-            .as_deref()
-            .or(Some(self.default_visibility.as_str()));
-        let props = serde_json::json!(params.props);
-        match self.client.add_entity(&params.kind, props, vis).await {
-            Ok(resp) => {
-                let raw_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let node_id = ensure_entity_id(raw_id);
-                let mut result = serde_json::json!({ "node_id": node_id, "status": "created" });
+        let bucket = match self.resolve_bucket(params.bucket.as_deref()) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        let vis = parse_visibility(
+            params
+                .visibility
+                .as_deref()
+                .or(Some(self.default_visibility.as_str())),
+        );
+        let props_map: BTreeMap<String, serde_json::Value> = params
+            .props
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::Value::String(v)))
+            .collect();
+        let entity = Entity {
+            id: EntityId::random(),
+            kind: params.kind,
+            props: props_map,
+            edges_out: vec![],
+        };
+        match self.client.add_entity(entity, vis, bucket.as_ref()).await {
+            Ok(id) => {
+                let node_id = format!("entity:{}", hex::encode(id.0));
+                let mut result =
+                    serde_json::json!({ "node_id": node_id, "status": "created" });
                 if let Some(vfs_path) = &params.vfs_path {
-                    let vfs = Vfs::new(self.client.as_ref());
+                    let vfs = Vfs::new(Arc::clone(&self.client), bucket.clone()).await;
                     match vfs.link(vfs_path, &node_id).await {
                         Ok(_) => {
                             result["vfs_path"] = serde_json::json!(vfs_path);
@@ -362,8 +488,24 @@ impl MemvaultServer {
         description = "Get a single entity by hex ID. Returns kind, properties, and edges."
     )]
     async fn get_entity(&self, Parameters(params): Parameters<GetEntityParams>) -> String {
-        match self.client.get_entity(&params.id).await {
-            Ok(Some(entity)) => entity.to_string(),
+        let id = match hex_to_32(params.id.trim_start_matches("entity:")) {
+            Ok(arr) => EntityId(arr),
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.get_entity(&id).await {
+            Ok(Some(e)) => serde_json::json!({
+                "id": hex::encode(e.id.0),
+                "kind": e.kind,
+                "props": e.props,
+                "edges": e.edges_out.iter().map(|edge| serde_json::json!({
+                    "edge_id": hex::encode(edge.id.0),
+                    "relation": edge.relation,
+                    "target": edge.target.tag_label(),
+                    "weight": edge.weight,
+                    "props": edge.props,
+                })).collect::<Vec<_>>(),
+            })
+            .to_string(),
             Ok(None) => format!("error: entity not found: {}", params.id),
             Err(e) => format!("error: {e}"),
         }
@@ -374,7 +516,27 @@ impl MemvaultServer {
         description = "List knowledge graph entities."
     )]
     async fn list_entities(&self, Parameters(params): Parameters<ListEntitiesParams>) -> String {
-        ok_or_err!(self.client.list_entities(params.limit.unwrap_or(50)).await)
+        let bucket = match self.resolve_bucket_query(params.bucket.as_deref()) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        match self
+            .client
+            .list_entities(params.limit.unwrap_or(50), bucket.as_ref())
+            .await
+        {
+            Ok(entities) => serde_json::json!(
+                entities.iter().map(|e| serde_json::json!({
+                    "id": hex::encode(e.id.0),
+                    "kind": e.kind,
+                    "label": e.props.get("name").or_else(|| e.props.get("title"))
+                        .and_then(|v| v.as_str()).unwrap_or(&e.kind),
+                    "edge_count": e.edges_out.len(),
+                })).collect::<Vec<_>>()
+            )
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -382,15 +544,28 @@ impl MemvaultServer {
         description = "Traverse the graph from any node (type:hex). Returns connected nodes up to max_depth."
     )]
     async fn traverse(&self, Parameters(params): Parameters<TraverseParams>) -> String {
-        ok_or_err!(
-            self.client
-                .traverse_from(
-                    &params.from,
-                    params.relation.as_deref(),
-                    params.max_depth.unwrap_or(2)
-                )
-                .await
-        )
+        let node = match NodeRef::from_tag_label(&params.from) {
+            Some(n) => n,
+            None => return format!("error: invalid node: {}", params.from),
+        };
+        match self
+            .client
+            .traverse_from(&node, params.relation.as_deref(), params.max_depth.unwrap_or(2))
+            .await
+        {
+            Ok(hits) => serde_json::json!(
+                hits.iter().map(|h| serde_json::json!({
+                    "node": h.node.tag_label(),
+                    "depth": h.depth,
+                    "path": h.path.iter().map(|(eid, rel)| serde_json::json!({
+                        "edge_id": hex::encode(eid.0),
+                        "relation": rel,
+                    })).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>()
+            )
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -398,21 +573,16 @@ impl MemvaultServer {
         description = "Link two entities by hex ID. Use memvault_link for cross-type linking."
     )]
     async fn graph_link(&self, Parameters(params): Parameters<GraphLinkParams>) -> String {
-        let source = ensure_entity_id(&params.source_id);
-        let target = ensure_entity_id(&params.target_id);
-        let props = params.props.into_iter().map(|(k, v)| (k, v)).collect();
-        match self
-            .client
-            .add_link(&source, &target, &params.relation, params.weight, props)
-            .await
-        {
-            Ok(resp) => serde_json::json!({
-                "edge_id": resp.get("edge_id").and_then(|v| v.as_str()).unwrap_or(""),
-                "status": "linked"
-            })
-            .to_string(),
-            Err(e) => format!("error: {e}"),
-        }
+        let source_label = ensure_entity_label(&params.source_id);
+        let target_label = ensure_entity_label(&params.target_id);
+        self.add_link_impl(
+            &source_label,
+            &target_label,
+            &params.relation,
+            params.weight,
+            params.props.into_iter().collect(),
+        )
+        .await
     }
 
     #[tool(
@@ -420,11 +590,8 @@ impl MemvaultServer {
         description = "List all edges for an entity."
     )]
     async fn graph_query(&self, Parameters(params): Parameters<GraphQueryParams>) -> String {
-        ok_or_err!(
-            self.client
-                .edges_of(&ensure_entity_id(&params.from_id))
-                .await
-        )
+        let node_label = ensure_entity_label(&params.from_id);
+        self.edges_of_impl(&node_label).await
     }
 
     // ── Links (cross-type) ─────────────────────────────────────────
@@ -434,25 +601,14 @@ impl MemvaultServer {
         description = "Link any two nodes (type:hex format). Returns the edge ID."
     )]
     async fn link(&self, Parameters(params): Parameters<LinkParams>) -> String {
-        let props = params.props.into_iter().map(|(k, v)| (k, v)).collect();
-        match self
-            .client
-            .add_link(
-                &params.source,
-                &params.target,
-                &params.relation,
-                params.weight,
-                props,
-            )
-            .await
-        {
-            Ok(resp) => serde_json::json!({
-                "edge_id": resp.get("edge_id").and_then(|v| v.as_str()).unwrap_or(""),
-                "status": "linked"
-            })
-            .to_string(),
-            Err(e) => format!("error: {e}"),
-        }
+        self.add_link_impl(
+            &params.source,
+            &params.target,
+            &params.relation,
+            params.weight,
+            params.props.into_iter().collect(),
+        )
+        .await
     }
 
     #[tool(
@@ -460,7 +616,7 @@ impl MemvaultServer {
         description = "List all edges for any node (type:hex)."
     )]
     async fn edges(&self, Parameters(params): Parameters<EdgesOfParams>) -> String {
-        ok_or_err!(self.client.edges_of(&params.node).await)
+        self.edges_of_impl(&params.node).await
     }
 
     #[tool(
@@ -468,14 +624,20 @@ impl MemvaultServer {
         description = "Remove an edge. Requires edge_id and source node (type:hex)."
     )]
     async fn unlink(&self, Parameters(params): Parameters<UnlinkParams>) -> String {
-        match self
-            .client
-            .delete_link(&params.edge_id, &params.source)
-            .await
-        {
-            Ok(_) => {
-                serde_json::json!({ "edge_id": params.edge_id, "status": "removed" }).to_string()
-            }
+        let source = match NodeRef::from_tag_label(&params.source) {
+            Some(n) => n,
+            None => return format!("error: invalid source: {}", params.source),
+        };
+        let edge_id = match hex_to_32(&params.edge_id) {
+            Ok(arr) => EdgeId(arr),
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.remove_link_from(&source, &edge_id).await {
+            Ok(()) => serde_json::json!({
+                "edge_id": params.edge_id,
+                "status": "removed"
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
@@ -487,11 +649,26 @@ impl MemvaultServer {
         description = "List all nodes (docs, entities, files). Optionally filter by view name."
     )]
     async fn list_all(&self, Parameters(params): Parameters<ListAllParams>) -> String {
-        ok_or_err!(
-            self.client
-                .list_all(params.view.as_deref(), params.limit.unwrap_or(100))
-                .await
-        )
+        // list_all does not currently filter by bucket; the bucket arg is
+        // accepted for API symmetry. When None, lists across all accessible buckets.
+        let _ = self.resolve_bucket_query(params.bucket.as_deref());
+        match self
+            .client
+            .list_all(params.view.as_deref(), params.limit.unwrap_or(100))
+            .await
+        {
+            Ok(items) => serde_json::json!(items
+                .iter()
+                .map(|(id, nt, label, tags)| serde_json::json!({
+                    "node_id": id,
+                    "node_type": nt,
+                    "label": label,
+                    "tags": tags,
+                }))
+                .collect::<Vec<_>>())
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -499,7 +676,14 @@ impl MemvaultServer {
         description = "Retract (soft-delete) any node. Node must be in type:hex format: doc:<hex>, entity:<hex>, or file:<hex>."
     )]
     async fn retract(&self, Parameters(params): Parameters<RetractParams>) -> String {
-        ok_or_err!(self.client.retract_node(&params.node, &params.reason).await)
+        match self.client.retract_node(&params.node, &params.reason).await {
+            Ok(()) => serde_json::json!({
+                "node_id": params.node,
+                "status": "retracted",
+            })
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     // ── Tags ───────────────────────────────────────────────────────
@@ -509,11 +693,18 @@ impl MemvaultServer {
         description = "Add tags to an item (type:hex node ID). Tags in scope:label format."
     )]
     async fn tag(&self, Parameters(params): Parameters<TagParams>) -> String {
-        ok_or_err!(
-            self.client
-                .add_tags(&params.node, parse_tags(&params.tags))
-                .await
-        )
+        match self
+            .client
+            .add_tags(&params.node, parse_tags(&params.tags))
+            .await
+        {
+            Ok(()) => serde_json::json!({
+                "node_id": params.node,
+                "status": "tags_added",
+            })
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -521,11 +712,18 @@ impl MemvaultServer {
         description = "Remove tags from an item. Tags in scope:label format."
     )]
     async fn untag(&self, Parameters(params): Parameters<UntagParams>) -> String {
-        ok_or_err!(
-            self.client
-                .remove_tags(&params.node, parse_tags(&params.tags))
-                .await
-        )
+        match self
+            .client
+            .remove_tags(&params.node, parse_tags(&params.tags))
+            .await
+        {
+            Ok(()) => serde_json::json!({
+                "node_id": params.node,
+                "status": "tags_removed",
+            })
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -533,14 +731,20 @@ impl MemvaultServer {
         description = "Get effective tags for an item."
     )]
     async fn get_tags(&self, Parameters(params): Parameters<GetTagsParams>) -> String {
-        ok_or_err!(self.client.get_tags(&params.node).await)
+        match self.client.get_tags(&params.node).await {
+            Ok(tags) => serde_json::json!({ "node_id": params.node, "tags": tags }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     // ── Views ──────────────────────────────────────────────────────
 
     #[tool(name = "memvault_view_list", description = "List all saved views.")]
     async fn view_list(&self) -> String {
-        ok_or_err!(self.client.list_views().await)
+        match self.client.list_views().await {
+            Ok(views) => serde_json::json!(views).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -548,25 +752,40 @@ impl MemvaultServer {
         description = "Create a view. Tags in scope:label format."
     )]
     async fn view_create(&self, Parameters(params): Parameters<ViewCreateParams>) -> String {
-        ok_or_err!(
-            self.client
-                .create_view(&params.name, parse_tags(&params.tags))
-                .await
-        )
+        let view = memvault_api::View {
+            name: params.name.clone(),
+            tags: parse_tags(&params.tags),
+            created_ns: memvault_core::wall_ns(),
+            cid: String::new(),
+            bucket_id: None,
+        };
+        match self.client.create_view(view).await {
+            Ok(()) => serde_json::json!({ "name": params.name, "status": "created" }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(name = "memvault_view_update", description = "Update a view's tags.")]
     async fn view_update(&self, Parameters(params): Parameters<ViewUpdateParams>) -> String {
-        ok_or_err!(
-            self.client
-                .update_view(&params.name, parse_tags(&params.tags))
-                .await
-        )
+        let view = memvault_api::View {
+            name: params.name.clone(),
+            tags: parse_tags(&params.tags),
+            created_ns: memvault_core::wall_ns(),
+            cid: String::new(),
+            bucket_id: None,
+        };
+        match self.client.update_view(view).await {
+            Ok(()) => serde_json::json!({ "name": params.name, "status": "updated" }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(name = "memvault_view_delete", description = "Delete a view.")]
     async fn view_delete(&self, Parameters(params): Parameters<ViewDeleteParams>) -> String {
-        ok_or_err!(self.client.delete_view(&params.name).await)
+        match self.client.delete_view(&params.name).await {
+            Ok(()) => serde_json::json!({ "name": params.name, "status": "deleted" }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     // ── Buckets ────────────────────────────────────────────────────
@@ -576,7 +795,22 @@ impl MemvaultServer {
         description = "List all buckets with status, name, and item count."
     )]
     async fn bucket_list(&self) -> String {
-        ok_or_err!(self.client.bucket_list().await)
+        match self.client.bucket_list().await {
+            Ok(buckets) => serde_json::json!(buckets
+                .iter()
+                .map(|b| serde_json::json!({
+                    "id": hex::encode(b.id.0),
+                    "name": b.name,
+                    "description": b.description,
+                    "owner_agent": b.owner_agent.as_ref().map(|a| &a.0),
+                    "is_attached": b.is_attached,
+                    "envelope_count": b.envelope_count,
+                    "created_ns": b.created_ns,
+                }))
+                .collect::<Vec<_>>())
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -584,11 +818,23 @@ impl MemvaultServer {
         description = "Create a new bucket. Returns the bucket ID."
     )]
     async fn bucket_create(&self, Parameters(params): Parameters<BucketCreateParams>) -> String {
-        ok_or_err!(
-            self.client
-                .bucket_create(&params.name, params.description.as_deref())
-                .await
-        )
+        match self
+            .client
+            .bucket_create(
+                &params.name,
+                params.description.as_deref(),
+                Visibility::Internal,
+                memvault_core::classification::Classification::Internal,
+                memvault_doc::BucketRole::Standard,
+            )
+            .await
+        {
+            Ok(id) => {
+                serde_json::json!({ "bucket_id": hex::encode(id.0), "name": params.name })
+                    .to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -596,8 +842,20 @@ impl MemvaultServer {
         description = "Get details of a bucket by hex ID."
     )]
     async fn bucket_get(&self, Parameters(params): Parameters<BucketGetParams>) -> String {
-        match self.client.bucket_get(&params.id).await {
-            Ok(Some(v)) => v.to_string(),
+        let bid = match parse_bucket_id(&params.id) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.bucket_get(&bid).await {
+            Ok(Some(b)) => serde_json::json!({
+                "id": hex::encode(b.id.0),
+                "name": b.name,
+                "description": b.description,
+                "owner_agent": b.owner_agent.as_ref().map(|a| &a.0),
+                "is_attached": b.is_attached,
+                "envelope_count": b.envelope_count,
+            })
+            .to_string(),
             Ok(None) => "not found".to_string(),
             Err(e) => format!("error: {e}"),
         }
@@ -605,7 +863,14 @@ impl MemvaultServer {
 
     #[tool(name = "memvault_bucket_rename", description = "Rename a bucket.")]
     async fn bucket_rename(&self, Parameters(params): Parameters<BucketRenameParams>) -> String {
-        ok_or_err!(self.client.bucket_rename(&params.id, &params.name).await)
+        let bid = match parse_bucket_id(&params.id) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.bucket_rename(&bid, &params.name).await {
+            Ok(()) => serde_json::json!({ "status": "renamed" }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -613,7 +878,14 @@ impl MemvaultServer {
         description = "Attach a private bucket to the cluster (makes it visible to peers)."
     )]
     async fn bucket_attach(&self, Parameters(params): Parameters<BucketAttachParams>) -> String {
-        ok_or_err!(self.client.bucket_attach(&params.id).await)
+        let bid = match parse_bucket_id(&params.id) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.bucket_attach(&bid).await {
+            Ok(()) => serde_json::json!({ "status": "attached" }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -621,7 +893,14 @@ impl MemvaultServer {
         description = "Archive a bucket (soft-remove, data preserved)."
     )]
     async fn bucket_archive(&self, Parameters(params): Parameters<BucketArchiveParams>) -> String {
-        ok_or_err!(self.client.bucket_archive(&params.id, &params.reason).await)
+        let bid = match parse_bucket_id(&params.id) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.bucket_archive(&bid, &params.reason).await {
+            Ok(()) => serde_json::json!({ "status": "archived" }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     // ── Audit ──────────────────────────────────────────────────────
@@ -631,11 +910,34 @@ impl MemvaultServer {
         description = "Query audit log. Optionally filter by op_kind (DocCreate, EntityCreate, AttachFile, EdgeAdd, Retract)."
     )]
     async fn audit(&self, Parameters(params): Parameters<AuditParams>) -> String {
-        ok_or_err!(
-            self.client
-                .audit(params.limit.unwrap_or(50), params.op_kind.as_deref())
-                .await
-        )
+        let _ = self.resolve_bucket_query(params.bucket.as_deref());
+        let query = AuditQuery {
+            op_kind: params.op_kind.as_deref().map(|k| match k {
+                "DocCreate" => memvault_query::OpKind::DocCreate,
+                "DocEdit" => memvault_query::OpKind::DocEdit,
+                "AttachFile" => memvault_query::OpKind::AttachFile,
+                "EntityCreate" => memvault_query::OpKind::EntityCreate,
+                "EdgeAdd" => memvault_query::OpKind::EdgeAdd,
+                "Retract" => memvault_query::OpKind::Retract,
+                other => memvault_query::OpKind::Other(other.to_string()),
+            }),
+            limit: Some(params.limit.unwrap_or(50)),
+            ..Default::default()
+        };
+        match self.client.audit(query).await {
+            Ok(records) => serde_json::json!(records
+                .iter()
+                .map(|r| serde_json::json!({
+                    "cid": hex::encode(&r.cid),
+                    "op_kind": format!("{:?}", r.op_kind),
+                    "author": hex::encode(&r.author),
+                    "wall_ns": r.wall_ns,
+                    "tags": r.tags,
+                }))
+                .collect::<Vec<_>>())
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     // ── Status ─────────────────────────────────────────────────────
@@ -645,17 +947,28 @@ impl MemvaultServer {
         description = "Get node status (block count, doc count, peer count, uptime)."
     )]
     async fn status(&self) -> String {
-        ok_or_err!(self.client.status().await)
+        match self.client.status().await {
+            Ok(s) => serde_json::json!({
+                "peer_id": hex::encode(&s.peer_id),
+                "cluster_id": hex::encode(&s.cluster_id),
+                "block_count": s.block_count,
+                "doc_count": s.doc_count,
+                "peer_count": s.peer_count,
+                "uptime_secs": s.uptime_secs,
+            })
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
-    // ── VFS (Virtual Filesystem) ──────────────────────────────────
+    // ── VFS ────────────────────────────────────────────────────────
 
     #[tool(
         name = "memvault_vfs_ls",
         description = "List directory contents at a VFS path. Shows name, type, and node ID for each entry."
     )]
     async fn vfs_ls(&self, Parameters(params): Parameters<VfsLsParams>) -> String {
-        let vfs = Vfs::new(self.client.as_ref());
+        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
         let recursive = params.recursive.unwrap_or(false);
         match vfs.ls(&params.path, recursive).await {
             Ok(entries) => serde_json::json!({
@@ -672,12 +985,12 @@ impl MemvaultServer {
         description = "Resolve a VFS path to its target node ID (type:hex format)."
     )]
     async fn vfs_resolve(&self, Parameters(params): Parameters<VfsResolveParams>) -> String {
-        let vfs = Vfs::new(self.client.as_ref());
+        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
         match vfs.resolve(&params.path).await {
-            Ok(Some((node_id, edge_id))) => serde_json::json!({
+            Ok(Some((node, edge_id))) => serde_json::json!({
                 "path": params.path,
-                "node_id": node_id,
-                "edge_id": edge_id,
+                "node_id": node.tag_label(),
+                "edge_id": edge_id.map(|e| hex::encode(e.0)),
             })
             .to_string(),
             Ok(None) => {
@@ -692,11 +1005,15 @@ impl MemvaultServer {
         description = "Create a directory at a VFS path. Intermediate directories are created automatically (like mkdir -p)."
     )]
     async fn vfs_mkdir(&self, Parameters(params): Parameters<VfsMkdirParams>) -> String {
-        let vfs = Vfs::new(self.client.as_ref());
+        let bucket = match self.resolve_bucket(params.bucket.as_deref()) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        let vfs = Vfs::new(Arc::clone(&self.client), bucket).await;
         match vfs.mkdir(&params.path).await {
-            Ok(entity_id) => serde_json::json!({
+            Ok(id) => serde_json::json!({
                 "path": params.path,
-                "entity_id": entity_id,
+                "entity_id": hex::encode(id.0),
                 "status": "created",
             })
             .to_string(),
@@ -709,12 +1026,16 @@ impl MemvaultServer {
         description = "Place a node at a VFS path. Intermediate directories are created automatically. A node can appear at multiple paths."
     )]
     async fn vfs_link(&self, Parameters(params): Parameters<VfsLinkParams>) -> String {
-        let vfs = Vfs::new(self.client.as_ref());
+        let bucket = match self.resolve_bucket(params.bucket.as_deref()) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        let vfs = Vfs::new(Arc::clone(&self.client), bucket).await;
         match vfs.link(&params.path, &params.target).await {
             Ok(edge_id) => serde_json::json!({
                 "path": params.path,
                 "target": params.target,
-                "edge_id": edge_id,
+                "edge_id": hex::encode(edge_id.0),
                 "status": "linked",
             })
             .to_string(),
@@ -727,7 +1048,7 @@ impl MemvaultServer {
         description = "Remove an entry from a VFS path. The underlying node is NOT deleted — only the VFS link is removed."
     )]
     async fn vfs_unlink(&self, Parameters(params): Parameters<VfsUnlinkParams>) -> String {
-        let vfs = Vfs::new(self.client.as_ref());
+        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
         match vfs.unlink(&params.path).await {
             Ok(()) => serde_json::json!({
                 "path": params.path,
@@ -743,7 +1064,11 @@ impl MemvaultServer {
         description = "Move or rename a VFS entry from one path to another."
     )]
     async fn vfs_mv(&self, Parameters(params): Parameters<VfsMvParams>) -> String {
-        let vfs = Vfs::new(self.client.as_ref());
+        let bucket = match self.resolve_bucket(params.bucket.as_deref()) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        let vfs = Vfs::new(Arc::clone(&self.client), bucket).await;
         match vfs.mv(&params.from, &params.to).await {
             Ok(()) => serde_json::json!({
                 "from": params.from,
@@ -760,7 +1085,7 @@ impl MemvaultServer {
         description = "Display an ASCII tree view of the VFS hierarchy from a given path."
     )]
     async fn vfs_tree(&self, Parameters(params): Parameters<VfsTreeParams>) -> String {
-        let vfs = Vfs::new(self.client.as_ref());
+        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
         let path = params.path.as_deref().unwrap_or("/");
         let max_depth = params.max_depth.unwrap_or(5);
         match vfs.tree(path, max_depth).await {
@@ -774,7 +1099,7 @@ impl MemvaultServer {
         description = "Find all VFS paths that link to a given node. Useful for discovering where a node is mounted."
     )]
     async fn vfs_find(&self, Parameters(params): Parameters<VfsFindParams>) -> String {
-        let vfs = Vfs::new(self.client.as_ref());
+        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
         match vfs.find_paths(&params.node).await {
             Ok(paths) => serde_json::json!({
                 "node": params.node,
@@ -794,12 +1119,10 @@ impl MemvaultServer {
                        Returns the file path. For documents, optionally includes history."
     )]
     async fn export_node(&self, Parameters(params): Parameters<ExportNodeParams>) -> String {
-        let Some(client) = self.client.as_memvault_client() else {
-            return "error: export tools require local mode (--db)".to_string();
-        };
         let out_dir = std::env::temp_dir().join("memvault-export");
         let history = params.history.unwrap_or(false);
-        match memvault_export::export_node(client, &params.node_id, &out_dir, history).await {
+        match memvault_export::export_node(&*self.client, &params.node_id, &out_dir, history).await
+        {
             Ok(result) => serde_json::to_string(&result).unwrap_or_else(|e| format!("error: {e}")),
             Err(e) => format!("error: {e}"),
         }
@@ -810,9 +1133,6 @@ impl MemvaultServer {
         description = "Export the entire vault (or a filtered subset) to a directory or tar archive on disk."
     )]
     async fn export_vault(&self, Parameters(params): Parameters<ExportVaultParams>) -> String {
-        let Some(client) = self.client.as_memvault_client() else {
-            return "error: export tools require local mode (--db)".to_string();
-        };
         let tag_filter = params.tag.as_deref().and_then(|t| {
             let parts: Vec<&str> = t.splitn(2, ':').collect();
             if parts.len() == 2 {
@@ -836,15 +1156,86 @@ impl MemvaultServer {
             Ok(s) => s,
             Err(e) => return format!("error creating output: {e}"),
         };
-        match memvault_export::run_export(client, sink, opts).await {
+        match memvault_export::run_export(&*self.client, sink, opts).await {
             Ok(stats) => format!(
                 "Exported {} documents, {} files, {} entities ({} history versions) to {}",
                 stats.documents,
                 stats.files,
                 stats.entities,
                 stats.history_versions,
-                params.output_path
+                params.output_path,
             ),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+}
+
+// ── Shared implementations (used by multiple #[tool] entry points) ─
+
+impl MemvaultServer {
+    /// Resolve bucket for query-style operations. Same as `resolve_bucket`
+    /// but None is fine — reads degrade to "all accessible buckets".
+    fn resolve_bucket_query(&self, explicit: Option<&str>) -> Result<Option<BucketId>> {
+        if let Some(s) = explicit.filter(|s| !s.is_empty()) {
+            return parse_bucket_id(s).map(Some);
+        }
+        // For reads, default to None so the daemon searches across all
+        // accessible buckets rather than confining the result.
+        Ok(None)
+    }
+
+    async fn add_link_impl(
+        &self,
+        source: &str,
+        target: &str,
+        relation: &str,
+        weight: Option<f32>,
+        props: BTreeMap<String, serde_json::Value>,
+    ) -> String {
+        let source_ref = match NodeRef::from_tag_label(source) {
+            Some(n) => n,
+            None => return format!("error: invalid source: {source}"),
+        };
+        let target_ref = match NodeRef::from_tag_label(target) {
+            Some(n) => n,
+            None => return format!("error: invalid target: {target}"),
+        };
+        let edge = Edge {
+            id: EdgeId::random(),
+            relation: relation.to_string(),
+            target: target_ref,
+            weight,
+            props,
+            provenance: None,
+        };
+        match self.client.add_link(&source_ref, edge, Visibility::Internal).await {
+            Ok(edge_id) => serde_json::json!({
+                "edge_id": hex::encode(edge_id.0),
+                "status": "linked",
+            })
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    async fn edges_of_impl(&self, node: &str) -> String {
+        let node_ref = match NodeRef::from_tag_label(node) {
+            Some(n) => n,
+            None => return format!("error: invalid node: {node}"),
+        };
+        match self.client.edges_of(&node_ref).await {
+            Ok(edges) => serde_json::json!(edges
+                .iter()
+                .map(|(src, edge)| serde_json::json!({
+                    "edge_id": hex::encode(edge.id.0),
+                    "source": src.tag_label(),
+                    "target": edge.target.tag_label(),
+                    "relation": edge.relation,
+                    "weight": edge.weight,
+                    "props": edge.props,
+                }))
+                .collect::<Vec<_>>())
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }

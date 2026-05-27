@@ -11519,7 +11519,6 @@ name = "plan-ai-memvault"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "base64 0.22.1",
  "clap",
  "dirs 6.0.0",
@@ -11528,11 +11527,8 @@ dependencies = [
  "memvault-core",
  "memvault-doc",
  "memvault-export",
- "memvault-extract",
  "memvault-query",
- "memvault-store",
  "mime_guess",
- "reqwest 0.12.28",
  "rmcp",
  "schemars",
  "serde",
