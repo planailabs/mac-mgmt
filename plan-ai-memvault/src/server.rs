@@ -70,12 +70,15 @@ impl MemvaultServer {
         Ok(None)
     }
 
-    /// Bucket used for VFS operations (agent bucket or daemon's default).
-    async fn vfs_bucket(&self, explicit: Option<&str>) -> Result<BucketId> {
-        if let Some(b) = self.resolve_bucket(explicit)? {
-            return Ok(b);
-        }
-        Ok(api_vfs::default_bucket(&*self.client).await)
+    /// Bucket used for VFS operations. VFS is per-bucket — every call needs
+    /// either an explicit bucket from the tool params or the startup-resolved
+    /// agent bucket. Errors when neither is available.
+    fn vfs_bucket(&self, explicit: Option<&str>) -> Result<BucketId> {
+        self.resolve_bucket(explicit)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no bucket available — pass `bucket` in the tool call or start with --agent-id"
+            )
+        })
     }
 }
 
@@ -939,7 +942,7 @@ impl MemvaultServer {
         description = "List directory contents at a VFS path. Shows name, type, and node ID for each entry."
     )]
     async fn vfs_ls(&self, Parameters(params): Parameters<VfsLsParams>) -> String {
-        let bucket = match self.vfs_bucket(None).await {
+        let bucket = match self.vfs_bucket(None) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -959,7 +962,7 @@ impl MemvaultServer {
         description = "Resolve a VFS path to its target node ID (type:hex format)."
     )]
     async fn vfs_resolve(&self, Parameters(params): Parameters<VfsResolveParams>) -> String {
-        let bucket = match self.vfs_bucket(None).await {
+        let bucket = match self.vfs_bucket(None) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -982,7 +985,7 @@ impl MemvaultServer {
         description = "Create a directory at a VFS path. Intermediate directories are created automatically (like mkdir -p)."
     )]
     async fn vfs_mkdir(&self, Parameters(params): Parameters<VfsMkdirParams>) -> String {
-        let bucket = match self.vfs_bucket(params.bucket.as_deref()).await {
+        let bucket = match self.vfs_bucket(params.bucket.as_deref()) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -1002,7 +1005,7 @@ impl MemvaultServer {
         description = "Place a node at a VFS path. Intermediate directories are created automatically. A node can appear at multiple paths."
     )]
     async fn vfs_link(&self, Parameters(params): Parameters<VfsLinkParams>) -> String {
-        let bucket = match self.vfs_bucket(params.bucket.as_deref()).await {
+        let bucket = match self.vfs_bucket(params.bucket.as_deref()) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -1027,7 +1030,7 @@ impl MemvaultServer {
         description = "Remove an entry from a VFS path. The underlying node is NOT deleted — only the VFS link is removed."
     )]
     async fn vfs_unlink(&self, Parameters(params): Parameters<VfsUnlinkParams>) -> String {
-        let bucket = match self.vfs_bucket(None).await {
+        let bucket = match self.vfs_bucket(None) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -1046,7 +1049,7 @@ impl MemvaultServer {
         description = "Move or rename a VFS entry from one path to another."
     )]
     async fn vfs_mv(&self, Parameters(params): Parameters<VfsMvParams>) -> String {
-        let bucket = match self.vfs_bucket(params.bucket.as_deref()).await {
+        let bucket = match self.vfs_bucket(params.bucket.as_deref()) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -1066,7 +1069,7 @@ impl MemvaultServer {
         description = "Display an ASCII tree view of the VFS hierarchy from a given path."
     )]
     async fn vfs_tree(&self, Parameters(params): Parameters<VfsTreeParams>) -> String {
-        let bucket = match self.vfs_bucket(None).await {
+        let bucket = match self.vfs_bucket(None) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -1083,7 +1086,7 @@ impl MemvaultServer {
         description = "Find all VFS paths that link to a given node. Useful for discovering where a node is mounted."
     )]
     async fn vfs_find(&self, Parameters(params): Parameters<VfsFindParams>) -> String {
-        let bucket = match self.vfs_bucket(None).await {
+        let bucket = match self.vfs_bucket(None) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
