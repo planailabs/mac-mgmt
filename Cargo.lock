@@ -9459,10 +9459,12 @@ dependencies = [
 name = "memvault-swarm"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek 2.2.0",
  "futures",
  "hex",
  "libp2p",
  "memvault-attach",
+ "memvault-auth",
  "memvault-core",
  "memvault-net",
  "memvault-store",
