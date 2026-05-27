@@ -18,20 +18,6 @@ use crate::types::*;
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-fn hex_to_32(hex_str: &str) -> Result<[u8; 32]> {
-    let bytes = hex::decode(hex_str)?;
-    if bytes.len() != 32 {
-        anyhow::bail!("expected 32 bytes, got {}", bytes.len());
-    }
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&bytes);
-    Ok(arr)
-}
-
-fn parse_bucket_id(s: &str) -> Result<BucketId> {
-    Ok(BucketId(hex_to_32(s)?))
-}
-
 fn ensure_entity_label(id: &str) -> String {
     if let Some(rest) = id.strip_prefix("entity:") {
         format!("entity:{rest}")
@@ -70,7 +56,7 @@ impl MemvaultServer {
     /// startup-resolved agent bucket.
     fn resolve_bucket(&self, explicit: Option<&str>) -> Result<Option<BucketId>> {
         if let Some(s) = explicit.filter(|s| !s.is_empty()) {
-            return parse_bucket_id(s).map(Some);
+            return BucketId::from_hex(s).map(Some).map_err(Into::into);
         }
         Ok(self.agent_bucket.clone())
     }
@@ -79,7 +65,7 @@ impl MemvaultServer {
     /// degrade to "all accessible buckets".
     fn resolve_bucket_query(&self, explicit: Option<&str>) -> Result<Option<BucketId>> {
         if let Some(s) = explicit.filter(|s| !s.is_empty()) {
-            return parse_bucket_id(s).map(Some);
+            return BucketId::from_hex(s).map(Some).map_err(Into::into);
         }
         Ok(None)
     }
@@ -169,8 +155,8 @@ impl MemvaultServer {
         description = "Retrieve a memory by its hex-encoded doc ID."
     )]
     async fn get(&self, Parameters(params): Parameters<GetParams>) -> String {
-        let id = match hex_to_32(&params.cid) {
-            Ok(arr) => DocId(arr),
+        let id = match DocId::from_hex(&params.cid) {
+            Ok(id) => id,
             Err(e) => return format!("error: {e}"),
         };
         match self.client.get_doc(&id).await {
@@ -238,8 +224,8 @@ impl MemvaultServer {
         description = "View the operation history for a document by its hex-encoded ID."
     )]
     async fn doc_history(&self, Parameters(params): Parameters<DocHistoryParams>) -> String {
-        let id = match hex_to_32(&params.doc_id) {
-            Ok(arr) => DocId(arr),
+        let id = match DocId::from_hex(&params.doc_id) {
+            Ok(id) => id,
             Err(e) => return format!("error: {e}"),
         };
         match self.client.history_of(&id).await {
@@ -475,8 +461,8 @@ impl MemvaultServer {
         description = "Get a single entity by hex ID. Returns kind, properties, and edges."
     )]
     async fn get_entity(&self, Parameters(params): Parameters<GetEntityParams>) -> String {
-        let id = match hex_to_32(params.id.trim_start_matches("entity:")) {
-            Ok(arr) => EntityId(arr),
+        let id = match EntityId::from_hex(&params.id) {
+            Ok(id) => id,
             Err(e) => return format!("error: {e}"),
         };
         match self.client.get_entity(&id).await {
@@ -615,8 +601,8 @@ impl MemvaultServer {
             Some(n) => n,
             None => return format!("error: invalid source: {}", params.source),
         };
-        let edge_id = match hex_to_32(&params.edge_id) {
-            Ok(arr) => EdgeId(arr),
+        let edge_id = match EdgeId::from_hex(&params.edge_id) {
+            Ok(id) => id,
             Err(e) => return format!("error: {e}"),
         };
         match self.client.remove_link_from(&source, &edge_id).await {
@@ -827,7 +813,7 @@ impl MemvaultServer {
         description = "Get details of a bucket by hex ID."
     )]
     async fn bucket_get(&self, Parameters(params): Parameters<BucketGetParams>) -> String {
-        let bid = match parse_bucket_id(&params.id) {
+        let bid = match BucketId::from_hex(&params.id) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -848,7 +834,7 @@ impl MemvaultServer {
 
     #[tool(name = "memvault_bucket_rename", description = "Rename a bucket.")]
     async fn bucket_rename(&self, Parameters(params): Parameters<BucketRenameParams>) -> String {
-        let bid = match parse_bucket_id(&params.id) {
+        let bid = match BucketId::from_hex(&params.id) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -863,7 +849,7 @@ impl MemvaultServer {
         description = "Attach a private bucket to the cluster (makes it visible to peers)."
     )]
     async fn bucket_attach(&self, Parameters(params): Parameters<BucketAttachParams>) -> String {
-        let bid = match parse_bucket_id(&params.id) {
+        let bid = match BucketId::from_hex(&params.id) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -878,7 +864,7 @@ impl MemvaultServer {
         description = "Archive a bucket (soft-remove, data preserved)."
     )]
     async fn bucket_archive(&self, Parameters(params): Parameters<BucketArchiveParams>) -> String {
-        let bid = match parse_bucket_id(&params.id) {
+        let bid = match BucketId::from_hex(&params.id) {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
@@ -1138,14 +1124,10 @@ impl MemvaultServer {
         description = "Export the entire vault (or a filtered subset) to a directory or tar archive on disk."
     )]
     async fn export_vault(&self, Parameters(params): Parameters<ExportVaultParams>) -> String {
-        let tag_filter = params.tag.as_deref().and_then(|t| {
-            let parts: Vec<&str> = t.splitn(2, ':').collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                None
-            }
-        });
+        let tag_filter = params
+            .tag
+            .as_deref()
+            .and_then(memvault_api::docs::parse_tag_filter);
         let opts = memvault_export::ExportOptions {
             history: params.history.unwrap_or(false),
             include_vfs: true,
