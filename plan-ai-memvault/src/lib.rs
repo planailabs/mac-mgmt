@@ -1,6 +1,5 @@
 pub mod server;
 pub mod types;
-pub mod vfs;
 
 use std::sync::Arc;
 

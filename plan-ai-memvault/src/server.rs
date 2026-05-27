@@ -6,34 +6,16 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 
+use memvault_api::docs::{parse_tags, parse_visibility};
+use memvault_api::files::detect_mime;
 use memvault_api::MemvaultClient;
 use memvault_core::{BucketId, DocId, EdgeId, EntityId, NodeRef, Visibility};
-use memvault_doc::{Document, Edge, Entity};
+use memvault_doc::{Edge, Entity};
 use memvault_query::AuditQuery;
 
 use crate::types::*;
-use crate::vfs::Vfs;
 
 // ── Helpers ────────────────────────────────────────────────────────
-
-fn parse_visibility(s: Option<&str>) -> Visibility {
-    match s {
-        Some("public") => Visibility::Public,
-        Some("federated") | Some("cluster") => Visibility::Federated,
-        _ => Visibility::Internal,
-    }
-}
-
-fn parse_tags(tags: &[String]) -> Vec<(String, String)> {
-    tags.iter()
-        .filter_map(|t| {
-            let mut parts = t.splitn(2, ':');
-            let scope = parts.next()?.to_string();
-            let label = parts.next().unwrap_or("").to_string();
-            Some((scope, label))
-        })
-        .collect()
-}
 
 fn hex_to_32(hex_str: &str) -> Result<[u8; 32]> {
     let bytes = hex::decode(hex_str)?;
@@ -84,13 +66,29 @@ impl MemvaultServer {
     }
 
     /// Resolve a per-call bucket: explicit override if provided, else the
-    /// startup-resolved agent bucket. Returned by value to avoid borrowing
-    /// across await points.
+    /// startup-resolved agent bucket.
     fn resolve_bucket(&self, explicit: Option<&str>) -> Result<Option<BucketId>> {
         if let Some(s) = explicit.filter(|s| !s.is_empty()) {
             return parse_bucket_id(s).map(Some);
         }
         Ok(self.agent_bucket.clone())
+    }
+
+    /// Resolve bucket for query-style operations. None is fine — reads
+    /// degrade to "all accessible buckets".
+    fn resolve_bucket_query(&self, explicit: Option<&str>) -> Result<Option<BucketId>> {
+        if let Some(s) = explicit.filter(|s| !s.is_empty()) {
+            return parse_bucket_id(s).map(Some);
+        }
+        Ok(None)
+    }
+
+    /// Bucket used for VFS operations (agent bucket or daemon's default).
+    async fn vfs_bucket(&self, explicit: Option<&str>) -> Result<BucketId> {
+        if let Some(b) = self.resolve_bucket(explicit)? {
+            return Ok(b);
+        }
+        Ok(self.client.vfs_default_bucket().await)
     }
 }
 
@@ -125,10 +123,6 @@ impl MemvaultServer {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
-        let mut frontmatter: BTreeMap<String, serde_json::Value> = BTreeMap::new();
-        if let Some(title) = &params.title {
-            frontmatter.insert("title".to_string(), serde_json::json!(title));
-        }
         let tags_input = if params.tags.is_empty() {
             &self.default_tags
         } else {
@@ -141,32 +135,28 @@ impl MemvaultServer {
                 .as_deref()
                 .or(Some(self.default_visibility.as_str())),
         );
-        let doc = Document::new(DocId::random(), params.text.clone(), frontmatter);
-        let doc_id_hex = hex::encode(doc.id.0);
-        let doc_node_id = format!("doc:{doc_id_hex}");
-
         match self
             .client
-            .put_doc(doc, tags, vis, bucket.as_ref())
+            .create_doc(
+                &params.text,
+                params.title.as_deref(),
+                None,
+                tags,
+                vis,
+                params.vfs_path.as_deref(),
+                bucket.as_ref(),
+            )
             .await
         {
-            Ok(cid) => {
+            Ok(res) => {
                 let mut result = serde_json::json!({
-                    "node_id": doc_node_id,
-                    "doc_id": doc_id_hex,
-                    "cid": hex::encode(&cid),
+                    "node_id": res.node_id,
+                    "doc_id": hex::encode(res.doc_id.0),
+                    "cid": hex::encode(&res.cid),
                     "status": "stored",
                 });
-                if let Some(vfs_path) = &params.vfs_path {
-                    let vfs = Vfs::new(Arc::clone(&self.client), bucket.clone()).await;
-                    match vfs.link(vfs_path, &doc_node_id).await {
-                        Ok(_) => {
-                            result["vfs_path"] = serde_json::json!(vfs_path);
-                        }
-                        Err(e) => {
-                            result["vfs_error"] = serde_json::json!(e.to_string());
-                        }
-                    }
+                if let Some(path) = &params.vfs_path {
+                    result["vfs_path"] = serde_json::json!(path);
                 }
                 result.to_string()
             }
@@ -286,43 +276,40 @@ impl MemvaultServer {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unnamed");
-        let mime_type = params.content_type.as_deref().unwrap_or_else(|| {
-            mime_guess::from_path(path)
-                .first_raw()
-                .unwrap_or("application/octet-stream")
-        });
+        let mime_type = params
+            .content_type
+            .as_deref()
+            .unwrap_or_else(|| detect_mime(path));
         let tags_input = params.tags.unwrap_or_else(|| self.default_tags.clone());
         let tags = parse_tags(&tags_input);
-        let vis = params
+        let visibility = params
             .visibility
             .as_deref()
             .unwrap_or(self.default_visibility.as_str());
         match self
             .client
-            .upload_file(&data, Some(filename), mime_type, tags, vis, bucket.as_ref())
+            .upload_file_at(
+                &data,
+                Some(filename),
+                mime_type,
+                tags,
+                visibility,
+                params.vfs_path.as_deref(),
+                bucket.as_ref(),
+            )
             .await
         {
-            Ok(cid) => {
-                let cid_hex = hex::encode(&cid);
-                let node_id = format!("file:{cid_hex}");
+            Ok((cid, node_id)) => {
                 let mut result = serde_json::json!({
                     "node_id": node_id,
-                    "cid": cid_hex,
+                    "cid": hex::encode(&cid),
                     "filename": filename,
                     "size": data.len(),
                     "mime_type": mime_type,
                     "status": "uploaded",
                 });
-                if let Some(vfs_path) = &params.vfs_path {
-                    let vfs = Vfs::new(Arc::clone(&self.client), bucket.clone()).await;
-                    match vfs.link(vfs_path, &node_id).await {
-                        Ok(_) => {
-                            result["vfs_path"] = serde_json::json!(vfs_path);
-                        }
-                        Err(e) => {
-                            result["vfs_error"] = serde_json::json!(e.to_string());
-                        }
-                    }
+                if let Some(path) = &params.vfs_path {
+                    result["vfs_path"] = serde_json::json!(path);
                 }
                 result.to_string()
             }
@@ -467,14 +454,17 @@ impl MemvaultServer {
                 let mut result =
                     serde_json::json!({ "node_id": node_id, "status": "created" });
                 if let Some(vfs_path) = &params.vfs_path {
-                    let vfs = Vfs::new(Arc::clone(&self.client), bucket.clone()).await;
-                    match vfs.link(vfs_path, &node_id).await {
-                        Ok(_) => {
-                            result["vfs_path"] = serde_json::json!(vfs_path);
-                        }
-                        Err(e) => {
-                            result["vfs_error"] = serde_json::json!(e.to_string());
-                        }
+                    let bid = bucket
+                        .clone()
+                        .unwrap_or_else(|| BucketId([0u8; 32]));
+                    if let Err(e) = self
+                        .client
+                        .vfs_link_node_at_path(&bid, vfs_path, &node_id)
+                        .await
+                    {
+                        result["vfs_error"] = serde_json::json!(e.to_string());
+                    } else {
+                        result["vfs_path"] = serde_json::json!(vfs_path);
                     }
                 }
                 result.to_string()
@@ -649,8 +639,6 @@ impl MemvaultServer {
         description = "List all nodes (docs, entities, files). Optionally filter by view name."
     )]
     async fn list_all(&self, Parameters(params): Parameters<ListAllParams>) -> String {
-        // list_all does not currently filter by bucket; the bucket arg is
-        // accepted for API symmetry. When None, lists across all accessible buckets.
         let _ = self.resolve_bucket_query(params.bucket.as_deref());
         match self
             .client
@@ -968,9 +956,12 @@ impl MemvaultServer {
         description = "List directory contents at a VFS path. Shows name, type, and node ID for each entry."
     )]
     async fn vfs_ls(&self, Parameters(params): Parameters<VfsLsParams>) -> String {
-        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
+        let bucket = match self.vfs_bucket(None).await {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
         let recursive = params.recursive.unwrap_or(false);
-        match vfs.ls(&params.path, recursive).await {
+        match self.client.vfs_ls(&bucket, &params.path, recursive).await {
             Ok(entries) => serde_json::json!({
                 "path": params.path,
                 "entries": entries,
@@ -985,8 +976,11 @@ impl MemvaultServer {
         description = "Resolve a VFS path to its target node ID (type:hex format)."
     )]
     async fn vfs_resolve(&self, Parameters(params): Parameters<VfsResolveParams>) -> String {
-        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
-        match vfs.resolve(&params.path).await {
+        let bucket = match self.vfs_bucket(None).await {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.vfs_resolve(&bucket, &params.path).await {
             Ok(Some((node, edge_id))) => serde_json::json!({
                 "path": params.path,
                 "node_id": node.tag_label(),
@@ -1005,12 +999,11 @@ impl MemvaultServer {
         description = "Create a directory at a VFS path. Intermediate directories are created automatically (like mkdir -p)."
     )]
     async fn vfs_mkdir(&self, Parameters(params): Parameters<VfsMkdirParams>) -> String {
-        let bucket = match self.resolve_bucket(params.bucket.as_deref()) {
+        let bucket = match self.vfs_bucket(params.bucket.as_deref()).await {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
-        let vfs = Vfs::new(Arc::clone(&self.client), bucket).await;
-        match vfs.mkdir(&params.path).await {
+        match self.client.vfs_mkdir(&bucket, &params.path).await {
             Ok(id) => serde_json::json!({
                 "path": params.path,
                 "entity_id": hex::encode(id.0),
@@ -1026,12 +1019,19 @@ impl MemvaultServer {
         description = "Place a node at a VFS path. Intermediate directories are created automatically. A node can appear at multiple paths."
     )]
     async fn vfs_link(&self, Parameters(params): Parameters<VfsLinkParams>) -> String {
-        let bucket = match self.resolve_bucket(params.bucket.as_deref()) {
+        let bucket = match self.vfs_bucket(params.bucket.as_deref()).await {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
-        let vfs = Vfs::new(Arc::clone(&self.client), bucket).await;
-        match vfs.link(&params.path, &params.target).await {
+        let target_ref = match NodeRef::from_tag_label(&params.target) {
+            Some(n) => n,
+            None => return format!("error: invalid target: {}", params.target),
+        };
+        match self
+            .client
+            .vfs_link_at_path(&bucket, &params.path, &target_ref)
+            .await
+        {
             Ok(edge_id) => serde_json::json!({
                 "path": params.path,
                 "target": params.target,
@@ -1048,8 +1048,11 @@ impl MemvaultServer {
         description = "Remove an entry from a VFS path. The underlying node is NOT deleted — only the VFS link is removed."
     )]
     async fn vfs_unlink(&self, Parameters(params): Parameters<VfsUnlinkParams>) -> String {
-        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
-        match vfs.unlink(&params.path).await {
+        let bucket = match self.vfs_bucket(None).await {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        match self.client.vfs_unlink_path(&bucket, &params.path).await {
             Ok(()) => serde_json::json!({
                 "path": params.path,
                 "status": "unlinked",
@@ -1064,12 +1067,15 @@ impl MemvaultServer {
         description = "Move or rename a VFS entry from one path to another."
     )]
     async fn vfs_mv(&self, Parameters(params): Parameters<VfsMvParams>) -> String {
-        let bucket = match self.resolve_bucket(params.bucket.as_deref()) {
+        let bucket = match self.vfs_bucket(params.bucket.as_deref()).await {
             Ok(b) => b,
             Err(e) => return format!("error: {e}"),
         };
-        let vfs = Vfs::new(Arc::clone(&self.client), bucket).await;
-        match vfs.mv(&params.from, &params.to).await {
+        match self
+            .client
+            .vfs_mv_path(&bucket, &params.from, &params.to)
+            .await
+        {
             Ok(()) => serde_json::json!({
                 "from": params.from,
                 "to": params.to,
@@ -1085,11 +1091,14 @@ impl MemvaultServer {
         description = "Display an ASCII tree view of the VFS hierarchy from a given path."
     )]
     async fn vfs_tree(&self, Parameters(params): Parameters<VfsTreeParams>) -> String {
-        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
+        let bucket = match self.vfs_bucket(None).await {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
         let path = params.path.as_deref().unwrap_or("/");
         let max_depth = params.max_depth.unwrap_or(5);
-        match vfs.tree(path, max_depth).await {
-            Ok(tree) => tree,
+        match self.client.vfs_tree(&bucket, path, max_depth).await {
+            Ok(t) => t,
             Err(e) => format!("error: {e}"),
         }
     }
@@ -1099,8 +1108,15 @@ impl MemvaultServer {
         description = "Find all VFS paths that link to a given node. Useful for discovering where a node is mounted."
     )]
     async fn vfs_find(&self, Parameters(params): Parameters<VfsFindParams>) -> String {
-        let vfs = Vfs::new(Arc::clone(&self.client), self.agent_bucket.clone()).await;
-        match vfs.find_paths(&params.node).await {
+        let bucket = match self.vfs_bucket(None).await {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+        let target_ref = match NodeRef::from_tag_label(&params.node) {
+            Some(n) => n,
+            None => return format!("error: invalid node: {}", params.node),
+        };
+        match self.client.vfs_find_paths(&bucket, &target_ref).await {
             Ok(paths) => serde_json::json!({
                 "node": params.node,
                 "paths": paths,
@@ -1170,20 +1186,9 @@ impl MemvaultServer {
     }
 }
 
-// ── Shared implementations (used by multiple #[tool] entry points) ─
+// ── Shared implementations ─────────────────────────────────────────
 
 impl MemvaultServer {
-    /// Resolve bucket for query-style operations. Same as `resolve_bucket`
-    /// but None is fine — reads degrade to "all accessible buckets".
-    fn resolve_bucket_query(&self, explicit: Option<&str>) -> Result<Option<BucketId>> {
-        if let Some(s) = explicit.filter(|s| !s.is_empty()) {
-            return parse_bucket_id(s).map(Some);
-        }
-        // For reads, default to None so the daemon searches across all
-        // accessible buckets rather than confining the result.
-        Ok(None)
-    }
-
     async fn add_link_impl(
         &self,
         source: &str,
