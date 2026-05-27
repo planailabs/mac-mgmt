@@ -43,7 +43,7 @@ impl MemvaultHandle {
         // Create the local client (used by the web API and for internal operations).
         // `open` runs rebuild_if_needed so an out-of-date blockstore is migrated
         // before the web API starts serving requests.
-        let mut client = memvault_api::LocalClient::open(
+        let client = memvault_api::LocalClient::open(
             Arc::clone(&store),
             Arc::new(RwLock::new(memvault_query::TextIndex::new())),
             Arc::new(RwLock::new(memvault_query::QuotaManager::new(
@@ -69,6 +69,16 @@ impl MemvaultHandle {
                 }
             }
         }
+
+        // Set the node signing key (the daemon's libp2p ed25519 host key).
+        // Used to sign agent attestations + revocations, and looked up by the
+        // web auth bootstrap. Set before Arc-wrapping so revoke_agent etc.
+        // have it available on the shared client.
+        let host_key = crate::host_keys::load_or_generate()?;
+        let node_signing_key =
+            crate::p2p::identity::ed25519_dalek_signing_key_from_russh(&host_key)?;
+        client.set_node_signing_key(node_signing_key);
+
         let client = Arc::new(client);
 
         // Load or rebuild the full-text search index.
@@ -79,17 +89,10 @@ impl MemvaultHandle {
         }
 
         // Start the API server.
+        let _ = peer_id;
         let web_handle = if config.port > 0 {
             let port = config.port;
-            // Reuse the daemon's libp2p ed25519 key as the cluster node
-            // signing key (design A-1: node key = libp2p key). The same key
-            // bytes back the daemon's `peer_id`.
-            let host_key = crate::host_keys::load_or_generate()?;
-            let node_signing_key =
-                crate::p2p::identity::ed25519_dalek_signing_key_from_russh(&host_key)?;
-            let _ = peer_id; // peer_id (multihash) is computed elsewhere; we
-                             // identify the node by its ed25519 pubkey here.
-            let auth = memvault_web::init_web_auth(&client, &data_dir, node_signing_key)
+            let auth = memvault_web::init_web_auth(&client, &data_dir)
                 .map_err(|e| anyhow::anyhow!("web auth init: {e}"))?;
             let app_state = Arc::new(memvault_web::AppState {
                 client: Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>,
