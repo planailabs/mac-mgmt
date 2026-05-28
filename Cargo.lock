@@ -9527,6 +9527,7 @@ dependencies = [
  "memvault-auth",
  "memvault-core",
  "memvault-doc",
+ "memvault-extract-abi",
  "memvault-query",
  "memvault-store",
  "plan-ai-design",
