@@ -40,6 +40,12 @@ impl MemvaultHandle {
         let store = Arc::new(memvault_store::MemvaultStore::open(&db_path)?);
         let bridge = BlockstoreBridge::new(Arc::clone(&store));
 
+        // Resolve cluster_id from the store (single source of truth, matching
+        // memctl). Older daemon installs persisted the cluster_id only as a
+        // hex sidecar file — migrate that to the store on first run so the
+        // two paths stay aligned.
+        let cluster_id = resolve_cluster_id(&store, &data_dir);
+
         // Create the local client (used by the web API and for internal operations).
         // `open` runs rebuild_if_needed so an out-of-date blockstore is migrated
         // before the web API starts serving requests.
@@ -51,7 +57,7 @@ impl MemvaultHandle {
             ))),
             Arc::new(memvault_api::EventBus::new(256)),
             peer_id.clone(),
-            cluster_id_from_dir(&data_dir),
+            cluster_id,
         )?;
 
         // Load admin signing key if available (genesis admin). Needed so the
@@ -230,10 +236,32 @@ fn default_data_dir() -> PathBuf {
         .join("memvault")
 }
 
+/// Read the cluster_id sidecar file (legacy daemon location). Returns
+/// `vec![0u8; 32]` if the file is absent or malformed — same sentinel
+/// `LocalClient::open` already treats as "no cluster yet".
 fn cluster_id_from_dir(data_dir: &PathBuf) -> Vec<u8> {
     let id_path = data_dir.join("cluster_id");
     match std::fs::read_to_string(&id_path) {
         Ok(hex_str) => hex::decode(hex_str.trim()).unwrap_or_else(|_| vec![0u8; 32]),
         Err(_) => vec![0u8; 32],
     }
+}
+
+/// Resolve the daemon's cluster_id, preferring the store (the single
+/// source of truth used by memctl). Falls back to the legacy `cluster_id`
+/// sidecar file for older daemon installs and migrates it into the store
+/// so subsequent runs see a consistent value from both paths.
+fn resolve_cluster_id(store: &memvault_store::MemvaultStore, data_dir: &PathBuf) -> Vec<u8> {
+    if let Ok(Some(cid)) = store.get_local_cluster_id() {
+        return cid;
+    }
+    let from_file = cluster_id_from_dir(data_dir);
+    // Don't persist the zero sentinel — that's "no cluster yet" and would
+    // shadow a real cluster_id written later by genesis / join.
+    if from_file != [0u8; 32] {
+        if let Err(e) = store.set_local_cluster_id(&from_file) {
+            warn!("could not migrate cluster_id from sidecar to store: {e}");
+        }
+    }
+    from_file
 }
