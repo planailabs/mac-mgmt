@@ -9,6 +9,26 @@
 use anyhow::{Context, Result, bail};
 use libp2p::identity;
 
+/// Extract the daemon's ed25519 private key bytes from a russh `PrivateKey`,
+/// returning an `ed25519_dalek::SigningKey` suitable for application-layer
+/// signing (e.g. as the cluster *node* key for `NodeAttestation` and
+/// `AgentAttestation` issuance).
+///
+/// The daemon's russh key is its libp2p identity (`PeerId` derives from the
+/// same seed via `keypair_from_russh`), so reusing it here matches design
+/// choice A-1 — "node key = libp2p key".
+pub fn ed25519_dalek_signing_key_from_russh(
+    key: &russh::keys::PrivateKey,
+) -> Result<memvault_api::ed25519_dalek::SigningKey> {
+    let mut pem_buf = Vec::new();
+    russh::keys::encode_pkcs8_pem(key, &mut pem_buf)
+        .context("failed to encode russh key as PKCS8 PEM")?;
+    let pem_str = String::from_utf8(pem_buf).context("PEM is not valid UTF-8")?;
+    let der = decode_pem_to_der(&pem_str).context("failed to decode PEM")?;
+    let seed = extract_ed25519_seed(&der).context("failed to extract Ed25519 seed from PKCS8")?;
+    Ok(memvault_api::ed25519_dalek::SigningKey::from_bytes(&seed))
+}
+
 /// Ed25519 PKCS8 v1 DER has a fixed structure.  The 32-byte private
 /// key seed is wrapped in an inner OCTET STRING inside the outer
 /// OCTET STRING at a known offset.

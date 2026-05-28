@@ -38,3 +38,4 @@ test-*.sh
 
 state
 __pycache__
+/master

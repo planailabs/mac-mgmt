@@ -40,19 +40,72 @@ impl MemvaultHandle {
         let store = Arc::new(memvault_store::MemvaultStore::open(&db_path)?);
         let bridge = BlockstoreBridge::new(Arc::clone(&store));
 
+        // Resolve cluster_id from the store (single source of truth, matching
+        // memctl). Older daemon installs persisted the cluster_id only as a
+        // hex sidecar file — migrate that to the store on first run so the
+        // two paths stay aligned.
+        let cluster_id = resolve_cluster_id(&store, &data_dir);
+
         // Create the local client (used by the web API and for internal operations).
         // `open` runs rebuild_if_needed so an out-of-date blockstore is migrated
         // before the web API starts serving requests.
-        let client = Arc::new(memvault_api::LocalClient::open(
+        let client = memvault_api::LocalClient::open(
             Arc::clone(&store),
             Arc::new(RwLock::new(memvault_query::TextIndex::new())),
             Arc::new(RwLock::new(memvault_query::QuotaManager::new(
                 Default::default(),
             ))),
             Arc::new(memvault_api::EventBus::new(256)),
-            peer_id,
-            cluster_id_from_dir(&data_dir),
-        )?);
+            peer_id.clone(),
+            cluster_id,
+        )?;
+
+        // Load admin signing key if available (genesis admin). Needed so the
+        // web API can issue JWTs for the built-in UI agent and verify
+        // incoming attestation signatures.
+        let admin_key_path = data_dir.join("identity").join("admin.key");
+        if admin_key_path.exists() {
+            if let Ok(key_bytes) = std::fs::read(&admin_key_path) {
+                if key_bytes.len() >= 32 {
+                    let mut seed = [0u8; 32];
+                    seed.copy_from_slice(&key_bytes[..32]);
+                    client.set_admin_signing_key(
+                        memvault_api::ed25519_dalek::SigningKey::from_bytes(&seed),
+                    );
+                }
+            }
+        }
+
+        // Load the pinned AdminGenesis block (cluster root of trust),
+        // established at genesis or via a join token. Without it, peers
+        // operate in pre-genesis mode — they can't verify NodeAttestations
+        // from admin.
+        let pin_path = data_dir.join("identity").join("cluster_admin_genesis.cbor");
+        if let Ok(pin_bytes) = std::fs::read(&pin_path) {
+            match serde_ipld_dagcbor::from_slice::<memvault_auth::AdminGenesis>(&pin_bytes) {
+                Ok(g) => {
+                    if let Err(e) = g.verify_self_signature() {
+                        tracing::warn!(error = %e, "pinned admin_genesis has bad signature; ignoring");
+                    } else {
+                        client.set_pinned_admin_genesis(g);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not decode pinned admin_genesis; ignoring");
+                }
+            }
+        }
+
+        // Set the node signing key (the daemon's libp2p ed25519 host key).
+        // Used to sign agent attestations + revocations, and looked up by the
+        // web auth bootstrap. Set before Arc-wrapping so revoke_agent etc.
+        // have it available on the shared client.
+        let host_key = crate::host_keys::load_or_generate()?;
+        let node_signing_key =
+            crate::p2p::identity::ed25519_dalek_signing_key_from_russh(&host_key)?;
+        client.set_node_signing_key(node_signing_key);
+
+        let client = Arc::new(client);
 
         // Load or rebuild the full-text search index.
         let index_cache_path = data_dir.join("text_index.json");
@@ -62,14 +115,30 @@ impl MemvaultHandle {
         }
 
         // Start the API server.
+        let _ = peer_id;
         let web_handle = if config.port > 0 {
             let port = config.port;
-            let auth_token = load_or_generate_token(&data_dir)?;
+            let trust = memvault_api::bootstrap::bootstrap_cluster_trust(&client)
+                .map_err(|e| anyhow::anyhow!("cluster trust bootstrap: {e}"))?;
+            // Inside async fn init() driven by the daemon's runtime —
+            // spawn the watcher here so it lives on the same runtime as
+            // the HTTP server below.
+            let _watcher = memvault_api::sigchain::spawn_sigchain_watcher(
+                Arc::clone(&client),
+                trust.admin_pubkey,
+                trust.trust_state.clone(),
+            );
+            memvault_web::init_ui_agent(&client, &data_dir)
+                .map_err(|e| anyhow::anyhow!("init ui agent: {e}"))?;
             let app_state = Arc::new(memvault_web::AppState {
                 client: Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>,
                 event_bus: Arc::new(memvault_api::EventBus::new(256)),
-                auth_token,
+                admin_pubkey: trust.admin_pubkey,
+                node_trust: Arc::clone(&trust.trust_state.node_trust),
+                revoked_agents: Arc::clone(&trust.trust_state.revoked_agents),
+                revoked_nodes: Arc::clone(&trust.trust_state.revoked_nodes),
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
+                agent_attestation_lookup: None,
             });
             memvault_web::ui::state::set_client(Arc::clone(&client));
             let router = memvault_web::build_fullstack_router(app_state);
@@ -162,20 +231,38 @@ impl MemvaultHandle {
     }
 }
 
-fn load_or_generate_token(data_dir: &std::path::Path) -> Result<String> {
-    memvault_web::load_or_generate_token(data_dir).map_err(|e| anyhow::anyhow!("token: {e}"))
-}
-
 fn default_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("memvault")
 }
 
+/// Read the cluster_id sidecar file (legacy daemon location). Returns
+/// `vec![0u8; 32]` if the file is absent or malformed — same sentinel
+/// `LocalClient::open` already treats as "no cluster yet".
 fn cluster_id_from_dir(data_dir: &PathBuf) -> Vec<u8> {
     let id_path = data_dir.join("cluster_id");
     match std::fs::read_to_string(&id_path) {
         Ok(hex_str) => hex::decode(hex_str.trim()).unwrap_or_else(|_| vec![0u8; 32]),
         Err(_) => vec![0u8; 32],
     }
+}
+
+/// Resolve the daemon's cluster_id, preferring the store (the single
+/// source of truth used by memctl). Falls back to the legacy `cluster_id`
+/// sidecar file for older daemon installs and migrates it into the store
+/// so subsequent runs see a consistent value from both paths.
+fn resolve_cluster_id(store: &memvault_store::MemvaultStore, data_dir: &PathBuf) -> Vec<u8> {
+    if let Ok(Some(cid)) = store.get_local_cluster_id() {
+        return cid;
+    }
+    let from_file = cluster_id_from_dir(data_dir);
+    // Don't persist the zero sentinel — that's "no cluster yet" and would
+    // shadow a real cluster_id written later by genesis / join.
+    if from_file != [0u8; 32] {
+        if let Err(e) = store.set_local_cluster_id(&from_file) {
+            warn!("could not migrate cluster_id from sidecar to store: {e}");
+        }
+    }
+    from_file
 }

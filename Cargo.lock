@@ -8602,6 +8602,7 @@ dependencies = [
  "memvault-api",
  "memvault-auth",
  "memvault-core",
+ "memvault-mcp",
  "memvault-net",
  "memvault-query",
  "memvault-store",
@@ -8610,7 +8611,6 @@ dependencies = [
  "notify",
  "plan-ai-cleaner",
  "plan-ai-cloud",
- "plan-ai-memvault",
  "prometheus 0.14.0",
  "pty-process",
  "ramhorns",
@@ -8625,6 +8625,7 @@ dependencies = [
  "self_update",
  "sentry",
  "serde",
+ "serde_ipld_dagcbor",
  "serde_json",
  "sha2 0.10.9",
  "strip-ansi-escapes",
@@ -9131,6 +9132,7 @@ dependencies = [
  "memvault-web",
  "rand 0.8.6",
  "serde",
+ "serde_ipld_dagcbor",
  "serde_json",
  "tokio",
  "tracing",
@@ -9181,6 +9183,7 @@ dependencies = [
  "memvault-core",
  "memvault-doc",
  "memvault-extract",
+ "memvault-extract-abi",
  "memvault-query",
  "memvault-store",
  "mime_guess",
@@ -9221,15 +9224,18 @@ dependencies = [
 name = "memvault-auth"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cid",
  "data-encoding",
  "ed25519-dalek 2.2.0",
+ "hex",
  "memvault-core",
  "rand 0.8.6",
  "serde",
  "serde-big-array",
  "serde_bytes",
  "serde_ipld_dagcbor",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -9244,6 +9250,7 @@ dependencies = [
  "glob",
  "hex",
  "ipld-core",
+ "js-sys",
  "multihash",
  "multihash-codetable",
  "rand 0.8.6",
@@ -9259,6 +9266,7 @@ dependencies = [
 name = "memvault-doc"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "loro",
  "memvault-auth",
  "memvault-core",
@@ -9343,6 +9351,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "memvault-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "dirs 6.0.0",
+ "ed25519-dalek 2.2.0",
+ "hex",
+ "memvault-api",
+ "memvault-auth",
+ "memvault-core",
+ "memvault-doc",
+ "memvault-export",
+ "memvault-query",
+ "mime_guess",
+ "rand 0.8.6",
+ "reqwest 0.13.2",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_ipld_dagcbor",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "memvault-net"
 version = "0.1.0"
 dependencies = [
@@ -9410,6 +9447,7 @@ dependencies = [
  "memvault-net",
  "memvault-query",
  "memvault-store",
+ "memvault-swarm",
  "prost 0.13.5",
  "rand 0.8.6",
  "serde",
@@ -9454,10 +9492,12 @@ dependencies = [
 name = "memvault-swarm"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek 2.2.0",
  "futures",
  "hex",
  "libp2p",
  "memvault-attach",
+ "memvault-auth",
  "memvault-core",
  "memvault-net",
  "memvault-store",
@@ -9478,6 +9518,7 @@ dependencies = [
  "dioxus",
  "dioxus-i18n",
  "dirs 6.0.0",
+ "ed25519-dalek 2.2.0",
  "getrandom 0.2.17",
  "gloo-timers",
  "hex",
@@ -9487,12 +9528,14 @@ dependencies = [
  "memvault-auth",
  "memvault-core",
  "memvault-doc",
+ "memvault-extract-abi",
  "memvault-query",
  "memvault-store",
  "plan-ai-design",
  "pulldown-cmark 0.12.2",
  "rand 0.8.6",
  "serde",
+ "serde_ipld_dagcbor",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
@@ -11512,30 +11555,6 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dioxus-i18n",
-]
-
-[[package]]
-name = "plan-ai-memvault"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "clap",
- "dirs 6.0.0",
- "hex",
- "memvault-api",
- "memvault-core",
- "memvault-doc",
- "memvault-export",
- "memvault-query",
- "mime_guess",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

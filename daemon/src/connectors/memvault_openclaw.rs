@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::{Context, Result};
 
 use super::{Connector, ConnectorPhase};
@@ -132,9 +134,68 @@ impl Connector for MemvaultOpenClaw {
         });
 
         merge_and_validate(&path, &patch)?;
+
+        // Bootstrap the openclaw agent identity at MEMVAULT_IDENTITY_DIR.
+        // Nothing else in the daemon does this — without it the MCP
+        // server fails on its first connect with "failed to load agent
+        // identity from …" because ClientArgs::connect() calls
+        // AgentIdentity::load and there's no file on disk yet. Idempotent
+        // via AgentIdentity::exists().
+        if let Err(e) = ensure_agent_identity(&identity_dir, "openclaw") {
+            tracing::warn!(
+                error = %e,
+                identity_dir = %identity_dir.display(),
+                "could not bootstrap openclaw agent identity; \
+                 the MCP server will fail until this is fixed manually"
+            );
+        }
+
         tracing::info!("memvault→openclaw connected");
         Ok(())
     }
+}
+
+/// Provision the per-agent `AgentIdentity` (private key + node-signed
+/// `AgentAttestation` + metadata) the openclaw MCP subprocess expects to
+/// find at `MEMVAULT_IDENTITY_DIR`. Reuses the daemon's already-running
+/// `LocalClient` — same one that holds the node signing key, the
+/// cluster_id, and the sigchain — instead of opening a second redb
+/// handle from the connector.
+///
+/// `enroll_local_agent` is idempotent (it reuses an unexpired identity
+/// signed by the current node key, regenerates on key rotation, and
+/// re-publishes the attestation in either case), so re-running the
+/// connector is safe.
+fn ensure_agent_identity(identity_dir: &Path, agent_id: &str) -> Result<()> {
+    // The daemon parks its LocalClient in the memvault-web state cache
+    // (`set_client` at MemvaultHandle::init). PreStart connectors run
+    // after that, so the global is populated by the time we reach here.
+    // If it isn't, the daemon never came up with memvault enabled and
+    // we have nothing to enroll against — return early.
+    let client = match memvault_web::ui::state::local_client() {
+        Ok(c) => c,
+        Err(_) => {
+            tracing::warn!(
+                "memvault LocalClient not yet available; \
+                 skipping openclaw agent enrollment for this tick"
+            );
+            return Ok(());
+        }
+    };
+    let _ = memvault_api::agent_identity::enroll_local_agent(
+        &client,
+        agent_id,
+        identity_dir,
+        memvault_auth::Role::AgentHost,
+        365 * 24 * 60 * 60 * 1_000_000_000,
+    )
+    .with_context(|| format!("enroll local agent {agent_id}"))?;
+    tracing::info!(
+        agent_id,
+        identity_dir = %identity_dir.display(),
+        "ensured openclaw agent identity via daemon LocalClient"
+    );
+    Ok(())
 }
 
 // ── Teardown connector (memvault disabled) ─────────────────────────────
