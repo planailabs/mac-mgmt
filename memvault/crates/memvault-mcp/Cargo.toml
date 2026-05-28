@@ -1,14 +1,14 @@
 [package]
-name = "plan-ai-memvault"
+name = "memvault-mcp"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "plan_ai_memvault"
+name = "memvault_mcp"
 path = "src/lib.rs"
 
 [[bin]]
-name = "plan-ai-memvault"
+name = "memvault-mcp"
 path = "src/main.rs"
 
 [dependencies]
@@ -23,12 +23,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "6"
 
-memvault-core = { path = "../memvault/crates/memvault-core" }
-memvault-doc = { path = "../memvault/crates/memvault-doc" }
-memvault-query = { path = "../memvault/crates/memvault-query" }
-memvault-api = { path = "../memvault/crates/memvault-api", features = ["http-client"] }
-memvault-auth = { path = "../memvault/crates/memvault-auth" }
-memvault-export = { path = "../memvault/crates/memvault-export" }
+memvault-core = { path = "../memvault-core" }
+memvault-doc = { path = "../memvault-doc" }
+memvault-query = { path = "../memvault-query" }
+memvault-api = { path = "../memvault-api", features = ["http-client"] }
+memvault-auth = { path = "../memvault-auth" }
+memvault-export = { path = "../memvault-export" }
 base64 = "0.22"
 hex = "0.4"
 mime_guess = "2"

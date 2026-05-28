@@ -119,7 +119,7 @@ enum Commands {
     /// Run the multi-AI cloud MCP server (stdio transport)
     McpCloud(plan_ai_cloud::Cli),
     /// Run the memvault memory MCP server (stdio transport)
-    McpMemvault(plan_ai_memvault::Cli),
+    McpMemvault(memvault_mcp::Cli),
     /// Memvault management CLI (memctl)
     Memctl(memctl::Cli),
     /// systemctl compatibility shim for managed services
@@ -543,7 +543,7 @@ async fn run(
             plan_ai_cloud::run(cli).await?;
         }
         Commands::McpMemvault(cli) => {
-            plan_ai_memvault::run(cli).await?;
+            memvault_mcp::run(cli).await?;
         }
         Commands::Memctl(cli) => {
             memctl::run(cli).await?;

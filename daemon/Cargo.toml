@@ -83,7 +83,7 @@ ramhorns = "1"
 mac-mgmt-healer = { path = "../mac-mgmt-healer", default-features = false, optional = true }
 plan-ai-cleaner = { path = "../plan-ai-cleaner" }
 plan-ai-cloud = { path = "../plan-ai-cloud" }
-plan-ai-memvault = { path = "../plan-ai-memvault" }
+memvault-mcp = { path = "../memvault/crates/memvault-mcp" }
 memvault-api = { path = "../memvault/crates/memvault-api" }
 memctl = { path = "../memvault/crates/memctl" }
 aes-gcm = "0.10"
