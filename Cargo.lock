@@ -9250,6 +9250,7 @@ dependencies = [
  "glob",
  "hex",
  "ipld-core",
+ "js-sys",
  "multihash",
  "multihash-codetable",
  "rand 0.8.6",
