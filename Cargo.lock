@@ -9265,6 +9265,7 @@ dependencies = [
 name = "memvault-doc"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "loro",
  "memvault-auth",
  "memvault-core",
