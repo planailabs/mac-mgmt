@@ -64,8 +64,6 @@ impl MemvaultHandle {
         // web API can issue JWTs for the built-in UI agent and verify
         // incoming attestation signatures.
         let admin_key_path = data_dir.join("identity").join("admin.key");
-        let pin_path = data_dir.join("identity").join("cluster_admin_genesis.cbor");
-        let founder_path = data_dir.join("identity").join("founder_admin.key");
         if admin_key_path.exists() {
             if let Ok(key_bytes) = std::fs::read(&admin_key_path) {
                 if key_bytes.len() >= 32 {
@@ -76,43 +74,17 @@ impl MemvaultHandle {
                     );
                 }
             }
-        } else if !pin_path.exists() {
-            // Truly pre-genesis (no admin key, no pinned cluster admin):
-            // mint or load a *founder* admin key so this node can issue +
-            // verify grants on its own private buckets before genesis/join.
-            // At genesis the founder key is promoted to cluster admin (see
-            // `memctl genesis`), so pre-genesis grants survive.
-            match load_or_create_founder_key(&founder_path) {
-                Ok(founder_sk) => {
-                    let founder_pk = founder_sk.verifying_key().to_bytes();
-                    client.set_admin_signing_key(founder_sk);
-                    client.register_founder_key(founder_pk);
-                    info!(
-                        founder = %hex::encode(founder_pk),
-                        "pre-genesis: minted founder admin key (grants enabled locally)"
-                    );
-                }
-                Err(e) => warn!("could not establish founder admin key: {e}"),
-            }
         }
-        // If a founder key exists from a pre-genesis boot, keep trusting it
-        // locally even after genesis/join so its private-bucket grants
-        // still verify on this node (other nodes never see those buckets).
-        if founder_path.exists() {
-            if let Ok(bytes) = std::fs::read(&founder_path) {
-                if bytes.len() >= 32 {
-                    let mut seed = [0u8; 32];
-                    seed.copy_from_slice(&bytes[..32]);
-                    let sk = memvault_api::ed25519_dalek::SigningKey::from_bytes(&seed);
-                    client.register_founder_key(sk.verifying_key().to_bytes());
-                }
-            }
-        }
+        // Pre-genesis grant signing no longer needs a founder key: a node
+        // signs grants for its own (node-owned) and its agents' buckets
+        // with its node key, which gains cluster trust at genesis/join, so
+        // those grants become cluster-valid with no reissue.
 
         // Load the pinned AdminGenesis block (cluster root of trust),
         // established at genesis or via a join token. Without it, peers
         // operate in pre-genesis mode — they can't verify NodeAttestations
         // from admin.
+        let pin_path = data_dir.join("identity").join("cluster_admin_genesis.cbor");
         if let Ok(pin_bytes) = std::fs::read(&pin_path) {
             match serde_ipld_dagcbor::from_slice::<memvault_auth::AdminGenesis>(&pin_bytes) {
                 Ok(g) => {
@@ -324,43 +296,6 @@ fn default_data_dir() -> PathBuf {
         .join("memvault")
 }
 
-/// Load the founder admin key from `path`, or create + persist it (0600)
-/// if absent. The founder key lets a pre-genesis node sign grants on its
-/// own private buckets; at genesis it is promoted to cluster admin.
-fn load_or_create_founder_key(
-    path: &std::path::Path,
-) -> anyhow::Result<memvault_api::ed25519_dalek::SigningKey> {
-    if let Ok(bytes) = std::fs::read(path) {
-        if bytes.len() >= 32 {
-            let mut seed = [0u8; 32];
-            seed.copy_from_slice(&bytes[..32]);
-            return Ok(memvault_api::ed25519_dalek::SigningKey::from_bytes(&seed));
-        }
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut seed = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut seed);
-    // Create atomically with 0600 so the secret is never momentarily
-    // world/group-readable (no create-then-chmod race).
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)?;
-        f.write_all(&seed)?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, seed)?;
-    }
-    Ok(memvault_api::ed25519_dalek::SigningKey::from_bytes(&seed))
-}
 
 /// Read the cluster_id sidecar file (legacy daemon location). Returns
 /// `vec![0u8; 32]` if the file is absent or malformed — same sentinel
