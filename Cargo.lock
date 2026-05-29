@@ -9414,6 +9414,7 @@ dependencies = [
  "argon2",
  "chacha20poly1305",
  "fs2",
+ "notify",
  "rand 0.9.4",
  "tempfile",
  "thiserror 2.0.18",

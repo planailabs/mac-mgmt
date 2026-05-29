@@ -120,6 +120,11 @@ impl MemvaultHandle {
 
         let client = Arc::new(client);
 
+        // Apply keystore changes from other processes live — e.g. a co-admin
+        // key admitted by a separate memctl (or the swarm thread) is loaded
+        // into this running daemon without a restart.
+        client.start_keystore_watch();
+
         // Stamp this node as the owner of its per-node legacy bucket (the
         // bucket is created during rebuild, before the node key is set), so
         // the node can delegate access to its own legacy data with its node
