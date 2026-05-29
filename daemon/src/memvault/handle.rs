@@ -139,10 +139,17 @@ impl MemvaultHandle {
 
         let client = Arc::new(client);
 
+        // Stamp this node as the owner of its per-node legacy bucket (the
+        // bucket is created during rebuild, before the node key is set), so
+        // the node can delegate access to its own legacy data with its node
+        // key — no admin required.
+        if let Err(e) = client.ensure_legacy_bucket_node_owner() {
+            warn!("could not stamp legacy-bucket node owner: {e}");
+        }
+
         // If a legacy bucket exists, make sure every AgentHost can read +
-        // write to it. Idempotent — does nothing if such a grant is
-        // already on chain. Skips silently if the admin signing key
-        // wasn't loaded (pre-genesis nodes can't sign grants).
+        // write to it. Idempotent. Now signed by the node key via the
+        // node-owner authority, so this works on non-admin nodes too.
         if let Err(e) = ensure_legacy_bucket_agent_grant(&client).await {
             warn!("could not ensure legacy-bucket agent grant: {e}");
         }
