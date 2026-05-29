@@ -9240,6 +9240,7 @@ dependencies = [
  "memvault-doc",
  "memvault-extract",
  "memvault-extract-abi",
+ "memvault-keystore",
  "memvault-query",
  "memvault-store",
  "mime_guess",
