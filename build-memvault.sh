@@ -11,6 +11,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB_DIR="$SCRIPT_DIR/memvault/crates/memvault-web"
 
+# Cargo and dx both need a usable Cargo home. CI normally symlinks ~/.cargo to a
+# shared cache volume; if that symlink is broken, dx's nested cargo-metadata run
+# fails later with an opaque "failed to create directory ... File exists" error.
+CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+export CARGO_HOME
+if [ -L "$CARGO_HOME" ] && [ ! -e "$CARGO_HOME" ]; then
+  echo "✗ CARGO_HOME points at a broken symlink: $CARGO_HOME -> $(readlink "$CARGO_HOME")" >&2
+  echo "  Initialize the cache target before linking ~/.cargo." >&2
+  exit 1
+fi
+
 RELEASE="${RELEASE:-1}"
 if [ "$RELEASE" = "1" ]; then
   DX_PROFILE="--release"
