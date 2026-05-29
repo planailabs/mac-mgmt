@@ -182,7 +182,7 @@ fn ensure_agent_identity(identity_dir: &Path, agent_id: &str) -> Result<()> {
             return Ok(());
         }
     };
-    let _ = memvault_api::agent_identity::enroll_local_agent(
+    let identity = memvault_api::agent_identity::enroll_local_agent(
         &client,
         agent_id,
         identity_dir,
@@ -192,6 +192,15 @@ fn ensure_agent_identity(identity_dir: &Path, agent_id: &str) -> Result<()> {
         u64::MAX,
     )
     .with_context(|| format!("enroll local agent {agent_id}"))?;
+
+    // Ensure the agent's default bucket exists now (the bucket-create path is
+    // sync, so this works from the connector's non-async context).
+    if let Err(e) = client
+        .ensure_agent_bucket_for_pubkey_sync(&identity.verifying_key.to_bytes(), agent_id)
+    {
+        tracing::warn!(agent_id, error = %e, "could not ensure openclaw agent bucket");
+    }
+
     tracing::info!(
         agent_id,
         identity_dir = %identity_dir.display(),
