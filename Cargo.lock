@@ -9351,6 +9351,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memvault-keystore"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "memvault-mcp"
 version = "0.1.0"
 dependencies = [
