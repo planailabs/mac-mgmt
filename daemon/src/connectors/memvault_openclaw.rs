@@ -187,7 +187,9 @@ fn ensure_agent_identity(identity_dir: &Path, agent_id: &str) -> Result<()> {
         agent_id,
         identity_dir,
         memvault_auth::Role::AgentHost,
-        365 * 24 * 60 * 60 * 1_000_000_000,
+        // Daemon-managed identity — no expiry. `generate_local`
+        // saturates so this is treated as effectively never-expires.
+        u64::MAX,
     )
     .with_context(|| format!("enroll local agent {agent_id}"))?;
     tracing::info!(
