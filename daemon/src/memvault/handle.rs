@@ -68,51 +68,33 @@ impl MemvaultHandle {
         // blockstore at <data_dir>/identity/), honouring
         // MEMVAULT_KEYSTORE_PASSPHRASE. Run the one-off redb→keystore token
         // migration now that both stores are open.
+        // The keystore (tokens + key material) is opened by LocalClient
+        // itself, beside the blockstore at <data_dir>/identity/. Identity
+        // material lives only in the keystore + redb store; import and delete
+        // any legacy loose files (admin.key, cluster_admin_genesis.cbor,
+        // root cluster_id) once, then run the one-off redb→keystore token
+        // migration.
         let identity_dir = data_dir.join("identity");
         std::fs::create_dir_all(&identity_dir)?;
+        client.migrate_legacy_identity_files(&identity_dir);
         let migrated = client.migrate_tokens_to_keystore();
         if migrated > 0 {
             info!(count = migrated, "migrated legacy redb tokens into keystore");
         }
 
-        // Load admin signing key (genesis admin). Needed so the web API can
-        // issue JWTs for the built-in UI agent and verify incoming
-        // attestation signatures. Prefer the keystore; migrate a legacy
-        // plaintext admin.key file into it on first run.
-        let admin_key_path = identity_dir.join("admin.key");
-        if client.load_admin_keys_from_keystore() == 0 {
-            if let Ok(key_bytes) = std::fs::read(&admin_key_path) {
-                if key_bytes.len() >= 32 {
-                    let mut seed = [0u8; 32];
-                    seed.copy_from_slice(&key_bytes[..32]);
-                    // set_admin_signing_key persists into the keystore.
-                    client.set_admin_signing_key(
-                        memvault_api::ed25519_dalek::SigningKey::from_bytes(&seed),
-                    );
-                    info!("migrated admin.key into keystore");
-                }
-            }
-        }
+        // Load the admin signing key (genesis admin) from the keystore so the
+        // web API can issue JWTs for the built-in UI agent and verify
+        // attestation signatures. (Legacy admin.key was folded in above.)
+        client.load_admin_keys_from_keystore();
         // Pre-genesis grant signing no longer needs a founder key: a node
         // signs grants for its own (node-owned) and its agents' buckets
         // with its node key, which gains cluster trust at genesis/join, so
         // those grants become cluster-valid with no reissue.
 
-        // Load the pinned AdminGenesis block (cluster root of trust),
-        // established at genesis or via a join token. Without it, peers
-        // operate in pre-genesis mode — they can't verify NodeAttestations
-        // from admin. Prefer the keystore; migrate a legacy CBOR file in.
-        let pin_path = identity_dir.join("cluster_admin_genesis.cbor");
-        let pin_bytes = client.pinned_admin_genesis_bytes_from_keystore().or_else(|| {
-            std::fs::read(&pin_path).ok().inspect(|b| {
-                if let Err(e) = client.persist_pinned_admin_genesis_bytes(b) {
-                    warn!("could not migrate admin_genesis into keystore: {e}");
-                } else {
-                    info!("migrated cluster_admin_genesis into keystore");
-                }
-            })
-        });
-        if let Some(pin_bytes) = pin_bytes {
+        // Load the pinned AdminGenesis block (cluster root of trust) from the
+        // keystore. Without it, peers operate in pre-genesis mode — they
+        // can't verify NodeAttestations from admin.
+        if let Some(pin_bytes) = client.pinned_admin_genesis_bytes_from_keystore() {
             match serde_ipld_dagcbor::from_slice::<memvault_auth::AdminGenesis>(&pin_bytes) {
                 Ok(g) => {
                     if let Err(e) = g.verify_self_signature() {
