@@ -349,11 +349,22 @@ fn load_or_create_founder_key(
     }
     let mut seed = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut seed);
-    std::fs::write(path, seed)?;
+    // Create atomically with 0600 so the secret is never momentarily
+    // world/group-readable (no create-then-chmod race).
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(&seed)?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, seed)?;
     }
     Ok(memvault_api::ed25519_dalek::SigningKey::from_bytes(&seed))
 }
