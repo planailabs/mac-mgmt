@@ -64,22 +64,15 @@ impl MemvaultHandle {
         // process (memctl) can append to it while the daemon runs, which
         // redb's cross-process exclusive lock would forbid. Optionally
         // AEAD-encrypted at rest when MEMVAULT_KEYSTORE_PASSPHRASE is set.
+        // The token/key keystore is opened by LocalClient itself (beside the
+        // blockstore at <data_dir>/identity/), honouring
+        // MEMVAULT_KEYSTORE_PASSPHRASE. Run the one-off redb→keystore token
+        // migration now that both stores are open.
         let identity_dir = data_dir.join("identity");
         std::fs::create_dir_all(&identity_dir)?;
-        let keystore_path = identity_dir.join("keystore.mvks");
-        match std::env::var("MEMVAULT_KEYSTORE_PASSPHRASE") {
-            Ok(pass) if !pass.is_empty() => {
-                if let Err(e) =
-                    client.open_encrypted_keystore_at(&keystore_path, pass.as_bytes())
-                {
-                    warn!("could not open encrypted keystore: {e}");
-                }
-            }
-            _ => {
-                if let Err(e) = client.open_keystore_at(&keystore_path) {
-                    warn!("could not open keystore: {e}");
-                }
-            }
+        let migrated = client.migrate_tokens_to_keystore();
+        if migrated > 0 {
+            info!(count = migrated, "migrated legacy redb tokens into keystore");
         }
 
         // Load admin signing key (genesis admin). Needed so the web API can

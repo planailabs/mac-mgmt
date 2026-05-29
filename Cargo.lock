@@ -9570,6 +9570,7 @@ dependencies = [
  "memvault-attach",
  "memvault-auth",
  "memvault-core",
+ "memvault-keystore",
  "memvault-net",
  "memvault-store",
  "prost 0.13.5",
