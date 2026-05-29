@@ -128,20 +128,6 @@ impl MemvaultHandle {
             }
         }
 
-        // Strict grant verification defaults on (secure). Operators can
-        // disable it for a migration window via env var while they run
-        // `memctl grants reissue`.
-        if let Ok(v) = std::env::var("MEMVAULT_STRICT_GRANT_VERIFY") {
-            let on = !matches!(v.trim(), "0" | "false" | "no" | "off");
-            client.set_strict_grant_verify(on);
-            if !on {
-                warn!(
-                    "strict grant verification DISABLED via MEMVAULT_STRICT_GRANT_VERIFY — \
-                     legacy unsigned grants are tolerated (migration window only)"
-                );
-            }
-        }
-
         // Set the node signing key (the daemon's libp2p ed25519 host key).
         // Used to sign agent attestations + revocations, and looked up by the
         // web auth bootstrap. Set before Arc-wrapping so revoke_agent etc.
