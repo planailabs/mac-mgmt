@@ -8,6 +8,7 @@ build:
   tags:
     - nix-image
   script:
+    - ln -s /cache/cargo .cargo
     - bash prebuild.sh
   timeout: 3h
   resource_group: build-cache
@@ -17,6 +18,7 @@ test:
   tags:
     - nix-image
   script:
+    - ln -s /cache/cargo .cargo
     - nix develop -c bash build-memvault.sh
     - nix develop -c cargo test --workspace --locked --exclude mac-mgmt-executor
   timeout: 3h
@@ -28,6 +30,7 @@ deploy:
   only:
     - trunk
   script:
+    - ln -s /cache/cargo .cargo
     # VM-backed flake checks are resource-heavy; run them serially so one
     # test VM cannot starve another until the NixOS backdoor times out.
     - nix flake check -L --max-jobs 1
