@@ -107,6 +107,14 @@ impl MemvaultHandle {
 
         let client = Arc::new(client);
 
+        // If a legacy bucket exists, make sure every AgentHost can read +
+        // write to it. Idempotent — does nothing if such a grant is
+        // already on chain. Skips silently if the admin signing key
+        // wasn't loaded (pre-genesis nodes can't sign grants).
+        if let Err(e) = ensure_legacy_bucket_agent_grant(&client).await {
+            warn!("could not ensure legacy-bucket agent grant: {e}");
+        }
+
         // Load or rebuild the full-text search index.
         let index_cache_path = data_dir.join("text_index.json");
         match client.load_or_rebuild_index(&index_cache_path).await {
@@ -229,6 +237,46 @@ impl MemvaultHandle {
     pub fn client(&self) -> &memvault_api::LocalClient {
         &self.client
     }
+}
+
+/// Ensure the legacy bucket carries a Role(AgentHost) read+write grant so
+/// every daemon-enrolled agent can access pre-bucket data. No-ops when:
+///   * no legacy bucket exists (fresh install / post-migration cluster),
+///   * the daemon doesn't hold the admin signing key,
+///   * an equivalent grant is already on chain.
+async fn ensure_legacy_bucket_agent_grant(
+    client: &memvault_api::LocalClient,
+) -> anyhow::Result<()> {
+    let Some(bucket) = client.find_legacy_bucket() else {
+        return Ok(());
+    };
+
+    let existing = client.list_bucket_grants(&bucket)?;
+    let covered = existing.iter().any(|(_, g)| {
+        matches!(
+            &g.audience,
+            memvault_auth::GrantAudience::Role(memvault_auth::Role::AgentHost)
+        ) && g.actions.contains(&memvault_auth::Action::Read)
+            && g.actions.contains(&memvault_auth::Action::Write)
+    });
+    if covered {
+        return Ok(());
+    }
+
+    let cid = client
+        .issue_bucket_grant(
+            &bucket,
+            memvault_auth::GrantAudience::Role(memvault_auth::Role::AgentHost),
+            vec![memvault_auth::Action::Read, memvault_auth::Action::Write],
+            u64::MAX,
+        )
+        .await?;
+    info!(
+        legacy_bucket = %bucket,
+        cid = %hex::encode(&cid),
+        "auto-granted Role(AgentHost) read+write on legacy bucket",
+    );
+    Ok(())
 }
 
 fn default_data_dir() -> PathBuf {
