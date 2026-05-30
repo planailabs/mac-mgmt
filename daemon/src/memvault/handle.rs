@@ -194,6 +194,29 @@ impl MemvaultHandle {
             None
         };
 
+        // Periodic GC of invalidated token records: a token that has been
+        // revoked, expired, or exhausted is retained for 30 days (so it still
+        // shows in audits/lists), then its keystore records are reclaimed.
+        // This is the only sweeper — `list`/`issue` stay read-only.
+        {
+            let ks = Arc::clone(client.keystore());
+            tokio::spawn(async move {
+                let mut tick =
+                    tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+                loop {
+                    tick.tick().await;
+                    let now_ns = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos() as u64)
+                        .unwrap_or(0);
+                    let n = memvault_api::tokens::gc_invalidated_tokens(&ks, now_ns);
+                    if n > 0 {
+                        info!(deleted = n, "GC'd invalidated token records");
+                    }
+                }
+            });
+        }
+
         info!(data_dir = %data_dir.display(), "memvault initialized");
 
         Ok(Self {
