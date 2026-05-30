@@ -265,7 +265,10 @@ impl MemvaultHandle {
 }
 
 /// Ensure the legacy bucket carries a Role(AgentHost) read+write grant so
-/// every daemon-enrolled agent can access pre-bucket data. No-ops when:
+/// every daemon-enrolled agent can access pre-bucket data. (Nodes don't need
+/// a Role(Node) grant: they hold the data via block-level sync and write to
+/// their own buckets via the node-owner authority — they never go through the
+/// agent ACL path.) No-ops when:
 ///   * no legacy bucket exists (fresh install / post-migration cluster),
 ///   * the daemon doesn't hold the admin signing key,
 ///   * an equivalent grant is already on chain.
