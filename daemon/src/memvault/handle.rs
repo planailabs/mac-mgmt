@@ -306,7 +306,7 @@ async fn ensure_legacy_bucket_agent_grant(
     let covered = existing.iter().any(|(_, g)| {
         matches!(
             &g.audience,
-            memvault_auth::GrantAudience::Role(memvault_auth::Role::AgentHost)
+            memvault_auth::GrantAudience::Role(memvault_auth::AgentRole::AgentHost)
         ) && g.actions.contains(&memvault_auth::Action::Read)
             && g.actions.contains(&memvault_auth::Action::Write)
     });
@@ -317,7 +317,7 @@ async fn ensure_legacy_bucket_agent_grant(
     let cid = client
         .issue_bucket_grant(
             &bucket,
-            memvault_auth::GrantAudience::Role(memvault_auth::Role::AgentHost),
+            memvault_auth::GrantAudience::Role(memvault_auth::AgentRole::AgentHost),
             vec![memvault_auth::Action::Read, memvault_auth::Action::Write],
             u64::MAX,
         )
