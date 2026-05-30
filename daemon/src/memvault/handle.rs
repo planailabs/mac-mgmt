@@ -51,7 +51,6 @@ impl MemvaultHandle {
         // before the web API starts serving requests.
         let client = memvault_api::LocalClient::open(
             Arc::clone(&store),
-            Arc::new(RwLock::new(memvault_query::TextIndex::new())),
             Arc::new(RwLock::new(memvault_query::QuotaManager::new(
                 Default::default(),
             ))),
