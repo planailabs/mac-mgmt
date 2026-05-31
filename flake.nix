@@ -1,5 +1,8 @@
 {
   inputs = {
+    # Include git submodules (e.g. memvault in the flake source.
+    self.submodules = true;
+
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
