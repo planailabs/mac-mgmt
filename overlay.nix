@@ -48,6 +48,11 @@ in
     ];
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
+    # Keep the Dioxus fullstack build below from spawning one rustc per host
+    # core. The GitLab custom-executor build container has limited writable
+    # space under /build; unconstrained rustc fan-out can exhaust it while many
+    # large rmeta/object files are being written concurrently.
+    env.CARGO_BUILD_JOBS = "2";
     # Fullstack build via dx: @client gets only the web feature (no native
     # deps), @server gets default features. --embed bakes the client's
     # public assets into the server binary via rust-embed.
