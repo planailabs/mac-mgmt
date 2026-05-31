@@ -16,9 +16,9 @@ default = ["services", "relay", "memvault"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
 relay = ["dep:libp2p-stream"]
-memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "memvault-web/server", "dep:memvault-query", "dep:axum", "dep:serde_ipld_dagcbor", "relay"]
+memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "memvault-web/server", "memctl/daemon", "dep:memvault-query", "dep:axum", "dep:serde_ipld_dagcbor", "relay"]
 healer = ["dep:mac-mgmt-healer", "services", "relay"]
-embed = ["memvault-web/embed"]
+embed = ["memvault-web/embed", "memctl/embed"]
 sim = []
 # WASM client for the memvault web UI — built by dx for embedding.
 # Both `web` and `server` (via memvault) compile the same App component from
@@ -85,7 +85,7 @@ plan-ai-cleaner = { path = "../plan-ai-cleaner" }
 plan-ai-cloud = { path = "../plan-ai-cloud" }
 memvault-mcp = { path = "../memvault/crates/memvault-mcp" }
 memvault-api = { path = "../memvault/crates/memvault-api" }
-memctl = { path = "../memvault/crates/memctl" }
+memctl = { path = "../memvault/crates/memctl", default-features = false }
 aes-gcm = "0.10"
 tokio-tungstenite = "0.26"
 tokio-util = { version = "0.7", features = ["compat"] }
