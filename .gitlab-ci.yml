@@ -15,6 +15,9 @@ before_script:
   - ln -s /cache/cargo ~/.cargo
   - export CARGO_HOME="$HOME/.cargo"
 
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
 build:
   stage: build
   tags:
