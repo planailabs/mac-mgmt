@@ -150,16 +150,13 @@ impl MemvaultHandle {
         let _ = peer_id;
         let web_handle = if config.port > 0 {
             let port = config.port;
-            let trust = memvault_api::bootstrap::bootstrap_cluster_trust(&client)
-                .map_err(|e| anyhow::anyhow!("cluster trust bootstrap: {e}"))?;
-            // Inside async fn init() driven by the daemon's runtime —
-            // spawn the watcher here so it lives on the same runtime as
-            // the HTTP server below.
-            let _watcher = memvault_api::sigchain::spawn_sigchain_watcher(
-                Arc::clone(&client),
-                trust.admin_pubkey,
-                trust.trust_state.clone(),
-            );
+            // Inside async fn init() driven by the daemon's runtime — start
+            // the shared host services (trust bootstrap, sigchain watcher,
+            // batched index commits + flusher) on it. The watcher/flusher
+            // handles are detached (tokio keeps them running after drop).
+            let memvault_api::bootstrap::HostServices { trust, .. } =
+                memvault_api::bootstrap::start_host_services(&client)
+                    .map_err(|e| anyhow::anyhow!("memvault host services: {e}"))?;
             memvault_web::init_ui_agent(&client, &data_dir)
                 .map_err(|e| anyhow::anyhow!("init ui agent: {e}"))?;
             let app_state = Arc::new(memvault_web::AppState {
