@@ -1,6 +1,0 @@
-[application]
-name = "memvault-web"
-asset_dir = "public"
-
-[web.app]
-title = "memvault"
