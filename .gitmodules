@@ -1,3 +1,6 @@
 [submodule "plan-ai-design"]
 	path = plan-ai-design
 	url = ../design
+[submodule "memvault"]
+	path = memvault
+	url = ../memvault
