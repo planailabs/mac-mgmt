@@ -1,11 +1,11 @@
 [workspace]
 members = ["common", "daemon", "mac-mgmt-executor", "mac-mgmt-healer", "mac-mgmt-services", "mac-mgmt-ws", "nix-driver-sync", "plan-ai-auth", "plan-ai-cleaner", "plan-ai-cloud", "plan-ai-memvault-share-agent", "runner", "server", "relay", "relay-ssh", "sim-tests", "trainer", "web-agency/cloudflare-api", "web-agency/spaceship-api", "web-agency/changedetection-api", "web-agency/dataforseo-api", "web-agency/server", "web-agency/upload-cli", "web-agency/proxy"]
-# memvault and plan-ai-design are independent submodules with their own
-# workspace roots. They are NOT members here — Cargo workspaces cannot nest.
-# Crates that need them depend by path (memvault) or git URL (plan-ai-design),
-# resolving against the submodules' own workspaces. excluded so member scanning
-# never tries to absorb them.
-exclude = ["memvault", "plan-ai-design"]
+# memvault is an independent submodule with its own workspace root and is NOT a
+# member here (Cargo workspaces cannot nest). Crates that need its crates — or
+# the plan-ai-design submodule vendored inside it — depend on them by path,
+# resolving against memvault's own workspace. Excluded so member scanning never
+# tries to absorb the subtree.
+exclude = ["memvault"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -28,10 +28,3 @@ swiftide-integrations = { git = "https://github.com/mkg20001/swiftide.git", bran
 swiftide-indexing = { git = "https://github.com/mkg20001/swiftide.git", branch = "mac-mgmt-patches" }
 swiftide-macros = { git = "https://github.com/mkg20001/swiftide.git", branch = "mac-mgmt-patches" }
 swiftide-query = { git = "https://github.com/mkg20001/swiftide.git", branch = "mac-mgmt-patches" }
-
-# memvault-web references plan-ai-design by git URL. In this combined build,
-# redirect it to the top-level submodule checkout so server, web-agency/server,
-# and memvault-web all resolve to a single plan-ai-design package (no duplicate
-# crate). This patch wins over memvault's own (only the build root's applies).
-[patch."ssh://git@git.plan.ai/plan-ai/design"]
-plan-ai-design = { path = "plan-ai-design" }

@@ -18,29 +18,6 @@ before_script:
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
 
-# plan-ai-design is checked out twice: the top-level submodule (used by the
-# combined mac-mgmt build) and memvault/plan-ai-design (used only when memvault
-# builds standalone). The two builds compile memvault-web against whichever copy
-# they see, so a divergence is a silent behavioural skew that no compiler or
-# Cargo semver check can catch. Fail loudly when the pointers drift.
-check-design-pinning:
-  stage: build
-  tags:
-    - nix-image
-  script:
-    - |
-      top="$(git -C plan-ai-design rev-parse HEAD)"
-      nested="$(git -C memvault/plan-ai-design rev-parse HEAD)"
-      if [ "$top" != "$nested" ]; then
-        echo "plan-ai-design submodule pointers diverge:"
-        echo "  top-level (plan-ai-design):          $top"
-        echo "  nested    (memvault/plan-ai-design): $nested"
-        echo "Bump both to the same commit so standalone memvault and the combined build compile the same design code."
-        exit 1
-      fi
-      echo "plan-ai-design pinned consistently at $top"
-  timeout: 10m
-
 build:
   stage: build
   tags:

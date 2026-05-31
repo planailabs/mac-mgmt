@@ -11,7 +11,7 @@ server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "d
 
 [dependencies]
 dioxus = { version = "0.8.0-alpha.0", features = ["fullstack", "router"], optional = true }
-plan-ai-design = { path = "../../plan-ai-design", optional = true }
+plan-ai-design = { path = "../../memvault/plan-ai-design", optional = true }
 wasm-bindgen = { version = "=0.2.121", optional = true }
 web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"], optional = true }
