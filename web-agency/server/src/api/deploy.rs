@@ -208,8 +208,8 @@ async fn upload_deploy(
 ) -> Result<Json<UploadResponse>, (StatusCode, String)> {
     authenticate_deploy(&state.pool, &headers, webspace_id).await?;
 
-    let ws = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
-        "SELECT hosting_type, cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
+    let ws = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<Uuid>)>(
+        "SELECT hosting_type, runtime, cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
     )
     .bind(webspace_id)
     .fetch_optional(&state.pool)
@@ -217,26 +217,47 @@ async fn upload_deploy(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "webspace not found".into()))?;
 
-    let (hosting_type, project_name, cred_id) = ws;
-    if hosting_type != "cloudflare_pages" {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "webspace is not a Cloudflare Pages project".into(),
-        ));
-    }
-    let project_name = project_name.ok_or((
-        StatusCode::BAD_REQUEST,
-        "Pages project not deployed yet".into(),
-    ))?;
-    let cred_id = cred_id.ok_or((
-        StatusCode::BAD_REQUEST,
-        "no Cloudflare credential linked".into(),
-    ))?;
+    let (hosting_type, runtime, project_name, cred_id) = ws;
+
+    // Determine the deploy target. Tarball upload is supported for Cloudflare
+    // Pages (via wrangler) and local static webspaces (extracted to disk).
+    let target = match hosting_type.as_str() {
+        "cloudflare_pages" => {
+            let project_name = project_name.ok_or((
+                StatusCode::BAD_REQUEST,
+                "Pages project not deployed yet".into(),
+            ))?;
+            let cred_id = cred_id.ok_or((
+                StatusCode::BAD_REQUEST,
+                "no Cloudflare credential linked".into(),
+            ))?;
+            DeployTarget::CloudflarePages {
+                project_name,
+                cred_id,
+            }
+        }
+        "local" if runtime.as_deref() == Some("static") => DeployTarget::LocalStatic,
+        "local" => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "tarball deploy is only supported for the 'static' runtime (this folder uses '{}')",
+                    runtime.as_deref().unwrap_or("none")
+                ),
+            ));
+        }
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("hosting type '{other}' does not support tarball deploy"),
+            ));
+        }
+    };
 
     let tarball_size = body.len() as i64;
     tracing::info!(
         webspace_id = %webspace_id,
-        project = %project_name,
+        target = target.label(),
         tarball_bytes = tarball_size,
         branch = ?query.branch,
         "received deploy upload"
@@ -250,57 +271,84 @@ async fn upload_deploy(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let cf_token = get_cf_token(&state.pool, cred_id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let account_id = get_cf_account_id(&state.pool, cred_id)
-        .await
-        .unwrap_or_default();
-
-    // If no branch specified, fetch the production branch from the CF Pages project
-    let branch = if query.branch.is_some() {
-        query.branch
-    } else {
-        if !account_id.is_empty() {
-            let client = cloudflare_api::compat::SimpleClient::new(&cf_token);
-            match client.get_pages_project(&account_id, &project_name).await {
-                Ok(project) => {
-                    let pb = project.production_branch.unwrap_or_else(|| "main".into());
-                    tracing::info!(deployment_id = %deployment_id, branch = %pb, "using production branch from CF Pages project");
-                    Some(pb)
-                }
-                Err(e) => {
-                    tracing::warn!(deployment_id = %deployment_id, error = %e, "could not fetch production branch, defaulting to 'main'");
-                    Some("main".into())
-                }
-            }
-        } else {
-            tracing::warn!(deployment_id = %deployment_id, "no account_id in credential, defaulting branch to 'main'");
-            Some("main".into())
-        }
-    };
-
     let pool = state.pool.clone();
     let active = state.active_deploys.clone();
     active.fetch_add(1, Ordering::Relaxed);
-    tokio::spawn(async move {
-        run_wrangler_deploy(
-            pool,
-            deployment_id,
+
+    match target {
+        DeployTarget::CloudflarePages {
             project_name,
-            cf_token,
-            account_id,
-            branch,
-            body,
-        )
-        .await;
-        active.fetch_sub(1, Ordering::Relaxed);
-    });
+            cred_id,
+        } => {
+            let cf_token = match get_cf_token(&state.pool, cred_id).await {
+                Ok(t) => t,
+                Err(e) => {
+                    active.fetch_sub(1, Ordering::Relaxed);
+                    set_failed(&state.pool, deployment_id, &e).await;
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
+                }
+            };
+            let account_id = get_cf_account_id(&state.pool, cred_id)
+                .await
+                .unwrap_or_default();
+
+            // If no branch specified, fetch the production branch from the CF Pages project
+            let branch = if query.branch.is_some() {
+                query.branch
+            } else if !account_id.is_empty() {
+                let client = cloudflare_api::compat::SimpleClient::new(&cf_token);
+                match client.get_pages_project(&account_id, &project_name).await {
+                    Ok(project) => Some(project.production_branch.unwrap_or_else(|| "main".into())),
+                    Err(e) => {
+                        tracing::warn!(deployment_id = %deployment_id, error = %e, "could not fetch production branch, defaulting to 'main'");
+                        Some("main".into())
+                    }
+                }
+            } else {
+                Some("main".into())
+            };
+
+            tokio::spawn(async move {
+                run_wrangler_deploy(
+                    pool,
+                    deployment_id,
+                    project_name,
+                    cf_token,
+                    account_id,
+                    branch,
+                    body,
+                )
+                .await;
+                active.fetch_sub(1, Ordering::Relaxed);
+            });
+        }
+        DeployTarget::LocalStatic => {
+            tokio::spawn(async move {
+                run_static_deploy(pool, deployment_id, webspace_id, body).await;
+                active.fetch_sub(1, Ordering::Relaxed);
+            });
+        }
+    }
 
     Ok(Json(UploadResponse {
         deployment_id,
         status: "uploading".into(),
     }))
+}
+
+/// Where a tarball upload should be deployed.
+enum DeployTarget {
+    CloudflarePages { project_name: String, cred_id: Uuid },
+    LocalStatic,
+}
+
+impl DeployTarget {
+    fn label(&self) -> &'static str {
+        match self {
+            DeployTarget::CloudflarePages { .. } => "cloudflare_pages",
+            DeployTarget::LocalStatic => "local_static",
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -406,60 +454,16 @@ async fn run_wrangler_deploy(
     tracing::debug!(deployment_id = %deployment_id, dir = %tmp_dir.path().display(), "created temp dir");
 
     let extract_dir = tmp_dir.path().join("site");
-    if let Err(e) = tokio::fs::create_dir_all(&extract_dir).await {
-        set_failed(&pool, deployment_id, &format!("mkdir: {e}")).await;
+
+    tracing::info!(deployment_id = %deployment_id, "extracting tarball");
+    if let Err(e) = extract_tarball(tarball, extract_dir.clone()).await {
+        tracing::error!(deployment_id = %deployment_id, error = %e, "tar extraction failed");
+        set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
         return;
     }
 
-    tracing::info!(deployment_id = %deployment_id, "extracting tarball");
-    let tar_start = std::time::Instant::now();
-    let extract_dst = extract_dir.clone();
-    let tarball_data = tarball.clone();
-    let tar_result = tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let gz = flate2::read::GzDecoder::new(std::io::Cursor::new(&tarball_data));
-        let mut archive = tar::Archive::new(gz);
-        archive.set_overwrite(true);
-        archive.unpack(&extract_dst).map_err(|e| e.to_string())
-    })
-    .await;
-
-    match tar_result {
-        Ok(Ok(())) => {
-            tracing::info!(
-                deployment_id = %deployment_id,
-                elapsed_ms = tar_start.elapsed().as_millis(),
-                "tarball extracted"
-            );
-        }
-        Ok(Err(e)) => {
-            tracing::error!(deployment_id = %deployment_id, error = %e, "tar extraction failed");
-            set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
-            return;
-        }
-        Err(e) => {
-            tracing::error!(deployment_id = %deployment_id, error = %e, "tar task panicked");
-            set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
-            return;
-        }
-    }
-
     // Inject .well-known/web-agency.json so reachability checks can verify the site
-    let well_known_dir = extract_dir.join(".well-known");
-    let _ = tokio::fs::create_dir_all(&well_known_dir).await;
-    let _ = tokio::fs::write(
-        well_known_dir.join("web-agency.json"),
-        b"{\"service\":\"web-agency-pages\"}",
-    )
-    .await;
-
-    // Count extracted files for the log
-    if let Ok(mut entries) = tokio::fs::read_dir(&extract_dir).await {
-        let mut count = 0u32;
-        while entries.next_entry().await.ok().flatten().is_some() {
-            count += 1;
-        }
-        tracing::info!(deployment_id = %deployment_id, files = count, "extracted files in root");
-    }
+    inject_well_known(&extract_dir, "web-agency-pages").await;
 
     let mut wrangler_args = vec![
         "pages".to_string(),
@@ -542,6 +546,110 @@ async fn run_wrangler_deploy(
 
     tracing::debug!(deployment_id = %deployment_id, "cleaning up temp dir");
     // tmp_dir dropped here, auto-cleaned
+}
+
+/// Extract a gzipped tarball into `dest` (created if missing).
+async fn extract_tarball(tarball: Bytes, dest: std::path::PathBuf) -> Result<(), String> {
+    tokio::fs::create_dir_all(&dest)
+        .await
+        .map_err(|e| format!("mkdir: {e}"))?;
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let gz = flate2::read::GzDecoder::new(std::io::Cursor::new(&tarball));
+        let mut archive = tar::Archive::new(gz);
+        archive.set_overwrite(true);
+        archive.unpack(&dest).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("extract task panicked: {e}"))?
+}
+
+/// Write the `.well-known/web-agency.json` marker so reachability checks can
+/// verify the served site reports the expected service.
+async fn inject_well_known(root: &std::path::Path, service: &str) {
+    let dir = root.join(".well-known");
+    let _ = tokio::fs::create_dir_all(&dir).await;
+    let _ = tokio::fs::write(
+        dir.join("web-agency.json"),
+        format!("{{\"service\":\"{service}\"}}").into_bytes(),
+    )
+    .await;
+}
+
+/// Deploy a tarball to a local static webspace: extract into a staging dir
+/// alongside the live directory, then atomically swap it into place.
+async fn run_static_deploy(
+    pool: PgPool,
+    deployment_id: Uuid,
+    webspace_id: Uuid,
+    tarball: Bytes,
+) {
+    tracing::info!(deployment_id = %deployment_id, webspace_id = %webspace_id, "starting static deploy");
+    let _ = sqlx::query("UPDATE deployments SET status = 'deploying', updated_at = now() WHERE id = $1")
+        .bind(deployment_id)
+        .execute(&pool)
+        .await;
+
+    let dest = crate::local_hosting::webspace_dir(webspace_id);
+    let parent = crate::local_hosting::webroot();
+    // Staging dir sits under the same root as `dest` so the final rename is
+    // atomic (same filesystem) rather than a cross-device move.
+    let staging = parent.join(format!("{webspace_id}.tmp-{deployment_id}"));
+
+    if let Err(e) = tokio::fs::create_dir_all(&parent).await {
+        set_failed(&pool, deployment_id, &format!("mkdir webroot: {e}")).await;
+        return;
+    }
+    let _ = tokio::fs::remove_dir_all(&staging).await;
+
+    if let Err(e) = extract_tarball(tarball, staging.clone()).await {
+        let _ = tokio::fs::remove_dir_all(&staging).await;
+        set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
+        return;
+    }
+
+    inject_well_known(&staging, "web-agency-proxy").await;
+
+    // Atomic swap: move the live dir aside, promote staging, then drop the old.
+    let dest2 = dest.clone();
+    let staging2 = staging.clone();
+    let swap = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let backup = dest2.with_extension("old");
+        let _ = std::fs::remove_dir_all(&backup);
+        if dest2.exists() {
+            std::fs::rename(&dest2, &backup).map_err(|e| format!("rename live aside: {e}"))?;
+        }
+        if let Err(e) = std::fs::rename(&staging2, &dest2) {
+            // Roll back the live directory if promotion failed.
+            if backup.exists() {
+                let _ = std::fs::rename(&backup, &dest2);
+            }
+            return Err(format!("promote staging: {e}"));
+        }
+        let _ = std::fs::remove_dir_all(&backup);
+        Ok(())
+    })
+    .await;
+
+    match swap {
+        Ok(Ok(())) => {
+            tracing::info!(deployment_id = %deployment_id, dir = %dest.display(), "static deploy succeeded");
+            let _ = sqlx::query("UPDATE deployments SET status = 'success', updated_at = now() WHERE id = $1")
+                .bind(deployment_id)
+                .execute(&pool)
+                .await;
+            super::counters::COUNTERS
+                .deploy_success
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(Err(e)) => {
+            let _ = tokio::fs::remove_dir_all(&staging).await;
+            set_failed(&pool, deployment_id, &e).await;
+        }
+        Err(e) => {
+            let _ = tokio::fs::remove_dir_all(&staging).await;
+            set_failed(&pool, deployment_id, &format!("swap task panicked: {e}")).await;
+        }
+    }
 }
 
 async fn set_failed(pool: &PgPool, deployment_id: Uuid, msg: &str) {

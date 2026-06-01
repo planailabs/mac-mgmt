@@ -1,4 +1,7 @@
-//! web-agency-upload: upload a folder to a web-agency Cloudflare Pages webspace.
+//! web-agency-upload: upload a folder to a web-agency webspace.
+//!
+//! Works for any webspace that accepts tarball deploys — Cloudflare Pages
+//! (deployed via wrangler) and local static folders (extracted to disk).
 //!
 //! Usage:
 //!   web-agency-upload ./dist
@@ -36,7 +39,7 @@ struct Cli {
     webspace_id: Option<String>,
 
     /// Branch name for the deployment (e.g. "main", "preview", "staging").
-    /// Maps to a Cloudflare Pages deployment branch.
+    /// Cloudflare Pages only; ignored for local static folders.
     #[arg(long, env = "WEB_AGENCY_BRANCH")]
     branch: Option<String>,
 

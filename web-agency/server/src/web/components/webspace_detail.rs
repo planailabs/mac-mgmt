@@ -542,6 +542,8 @@ pub fn WebspaceDetail(id: String) -> Element {
 
     let is_pages = data.hosting_type == "cloudflare_pages";
     let has_project = data.cloudflare_pages_project.is_some();
+    // Local static folders accept the same tarball/token deploy flow as Pages.
+    let is_static = data.hosting_type == "local" && data.runtime.as_deref() == Some("static");
 
     rsx! {
         PageHeader { "{data.name}" }
@@ -652,14 +654,14 @@ pub fn WebspaceDetail(id: String) -> Element {
             }
         }
 
-        // Deployments (for direct-upload Pages projects)
-        if is_pages && has_project && data.git_source.is_none() {
+        // Deployments (direct-upload Pages projects and local static folders)
+        if (is_pages && has_project && data.git_source.is_none()) || is_static {
             SectionHeading { class: "mt-6", "Deployments" }
             DeploymentsSection { webspace_id: data.id }
         }
 
         // Deploy token (org admins can create inline)
-        if is_pages && has_project && data.git_source.is_none() && data.is_org_admin {
+        if ((is_pages && has_project && data.git_source.is_none()) || is_static) && data.is_org_admin {
             SectionHeading { class: "mt-6", "Deploy Token" }
             DeployTokenSection { webspace_id: data.id, organization_id: data.organization_id }
         }
