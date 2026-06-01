@@ -470,7 +470,7 @@ async fn sync_changedetection(pool: &PgPool) {
     // Fetch webspaces that have a changedetection credential assigned.
     let webspaces = match sqlx::query_as::<_, (Uuid, String, Uuid)>(
         "SELECT w.id, w.name, w.changedetection_credential_id \
-         FROM webspaces w \
+         FROM webspace_hosts w \
          WHERE w.changedetection_credential_id IS NOT NULL",
     )
     .fetch_all(pool)
@@ -537,7 +537,7 @@ async fn sync_changedetection_for_webspace(
     // 0. Ensure at least a "/" sub-URL exists.
     let suburls = sqlx::query_as::<_, (Uuid, String, Option<Uuid>, String, serde_json::Value)>(
         "SELECT id, path, tag_id, secret, tag_settings \
-         FROM changedetection_suburls WHERE webspace_id = $1 ORDER BY path",
+         FROM changedetection_suburls WHERE webspace_host_id = $1 ORDER BY path",
     )
     .bind(ws_id)
     .fetch_all(pool)
@@ -547,7 +547,7 @@ async fn sync_changedetection_for_webspace(
         // Auto-create "/" sub-URL.
         let secret = generate_secret();
         sqlx::query(
-            "INSERT INTO changedetection_suburls (webspace_id, path, secret) VALUES ($1, '/', $2)",
+            "INSERT INTO changedetection_suburls (webspace_host_id, path, secret) VALUES ($1, '/', $2)",
         )
         .bind(ws_id)
         .bind(&secret)
@@ -559,7 +559,7 @@ async fn sync_changedetection_for_webspace(
         );
         sqlx::query_as::<_, (Uuid, String, Option<Uuid>, String, serde_json::Value)>(
             "SELECT id, path, tag_id, secret, tag_settings \
-             FROM changedetection_suburls WHERE webspace_id = $1 ORDER BY path",
+             FROM changedetection_suburls WHERE webspace_host_id = $1 ORDER BY path",
         )
         .bind(ws_id)
         .fetch_all(pool)
@@ -580,10 +580,10 @@ async fn sync_changedetection_for_webspace(
     // 3. Fetch domain bindings once for the webspace.
     let bindings = sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT d.name, s.name \
-         FROM webspace_domains wd \
+         FROM webspace_host_domains wd \
          JOIN domains d ON d.id = wd.domain_id \
          LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
-         WHERE wd.webspace_id = $1",
+         WHERE wd.webspace_host_id = $1",
     )
     .bind(ws_id)
     .fetch_all(pool)
@@ -1011,7 +1011,7 @@ async fn gc_changedetection(pool: &PgPool) {
     // Get distinct credentials used by webspaces.
     let creds = match sqlx::query_as::<_, (Uuid,)>(
         "SELECT DISTINCT changedetection_credential_id \
-         FROM webspaces WHERE changedetection_credential_id IS NOT NULL",
+         FROM webspace_hosts WHERE changedetection_credential_id IS NOT NULL",
     )
     .fetch_all(pool)
     .await
@@ -1038,11 +1038,11 @@ async fn gc_for_credential(pool: &PgPool, cred_id: Uuid) -> anyhow::Result<()> {
         sqlx::query_as::<_, (String, Option<String>, String)>(
             "SELECT d.name, s.name, cs.path \
          FROM changedetection_suburls cs \
-         JOIN webspaces w ON w.id = cs.webspace_id \
-         JOIN webspace_domains wd ON wd.webspace_id = w.id \
+         JOIN webspace_hosts h ON h.id = cs.webspace_host_id \
+         JOIN webspace_host_domains wd ON wd.webspace_host_id = h.id \
          JOIN domains d ON d.id = wd.domain_id \
          LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
-         WHERE w.changedetection_credential_id = $1",
+         WHERE h.changedetection_credential_id = $1",
         )
         .bind(cred_id)
         .fetch_all(pool)
@@ -1059,7 +1059,7 @@ async fn gc_for_credential(pool: &PgPool, cred_id: Uuid) -> anyhow::Result<()> {
 
     // Collect valid webspace names and their sub-URL paths.
     let valid_ws_names: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM webspaces WHERE changedetection_credential_id = $1",
+        "SELECT name FROM webspace_hosts WHERE changedetection_credential_id = $1",
     )
     .bind(cred_id)
     .fetch_all(pool)
@@ -1070,10 +1070,10 @@ async fn gc_for_credential(pool: &PgPool, cred_id: Uuid) -> anyhow::Result<()> {
     // Collect valid (webspace_name, path) pairs for sub-URL tag validation.
     let valid_suburl_pairs: std::collections::HashSet<(String, String)> =
         sqlx::query_as::<_, (String, String)>(
-            "SELECT w.name, cs.path \
+            "SELECT h.name, cs.path \
              FROM changedetection_suburls cs \
-             JOIN webspaces w ON w.id = cs.webspace_id \
-             WHERE w.changedetection_credential_id = $1",
+             JOIN webspace_hosts h ON h.id = cs.webspace_host_id \
+             WHERE h.changedetection_credential_id = $1",
         )
         .bind(cred_id)
         .fetch_all(pool)

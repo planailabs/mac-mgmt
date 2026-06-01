@@ -29,5 +29,8 @@ pub mod user_list;
 pub mod webspace_changedetection;
 pub mod webspace_detail;
 pub mod webspace_form;
+pub mod webspace_host_detail;
+pub mod webspace_host_form;
+pub mod webspace_host_list;
 pub mod webspace_import;
 pub mod webspace_list;

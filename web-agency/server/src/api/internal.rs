@@ -99,6 +99,9 @@ struct RoutesResponse {
 #[derive(Serialize)]
 struct RouteEntry {
     host: String,
+    /// Mount path of this folder within the host (e.g. "/", "/api"). The proxy
+    /// dispatches by host + longest-matching path_prefix.
+    path_prefix: String,
     upstream: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     relay: Option<RelayInfo>,
@@ -251,35 +254,40 @@ async fn get_routes(
 
     let mut routes = vec![RouteEntry {
         host: proxy_cfg.agency_domain.clone(),
+        path_prefix: "/".to_string(),
         upstream: proxy_cfg.agency_upstream.clone(),
         relay: None,
         auth: None,
     }];
 
-    // Local webspace routes: domain → 127.0.0.1:local_port
+    // Local folder routes: (host hostname, folder path_prefix) → 127.0.0.1:local_port.
+    // The hostname comes from the host's domain bindings; the folder supplies the
+    // mount path, upstream port, and auth. Only proxy-kind hosts are routed here.
     let rows = sqlx::query_as::<
         _,
         (
             String,
             Option<String>,
+            String,
             i32,
             uuid::Uuid,
             String,
             Option<uuid::Uuid>,
         ),
     >(
-        "SELECT d.name, s.name, w.local_port, w.organization_id, w.auth_mode, w.auth_basic_list_id \
-         FROM webspace_domains wd \
-         JOIN webspaces w ON w.id = wd.webspace_id \
-         JOIN domains d ON d.id = wd.domain_id \
-         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+        "SELECT d.name, s.name, w.path_prefix, w.local_port, w.organization_id, w.auth_mode, w.auth_basic_list_id \
+         FROM webspace_host_domains whd \
+         JOIN webspace_hosts h ON h.id = whd.webspace_host_id AND h.kind = 'proxy' \
+         JOIN webspaces w ON w.webspace_host_id = h.id \
+         JOIN domains d ON d.id = whd.domain_id \
+         LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
          WHERE w.hosting_type = 'local' AND w.local_port IS NOT NULL",
     )
     .fetch_all(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, port, org_id, auth_mode, basic_list_id) in rows {
+    for (domain, subdomain, path_prefix, port, org_id, auth_mode, basic_list_id) in rows {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
@@ -287,26 +295,28 @@ async fn get_routes(
         let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
         routes.push(RouteEntry {
             host,
+            path_prefix,
             upstream: format!("127.0.0.1:{port}"),
             relay: None,
             auth,
         });
     }
 
-    // Relay webspace routes: domain → relay URL with proxy token
-    let relay_rows = sqlx::query_as::<_, (String, Option<String>, String, uuid::Uuid, uuid::Uuid, String, Option<uuid::Uuid>)>(
-        "SELECT d.name, s.name, w.relay_url, w.relay_credential_id, w.organization_id, w.auth_mode, w.auth_basic_list_id \
-         FROM webspace_domains wd \
-         JOIN webspaces w ON w.id = wd.webspace_id \
-         JOIN domains d ON d.id = wd.domain_id \
-         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+    // Relay folder routes: (host hostname, folder path_prefix) → relay URL with proxy token
+    let relay_rows = sqlx::query_as::<_, (String, Option<String>, String, String, uuid::Uuid, uuid::Uuid, String, Option<uuid::Uuid>)>(
+        "SELECT d.name, s.name, w.path_prefix, w.relay_url, w.relay_credential_id, w.organization_id, w.auth_mode, w.auth_basic_list_id \
+         FROM webspace_host_domains whd \
+         JOIN webspace_hosts h ON h.id = whd.webspace_host_id AND h.kind = 'proxy' \
+         JOIN webspaces w ON w.webspace_host_id = h.id \
+         JOIN domains d ON d.id = whd.domain_id \
+         LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
          WHERE w.hosting_type = 'relay' AND w.relay_url IS NOT NULL AND w.relay_credential_id IS NOT NULL",
     )
     .fetch_all(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, relay_url, cred_id, org_id, auth_mode, basic_list_id) in relay_rows {
+    for (domain, subdomain, path_prefix, relay_url, cred_id, org_id, auth_mode, basic_list_id) in relay_rows {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
@@ -362,6 +372,7 @@ async fn get_routes(
         let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
         routes.push(RouteEntry {
             host,
+            path_prefix,
             upstream,
             relay: Some(RelayInfo {
                 url: relay_url,
@@ -371,30 +382,32 @@ async fn get_routes(
         });
     }
 
-    // Tunnel webspace routes: domain → upstream URL (no auth token)
+    // Tunnel folder routes: (host hostname, folder path_prefix) → upstream URL (no auth token)
     let tunnel_rows = sqlx::query_as::<
         _,
         (
             String,
             Option<String>,
             String,
+            String,
             uuid::Uuid,
             String,
             Option<uuid::Uuid>,
         ),
     >(
-        "SELECT d.name, s.name, w.relay_url, w.organization_id, w.auth_mode, w.auth_basic_list_id \
-         FROM webspace_domains wd \
-         JOIN webspaces w ON w.id = wd.webspace_id \
-         JOIN domains d ON d.id = wd.domain_id \
-         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+        "SELECT d.name, s.name, w.path_prefix, w.relay_url, w.organization_id, w.auth_mode, w.auth_basic_list_id \
+         FROM webspace_host_domains whd \
+         JOIN webspace_hosts h ON h.id = whd.webspace_host_id AND h.kind = 'proxy' \
+         JOIN webspaces w ON w.webspace_host_id = h.id \
+         JOIN domains d ON d.id = whd.domain_id \
+         LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
          WHERE w.hosting_type = 'tunnel' AND w.relay_url IS NOT NULL",
     )
     .fetch_all(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, tunnel_url, org_id, auth_mode, basic_list_id) in tunnel_rows {
+    for (domain, subdomain, path_prefix, tunnel_url, org_id, auth_mode, basic_list_id) in tunnel_rows {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
@@ -410,6 +423,7 @@ async fn get_routes(
         let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
         routes.push(RouteEntry {
             host,
+            path_prefix,
             upstream,
             relay: Some(RelayInfo {
                 url: tunnel_url,
@@ -598,12 +612,13 @@ pub async fn proxy_gate(
         .and_then(|s| s.split(':').next())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, "bad return_url".into()))?;
 
-    // Find which org owns the webspace bound to this hostname
+    // Find which org owns the host bound to this hostname that has an OIDC-protected folder.
     let org_id = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT w.organization_id FROM webspace_domains wd \
-         JOIN webspaces w ON w.id = wd.webspace_id \
-         JOIN domains d ON d.id = wd.domain_id \
-         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+        "SELECT h.organization_id FROM webspace_host_domains whd \
+         JOIN webspace_hosts h ON h.id = whd.webspace_host_id \
+         JOIN webspaces w ON w.webspace_host_id = h.id \
+         JOIN domains d ON d.id = whd.domain_id \
+         LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
          WHERE (CASE WHEN s.name IS NOT NULL AND s.name != '@' \
                 THEN s.name || '.' || d.name ELSE d.name END) = $1 \
          AND w.auth_mode = 'oidc' \

@@ -130,12 +130,21 @@ async fn import_pages_projects(
         // Fetch project to get ID
         match client.get_pages_project(&account_id, name).await {
             Ok(project) => {
-                let result = sqlx::query(
-                    "INSERT INTO webspaces (organization_id, name, hosting_type, cloudflare_pages_project, cloudflare_pages_project_id, cloudflare_credential_id) \
-                     VALUES ($1, $2, 'cloudflare_pages', $3, $4, $5)",
-                )
-                .bind(org_id).bind(name).bind(name).bind(&project.id).bind(credential_id)
-                .execute(&pool).await;
+                // Each imported project becomes a cloudflare host with one main-folder.
+                let result = async {
+                    let host_id = sqlx::query_scalar::<_, uuid::Uuid>(
+                        "INSERT INTO webspace_hosts (organization_id, name, kind) VALUES ($1, $2, 'cloudflare') RETURNING id",
+                    )
+                    .bind(org_id).bind(name)
+                    .fetch_one(&pool).await?;
+                    sqlx::query(
+                        "INSERT INTO webspaces (organization_id, webspace_host_id, name, path_prefix, hosting_type, cloudflare_pages_project, cloudflare_pages_project_id, cloudflare_credential_id) \
+                         VALUES ($1, $2, $3, '/', 'cloudflare_pages', $4, $5, $6)",
+                    )
+                    .bind(org_id).bind(host_id).bind(name).bind(name).bind(&project.id).bind(credential_id)
+                    .execute(&pool).await?;
+                    Ok::<_, sqlx::Error>(())
+                }.await;
 
                 match result {
                     Ok(_) => imported += 1,

@@ -18,9 +18,15 @@ struct RoutesResponse {
 #[derive(Debug, Deserialize)]
 struct RouteEntry {
     host: String,
+    #[serde(default = "default_path_prefix")]
+    path_prefix: String,
     upstream: String,
     relay: Option<RelayInfoEntry>,
     auth: Option<AuthInfoEntry>,
+}
+
+fn default_path_prefix() -> String {
+    "/".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,7 +80,7 @@ fn build_sse_client(token: &str) -> reqwest::Client {
 async fn reload_routes(
     client: &reqwest::Client,
     server_url: &str,
-    routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
+    routes: &ArcSwap<HashMap<String, Vec<(String, Route, AuthMode)>>>,
 ) -> Option<Option<i64>> {
     match client
         .get(format!("{server_url}/api/internal/routes"))
@@ -85,7 +91,7 @@ async fn reload_routes(
             Ok(body) => {
                 let token_lifetime_secs = body.token_lifetime_secs;
                 let entries = body.routes;
-                let mut map = HashMap::new();
+                let mut map: HashMap<String, Vec<(String, Route, AuthMode)>> = HashMap::new();
                 for entry in entries {
                     let route = if let Some(relay) = entry.relay {
                         let relay_host = relay
@@ -125,24 +131,34 @@ async fn reload_routes(
                         _ => AuthMode::None,
                     };
 
-                    map.insert(entry.host, (route, auth));
+                    map.entry(entry.host)
+                        .or_default()
+                        .push((entry.path_prefix, route, auth));
                 }
-                for (host, (route, auth)) in &map {
-                    let route_desc = match route {
-                        Route::Direct(upstream) => format!("direct → {upstream}"),
-                        Route::Relay { upstream, tls, .. } => {
-                            let scheme = if *tls { "tls" } else { "plain" };
-                            format!("relay → {upstream} ({scheme})")
-                        }
-                    };
-                    let auth_desc = match auth {
-                        AuthMode::None => "none",
-                        AuthMode::Oidc { .. } => "oidc",
-                        AuthMode::Basic { .. } => "basic",
-                    };
-                    tracing::info!(host, route = %route_desc, auth = auth_desc, "route");
+                // Longest path prefix first, so the proxy matches the most specific folder.
+                for folders in map.values_mut() {
+                    folders.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
                 }
-                tracing::info!(count = map.len(), ?token_lifetime_secs, "loaded routes");
+                let mut route_count = 0usize;
+                for (host, folders) in &map {
+                    for (path_prefix, route, auth) in folders {
+                        route_count += 1;
+                        let route_desc = match route {
+                            Route::Direct(upstream) => format!("direct → {upstream}"),
+                            Route::Relay { upstream, tls, .. } => {
+                                let scheme = if *tls { "tls" } else { "plain" };
+                                format!("relay → {upstream} ({scheme})")
+                            }
+                        };
+                        let auth_desc = match auth {
+                            AuthMode::None => "none",
+                            AuthMode::Oidc { .. } => "oidc",
+                            AuthMode::Basic { .. } => "basic",
+                        };
+                        tracing::info!(host, path = %path_prefix, route = %route_desc, auth = auth_desc, "route");
+                    }
+                }
+                tracing::info!(hosts = map.len(), routes = route_count, ?token_lifetime_secs, "loaded routes");
                 routes.store(Arc::new(map));
                 Some(token_lifetime_secs)
             }
@@ -197,7 +213,7 @@ async fn reload_certs(client: &reqwest::Client, server_url: &str, cert_store: &C
 async fn trigger_missing_certs(
     client: &reqwest::Client,
     server_url: &str,
-    routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
+    routes: &ArcSwap<HashMap<String, Vec<(String, Route, AuthMode)>>>,
     cert_store: &CertStore,
 ) {
     let route_hosts: Vec<String> = routes.load().keys().cloned().collect();
@@ -220,7 +236,7 @@ async fn trigger_missing_certs(
 async fn reload_all(
     client: &reqwest::Client,
     server_url: &str,
-    routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
+    routes: &ArcSwap<HashMap<String, Vec<(String, Route, AuthMode)>>>,
     cert_store: &CertStore,
 ) -> Option<i64> {
     let token_lifetime = reload_routes(client, server_url, routes)
@@ -235,7 +251,7 @@ async fn reload_all(
 /// Retries every 10 seconds until both routes and certs load successfully.
 pub async fn initial_load(
     cfg: &ProxyConfig,
-    routes: &ArcSwap<HashMap<String, (Route, AuthMode)>>,
+    routes: &ArcSwap<HashMap<String, Vec<(String, Route, AuthMode)>>>,
     cert_store: &CertStore,
 ) {
     let token = cfg.internal_token();
@@ -262,7 +278,7 @@ pub async fn initial_load(
 /// `start()` immediately so Pingora never blocks on us during shutdown.
 pub fn build_service(
     cfg: ProxyConfig,
-    routes: Arc<ArcSwap<HashMap<String, (Route, AuthMode)>>>,
+    routes: Arc<ArcSwap<HashMap<String, Vec<(String, Route, AuthMode)>>>>,
     cert_store: Arc<CertStore>,
 ) -> pingora::services::background::GenBackgroundService<SyncTask> {
     pingora::services::background::background_service(
@@ -277,7 +293,7 @@ pub fn build_service(
 
 pub struct SyncTask {
     cfg: ProxyConfig,
-    routes: Arc<ArcSwap<HashMap<String, (Route, AuthMode)>>>,
+    routes: Arc<ArcSwap<HashMap<String, Vec<(String, Route, AuthMode)>>>>,
     cert_store: Arc<CertStore>,
 }
 
@@ -311,7 +327,7 @@ fn schedule_refresh(interval: &mut tokio::time::Interval, lifetime_secs: Option<
 
 async fn sync_loop(
     cfg: ProxyConfig,
-    routes: Arc<ArcSwap<HashMap<String, (Route, AuthMode)>>>,
+    routes: Arc<ArcSwap<HashMap<String, Vec<(String, Route, AuthMode)>>>>,
     cert_store: Arc<CertStore>,
 ) {
     let token = cfg.internal_token();

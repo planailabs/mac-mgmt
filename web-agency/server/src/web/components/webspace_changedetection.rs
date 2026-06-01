@@ -115,7 +115,7 @@ async fn get_cd_config(webspace_id: Uuid) -> Result<CdConfig, ServerFnError> {
     let pool = crate::server_pool()?;
 
     let (name, cred_id) = sqlx::query_as::<_, (String, Option<Uuid>)>(
-        "SELECT w.name, w.changedetection_credential_id FROM webspaces w WHERE w.id = $1",
+        "SELECT name, changedetection_credential_id FROM webspace_hosts WHERE id = $1",
     )
     .bind(webspace_id)
     .fetch_one(&pool)
@@ -123,7 +123,7 @@ async fn get_cd_config(webspace_id: Uuid) -> Result<CdConfig, ServerFnError> {
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
             .bind(webspace_id)
             .fetch_one(&pool)
             .await
@@ -175,7 +175,7 @@ async fn set_webspace_changedetection(
 
     let (org_id, old_cred_id, ws_name) = sqlx::query_as::<_, (Uuid, Option<Uuid>, String)>(
         "SELECT organization_id, changedetection_credential_id, name \
-             FROM webspaces WHERE id = $1",
+             FROM webspace_hosts WHERE id = $1",
     )
     .bind(webspace_id)
     .fetch_one(&pool)
@@ -195,7 +195,7 @@ async fn set_webspace_changedetection(
                 // Delete all sub-URL tags from the old CD instance.
                 let suburl_tags = sqlx::query_scalar::<_, Uuid>(
                     "SELECT tag_id FROM changedetection_suburls \
-                     WHERE webspace_id = $1 AND tag_id IS NOT NULL",
+                     WHERE webspace_host_id = $1 AND tag_id IS NOT NULL",
                 )
                 .bind(webspace_id)
                 .fetch_all(&pool)
@@ -220,13 +220,13 @@ async fn set_webspace_changedetection(
 
             // Clear cached tag_ids on sub-URLs and delete notifications (they belong
             // to the old credential).
-            sqlx::query("UPDATE changedetection_suburls SET tag_id = NULL WHERE webspace_id = $1")
+            sqlx::query("UPDATE changedetection_suburls SET tag_id = NULL WHERE webspace_host_id = $1")
                 .bind(webspace_id)
                 .execute(&pool)
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-            sqlx::query("DELETE FROM changedetection_notifications WHERE webspace_id = $1")
+            sqlx::query("DELETE FROM changedetection_notifications WHERE webspace_host_id = $1")
                 .bind(webspace_id)
                 .execute(&pool)
                 .await
@@ -235,7 +235,7 @@ async fn set_webspace_changedetection(
     }
 
     sqlx::query(
-        "UPDATE webspaces SET changedetection_credential_id = $1, updated_at = now() WHERE id = $2",
+        "UPDATE webspace_hosts SET changedetection_credential_id = $1, updated_at = now() WHERE id = $2",
     )
     .bind(credential_id)
     .bind(webspace_id)
@@ -254,7 +254,7 @@ async fn list_suburls(webspace_id: Uuid) -> Result<Vec<SubUrlRow>, ServerFnError
     let pool = crate::server_pool()?;
 
     let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
             .bind(webspace_id)
             .fetch_one(&pool)
             .await
@@ -264,7 +264,7 @@ async fn list_suburls(webspace_id: Uuid) -> Result<Vec<SubUrlRow>, ServerFnError
 
     let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, path, created_at FROM changedetection_suburls \
-         WHERE webspace_id = $1 ORDER BY path",
+         WHERE webspace_host_id = $1 ORDER BY path",
     )
     .bind(webspace_id)
     .fetch_all(&pool)
@@ -287,7 +287,7 @@ async fn create_suburl(webspace_id: Uuid, path: String) -> Result<Uuid, ServerFn
     let pool = crate::server_pool()?;
 
     let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
             .bind(webspace_id)
             .fetch_one(&pool)
             .await
@@ -318,7 +318,7 @@ async fn create_suburl(webspace_id: Uuid, path: String) -> Result<Uuid, ServerFn
     };
 
     let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO changedetection_suburls (webspace_id, path, secret) \
+        "INSERT INTO changedetection_suburls (webspace_host_id, path, secret) \
          VALUES ($1, $2, $3) RETURNING id",
     )
     .bind(webspace_id)
@@ -337,7 +337,7 @@ async fn delete_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<(), ServerF
     let pool = crate::server_pool()?;
 
     let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
             .bind(webspace_id)
             .fetch_one(&pool)
             .await
@@ -347,10 +347,10 @@ async fn delete_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<(), ServerF
 
     // Delete the tag from changedetection.io if cached.
     let tag_and_cred = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>)>(
-        "SELECT cs.tag_id, w.changedetection_credential_id \
+        "SELECT cs.tag_id, h.changedetection_credential_id \
          FROM changedetection_suburls cs \
-         JOIN webspaces w ON w.id = cs.webspace_id \
-         WHERE cs.id = $1 AND cs.webspace_id = $2",
+         JOIN webspace_hosts h ON h.id = cs.webspace_host_id \
+         WHERE cs.id = $1 AND cs.webspace_host_id = $2",
     )
     .bind(suburl_id)
     .bind(webspace_id)
@@ -365,7 +365,7 @@ async fn delete_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<(), ServerF
     }
 
     // CASCADE deletes associated notifications.
-    sqlx::query("DELETE FROM changedetection_suburls WHERE id = $1 AND webspace_id = $2")
+    sqlx::query("DELETE FROM changedetection_suburls WHERE id = $1 AND webspace_host_id = $2")
         .bind(suburl_id)
         .bind(webspace_id)
         .execute(&pool)
@@ -381,7 +381,7 @@ async fn get_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<SubUrlDetail, 
     let pool = crate::server_pool()?;
 
     let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
             .bind(webspace_id)
             .fetch_one(&pool)
             .await
@@ -391,7 +391,7 @@ async fn get_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<SubUrlDetail, 
 
     let (id, path, settings_json) = sqlx::query_as::<_, (Uuid, String, serde_json::Value)>(
         "SELECT id, path, tag_settings FROM changedetection_suburls \
-         WHERE id = $1 AND webspace_id = $2",
+         WHERE id = $1 AND webspace_host_id = $2",
     )
     .bind(suburl_id)
     .bind(webspace_id)
@@ -418,7 +418,7 @@ async fn update_suburl_settings(
     let pool = crate::server_pool()?;
 
     let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
             .bind(webspace_id)
             .fetch_one(&pool)
             .await
@@ -432,7 +432,7 @@ async fn update_suburl_settings(
     // Update the JSONB column.
     sqlx::query(
         "UPDATE changedetection_suburls SET tag_settings = $1, updated_at = now() \
-         WHERE id = $2 AND webspace_id = $3",
+         WHERE id = $2 AND webspace_host_id = $3",
     )
     .bind(&settings_json)
     .bind(suburl_id)
@@ -443,10 +443,10 @@ async fn update_suburl_settings(
 
     // Push settings to changedetection.io immediately if the tag is cached.
     let tag_and_cred = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>)>(
-        "SELECT cs.tag_id, w.changedetection_credential_id \
+        "SELECT cs.tag_id, h.changedetection_credential_id \
          FROM changedetection_suburls cs \
-         JOIN webspaces w ON w.id = cs.webspace_id \
-         WHERE cs.id = $1 AND cs.webspace_id = $2",
+         JOIN webspace_hosts h ON h.id = cs.webspace_host_id \
+         WHERE cs.id = $1 AND cs.webspace_host_id = $2",
     )
     .bind(suburl_id)
     .bind(webspace_id)
@@ -477,7 +477,7 @@ async fn list_notifications(webspace_id: Uuid) -> Result<Vec<NotificationRow>, S
     let pool = crate::server_pool()?;
 
     let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
             .bind(webspace_id)
             .fetch_one(&pool)
             .await
@@ -498,7 +498,7 @@ async fn list_notifications(webspace_id: Uuid) -> Result<Vec<NotificationRow>, S
         "SELECT n.id, n.title, n.body, n.created_at, cs.path \
          FROM changedetection_notifications n \
          JOIN changedetection_suburls cs ON cs.id = n.suburl_id \
-         WHERE n.webspace_id = $1 \
+         WHERE n.webspace_host_id = $1 \
          ORDER BY n.created_at DESC \
          LIMIT 100",
     )
@@ -536,7 +536,7 @@ async fn get_notification(
     let pool = crate::server_pool()?;
 
     let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
             .bind(webspace_id)
             .fetch_one(&pool)
             .await
@@ -554,11 +554,11 @@ async fn get_notification(
             String,
         ),
     >(
-        "SELECT n.title, n.body, n.created_at, w.name, cs.path \
+        "SELECT n.title, n.body, n.created_at, h.name, cs.path \
              FROM changedetection_notifications n \
-             JOIN webspaces w ON w.id = n.webspace_id \
+             JOIN webspace_hosts h ON h.id = n.webspace_host_id \
              JOIN changedetection_suburls cs ON cs.id = n.suburl_id \
-             WHERE n.id = $1 AND n.webspace_id = $2",
+             WHERE n.id = $1 AND n.webspace_host_id = $2",
     )
     .bind(notification_id)
     .bind(webspace_id)
@@ -595,7 +595,7 @@ pub fn WebspaceChangedetection(id: String) -> Element {
     rsx! {
         PageHeader {
             Link {
-                to: crate::web::app::Route::WebspaceDetail { id: id.clone() },
+                to: crate::web::app::Route::WebspaceHostDetail { id: id.clone() },
                 class: "text-brand underline",
                 "{cfg.webspace_name}"
             }

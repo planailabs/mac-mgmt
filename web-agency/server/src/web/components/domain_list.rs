@@ -65,7 +65,7 @@ async fn list_domains() -> Result<Vec<DomainRow>, ServerFnError> {
     );
     let query = "SELECT d.id, d.name, d.registrar_type, d.ssl_mode, d.dnssec_enabled, d.cloudflare_zone_id, d.expires_at, o.name, \
          d.registrar_type, d.registrar_credential_id, d.ns_ok, \
-         EXISTS(SELECT 1 FROM webspace_domains wd WHERE wd.domain_id = d.id) AS has_webspace, \
+         EXISTS(SELECT 1 FROM webspace_host_domains whd WHERE whd.domain_id = d.id) AS has_webspace, \
          d.ai_bots_protection, \
          (d.expires_at IS NOT NULL AND d.expires_at < now() + interval '30 days') AS expires_soon \
          FROM domains d JOIN organizations o ON o.id = d.organization_id";
@@ -429,18 +429,24 @@ async fn bulk_create_pages_project(
             let project = client.create_pages_project(&account_id, &project_name, "main").await?;
             let project_id = project.id.clone();
 
-            // Create webspace
-            let ws_id = sqlx::query_scalar::<_, Uuid>(
-                "INSERT INTO webspaces (organization_id, name, hosting_type, cloudflare_pages_project, cloudflare_pages_project_id, cloudflare_credential_id) \
-                 VALUES ($1, $2, 'cloudflare_pages', $3, $4, $5) RETURNING id",
+            // Create a cloudflare host with its single main-folder (the Pages project).
+            let host_id = sqlx::query_scalar::<_, Uuid>(
+                "INSERT INTO webspace_hosts (organization_id, name, kind) VALUES ($1, $2, 'cloudflare') RETURNING id",
             )
-            .bind(org_id).bind(&project_name).bind(&project_name).bind(&project_id).bind(credential_id)
+            .bind(org_id).bind(&project_name)
             .fetch_one(&pool).await?;
 
-            // Link domain to webspace
             sqlx::query(
-                "INSERT INTO webspace_domains (webspace_id, domain_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            ).bind(ws_id).bind(domain_id).execute(&pool).await?;
+                "INSERT INTO webspaces (organization_id, webspace_host_id, name, path_prefix, hosting_type, cloudflare_pages_project, cloudflare_pages_project_id, cloudflare_credential_id) \
+                 VALUES ($1, $2, $3, '/', 'cloudflare_pages', $4, $5, $6)",
+            )
+            .bind(org_id).bind(host_id).bind(&project_name).bind(&project_name).bind(&project_id).bind(credential_id)
+            .execute(&pool).await?;
+
+            // Link domain to the host.
+            sqlx::query(
+                "INSERT INTO webspace_host_domains (webspace_host_id, domain_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            ).bind(host_id).bind(domain_id).execute(&pool).await?;
 
             Ok::<_, anyhow::Error>(())
         }.await {

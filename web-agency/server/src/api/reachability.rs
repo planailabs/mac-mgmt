@@ -17,10 +17,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_CONCURRENT_CHECKS: usize = 10;
 
 struct WebspaceHost {
-    webspace_id: Uuid,
+    webspace_host_id: Uuid,
     organization_id: Uuid,
     hostname: String,
-    hosting_type: String,
+    /// Host kind: "proxy" or "cloudflare" — determines the expected well-known service.
+    kind: String,
 }
 
 /// Spawn the periodic reachability check background task.
@@ -38,32 +39,29 @@ pub fn spawn(pool: PgPool) {
 
 async fn run_checks(pool: &PgPool) -> anyhow::Result<()> {
     let hosts = sqlx::query_as::<_, (Uuid, Uuid, String, Option<String>, String)>(
-        "SELECT w.id, w.organization_id, d.name, s.name, w.hosting_type \
-         FROM webspace_domains wd \
-         JOIN webspaces w ON w.id = wd.webspace_id \
-         JOIN domains d ON d.id = wd.domain_id \
-         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
-         WHERE w.hosting_type IN ('local', 'relay', 'tunnel', 'cloudflare_pages')",
+        "SELECT h.id, h.organization_id, d.name, s.name, h.kind \
+         FROM webspace_host_domains whd \
+         JOIN webspace_hosts h ON h.id = whd.webspace_host_id \
+         JOIN domains d ON d.id = whd.domain_id \
+         LEFT JOIN subdomains s ON s.id = whd.subdomain_id",
     )
     .fetch_all(pool)
     .await?;
 
     let webspace_hosts: Vec<WebspaceHost> = hosts
         .into_iter()
-        .map(
-            |(webspace_id, organization_id, domain, subdomain, hosting_type)| {
-                let hostname = match subdomain.as_deref() {
-                    Some(sub) if sub != "@" => format!("{sub}.{domain}"),
-                    _ => domain,
-                };
-                WebspaceHost {
-                    webspace_id,
-                    organization_id,
-                    hostname,
-                    hosting_type,
-                }
-            },
-        )
+        .map(|(webspace_host_id, organization_id, domain, subdomain, kind)| {
+            let hostname = match subdomain.as_deref() {
+                Some(sub) if sub != "@" => format!("{sub}.{domain}"),
+                _ => domain,
+            };
+            WebspaceHost {
+                webspace_host_id,
+                organization_id,
+                hostname,
+                kind,
+            }
+        })
         .collect();
 
     let current_hostnames: HashSet<String> =
@@ -185,8 +183,8 @@ async fn check_host(
     match wk_client.get(&well_known_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             if let Ok(body) = resp.text().await {
-                let expected_service = match host.hosting_type.as_str() {
-                    "cloudflare_pages" => "web-agency-pages",
+                let expected_service = match host.kind.as_str() {
+                    "cloudflare" => "web-agency-pages",
                     _ => "web-agency-proxy",
                 };
                 proxy_ok = body.contains(expected_service);
@@ -205,14 +203,14 @@ async fn check_host(
     // Upsert result
     if let Err(e) = sqlx::query(
         "INSERT INTO reachability_results \
-             (webspace_id, organization_id, hostname, http_ok, ssl_ok, proxy_ok, latency_ms, error_message, checked_at) \
+             (webspace_host_id, organization_id, hostname, http_ok, ssl_ok, proxy_ok, latency_ms, error_message, checked_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
          ON CONFLICT (hostname) DO UPDATE SET \
-             webspace_id = $1, organization_id = $2, \
+             webspace_host_id = $1, organization_id = $2, \
              http_ok = $4, ssl_ok = $5, proxy_ok = $6, \
              latency_ms = $7, error_message = $8, checked_at = now()",
     )
-    .bind(host.webspace_id)
+    .bind(host.webspace_host_id)
     .bind(host.organization_id)
     .bind(&host.hostname)
     .bind(http_ok)

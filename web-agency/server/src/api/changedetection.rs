@@ -39,7 +39,7 @@ async fn receive_notification(
     axum::Json(payload): axum::Json<NotificationBody>,
 ) -> StatusCode {
     let suburl = match sqlx::query_as::<_, (Uuid, Uuid)>(
-        "SELECT id, webspace_id FROM changedetection_suburls WHERE secret = $1",
+        "SELECT id, webspace_host_id FROM changedetection_suburls WHERE secret = $1",
     )
     .bind(&secret)
     .fetch_optional(&state.pool)
@@ -52,25 +52,25 @@ async fn receive_notification(
         }
     };
 
-    let Some((suburl_id, ws_id)) = suburl else {
+    let Some((suburl_id, host_id)) = suburl else {
         return StatusCode::NOT_FOUND;
     };
 
     if let Err(e) = sqlx::query(
-        "INSERT INTO changedetection_notifications (webspace_id, suburl_id, title, body) \
+        "INSERT INTO changedetection_notifications (webspace_host_id, suburl_id, title, body) \
          VALUES ($1, $2, $3, $4)",
     )
-    .bind(ws_id)
+    .bind(host_id)
     .bind(suburl_id)
     .bind(&payload.title)
     .bind(&payload.body)
     .execute(&state.pool)
     .await
     {
-        tracing::error!(%ws_id, %suburl_id, "failed to insert changedetection notification: {e}");
+        tracing::error!(%host_id, %suburl_id, "failed to insert changedetection notification: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
 
-    tracing::debug!(%ws_id, %suburl_id, title = ?payload.title, "received changedetection notification");
+    tracing::debug!(%host_id, %suburl_id, title = ?payload.title, "received changedetection notification");
     StatusCode::OK
 }

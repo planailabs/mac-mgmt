@@ -38,6 +38,9 @@ pub enum AuthMode {
 #[derive(Default)]
 pub struct RequestCtx {
     relay: Option<RelayCtx>,
+    /// Folder mount prefix (e.g. "/api") to strip from the request path before
+    /// forwarding upstream. "/" or empty means pass-through.
+    mount_prefix: String,
 }
 
 struct RelayCtx {
@@ -46,11 +49,40 @@ struct RelayCtx {
     path_prefix: String,
 }
 
-/// The Pingora HTTP proxy that routes requests by Host header.
+/// One mounted folder under a host: its path prefix, route target, and auth.
+pub type Folder = (String, Route, AuthMode);
+
+/// The Pingora HTTP proxy that routes requests by Host header, then by the
+/// longest matching folder path prefix. Each host maps to a list of folders
+/// sorted by descending prefix length (longest match wins).
 pub struct WebAgencyProxy {
-    pub routes: Arc<ArcSwap<HashMap<String, (Route, AuthMode)>>>,
+    pub routes: Arc<ArcSwap<HashMap<String, Vec<Folder>>>>,
     pub agency_domain: String,
     pub internal_token: String,
+}
+
+/// True if `prefix` is a path-prefix of `path` ("/" matches everything).
+fn path_matches(prefix: &str, path: &str) -> bool {
+    prefix == "/" || path == prefix || path.starts_with(&format!("{prefix}/"))
+}
+
+/// Pick the folder whose path prefix best matches `path`. `folders` must be
+/// sorted by descending prefix length so the first match is the longest.
+fn match_folder<'a>(folders: &'a [Folder], path: &str) -> Option<&'a Folder> {
+    folders.iter().find(|(prefix, _, _)| path_matches(prefix, path))
+}
+
+/// Strip a folder mount prefix from a path (a folder at "/api" sees "/").
+fn strip_mount_prefix(path: &str, prefix: &str) -> String {
+    if prefix.is_empty() || prefix == "/" {
+        return path.to_string();
+    }
+    let stripped = path.strip_prefix(prefix).unwrap_or(path);
+    if stripped.is_empty() {
+        "/".to_string()
+    } else {
+        stripped.to_string()
+    }
 }
 
 impl WebAgencyProxy {
@@ -247,9 +279,10 @@ impl ProxyHttp for WebAgencyProxy {
         }
 
         let host = extract_host(session);
+        let req_path = session.req_header().uri.path().to_string();
         let routes = self.routes.load();
-        let (_, auth) = match routes.get(&host) {
-            Some(r) => r,
+        let auth = match routes.get(&host).and_then(|f| match_folder(f, &req_path)) {
+            Some((_, _, auth)) => auth,
             None => return Ok(false), // will 404 in upstream_peer
         };
 
@@ -266,15 +299,16 @@ impl ProxyHttp for WebAgencyProxy {
         ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
         let host = extract_host(session);
+        let req_path = session.req_header().uri.path().to_string();
 
         let routes = self.routes.load();
-        match routes.get(&host) {
-            Some((Route::Direct(upstream), _)) => Ok(Box::new(HttpPeer::new(
-                upstream.as_str(),
-                false,
-                String::new(),
-            ))),
+        match routes.get(&host).and_then(|f| match_folder(f, &req_path)) {
+            Some((mount, Route::Direct(upstream), _)) => {
+                ctx.mount_prefix = mount.clone();
+                Ok(Box::new(HttpPeer::new(upstream.as_str(), false, String::new())))
+            }
             Some((
+                mount,
                 Route::Relay {
                     upstream,
                     url,
@@ -285,6 +319,7 @@ impl ProxyHttp for WebAgencyProxy {
                 },
                 _,
             )) => {
+                ctx.mount_prefix = mount.clone();
                 // Store relay info in context for upstream_request_filter
                 let path_prefix = url
                     .strip_prefix("https://")
@@ -325,6 +360,19 @@ impl ProxyHttp for WebAgencyProxy {
         upstream_request: &mut pingora::http::RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
+        // Strip the folder mount prefix so a folder mounted at /api sees "/".
+        if !ctx.mount_prefix.is_empty() && ctx.mount_prefix != "/" {
+            let stripped = strip_mount_prefix(upstream_request.uri.path(), &ctx.mount_prefix);
+            let query = upstream_request
+                .uri
+                .query()
+                .map(|q| format!("?{q}"))
+                .unwrap_or_default();
+            if let Ok(uri) = format!("{stripped}{query}").parse() {
+                upstream_request.set_uri(uri);
+            }
+        }
+
         if let Some(relay) = &ctx.relay {
             // Rewrite Host header to the relay hostname
             upstream_request
@@ -467,7 +515,7 @@ fn strip_gate_params(uri: &str) -> String {
 pub fn build_service(
     server_conf: &Arc<pingora::server::configuration::ServerConf>,
     cfg: &crate::config::ProxyConfig,
-    routes: Arc<ArcSwap<HashMap<String, (Route, AuthMode)>>>,
+    routes: Arc<ArcSwap<HashMap<String, Vec<(String, Route, AuthMode)>>>>,
     cert_store: Arc<crate::cert_store::CertStore>,
 ) -> pingora::services::listening::Service<pingora::proxy::HttpProxy<WebAgencyProxy>> {
     let internal_token = cfg.internal_token().trim().to_string();

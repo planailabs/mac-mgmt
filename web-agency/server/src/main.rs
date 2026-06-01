@@ -135,18 +135,18 @@ async fn cert_renewal_tick(pool: &sqlx::PgPool) -> anyhow::Result<()> {
         }
     }
 
-    // Issue certs for domains with webspace bindings but no cert row
+    // Issue certs for proxy hosts with domain bindings but no cert row.
+    // (Cloudflare hosts terminate TLS at Cloudflare, so they need no local cert.)
     let missing: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT CASE \
              WHEN s.name IS NOT NULL AND s.name != '@' THEN s.name || '.' || d.name \
              ELSE d.name \
          END AS hostname \
-         FROM webspace_domains wd \
-         JOIN webspaces w ON w.id = wd.webspace_id \
-         JOIN domains d ON d.id = wd.domain_id \
-         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
-         WHERE w.hosting_type IN ('local', 'relay', 'tunnel') \
-           AND NOT EXISTS (SELECT 1 FROM certificates c WHERE c.domain = \
+         FROM webspace_host_domains whd \
+         JOIN webspace_hosts h ON h.id = whd.webspace_host_id AND h.kind = 'proxy' \
+         JOIN domains d ON d.id = whd.domain_id \
+         LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
+         WHERE NOT EXISTS (SELECT 1 FROM certificates c WHERE c.domain = \
                CASE WHEN s.name IS NOT NULL AND s.name != '@' THEN s.name || '.' || d.name ELSE d.name END)",
     )
     .fetch_all(pool)

@@ -32,6 +32,9 @@ use super::components::webspace_changedetection::{
 };
 use super::components::webspace_detail::WebspaceDetail;
 use super::components::webspace_form::WebspaceForm;
+use super::components::webspace_host_detail::WebspaceHostDetail;
+use super::components::webspace_host_form::WebspaceHostForm;
+use super::components::webspace_host_list::WebspaceHostList;
 use super::components::webspace_import::WebspaceImport;
 use super::components::webspace_list::WebspaceList;
 
@@ -56,20 +59,26 @@ pub enum Route {
     DomainRegister {},
     #[route("/domains/:id")]
     DomainDetail { id: String },
+    #[route("/webspace-hosts")]
+    WebspaceHostList {},
+    #[route("/webspace-hosts/new")]
+    WebspaceHostForm {},
+    #[route("/webspace-hosts/:id")]
+    WebspaceHostDetail { id: String },
+    #[route("/webspace-hosts/:host_id/folders/new")]
+    WebspaceForm { host_id: String },
+    #[route("/webspace-hosts/:id/changedetection")]
+    WebspaceChangedetection { id: String },
+    #[route("/webspace-hosts/:id/changedetection/suburls/:suburl_id")]
+    WebspaceChangedetectionSuburl { id: String, suburl_id: String },
+    #[route("/webspace-hosts/:id/changedetection/:notification_id")]
+    WebspaceChangedetectionNotification { id: String, notification_id: String },
     #[route("/webspaces")]
     WebspaceList {},
-    #[route("/webspaces/new")]
-    WebspaceForm {},
     #[route("/webspaces/import")]
     WebspaceImport {},
     #[route("/webspaces/:id")]
     WebspaceDetail { id: String },
-    #[route("/webspaces/:id/changedetection")]
-    WebspaceChangedetection { id: String },
-    #[route("/webspaces/:id/changedetection/suburls/:suburl_id")]
-    WebspaceChangedetectionSuburl { id: String, suburl_id: String },
-    #[route("/webspaces/:id/changedetection/:notification_id")]
-    WebspaceChangedetectionNotification { id: String, notification_id: String },
     #[route("/contacts")]
     ContactList {},
     #[route("/contacts/new")]

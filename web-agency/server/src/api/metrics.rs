@@ -159,10 +159,10 @@ async fn register_reachability(
 ) -> Result<(), (StatusCode, String)> {
     let rows = if let Some(org_id) = org_filter {
         sqlx::query_as::<_, (String, String, String, bool, bool, bool, Option<i32>, f64)>(
-            "SELECT w.name, o.name, r.hostname, r.http_ok, r.ssl_ok, r.proxy_ok, r.latency_ms, \
+            "SELECT h.name, o.name, r.hostname, r.http_ok, r.ssl_ok, r.proxy_ok, r.latency_ms, \
                     EXTRACT(EPOCH FROM r.checked_at)::float8 \
              FROM reachability_results r \
-             JOIN webspaces w ON w.id = r.webspace_id \
+             JOIN webspace_hosts h ON h.id = r.webspace_host_id \
              JOIN organizations o ON o.id = r.organization_id \
              WHERE r.organization_id = $1",
         )
@@ -171,10 +171,10 @@ async fn register_reachability(
         .await
     } else {
         sqlx::query_as::<_, (String, String, String, bool, bool, bool, Option<i32>, f64)>(
-            "SELECT w.name, o.name, r.hostname, r.http_ok, r.ssl_ok, r.proxy_ok, r.latency_ms, \
+            "SELECT h.name, o.name, r.hostname, r.http_ok, r.ssl_ok, r.proxy_ok, r.latency_ms, \
                     EXTRACT(EPOCH FROM r.checked_at)::float8 \
              FROM reachability_results r \
-             JOIN webspaces w ON w.id = r.webspace_id \
+             JOIN webspace_hosts h ON h.id = r.webspace_host_id \
              JOIN organizations o ON o.id = r.organization_id",
         )
         .fetch_all(pool)
