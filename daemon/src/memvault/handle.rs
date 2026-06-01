@@ -168,6 +168,7 @@ impl MemvaultHandle {
                 revoked_nodes: Arc::clone(&trust.trust_state.revoked_nodes),
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
                 agent_attestation_lookup: None,
+                allowed_origins: Vec::new(),
             });
             memvault_web::ui::state::set_client(Arc::clone(&client));
             let router = memvault_web::build_fullstack_router(app_state);

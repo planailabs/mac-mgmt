@@ -32,6 +32,7 @@ let
     cargoLock.outputHashes = import ../extra-hashes.nix;
     cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" ];
     nativeBuildInputs = [ pkgs.lld ];
+    env.MEMVAULT_EXTRACT_GUEST_WASM = "${pkgs.memvault-extract-guest-wasm}/memvault_extract_guest.wasm";
     doCheck = false;
   };
 

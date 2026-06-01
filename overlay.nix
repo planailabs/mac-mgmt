@@ -26,9 +26,41 @@ let
       WRAPPER
       chmod +x $out/bin/mac-mgmt-server${pnameSuffix}
     '';
+  wasmToolchain = prev.rust-bin.stable.latest.default.override {
+    targets = [ "wasm32-unknown-unknown" ];
+  };
+  wasmRustPlatform = prev.makeRustPlatform {
+    cargo = wasmToolchain;
+    rustc = wasmToolchain;
+  };
+  memvaultExtractGuestWasm = wasmRustPlatform.buildRustPackage {
+    pname = "memvault-extract-guest-wasm";
+    version = "0.1.0";
+    src = ./memvault;
+    cargoLock = {
+      lockFile = ./memvault/Cargo.lock;
+      outputHashes = import ./memvault/extra-hashes.nix;
+    };
+    nativeBuildInputs = [ prev.lld ];
+    cargoBuildFlags = [
+      "-p"
+      "memvault-extract-guest"
+      "--target"
+      "wasm32-unknown-unknown"
+    ];
+    doCheck = false;
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out
+      cp target/wasm32-unknown-unknown/release/memvault_extract_guest.wasm \
+        $out/memvault_extract_guest.wasm
+      runHook postInstall
+    '';
+  };
 in
 {
   inherit dioxus-cli-patched;
+  memvault-extract-guest-wasm = memvaultExtractGuestWasm;
 
   mac-mgmt = prev.rustPlatform.buildRustPackage {
     pname = "mac-mgmt";
@@ -48,11 +80,7 @@ in
     ];
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
-    # Keep the Dioxus fullstack build below from spawning one rustc per host
-    # core. The GitLab custom-executor build container has limited writable
-    # space under /build; unconstrained rustc fan-out can exhaust it while many
-    # large rmeta/object files are being written concurrently.
-    env.CARGO_BUILD_JOBS = "2";
+    env.MEMVAULT_EXTRACT_GUEST_WASM = "${memvaultExtractGuestWasm}/memvault_extract_guest.wasm";
     # Fullstack build via dx: @client gets only the web feature (no native
     # deps), @server gets default features. --embed bakes the client's
     # public assets into the server binary via rust-embed.
