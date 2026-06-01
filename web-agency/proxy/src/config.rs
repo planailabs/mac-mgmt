@@ -40,16 +40,35 @@ fn default_server_url() -> String {
 }
 
 impl ProxyConfig {
+    /// Read the internal API token. The token file is provisioned by the
+    /// web-agency server and may not exist yet when the proxy starts, so we
+    /// wait for it to appear rather than crashing.
     pub fn internal_token(&self) -> String {
-        std::fs::read_to_string(&self.internal_token_path)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "failed to read internal token from {}: {e}",
-                    self.internal_token_path
-                )
-            })
-            .trim()
-            .to_string()
+        let mut logged = false;
+        loop {
+            match std::fs::read_to_string(&self.internal_token_path) {
+                Ok(s) if !s.trim().is_empty() => return s.trim().to_string(),
+                Ok(_) => {
+                    if !logged {
+                        tracing::warn!(
+                            path = %self.internal_token_path,
+                            "internal token file is empty; waiting for it to be written"
+                        );
+                        logged = true;
+                    }
+                }
+                Err(e) => {
+                    if !logged {
+                        tracing::warn!(
+                            path = %self.internal_token_path,
+                            "waiting for internal token file to appear: {e}"
+                        );
+                        logged = true;
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
     }
 }
 
