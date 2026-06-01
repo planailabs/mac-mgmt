@@ -69,8 +69,11 @@ pub struct WebAgencyProxy {
 }
 
 /// True if `prefix` is a path-prefix of `path` ("/" matches everything).
+/// Trailing slashes on the prefix are ignored so "/static" and "/static/" both
+/// match "/static" and "/static/...".
 fn path_matches(prefix: &str, path: &str) -> bool {
-    prefix == "/" || path == prefix || path.starts_with(&format!("{prefix}/"))
+    let prefix = prefix.trim_end_matches('/');
+    prefix.is_empty() || path == prefix || path.starts_with(&format!("{prefix}/"))
 }
 
 /// Pick the folder whose path prefix best matches `path`. `folders` must be
@@ -80,8 +83,11 @@ fn match_folder<'a>(folders: &'a [Folder], path: &str) -> Option<&'a Folder> {
 }
 
 /// Strip a folder mount prefix from a path (a folder at "/api" sees "/").
+/// Trailing slashes on the prefix are ignored, so the stripped path keeps its
+/// leading slash (e.g. prefix "/static/", path "/static/da/" → "/da/").
 fn strip_mount_prefix(path: &str, prefix: &str) -> String {
-    if prefix.is_empty() || prefix == "/" {
+    let prefix = prefix.trim_end_matches('/');
+    if prefix.is_empty() {
         return path.to_string();
     }
     let stripped = path.strip_prefix(prefix).unwrap_or(path);

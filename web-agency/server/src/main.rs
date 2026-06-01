@@ -335,17 +335,39 @@ fn main() {
                 },
             );
 
-            let router = axum::Router::new()
+            // The agency app router (Dioxus + APIs, with their own auth).
+            let agency_router = axum::Router::new()
                 .merge(deploy_router)
                 .merge(internal_router)
                 .merge(metrics_router)
                 .merge(cd_router)
-                .merge(web_router)
-                // Serve static webspace folders for proxy-forwarded requests
-                // (no-op for requests without the webspace header).
-                .layer(axum::middleware::from_fn(crate::api::static_serve::serve));
+                .merge(web_router);
 
-            Ok(router)
+            // A fully separate router for proxy-forwarded static webspace
+            // requests (no agency auth/Dioxus middleware).
+            let webspace_router = crate::api::static_serve::router();
+
+            // Steer by the webspace header: requests carrying it go to the
+            // webspace router, everything else to the agency router. Expressed
+            // as a fallback service (not a wrapping layer) so the two routers
+            // stay fully independent.
+            use tower::ServiceExt; // oneshot
+            let dispatch = tower::service_fn(move |req: axum::extract::Request| {
+                let agency = agency_router.clone();
+                let webspace = webspace_router.clone();
+                async move {
+                    if req
+                        .headers()
+                        .contains_key(crate::api::static_serve::WEBSPACE_HEADER)
+                    {
+                        webspace.oneshot(req).await
+                    } else {
+                        agency.oneshot(req).await
+                    }
+                }
+            });
+
+            Ok(axum::Router::new().fallback_service(dispatch))
         });
     }
 

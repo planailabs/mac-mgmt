@@ -129,13 +129,21 @@ async fn create_folder(
     if !matches!(hosting_type.as_str(), "local" | "relay" | "tunnel") {
         return Err(ServerFnError::new("invalid folder hosting type"));
     }
-    let path = path_prefix.trim();
+    // Normalize the mount path: leading slash, no trailing slash, no doubles.
+    let mut path = path_prefix.trim().to_string();
     if !path.starts_with('/') {
         return Err(ServerFnError::new("path must start with /"));
+    }
+    while path.contains("//") {
+        path = path.replace("//", "/");
+    }
+    while path.len() > 1 && path.ends_with('/') {
+        path.pop();
     }
     if path == "/" {
         return Err(ServerFnError::new("\"/\" is reserved for the main folder"));
     }
+    let path = path.as_str();
 
     let id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO webspaces (organization_id, webspace_host_id, name, path_prefix, hosting_type, runtime, relay_url, relay_credential_id, auth_mode, auth_basic_list_id, local_status) \
