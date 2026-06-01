@@ -112,10 +112,39 @@ impl MemvaultHandle {
         // Used to sign agent attestations + revocations, and looked up by the
         // web auth bootstrap. Set before Arc-wrapping so revoke_agent etc.
         // have it available on the shared client.
+        //
+        // This also runs the deferred blockstore rebuild: `LocalClient::open`
+        // no longer rebuilds on construction because the rebuild must re-sign
+        // migrated legacy envelopes with this key, which only becomes
+        // available here. Running the rebuild now — with the key installed —
+        // is what lets a store carrying legacy pre-bucket data converge.
         let host_key = crate::host_keys::load_or_generate()?;
         let node_signing_key =
             crate::p2p::identity::ed25519_dalek_signing_key_from_russh(&host_key)?;
-        client.set_node_signing_key(node_signing_key);
+        // Persist the node seed into the keystore (write-once) so co-process
+        // tools like memctl resolve the SAME node key from the authoritative
+        // keystore instead of a loose libp2p.key file (design A-1). Only write
+        // when absent, so an already-established identity is never clobbered.
+        if client
+            .keystore()
+            .get(memvault_api::node_key::NODE_SEED_KEYSTORE_KEY)
+            .is_none()
+        {
+            let seed = node_signing_key.to_bytes();
+            if let Err(e) = client
+                .keystore()
+                .put(memvault_api::node_key::NODE_SEED_KEYSTORE_KEY, &seed)
+            {
+                warn!("could not persist node seed to keystore: {e}");
+            }
+        }
+        if let Some(report) = client.install_node_key_and_rebuild(Some(node_signing_key)) {
+            info!(
+                blocks = report.blocks_total,
+                rewritten = report.unbucketed_rewritten,
+                "blockstore rebuild complete"
+            );
+        }
 
         let client = Arc::new(client);
 
