@@ -65,6 +65,11 @@ async fn init_server() -> sqlx::PgPool {
         }
     }
 
+    // Ensure a content directory exists for every local webspace.
+    if let Err(e) = local_hosting::ensure_webspace_dirs(&pool).await {
+        tracing::error!("failed to ensure local webspace dirs: {e}");
+    }
+
     // Mark any deployments left in-flight from a previous run as failed.
     api::deploy::recover_interrupted_deployments(&pool).await;
 

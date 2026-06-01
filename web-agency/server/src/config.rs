@@ -10,9 +10,17 @@ pub struct ServerConfig {
     pub database: DatabaseConfig,
     #[serde(default)]
     pub web: WebConfig,
+    pub local_hosting: LocalHostingConfig,
     pub auth: Option<AuthConfig>,
     pub secrets: Option<SecretsConfig>,
     pub proxy: Option<ProxyConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LocalHostingConfig {
+    /// Root directory for locally-hosted static webspace content. Each webspace
+    /// is served from `{dir}/{webspace_id}/`. Required.
+    pub dir: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

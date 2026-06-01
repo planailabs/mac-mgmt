@@ -4,6 +4,11 @@ url = "postgres://localhost/web_agency"
 [web]
 port = 7380
 
+[local_hosting]
+# Root directory for locally-hosted static webspace content.
+# Each webspace is served from {dir}/{webspace_id}/.
+dir = "./web"
+
 [secrets]
 # Generate with: openssl rand -base64 32
 encryption_key = "CHANGE_ME_base64_encoded_32_byte_key"
