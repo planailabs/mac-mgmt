@@ -22,7 +22,7 @@ struct RouteEntry {
     path_prefix: String,
     upstream: String,
     #[serde(default)]
-    static_dir: Option<String>,
+    static_webspace_id: Option<String>,
     relay: Option<RelayInfoEntry>,
     auth: Option<AuthInfoEntry>,
 }
@@ -95,8 +95,11 @@ async fn reload_routes(
                 let entries = body.routes;
                 let mut map: HashMap<String, Vec<(String, Route, AuthMode)>> = HashMap::new();
                 for entry in entries {
-                    let route = if let Some(dir) = entry.static_dir {
-                        Route::Static { dir }
+                    let route = if let Some(webspace_id) = entry.static_webspace_id {
+                        Route::StaticOrigin {
+                            upstream: entry.upstream,
+                            webspace_id,
+                        }
                     } else if let Some(relay) = entry.relay {
                         let relay_host = relay
                             .url
@@ -149,7 +152,9 @@ async fn reload_routes(
                         route_count += 1;
                         let route_desc = match route {
                             Route::Direct(upstream) => format!("direct → {upstream}"),
-                            Route::Static { dir } => format!("static → {dir}"),
+                            Route::StaticOrigin { upstream, webspace_id } => {
+                                format!("static → {upstream} (webspace {webspace_id})")
+                            }
                             Route::Relay { upstream, tls, .. } => {
                                 let scheme = if *tls { "tls" } else { "plain" };
                                 format!("relay → {upstream} ({scheme})")

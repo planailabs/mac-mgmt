@@ -5,4 +5,5 @@ pub mod deploy;
 pub mod internal;
 pub mod metrics;
 pub mod reachability;
+pub mod static_serve;
 pub mod sync;

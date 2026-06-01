@@ -340,7 +340,10 @@ fn main() {
                 .merge(internal_router)
                 .merge(metrics_router)
                 .merge(cd_router)
-                .merge(web_router);
+                .merge(web_router)
+                // Serve static webspace folders for proxy-forwarded requests
+                // (no-op for requests without the webspace header).
+                .layer(axum::middleware::from_fn(crate::api::static_serve::serve));
 
             Ok(router)
         });

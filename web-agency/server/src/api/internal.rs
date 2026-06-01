@@ -103,10 +103,12 @@ struct RouteEntry {
     /// dispatches by host + longest-matching path_prefix.
     path_prefix: String,
     upstream: String,
-    /// Absolute directory the proxy should serve static files from. When set,
-    /// the proxy serves files directly instead of proxying to `upstream`.
+    /// When set, this is a static folder served by the agency origin: the proxy
+    /// proxies to `upstream` (the agency server), passes the Host through, and
+    /// injects the internal token + this webspace id so the server serves the
+    /// folder's files. Avoids the proxy needing filesystem access.
     #[serde(skip_serializing_if = "Option::is_none")]
-    static_dir: Option<String>,
+    static_webspace_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     relay: Option<RelayInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -260,7 +262,7 @@ async fn get_routes(
         host: proxy_cfg.agency_domain.clone(),
         path_prefix: "/".to_string(),
         upstream: proxy_cfg.agency_upstream.clone(),
-        static_dir: None,
+        static_webspace_id: None,
         relay: None,
         auth: None,
     }];
@@ -302,14 +304,12 @@ async fn get_routes(
         };
         let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
         if runtime.as_deref() == Some("static") {
-            let dir = crate::local_hosting::webspace_dir(ws_id)
-                .to_string_lossy()
-                .into_owned();
+            // Served by the agency origin (the server), not the proxy's disk.
             routes.push(RouteEntry {
                 host,
                 path_prefix,
-                upstream: String::new(),
-                static_dir: Some(dir),
+                upstream: proxy_cfg.agency_upstream.clone(),
+                static_webspace_id: Some(ws_id.to_string()),
                 relay: None,
                 auth,
             });
@@ -318,7 +318,7 @@ async fn get_routes(
                 host,
                 path_prefix,
                 upstream: format!("127.0.0.1:{port}"),
-                static_dir: None,
+                static_webspace_id: None,
                 relay: None,
                 auth,
             });
@@ -398,7 +398,7 @@ async fn get_routes(
             host,
             path_prefix,
             upstream,
-            static_dir: None,
+            static_webspace_id: None,
             relay: Some(RelayInfo {
                 url: relay_url,
                 proxy_token,
@@ -450,7 +450,7 @@ async fn get_routes(
             host,
             path_prefix,
             upstream,
-            static_dir: None,
+            static_webspace_id: None,
             relay: Some(RelayInfo {
                 url: tunnel_url,
                 proxy_token: String::new(),
