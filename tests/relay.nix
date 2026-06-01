@@ -28,6 +28,7 @@ let
     cargoLock.lockFile = ../Cargo.lock;
     cargoLock.outputHashes = import ../extra-hashes.nix;
     cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" "--features" "relay" ];
+    nativeBuildInputs = [ pkgs.lld ];
     doCheck = false;
   };
 
