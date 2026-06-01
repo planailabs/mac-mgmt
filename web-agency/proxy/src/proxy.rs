@@ -9,6 +9,8 @@ use std::sync::Arc;
 pub enum Route {
     /// Direct TCP upstream (local webspace, agency server).
     Direct(String),
+    /// Static files served directly by the proxy from a local directory.
+    Static { dir: String },
     /// Relay tunnel — proxy via HTTPS to relay server with token auth.
     Relay {
         /// host:port to connect to
@@ -85,7 +87,91 @@ fn strip_mount_prefix(path: &str, prefix: &str) -> String {
     }
 }
 
+/// Guess a Content-Type from a file extension for static serving.
+fn content_type(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        "wasm" => "application/wasm",
+        "txt" => "text/plain; charset=utf-8",
+        "xml" => "application/xml",
+        "map" => "application/json",
+        "pdf" => "application/pdf",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Write a plain-text status response and short-circuit the request.
+async fn write_simple(session: &mut Session, code: u16, msg: &str) -> Result<bool> {
+    let mut resp = pingora::http::ResponseHeader::build(code, None).map_err(|e| {
+        pingora::Error::because(pingora::ErrorType::InternalError, "build response", e)
+    })?;
+    let _ = resp.insert_header("Content-Type", "text/plain; charset=utf-8");
+    let _ = resp.insert_header("Content-Length", msg.len().to_string());
+    session.write_response_header(Box::new(resp), false).await?;
+    session
+        .write_response_body(Some(bytes::Bytes::copy_from_slice(msg.as_bytes())), true)
+        .await?;
+    Ok(true)
+}
+
 impl WebAgencyProxy {
+    /// Serve a file from a static folder's directory. Always returns Ok(true)
+    /// (it writes the full response, including 404/400).
+    async fn serve_static(
+        &self,
+        session: &mut Session,
+        dir: &str,
+        mount: &str,
+        req_path: &str,
+    ) -> Result<bool> {
+        let rel = strip_mount_prefix(req_path, mount);
+        let mut fs_path = std::path::PathBuf::from(dir);
+        for comp in rel.split('/') {
+            match comp {
+                "" | "." => continue,
+                ".." => return write_simple(session, 400, "bad path").await, // no traversal
+                c => fs_path.push(c),
+            }
+        }
+
+        // Directory (or trailing-slash) requests serve index.html.
+        let file_path = match tokio::fs::metadata(&fs_path).await {
+            Ok(m) if m.is_dir() => fs_path.join("index.html"),
+            Ok(_) => fs_path,
+            Err(_) => return write_simple(session, 404, "not found").await,
+        };
+
+        match tokio::fs::read(&file_path).await {
+            Ok(body) => {
+                let ct = content_type(&file_path);
+                let mut resp = pingora::http::ResponseHeader::build(200, None).map_err(|e| {
+                    pingora::Error::because(pingora::ErrorType::InternalError, "build response", e)
+                })?;
+                let _ = resp.insert_header("Content-Type", ct);
+                let _ = resp.insert_header("Content-Length", body.len().to_string());
+                session.write_response_header(Box::new(resp), false).await?;
+                session
+                    .write_response_body(Some(bytes::Bytes::from(body)), true)
+                    .await?;
+                Ok(true)
+            }
+            Err(_) => write_simple(session, 404, "not found").await,
+        }
+    }
+
     async fn handle_basic_auth(
         &self,
         session: &mut Session,
@@ -280,17 +366,34 @@ impl ProxyHttp for WebAgencyProxy {
 
         let host = extract_host(session);
         let req_path = session.req_header().uri.path().to_string();
-        let routes = self.routes.load();
-        let auth = match routes.get(&host).and_then(|f| match_folder(f, &req_path)) {
-            Some((_, _, auth)) => auth,
-            None => return Ok(false), // will 404 in upstream_peer
+
+        // Clone the matched folder so we don't hold the routes guard across awaits.
+        let folder = {
+            let routes = self.routes.load();
+            routes
+                .get(&host)
+                .and_then(|f| match_folder(f, &req_path))
+                .map(|(mount, route, auth)| (mount.clone(), route.clone(), auth.clone()))
+        };
+        let Some((mount, route, auth)) = folder else {
+            return Ok(false); // will 404 in upstream_peer
         };
 
-        match auth {
-            AuthMode::None => Ok(false),
-            AuthMode::Basic { credentials } => self.handle_basic_auth(session, credentials).await,
-            AuthMode::Oidc { org_id } => self.handle_oidc_auth(session, &host, org_id).await,
+        let blocked = match &auth {
+            AuthMode::None => false,
+            AuthMode::Basic { credentials } => self.handle_basic_auth(session, credentials).await?,
+            AuthMode::Oidc { org_id } => self.handle_oidc_auth(session, &host, org_id).await?,
+        };
+        if blocked {
+            return Ok(true);
         }
+
+        // Static folders are served directly from disk; everything else proceeds
+        // to upstream_peer.
+        if let Route::Static { dir } = &route {
+            return self.serve_static(session, dir, &mount, &req_path).await;
+        }
+        Ok(false)
     }
 
     async fn upstream_peer(
@@ -342,6 +445,10 @@ impl ProxyHttp for WebAgencyProxy {
 
                 let peer = HttpPeer::new(upstream.as_str(), *tls, sni.clone());
                 Ok(Box::new(peer))
+            }
+            Some((_, Route::Static { .. }, _)) => {
+                // Static folders are served in request_filter and never reach here.
+                Err(pingora::Error::new(pingora::ErrorType::InternalError))
             }
             None => {
                 tracing::debug!(host = %host, "no route found");

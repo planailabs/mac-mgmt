@@ -103,6 +103,10 @@ struct RouteEntry {
     /// dispatches by host + longest-matching path_prefix.
     path_prefix: String,
     upstream: String,
+    /// Absolute directory the proxy should serve static files from. When set,
+    /// the proxy serves files directly instead of proxying to `upstream`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    static_dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     relay: Option<RelayInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -256,50 +260,70 @@ async fn get_routes(
         host: proxy_cfg.agency_domain.clone(),
         path_prefix: "/".to_string(),
         upstream: proxy_cfg.agency_upstream.clone(),
+        static_dir: None,
         relay: None,
         auth: None,
     }];
 
-    // Local folder routes: (host hostname, folder path_prefix) → 127.0.0.1:local_port.
-    // The hostname comes from the host's domain bindings; the folder supplies the
-    // mount path, upstream port, and auth. Only proxy-kind hosts are routed here.
+    // Local folder routes. Static folders are served by the proxy directly from
+    // their webroot directory; nodejs/docker folders are proxied to their local
+    // port. The hostname comes from the host's domain bindings; the folder
+    // supplies the mount path and auth. Only proxy-kind hosts are routed here.
     let rows = sqlx::query_as::<
         _,
         (
             String,
             Option<String>,
             String,
-            i32,
+            Option<String>,
+            Option<i32>,
+            uuid::Uuid,
             uuid::Uuid,
             String,
             Option<uuid::Uuid>,
         ),
     >(
-        "SELECT d.name, s.name, w.path_prefix, w.local_port, w.organization_id, w.auth_mode, w.auth_basic_list_id \
+        "SELECT d.name, s.name, w.path_prefix, w.runtime, w.local_port, w.id, w.organization_id, w.auth_mode, w.auth_basic_list_id \
          FROM webspace_host_domains whd \
          JOIN webspace_hosts h ON h.id = whd.webspace_host_id AND h.kind = 'proxy' \
          JOIN webspaces w ON w.webspace_host_id = h.id \
          JOIN domains d ON d.id = whd.domain_id \
          LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
-         WHERE w.hosting_type = 'local' AND w.local_port IS NOT NULL",
+         WHERE w.hosting_type = 'local'",
     )
     .fetch_all(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, path_prefix, port, org_id, auth_mode, basic_list_id) in rows {
+    for (domain, subdomain, path_prefix, runtime, port, ws_id, org_id, auth_mode, basic_list_id) in rows {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
         };
         let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
-        routes.push(RouteEntry {
-            host,
-            path_prefix,
-            upstream: format!("127.0.0.1:{port}"),
-            relay: None,
-            auth,
-        });
+        if runtime.as_deref() == Some("static") {
+            let dir = crate::local_hosting::webspace_dir(ws_id)
+                .to_string_lossy()
+                .into_owned();
+            routes.push(RouteEntry {
+                host,
+                path_prefix,
+                upstream: String::new(),
+                static_dir: Some(dir),
+                relay: None,
+                auth,
+            });
+        } else if let Some(port) = port {
+            routes.push(RouteEntry {
+                host,
+                path_prefix,
+                upstream: format!("127.0.0.1:{port}"),
+                static_dir: None,
+                relay: None,
+                auth,
+            });
+        }
+        // nodejs/docker folders without a running port are not routed yet.
     }
 
     // Relay folder routes: (host hostname, folder path_prefix) → relay URL with proxy token
@@ -374,6 +398,7 @@ async fn get_routes(
             host,
             path_prefix,
             upstream,
+            static_dir: None,
             relay: Some(RelayInfo {
                 url: relay_url,
                 proxy_token,
@@ -425,6 +450,7 @@ async fn get_routes(
             host,
             path_prefix,
             upstream,
+            static_dir: None,
             relay: Some(RelayInfo {
                 url: tunnel_url,
                 proxy_token: String::new(),
