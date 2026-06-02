@@ -208,7 +208,9 @@ impl MemvaultHandle {
                 .map_err(|e| anyhow::anyhow!("init ui agent: {e}"))?;
             let app_state = Arc::new(memvault_web::AppState {
                 client: Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>,
-                event_bus: Arc::new(memvault_api::EventBus::new(256)),
+                // Share the LocalClient's bus so the web UI live-event stream and
+                // the sync head-bridge both see the same mints (matches memctl).
+                event_bus: Arc::clone(&event_bus),
                 admin_pubkey: trust.admin_pubkey,
                 node_trust: Arc::clone(&trust.trust_state.node_trust),
                 revoked_agents: Arc::clone(&trust.trust_state.revoked_agents),
@@ -323,7 +325,7 @@ impl MemvaultHandle {
             .collect();
 
         let (head_tx, head_rx) = memvault_swarm::head_channel();
-        spawn_event_bridge(Arc::clone(&self.event_bus), head_tx);
+        memvault_swarm::spawn_event_bridge(Arc::clone(&self.event_bus), head_tx);
 
         Some(crate::p2p::MemvaultP2p {
             store: Arc::clone(&self.store),
@@ -473,46 +475,3 @@ fn resolve_cluster_id(store: &memvault_store::MemvaultStore, data_dir: &PathBuf)
     from_file
 }
 
-/// Bridge LocalClient block-mint events to the swarm's outbound-head channel,
-/// so a locally-written/synced block is immediately announced over gossip
-/// instead of waiting for the next RBSR cycle. Mirrors memctl's bridge.
-#[cfg(feature = "memvault")]
-fn spawn_event_bridge(
-    event_bus: Arc<memvault_api::EventBus>,
-    head_tx: tokio::sync::mpsc::UnboundedSender<memvault_swarm::OutboundHead>,
-) {
-    use memvault_api::MemvaultEvent;
-    tokio::spawn(async move {
-        let mut rx = event_bus.subscribe();
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    let cid = match &event {
-                        MemvaultEvent::DocCreated { cid, .. }
-                        | MemvaultEvent::DocUpdated { cid, .. }
-                        | MemvaultEvent::BucketCreated { cid, .. }
-                        | MemvaultEvent::Retracted { cid }
-                        | MemvaultEvent::SigchainBlock { cid, .. } => Some(cid.clone()),
-                        MemvaultEvent::TokenConsumed { token_cid } => Some(token_cid.clone()),
-                        _ => None,
-                    };
-                    if let Some(cid) = cid {
-                        if head_tx
-                            .send(memvault_swarm::OutboundHead {
-                                cid,
-                                bucket_id: None,
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!(skipped = n, "memvault event bus lagged, some heads not announced");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-}

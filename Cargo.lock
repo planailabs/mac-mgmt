@@ -9379,6 +9379,7 @@ dependencies = [
  "futures",
  "hex",
  "libp2p",
+ "memvault-api",
  "memvault-attach",
  "memvault-auth",
  "memvault-core",
