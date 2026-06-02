@@ -19,7 +19,13 @@ pub struct ClusterBehaviour {
     /// AI proxy request distribution across cluster peers.
     pub ai_proxy: request_response::Behaviour<ai_proxy::AiProxyCodec>,
     /// Pub/sub for tunnel advertisements and backend load announcements.
+    /// Also carries the memvault heads/admin gossip topics when memvault is
+    /// enabled (gossipsub is shared — two behaviours would collide on `/meshsub`).
     pub gossipsub: gossipsub::Behaviour,
     /// Raw bidirectional substreams for tunnel data (SSH, file, shell sessions).
     pub streams: libp2p_stream::Behaviour,
+    /// memvault p2p sync protocols (kad/auth/join/block-exchange), composed
+    /// into the cluster swarm so memory blocks sync over the same connections.
+    #[cfg(feature = "memvault")]
+    pub memvault: memvault_net::MemvaultBehaviour,
 }

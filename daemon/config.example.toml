@@ -309,7 +309,12 @@ flavour = "cpu"
 # enabled = false
 # data_dir = "~/.local/share/memvault"
 # cluster_id = ""                        # base58-encoded 32-byte cluster ID, or leave empty
-# bootstrap_peers = []                   # libp2p multiaddrs for Kademlia bootstrap
+# bootstrap_peers = []                   # libp2p multiaddrs dialed on startup to join the
+#                                        # cluster's memvault mesh, e.g.
+#                                        # ["/ip4/10.0.0.2/udp/4101/quic-v1/p2p/<peer-id>"].
+#                                        # Sync rides the daemon's existing cluster swarm
+#                                        # (shared identity/connections); enabling memvault
+#                                        # starts that swarm even without a relay configured.
 # port = 8401                            # API server port (token auto-generated in data_dir/api.token)
 
 # ── Custom services ────────────────────────────────────────────────────

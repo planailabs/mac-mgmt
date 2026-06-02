@@ -71,6 +71,172 @@ pub struct P2pConfig {
     /// External probe state: set to `true` when the relay is registered.
     /// If `None`, the manager creates its own.
     pub relay_registered: Option<Arc<AtomicBool>>,
+    /// memvault sync wiring. When `Some`, the swarm composes memvault's
+    /// protocols, dials its bootstrap peers, and drives block sync over the
+    /// shared cluster swarm. `None` leaves the (always-present) memvault
+    /// sub-behaviour inert.
+    #[cfg(feature = "memvault")]
+    pub memvault: Option<MemvaultP2p>,
+}
+
+/// Everything the swarm needs to run memvault sync over the cluster swarm.
+/// Assembled by the daemon's memvault subsystem (`crate::memvault`).
+#[cfg(feature = "memvault")]
+pub struct MemvaultP2p {
+    /// The memvault blockstore (serve + ingest).
+    pub store: Arc<memvault_store::MemvaultStore>,
+    /// Sync parameters (cluster_id for head announcements).
+    pub sync_config: memvault_swarm::SyncConfig,
+    /// Join/attestation config assembled from the keystore.
+    pub join_config: memvault_swarm::JoinConfig,
+    /// libp2p multiaddrs to dial on startup so this node finds the cluster.
+    pub bootstrap_peers: Vec<Multiaddr>,
+    /// Locally-minted heads to announce, bridged off the LocalClient EventBus.
+    pub head_rx: tokio::sync::mpsc::UnboundedReceiver<memvault_swarm::OutboundHead>,
+}
+
+/// [`memvault_swarm::MemvaultHost`] adapter over the daemon's cluster swarm.
+/// Routes sends to the composed `memvault` sub-behaviour and shares the
+/// daemon's gossipsub for head/admin announcements.
+#[cfg(feature = "memvault")]
+struct DaemonHost<'a>(&'a mut Swarm<ClusterBehaviour>);
+
+#[cfg(feature = "memvault")]
+impl memvault_swarm::MemvaultHost for DaemonHost<'_> {
+    fn dial(&mut self, addr: Multiaddr) {
+        if let Err(e) = self.0.dial(addr) {
+            tracing::warn!(error = %e, "memvault dial failed");
+        }
+    }
+    fn kad_add_address(&mut self, peer: &PeerId, addr: Multiaddr) {
+        self.0.behaviour_mut().memvault.kad.add_address(peer, addr);
+    }
+    fn send_block_request(&mut self, peer: &PeerId, req: memvault_net::BlockRequest) {
+        self.0
+            .behaviour_mut()
+            .memvault
+            .block_exchange
+            .send_request(peer, req);
+    }
+    fn send_block_response(
+        &mut self,
+        channel: request_response::ResponseChannel<memvault_net::BlockResponse>,
+        resp: memvault_net::BlockResponse,
+    ) {
+        let _ = self
+            .0
+            .behaviour_mut()
+            .memvault
+            .block_exchange
+            .send_response(channel, resp);
+    }
+    fn send_join_request(&mut self, peer: &PeerId, req: memvault_net::JoinRequest) {
+        let _ = self
+            .0
+            .behaviour_mut()
+            .memvault
+            .join
+            .send_request(peer, req);
+    }
+    fn send_join_response(
+        &mut self,
+        channel: request_response::ResponseChannel<memvault_net::JoinResponse>,
+        resp: memvault_net::JoinResponse,
+    ) {
+        let _ = self
+            .0
+            .behaviour_mut()
+            .memvault
+            .join
+            .send_response(channel, resp);
+    }
+    fn gossip_publish(&mut self, topic: gossipsub::IdentTopic, data: Vec<u8>) {
+        let _ = self.0.behaviour_mut().gossipsub.publish(topic, data);
+    }
+}
+
+/// Route a memvault sub-behaviour event into the shared driver. Handles the
+/// request_response Request/Response/failure arms; other events are ignored.
+#[cfg(feature = "memvault")]
+fn dispatch_memvault_event(
+    driver: &mut memvault_swarm::MemvaultDriver,
+    swarm: &mut Swarm<ClusterBehaviour>,
+    ev: memvault_net::MemvaultBehaviourEvent,
+) {
+    use memvault_net::MemvaultBehaviourEvent as MvEv;
+    use request_response::{Event as RrEvent, Message as RrMessage};
+    let mut host = DaemonHost(swarm);
+    match ev {
+        MvEv::BlockExchange(RrEvent::Message {
+            peer,
+            message: RrMessage::Request { channel, request, .. },
+            ..
+        }) => driver.on_block_request(peer, channel, request, &mut host),
+        MvEv::BlockExchange(RrEvent::Message {
+            peer,
+            message: RrMessage::Response { response, .. },
+            ..
+        }) => driver.on_block_response(peer, response, &mut host),
+        MvEv::BlockExchange(RrEvent::OutboundFailure { peer, error, .. }) => {
+            tracing::warn!(%peer, %error, "memvault block exchange outbound failure");
+            driver.on_block_failure(peer);
+        }
+        MvEv::BlockExchange(RrEvent::InboundFailure { peer, error, .. }) => {
+            tracing::warn!(%peer, %error, "memvault block exchange inbound failure");
+            driver.on_block_failure(peer);
+        }
+        MvEv::Join(RrEvent::Message {
+            peer,
+            message: RrMessage::Request { channel, request, .. },
+            ..
+        }) => driver.on_join_request(peer, channel, request, &mut host),
+        MvEv::Join(RrEvent::Message {
+            peer,
+            message: RrMessage::Response { response, .. },
+            ..
+        }) => driver.on_join_response(peer, response, &mut host),
+        _ => {}
+    }
+}
+
+/// Mirror shared swarm events (connection/identify/mdns/gossip) into the
+/// memvault driver, in addition to the daemon's own handling of them.
+#[cfg(feature = "memvault")]
+fn mirror_event_to_memvault(
+    driver: &mut memvault_swarm::MemvaultDriver,
+    swarm: &mut Swarm<ClusterBehaviour>,
+    event: &SwarmEvent<ClusterBehaviourEvent>,
+) {
+    let mut host = DaemonHost(swarm);
+    match event {
+        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            driver.on_connection_established(*peer_id, &mut host);
+        }
+        SwarmEvent::ConnectionClosed { peer_id, .. } => {
+            driver.on_connection_closed(*peer_id);
+        }
+        SwarmEvent::Behaviour(ClusterBehaviourEvent::Identify(identify::Event::Received {
+            peer_id,
+            info,
+            ..
+        })) => {
+            driver.on_identify(*peer_id, &info.listen_addrs, &info.agent_version, &mut host);
+        }
+        SwarmEvent::Behaviour(ClusterBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
+            driver.on_mdns_discovered(peers.iter().cloned(), &mut host);
+        }
+        SwarmEvent::Behaviour(ClusterBehaviourEvent::Gossipsub(gossipsub::Event::Message {
+            propagation_source,
+            message,
+            ..
+        })) => {
+            let topic = message.topic.as_str();
+            if topic == memvault_net::HEADS_TOPIC || topic == memvault_net::ADMIN_TOPIC {
+                driver.on_gossip(*propagation_source, message, &mut host);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Manages the libp2p swarm for cluster p2p networking.
@@ -197,6 +363,10 @@ impl P2pManager {
                     ai_proxy: ai_proxy_behaviour,
                     gossipsub: gossipsub_behaviour,
                     streams: libp2p_stream::Behaviour::new(),
+                    // Composed memvault protocols. Inert (built but never driven)
+                    // unless `config.memvault` is set and the driver is started.
+                    #[cfg(feature = "memvault")]
+                    memvault: memvault_net::MemvaultBehaviour::new(key.public().to_peer_id()),
                 })
             })?
             .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(3600)))
@@ -368,7 +538,7 @@ async fn swarm_loop(
     swarm_listening: Arc<AtomicBool>,
     relay_registered: Arc<AtomicBool>,
     stream_control: libp2p_stream::Control,
-    config: P2pConfig,
+    mut config: P2pConfig,
 ) {
     let mut ad_interval = tokio::time::interval(Duration::from_secs(30));
     let mut evict_interval = tokio::time::interval(Duration::from_secs(15));
@@ -378,6 +548,48 @@ async fn swarm_loop(
 
     // Initialize relay state machine.
     let mut relay = RelayState::new(config.relay_multiaddr.clone());
+
+    // memvault sync: compose the driver over the shared cluster swarm. Subscribe
+    // gossipsub to memvault's heads/admin topics, dial bootstrap peers, and run
+    // the same MemvaultDriver memctl uses.
+    //
+    // The timers + head channel are declared unconditionally so the `select!`
+    // arms (tokio's `select!` does not accept `#[cfg]` on branches) compile in
+    // both feature configurations; the handler bodies and the driver itself are
+    // feature-gated, so when memvault is disabled the arms are inert no-ops.
+    let mut mv_resync = tokio::time::interval(Duration::from_secs(5 * 60));
+    let mut mv_join_retry = tokio::time::interval(Duration::from_secs(15));
+    mv_resync.tick().await; // consume immediate ticks
+    mv_join_retry.tick().await;
+
+    #[cfg(feature = "memvault")]
+    let (mut mv_driver, mut mv_head_rx) = match config.memvault.take() {
+        Some(mv) => {
+            for topic in [
+                memvault_net::gossip::heads_topic(),
+                memvault_net::gossip::admin_topic(),
+            ] {
+                if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&topic) {
+                    tracing::warn!(error = %e, "failed to subscribe to memvault topic");
+                }
+            }
+            for addr in &mv.bootstrap_peers {
+                match swarm.dial(addr.clone()) {
+                    Ok(()) => tracing::info!(%addr, "dialing memvault bootstrap peer"),
+                    Err(e) => tracing::warn!(%addr, error = %e, "memvault bootstrap dial failed"),
+                }
+            }
+            let mut driver =
+                memvault_swarm::MemvaultDriver::new(mv.store, mv.sync_config, mv.join_config);
+            driver.on_start(&mut DaemonHost(&mut swarm));
+            tracing::info!("memvault sync active on cluster swarm");
+            (Some(driver), Some(mv.head_rx))
+        }
+        None => (None, None),
+    };
+    // Inert placeholder so the head `select!` arm type-checks without the feature.
+    #[cfg(not(feature = "memvault"))]
+    let mut mv_head_rx: Option<tokio::sync::mpsc::UnboundedReceiver<()>> = None;
 
     // Subscribe to cluster gossipsub topic if cluster_id is known.
     // May also be updated from the relay registration response.
@@ -405,6 +617,25 @@ async fn swarm_loop(
 
         tokio::select! {
             event = swarm.select_next_some() => {
+                // memvault sync: consume memvault-only sub-behaviour events
+                // (block-exchange / join request-response) and mirror shared
+                // events (connection / identify / mdns / gossip) into the driver.
+                #[cfg(feature = "memvault")]
+                let event = if let Some(driver) = mv_driver.as_mut() {
+                    match event {
+                        SwarmEvent::Behaviour(ClusterBehaviourEvent::Memvault(mv_ev)) => {
+                            dispatch_memvault_event(driver, &mut swarm, mv_ev);
+                            continue;
+                        }
+                        other => {
+                            mirror_event_to_memvault(driver, &mut swarm, &other);
+                            other
+                        }
+                    }
+                } else {
+                    event
+                };
+
                 // Convert swarm events to relay state events + handle general events.
                 let relay_event = match &event {
                     SwarmEvent::ConnectionEstablished { peer_id, .. } => {
@@ -499,6 +730,35 @@ async fn swarm_loop(
             }
             _ = evict_interval.tick() => {
                 peer_registry.write().await.evict_stale();
+            }
+
+            // ── memvault: outbound head announcements from local writes ──
+            head = async {
+                match mv_head_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                #[cfg(feature = "memvault")]
+                if let (Some(driver), Some(outbound)) = (mv_driver.as_mut(), head) {
+                    driver.on_local_head(outbound, &mut DaemonHost(&mut swarm));
+                }
+                #[cfg(not(feature = "memvault"))]
+                let _ = head;
+            }
+            // ── memvault: periodic RBSR resync ──
+            _ = mv_resync.tick() => {
+                #[cfg(feature = "memvault")]
+                if let Some(driver) = mv_driver.as_mut() {
+                    driver.tick_resync(&mut DaemonHost(&mut swarm));
+                }
+            }
+            // ── memvault: /join/1.0 retry while a token is pending ──
+            _ = mv_join_retry.tick() => {
+                #[cfg(feature = "memvault")]
+                if let Some(driver) = mv_driver.as_mut() {
+                    driver.tick_join_retry(&mut DaemonHost(&mut swarm));
+                }
             }
             _ = relay_tick.tick() => {
                 // Drive relay state machine tick (reconnect, re-register).

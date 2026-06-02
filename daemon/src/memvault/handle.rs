@@ -19,6 +19,12 @@ pub struct MemvaultHandle {
     bridge: BlockstoreBridge,
     client: Arc<memvault_api::LocalClient>,
     config: MemvaultConfig,
+    /// The EventBus the LocalClient publishes block-mint events to. Bridged to
+    /// the swarm's outbound-head channel so local writes are gossiped.
+    event_bus: Arc<memvault_api::EventBus>,
+    /// Cluster ID (32 bytes) resolved from the store — used for head
+    /// announcements and bound into NodeAttestations.
+    cluster_id: Vec<u8>,
     /// Join handle for the web server task (if started).
     web_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -46,6 +52,18 @@ impl MemvaultHandle {
         // two paths stay aligned.
         let cluster_id = resolve_cluster_id(&store, &data_dir);
 
+        // Persist the libp2p PeerId so co-process tools (memctl) and the
+        // trust-tree UI read the SAME peer_id the swarm serves with (design
+        // A-1: node key = libp2p key). `peer_id` here is the libp2p PeerId
+        // bytes derived from the host key by the caller.
+        if let Err(e) = store.set_local_peer_id(&peer_id) {
+            warn!("could not persist memvault peer_id: {e}");
+        }
+
+        // The EventBus LocalClient publishes to. Retained so the p2p swarm can
+        // bridge block-mint events into gossip head announcements.
+        let event_bus = Arc::new(memvault_api::EventBus::new(256));
+
         // Create the local client (used by the web API and for internal operations).
         // `open` runs rebuild_if_needed so an out-of-date blockstore is migrated
         // before the web API starts serving requests.
@@ -54,9 +72,9 @@ impl MemvaultHandle {
             Arc::new(RwLock::new(memvault_query::QuotaManager::new(
                 Default::default(),
             ))),
-            Arc::new(memvault_api::EventBus::new(256)),
+            Arc::clone(&event_bus),
             peer_id.clone(),
-            cluster_id,
+            cluster_id.clone(),
         )?;
 
         // Open the redb-bypassing keystore (tokens + key material). A second
@@ -250,7 +268,69 @@ impl MemvaultHandle {
             bridge,
             client,
             config: config.clone(),
+            event_bus,
+            cluster_id,
             web_handle,
+        })
+    }
+
+    /// Assemble the memvault p2p sync wiring so the daemon's libp2p swarm can
+    /// sync memory blocks over the shared cluster connections.
+    ///
+    /// Builds the [`memvault_swarm::JoinConfig`] from the same keystore the
+    /// LocalClient uses (shared assembly, identical to `memctl`), derives the
+    /// node pubkey from the daemon host key (design A-1), parses the configured
+    /// bootstrap peers, and spawns the EventBus→head bridge so local writes are
+    /// announced over gossip. Returns `None` if no usable identity is available.
+    #[cfg(feature = "memvault")]
+    pub fn p2p_sync(
+        &self,
+        host_key: &russh::keys::PrivateKey,
+    ) -> Option<crate::p2p::MemvaultP2p> {
+        // node pubkey = ed25519 verifying key of the daemon host key, matching
+        // the libp2p identity the swarm serves with.
+        let node_pubkey = match crate::p2p::identity::ed25519_dalek_signing_key_from_russh(host_key)
+        {
+            Ok(sk) => sk.verifying_key().to_bytes(),
+            Err(e) => {
+                warn!("memvault p2p: could not derive node pubkey: {e}");
+                return None;
+            }
+        };
+
+        let join_config = memvault_swarm::JoinConfig::from_keystore(
+            Arc::clone(self.client.keystore()),
+            &self.cluster_id,
+            node_pubkey,
+        );
+
+        let sync_config = memvault_swarm::SyncConfig {
+            cluster_id: self.cluster_id.clone(),
+            ..Default::default()
+        };
+
+        let bootstrap_peers: Vec<libp2p::Multiaddr> = self
+            .config
+            .bootstrap_peers
+            .iter()
+            .filter_map(|s| match s.parse() {
+                Ok(addr) => Some(addr),
+                Err(e) => {
+                    warn!(addr = %s, error = %e, "skipping unparseable memvault bootstrap peer");
+                    None
+                }
+            })
+            .collect();
+
+        let (head_tx, head_rx) = memvault_swarm::head_channel();
+        spawn_event_bridge(Arc::clone(&self.event_bus), head_tx);
+
+        Some(crate::p2p::MemvaultP2p {
+            store: Arc::clone(&self.store),
+            sync_config,
+            join_config,
+            bootstrap_peers,
+            head_rx,
         })
     }
 
@@ -391,4 +471,48 @@ fn resolve_cluster_id(store: &memvault_store::MemvaultStore, data_dir: &PathBuf)
         }
     }
     from_file
+}
+
+/// Bridge LocalClient block-mint events to the swarm's outbound-head channel,
+/// so a locally-written/synced block is immediately announced over gossip
+/// instead of waiting for the next RBSR cycle. Mirrors memctl's bridge.
+#[cfg(feature = "memvault")]
+fn spawn_event_bridge(
+    event_bus: Arc<memvault_api::EventBus>,
+    head_tx: tokio::sync::mpsc::UnboundedSender<memvault_swarm::OutboundHead>,
+) {
+    use memvault_api::MemvaultEvent;
+    tokio::spawn(async move {
+        let mut rx = event_bus.subscribe();
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let cid = match &event {
+                        MemvaultEvent::DocCreated { cid, .. }
+                        | MemvaultEvent::DocUpdated { cid, .. }
+                        | MemvaultEvent::BucketCreated { cid, .. }
+                        | MemvaultEvent::Retracted { cid }
+                        | MemvaultEvent::SigchainBlock { cid, .. } => Some(cid.clone()),
+                        MemvaultEvent::TokenConsumed { token_cid } => Some(token_cid.clone()),
+                        _ => None,
+                    };
+                    if let Some(cid) = cid {
+                        if head_tx
+                            .send(memvault_swarm::OutboundHead {
+                                cid,
+                                bucket_id: None,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "memvault event bus lagged, some heads not announced");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
 }

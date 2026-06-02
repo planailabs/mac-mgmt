@@ -8545,6 +8545,7 @@ dependencies = [
  "memvault-net",
  "memvault-query",
  "memvault-store",
+ "memvault-swarm",
  "memvault-web",
  "multihash",
  "notify",

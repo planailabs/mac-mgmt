@@ -1210,9 +1210,48 @@ pub async fn run(
         }
     }
 
-    // Start the libp2p P2P manager if relay_multiaddr is configured.
+    // Initialize memvault BEFORE the p2p swarm so its store, identity, and
+    // sync wiring can be composed into the cluster swarm (one swarm, one
+    // identity). The peer_id is the libp2p PeerId bytes derived from the same
+    // host key the swarm uses (design A-1: node key = libp2p key) — NOT a
+    // separate hash — so join/attestation peer matching lines up.
+    #[cfg(feature = "memvault")]
+    let memvault_handle = if cfg.memvault.enabled {
+        match crate::p2p::identity::keypair_from_russh(&host_key) {
+            Ok(kp) => {
+                let memvault_peer_id = kp.public().to_peer_id().to_bytes();
+                match crate::memvault::MemvaultHandle::init(&cfg.memvault, memvault_peer_id).await {
+                    Ok(h) => {
+                        tracing::info!("memvault subsystem active");
+                        Some(h)
+                    }
+                    Err(e) => {
+                        tracing::error!("failed to initialize memvault: {e:#}");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("memvault: failed to derive libp2p peer_id: {e:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Start the libp2p P2P manager if relay_multiaddr is configured, or if
+    // memvault sync is enabled (it rides the same swarm and needs it running
+    // to dial bootstrap peers).
+    #[cfg(all(feature = "relay", feature = "memvault"))]
+    let memvault_wants_swarm = memvault_handle.is_some();
+    #[cfg(all(feature = "relay", not(feature = "memvault")))]
+    let memvault_wants_swarm = false;
     #[cfg(feature = "relay")]
-    let mut _p2p_mgr = if cfg.relay.relay_multiaddr.is_some() || cfg.relay.mdns_enabled {
+    let mut _p2p_mgr = if cfg.relay.relay_multiaddr.is_some()
+        || cfg.relay.mdns_enabled
+        || memvault_wants_swarm
+    {
         let relay_multiaddr = cfg
             .relay
             .relay_multiaddr
@@ -1257,6 +1296,9 @@ pub async fn run(
             relay_registered: Some(p2p_relay_registered.clone()),
             #[cfg(not(feature = "services"))]
             relay_registered: None,
+            // Compose memvault sync into this swarm when enabled.
+            #[cfg(feature = "memvault")]
+            memvault: memvault_handle.as_ref().and_then(|h| h.p2p_sync(&host_key)),
         };
         match crate::p2p::P2pManager::new(&host_key, p2p_config).await {
             Ok(mgr) => {
@@ -1332,29 +1374,8 @@ pub async fn run(
         ))
     };
 
-    // Initialize memvault if enabled.
-    #[cfg(feature = "memvault")]
-    let memvault_handle = if cfg.memvault.enabled {
-        let memvault_peer_id = {
-            use russh::keys::PublicKeyBase64;
-            use sha2::{Digest, Sha256};
-            Sha256::digest(&host_key.public_key_bytes()).to_vec()
-        };
-        match crate::memvault::MemvaultHandle::init(&cfg.memvault, memvault_peer_id).await {
-            Ok(h) => {
-                tracing::info!("memvault subsystem active");
-                Some(h)
-            }
-            Err(e) => {
-                tracing::error!("failed to initialize memvault: {e:#}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     // Build the Daemon struct with all long-lived state.
+    // (memvault was initialized earlier, before the p2p swarm.)
     let mut daemon = Daemon {
         server_url,
         server_token,
