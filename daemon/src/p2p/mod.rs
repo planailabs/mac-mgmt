@@ -231,7 +231,9 @@ fn mirror_event_to_memvault(
             ..
         })) => {
             let topic = message.topic.as_str();
-            if topic == memvault_net::HEADS_TOPIC || topic == memvault_net::ADMIN_TOPIC {
+            if memvault_net::gossip::is_heads_topic(topic)
+                || memvault_net::gossip::is_admin_topic(topic)
+            {
                 driver.on_gossip(*propagation_source, message, &mut host);
             }
         }
@@ -565,9 +567,11 @@ async fn swarm_loop(
     #[cfg(feature = "memvault")]
     let (mut mv_driver, mut mv_head_rx) = match config.memvault.take() {
         Some(mv) => {
+            // Cluster-scoped memvault topics: mesh only with same-cluster
+            // peers (matches publish_head's heads_topic_for(cluster_id)).
             for topic in [
-                memvault_net::gossip::heads_topic(),
-                memvault_net::gossip::admin_topic(),
+                memvault_net::gossip::heads_topic_for(&mv.sync_config.cluster_id),
+                memvault_net::gossip::admin_topic_for(&mv.sync_config.cluster_id),
             ] {
                 if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&topic) {
                     tracing::warn!(error = %e, "failed to subscribe to memvault topic");
