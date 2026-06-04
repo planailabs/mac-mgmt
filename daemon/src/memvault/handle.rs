@@ -316,6 +316,8 @@ impl MemvaultHandle {
 
         let sync_config = memvault_swarm::SyncConfig {
             cluster_id: self.cluster_id.clone(),
+            kad_server: self.config.kad_server,
+            kad_bootstrap_interval_secs: self.config.kad_bootstrap_interval_secs,
             ..Default::default()
         };
 

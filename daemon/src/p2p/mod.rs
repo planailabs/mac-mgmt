@@ -113,6 +113,18 @@ impl memvault_swarm::MemvaultHost for DaemonHost<'_> {
     fn kad_add_address(&mut self, peer: &PeerId, addr: Multiaddr) {
         self.0.behaviour_mut().memvault.kad.add_address(peer, addr);
     }
+    fn kad_set_server_mode(&mut self) {
+        self.0
+            .behaviour_mut()
+            .memvault
+            .kad
+            .set_mode(Some(kad::Mode::Server));
+    }
+    fn kad_bootstrap(&mut self) {
+        if let Err(e) = self.0.behaviour_mut().memvault.kad.bootstrap() {
+            tracing::debug!(error = %e, "kademlia bootstrap skipped (no known peers)");
+        }
+    }
     fn send_block_request(&mut self, peer: &PeerId, req: memvault_net::BlockRequest) {
         self.0
             .behaviour_mut()
@@ -566,23 +578,10 @@ async fn swarm_loop(
     mv_resync.tick().await; // consume immediate ticks
     mv_join_retry.tick().await;
 
-    // Periodic Kademlia bootstrap (self-lookup that refreshes/expands the
-    // routing table). Interval from MEMVAULT_KAD_BOOTSTRAP_INTERVAL_SECS;
-    // 0/unset disables. `kad_bootstrap_enabled` also drives an initial
-    // bootstrap below.
-    let kad_bootstrap_secs: u64 = std::env::var("MEMVAULT_KAD_BOOTSTRAP_INTERVAL_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    let kad_bootstrap_enabled = kad_bootstrap_secs > 0;
-    let mut kad_bootstrap_tick = tokio::time::interval(Duration::from_secs(
-        if kad_bootstrap_enabled {
-            kad_bootstrap_secs
-        } else {
-            365 * 24 * 3600 // effectively never; arm is also no-op when disabled
-        },
-    ));
-    kad_bootstrap_tick.tick().await; // consume immediate tick
+    // Optional periodic Kademlia bootstrap timer; armed from the driver's
+    // configured interval in the memvault init below (None disables it).
+    #[cfg_attr(not(feature = "memvault"), allow(unused_mut))]
+    let mut kad_bootstrap_timer: Option<tokio::time::Interval> = None;
 
     #[cfg(feature = "memvault")]
     let (mut mv_driver, mut mv_head_rx) = match config.memvault.take() {
@@ -618,37 +617,19 @@ async fn swarm_loop(
                 }
             }
 
-            // Force Kademlia into server mode when MEMVAULT_KAD_SERVER is set
-            // (truthy). Otherwise libp2p auto-detects mode from confirmed
-            // external addresses — which can leave a NATed node stuck as a
-            // client and undiscoverable via the DHT.
-            if std::env::var("MEMVAULT_KAD_SERVER")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false)
-            {
-                swarm
-                    .behaviour_mut()
-                    .memvault
-                    .kad
-                    .set_mode(Some(kad::Mode::Server));
-                tracing::info!("kademlia mode forced to server (MEMVAULT_KAD_SERVER)");
-            }
-
             let mut driver =
                 memvault_swarm::MemvaultDriver::new(mv.store, mv.sync_config, mv.join_config);
+            // on_start applies Kademlia server mode + the initial bootstrap
+            // (both driven by SyncConfig); we just arm the periodic timer.
             driver.on_start(&mut DaemonHost(&mut swarm));
-
-            // Kick an initial bootstrap once the seed addresses above are in the
-            // routing table. Fails harmlessly if no peers are known yet — the
-            // periodic tick retries.
-            if kad_bootstrap_enabled {
-                match swarm.behaviour_mut().memvault.kad.bootstrap() {
-                    Ok(_) => tracing::info!("kademlia bootstrap initiated"),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "initial kademlia bootstrap skipped (no known peers)")
-                    }
+            kad_bootstrap_timer = match driver.kad_bootstrap_interval() {
+                Some(d) => {
+                    let mut t = tokio::time::interval(d);
+                    t.tick().await; // consume immediate; on_start already bootstrapped
+                    Some(t)
                 }
-            }
+                None => None,
+            };
 
             tracing::info!("memvault sync active on cluster swarm");
             (Some(driver), Some(mv.head_rx))
@@ -828,14 +809,16 @@ async fn swarm_loop(
                     driver.tick_join_retry(&mut DaemonHost(&mut swarm));
                 }
             }
-            // ── memvault: periodic Kademlia bootstrap (env-gated) ──
-            _ = kad_bootstrap_tick.tick() => {
+            // ── memvault: periodic Kademlia bootstrap (None disables) ──
+            _ = async {
+                match kad_bootstrap_timer.as_mut() {
+                    Some(t) => { t.tick().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
                 #[cfg(feature = "memvault")]
-                if kad_bootstrap_enabled && mv_driver.is_some() {
-                    match swarm.behaviour_mut().memvault.kad.bootstrap() {
-                        Ok(_) => tracing::debug!("periodic kademlia bootstrap"),
-                        Err(e) => tracing::debug!(error = %e, "periodic kademlia bootstrap skipped"),
-                    }
+                if let Some(driver) = mv_driver.as_ref() {
+                    driver.tick_kad_bootstrap(&mut DaemonHost(&mut swarm));
                 }
             }
             _ = relay_tick.tick() => {

@@ -1817,6 +1817,23 @@ pub struct MemvaultConfig {
     #[schemars(description = "Port for the memvault API server (default 8401)")]
     #[serde(default = "default_memvault_port")]
     pub port: u16,
+    #[schemars(
+        description = "Force the Kademlia DHT into server mode. When false, libp2p \
+                       auto-detects mode from confirmed external addresses — which can \
+                       leave a NATed node stuck as a client and undiscoverable via the \
+                       DHT. Set true on publicly-reachable nodes (e.g. relays/bootstrap).",
+        extend("x-advanced" = true),
+    )]
+    #[serde(default)]
+    pub kad_server: bool,
+    #[schemars(
+        description = "Interval in seconds between Kademlia bootstrap rounds (a self-lookup \
+                       that refreshes and expands the routing table). 0 disables periodic \
+                       bootstrap; when > 0 an initial bootstrap also runs at startup.",
+        extend("x-advanced" = true),
+    )]
+    #[serde(default)]
+    pub kad_bootstrap_interval_secs: u64,
 }
 
 // ── Cluster Config (what the server manages per-cluster) ──────────────

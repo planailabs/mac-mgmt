@@ -255,8 +255,10 @@ Distributed p2p memory store for AI context sharing across cluster nodes. Requir
 | `enabled` | `false` | Whether memvault is started |
 | `data_dir` | `"~/.local/share/memvault"` | Data directory for storage (redb, identity) |
 | `cluster_id` | `""` | Base58-encoded 32-byte cluster ID, or `"auto"` to generate on first run |
-| `bootstrap_peers` | `[]` | libp2p multiaddrs for Kademlia bootstrap |
+| `bootstrap_peers` | `[]` | libp2p multiaddrs for Kademlia bootstrap + initial connections. Include the `/p2p/<peer-id>` suffix so the peer is seeded into the DHT routing table before Identify completes |
 | `port` | `8401` | API server port (bearer token auto-generated in `data_dir/api.token`) |
+| `kad_server` | `false` | Force the Kademlia DHT into server mode. When `false`, libp2p auto-detects mode from confirmed external addresses — which can leave a NATed node stuck as a client and undiscoverable via the DHT. Set `true` on publicly-reachable nodes (relays/bootstrap) |
+| `kad_bootstrap_interval_secs` | `0` | Seconds between Kademlia bootstrap rounds (a self-lookup that refreshes/expands the routing table). `0` disables periodic bootstrap; when `> 0` an initial bootstrap also runs at startup |
 
 ## Example configuration
 
