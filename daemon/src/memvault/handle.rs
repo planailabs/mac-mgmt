@@ -186,6 +186,14 @@ impl MemvaultHandle {
             warn!("could not ensure legacy-bucket agent grant: {e}");
         }
 
+        // Materialize any missing canonical agent buckets that legacy buckets
+        // alias onto, then rebuild the alias maps. Runs here (not at open)
+        // because creating the canonical decl needs the node signing key set
+        // above. Idempotent. Without this, a legacy agent bucket aliasing onto
+        // a never-created canonical would be hidden from listings with no
+        // canonical to surface it.
+        client.run_agent_bucket_migration();
+
         // Load or rebuild the full-text search index.
         let index_cache_path = data_dir.join("text_index.json");
         match client.load_or_rebuild_index(&index_cache_path).await {
