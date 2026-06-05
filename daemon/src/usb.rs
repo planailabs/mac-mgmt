@@ -109,6 +109,17 @@ impl StackOpts {
     }
 }
 
+/// Set an environment variable only if it is not already set (respect the
+/// user's override). Call single-threaded, before the tokio runtime starts.
+fn set_env_default(key: &str, val: &str) {
+    if std::env::var_os(key).is_none() {
+        // SAFETY: called single-threaded during pre-runtime startup.
+        unsafe {
+            std::env::set_var(key, val);
+        }
+    }
+}
+
 /// True for `1`/`true`/`yes`/`on` (case-insensitive) env values.
 fn env_flag(key: &str) -> bool {
     std::env::var(key)
@@ -172,6 +183,18 @@ fn run_main(mut args: Vec<String>) -> Result<()> {
     // SAFETY: single-threaded startup, before the tokio runtime.
     unsafe {
         std::env::set_var("HOME", &opts.home);
+    }
+
+    if opts.ui {
+        // Harden the GTK/webview environment before the window opens (done here,
+        // single-threaded). Loading the system fcitx5 GTK input-method module
+        // into the nix-built GTK (different GLib ABI) segfaults the webview, so
+        // force the built-in simple IM; skip the a11y bus (HOME is repinned to
+        // the stick, so the at-spi socket dir isn't ours); and disable webkit GL
+        // compositing, which crashes on some drivers.
+        set_env_default("GTK_IM_MODULE", "gtk-im-context-simple");
+        set_env_default("NO_AT_BRIDGE", "1");
+        set_env_default("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     }
 
     // Select + prepare the nix runtime *before* building the tokio runtime: the
