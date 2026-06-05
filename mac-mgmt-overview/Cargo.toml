@@ -27,6 +27,7 @@ path = "src/lib.rs"
 # on Linux (added to flake.nix).
 dioxus = { version = "0.8.0-alpha.0", features = ["desktop"] }
 plan-ai-design = { path = "../memvault/plan-ai-design" }
+mac-mgmt-config-ui = { path = "../config-ui" }
 # Loopback http only — no TLS backend needed.
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde = { version = "1", features = ["derive"] }

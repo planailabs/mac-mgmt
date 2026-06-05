@@ -10,8 +10,15 @@
 //! `usb::main`) launches this after bringing the stack up on background threads.
 
 use dioxus::prelude::*;
+use mac_mgmt_config_ui::ConfigEditor;
 use plan_ai_design::{Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card};
 use serde::Deserialize;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Tab {
+    Services,
+    Config,
+}
 
 /// Launch the overview desktop window. `control_port` is the loopback port of
 /// the daemon's control/status API; `memvault_url` (if any) is linked from the
@@ -78,9 +85,35 @@ async fn post_action(action: &str, name: &str) {
         .await;
 }
 
+async fn fetch_json(path: &str) -> Option<serde_json::Value> {
+    reqwest::get(format!("{}{path}", base_url()))
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()
+}
+
+async fn put_config(json: String) -> Result<(), String> {
+    let resp = reqwest::Client::new()
+        .put(format!("{}/config", base_url()))
+        .header("content-type", "application/json")
+        .body(json)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        let body = resp.text().await.unwrap_or_default();
+        Err(format!("save failed: {body}"))
+    }
+}
+
 #[component]
 fn App() -> Element {
     let mut status = use_resource(|| async move { fetch_status().await });
+    let mut tab = use_signal(|| Tab::Services);
 
     let snapshot = status.read().clone();
 
@@ -96,9 +129,23 @@ fn App() -> Element {
                 }}
                 Button {
                     size: ButtonSize::Sm,
-                    variant: ButtonVariant::Ghost,
-                    onclick: move |_| status.restart(),
-                    "Refresh"
+                    variant: if *tab.read() == Tab::Services { ButtonVariant::Primary } else { ButtonVariant::Ghost },
+                    onclick: move |_| tab.set(Tab::Services),
+                    "Services"
+                }
+                Button {
+                    size: ButtonSize::Sm,
+                    variant: if *tab.read() == Tab::Config { ButtonVariant::Primary } else { ButtonVariant::Ghost },
+                    onclick: move |_| tab.set(Tab::Config),
+                    "Config"
+                }
+                if *tab.read() == Tab::Services {
+                    Button {
+                        size: ButtonSize::Sm,
+                        variant: ButtonVariant::Ghost,
+                        onclick: move |_| status.restart(),
+                        "Refresh"
+                    }
                 }
                 if let Some(url) = memvault_url() {
                     Button {
@@ -110,29 +157,34 @@ fn App() -> Element {
                 }
             }
 
-            Card {
-                {match snapshot {
-                    None => rsx! { p { "Loading…" } },
-                    Some(s) => {
-                        if let Some(err) = s.error {
-                            rsx! { p { class: "overview-error", "{err}" } }
-                        } else if s.services.is_empty() {
-                            rsx! { p { "No services registered." } }
-                        } else {
-                            let offline = s.offline;
-                            rsx! {
-                                table { class: "overview-table",
-                                    thead { tr { th { "Service" } th { "State" } th { "Program" } th { "Actions" } } }
-                                    tbody {
-                                        for svc in s.services.iter().cloned() {
-                                            ServiceRow { svc, offline, on_changed: move |_| status.restart() }
+            match *tab.read() {
+                Tab::Services => rsx! {
+                    Card {
+                        {match snapshot {
+                            None => rsx! { p { "Loading…" } },
+                            Some(s) => {
+                                if let Some(err) = s.error {
+                                    rsx! { p { class: "overview-error", "{err}" } }
+                                } else if s.services.is_empty() {
+                                    rsx! { p { "No services registered." } }
+                                } else {
+                                    let offline = s.offline;
+                                    rsx! {
+                                        table { class: "overview-table",
+                                            thead { tr { th { "Service" } th { "State" } th { "Program" } th { "Actions" } } }
+                                            tbody {
+                                                for svc in s.services.iter().cloned() {
+                                                    ServiceRow { svc, offline, on_changed: move |_| status.restart() }
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
+                        }}
                     }
-                }}
+                },
+                Tab::Config => rsx! { ConfigView {} },
             }
         }
     }
@@ -188,6 +240,55 @@ fn ServiceRow(svc: Svc, offline: bool, on_changed: EventHandler<()>) -> Element 
                     },
                     "Restart"
                 }
+            }
+        }
+    }
+}
+
+/// Config tab — loads the daemon config + schema and renders the shared
+/// schema-driven editor (the same component the server uses). Saving PUTs the
+/// edited JSON to the control API, which validates + persists config.json.
+#[component]
+fn ConfigView() -> Element {
+    let mut config = use_resource(|| async move { fetch_json("/config").await });
+    let schema = use_resource(|| async move { fetch_json("/config/schema").await });
+    let mut saving = use_signal(|| false);
+    let mut save_err = use_signal(|| None::<String>);
+    let mut saved_note = use_signal(|| None::<String>);
+
+    let cfg = config.read().clone().flatten();
+    let sch = schema.read().clone().flatten();
+
+    rsx! {
+        Card {
+            if let Some(note) = saved_note.read().clone() {
+                p { class: "config-saved-note", "{note}" }
+            }
+            match (sch, cfg) {
+                (Some(schema), Some(initial)) => rsx! {
+                    ConfigEditor {
+                        schema,
+                        initial,
+                        saving: saving(),
+                        error: save_err(),
+                        on_save: move |json: String| {
+                            saving.set(true);
+                            saved_note.set(None);
+                            spawn(async move {
+                                match put_config(json).await {
+                                    Ok(()) => {
+                                        save_err.set(None);
+                                        saved_note.set(Some("Saved to config.json — restart the stack to apply.".into()));
+                                        config.restart();
+                                    }
+                                    Err(e) => save_err.set(Some(e)),
+                                }
+                                saving.set(false);
+                            });
+                        },
+                    }
+                },
+                _ => rsx! { p { "Loading config…" } },
             }
         }
     }

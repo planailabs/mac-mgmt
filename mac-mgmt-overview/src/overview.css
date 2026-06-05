@@ -16,3 +16,18 @@ body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
 .btn { cursor: pointer; padding: 0.3rem 0.6rem; border-radius: 6px; border: 1px solid rgba(128,128,128,0.4); background: transparent; font-size: 0.85rem; }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid rgba(128,128,128,0.4); }
+
+/* Shared config editor */
+.config-editor-bar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+.config-editor-dirty { color: #d35400; font-size: 0.8rem; }
+.config-editor-error { color: #c0392b; }
+.config-saved-note { color: #27ae60; font-size: 0.85rem; }
+.config-editor-raw { width: 100%; min-height: 360px; font-family: ui-monospace, monospace; font-size: 0.82rem; }
+.config-section { margin-bottom: 0.5rem; }
+.config-section h3 { margin: 0 0 0.25rem; font-size: 0.95rem; }
+.config-section-desc { margin: 0 0 0.5rem; opacity: 0.65; font-size: 0.8rem; }
+.config-field { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
+.config-field-label { flex: 0 0 220px; font-size: 0.85rem; }
+.config-field-help { opacity: 0.5; cursor: help; }
+.config-field-json { flex: 1; min-height: 4rem; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+.config-field input[type=text], .config-field input[type=number] { flex: 1; padding: 0.25rem 0.4rem; }
