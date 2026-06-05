@@ -159,6 +159,15 @@ fn run_main(mut args: Vec<String>) -> Result<()> {
     std::fs::create_dir_all(&opts.home)
         .with_context(|| format!("failed to create home dir {}", opts.home.display()))?;
 
+    // Pin everything to the stick: point HOME at the stick dir so the supervisor
+    // socket, nix profile, config dir, and nix-portable state all live under it
+    // (fully relocatable, never writes the host's real home). Done here,
+    // single-threaded, before any runtime/thread is created.
+    // SAFETY: single-threaded startup, before the tokio runtime.
+    unsafe {
+        std::env::set_var("HOME", &opts.home);
+    }
+
     // Select + prepare the nix runtime *before* building the tokio runtime: the
     // Portable path enters a mount namespace, which only moves the calling
     // thread, so it must happen while we are still single-threaded.
