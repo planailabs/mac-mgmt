@@ -8,6 +8,10 @@ config-editor-paste-placeholder = JSON-Konfiguration hier einfügen...
 config-editor-schema-error = Schema konnte nicht geladen werden: { $error }
 config-editor-loading-schema = Schema wird geladen...
 config-editor-save = Konfiguration speichern
+config-filter-all = Alle
+config-filter-enabled = Aktiv
+config-filter-modified = Geändert
+config-filter-errors = Fehler
 config-save-unsaved = Ungespeicherte Änderungen
 config-save-summary = { $fields ->
     [one] { $fields } ungespeicherte Änderung
@@ -76,3 +80,14 @@ extra-config-add = + hinzufügen
 extra-config-add-item = + Element hinzufügen
 
 secrets-title = Secret-Vault
+model-select-title = Modelle auswählen
+model-select-search = Modelle suchen…
+model-select-show-selected = Ausgewählte anzeigen
+model-select-custom = Benutzerdefiniert
+model-select-custom-placeholder = Modell-ID eingeben…
+model-select-loading = Modelle werden geladen…
+model-select-error = Fehler beim Laden der Modelle: { $error }
+model-select-catalog = Aus Katalog
+model-select-apply = Anwenden
+model-select-apply-count = Anwenden ({ $count })
+model-select-browse = Modelle auswählen…

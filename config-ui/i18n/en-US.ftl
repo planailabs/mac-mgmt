@@ -8,6 +8,10 @@ config-editor-paste-placeholder = Paste JSON config here...
 config-editor-schema-error = Failed to load schema: { $error }
 config-editor-loading-schema = Loading schema...
 config-editor-save = Save Config
+config-filter-all = All
+config-filter-enabled = Enabled
+config-filter-modified = Modified
+config-filter-errors = Errors
 config-save-unsaved = Unsaved changes
 config-save-summary = { $fields ->
     [one] { $fields } unsaved change
@@ -76,3 +80,14 @@ extra-config-add = + add
 extra-config-add-item = + add item
 
 secrets-title = Secrets Vault
+model-select-title = Select Models
+model-select-search = Search models…
+model-select-show-selected = Show selected
+model-select-custom = Custom
+model-select-custom-placeholder = Enter model ID…
+model-select-loading = Loading models…
+model-select-error = Failed to load models: { $error }
+model-select-catalog = From catalog
+model-select-apply = Apply
+model-select-apply-count = Apply ({ $count })
+model-select-browse = Select models…
