@@ -6,7 +6,7 @@ edition = "2024"
 # Its own workspace root (like plan-ai-design / mac-mgmt-overview) so it builds
 # standalone and isn't absorbed by the parent workspace. Depended on by path
 # from BOTH the server (a workspace member) and the overview (its own
-# workspace), giving one shared, schema-driven config editor — not a clone.
+# workspace), giving one shared config editor — not a clone.
 [workspace]
 
 [patch.crates-io]
@@ -21,6 +21,9 @@ path = "src/lib.rs"
 
 [dependencies]
 dioxus = "0.8.0-alpha.0"
-plan-ai-design = { path = "../memvault/plan-ai-design" }
+dioxus-i18n = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# For ModelSource (the model-picker modal). common doesn't use dioxus, so the
+# patch above doesn't affect it.
+mac-mgmt-common = { path = "../common" }

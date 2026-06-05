@@ -112,6 +112,32 @@ async fn put_config(json: String) -> Result<(), String> {
 
 #[component]
 fn App() -> Element {
+    // The shared config editor uses `t!`, so an i18n context must exist.
+    // Concatenate plan-ai-design + config-ui translations.
+    use dioxus_i18n::prelude::*;
+    use unic_langid::langid;
+    use_init_i18n(|| {
+        let en: &'static str = Box::leak(
+            format!(
+                "{}\n{}",
+                plan_ai_design::i18n::EN_US,
+                mac_mgmt_config_ui::EN_US
+            )
+            .into_boxed_str(),
+        );
+        let de: &'static str = Box::leak(
+            format!(
+                "{}\n{}",
+                plan_ai_design::i18n::DE_DE,
+                mac_mgmt_config_ui::DE_DE
+            )
+            .into_boxed_str(),
+        );
+        I18nConfig::new(langid!("en-US"))
+            .with_locale(Locale::new_static(langid!("en-US"), en))
+            .with_locale(Locale::new_static(langid!("de-DE"), de))
+    });
+
     let mut status = use_resource(|| async move { fetch_status().await });
     let mut tab = use_signal(|| Tab::Services);
 
@@ -267,10 +293,11 @@ fn ConfigView() -> Element {
             match (sch, cfg) {
                 (Some(schema), Some(initial)) => rsx! {
                     ConfigEditor {
+                        cluster_id: "usb".to_string(),
                         schema,
                         initial,
                         saving: saving(),
-                        error: save_err(),
+                        save_error: save_err(),
                         on_save: move |json: String| {
                             saving.set(true);
                             saved_note.set(None);
