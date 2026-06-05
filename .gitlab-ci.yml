@@ -51,3 +51,18 @@ deploy:
   timeout: 3h
   environment: production
   resource_group: production
+
+# Sovereign-AI USB build: per-arch static-musl `mac-mgmt --features usb`
+# tarballs published as GitLab Release assets, which the in-binary updater
+# (daemon/src/usb_update.rs) downloads. Separate from the xzar/docker deploy.
+usb-release:
+  stage: deploy
+  tags:
+    - nix-image
+  only:
+    - trunk
+  script:
+    - nix develop -c bash usb-release.sh
+  timeout: 3h
+  environment: production
+  resource_group: production
