@@ -343,7 +343,22 @@
             binaryen  # wasm-opt
             lld
 
-          ] ++ darwinDeps;
+          ] ++ darwinDeps
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            # Native overview desktop app (mac-mgmt --features usb-ui →
+            # dioxus desktop / wry). Linux webview stack + GObject deps.
+            pkgs.webkitgtk_4_1
+            pkgs.gtk3
+            pkgs.libsoup_3
+            pkgs.glib-networking
+            pkgs.glib
+            pkgs.cairo
+            pkgs.pango
+            pkgs.atk
+            pkgs.gdk-pixbuf
+            pkgs.librsvg
+            pkgs.wrapGAppsHook
+          ];
 
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";

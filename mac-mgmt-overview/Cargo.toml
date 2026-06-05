@@ -1,0 +1,34 @@
+[package]
+name = "mac-mgmt-overview"
+version = "0.1.0"
+edition = "2024"
+
+# Its own workspace root (like plan-ai-design): builds standalone and is NOT a
+# member of the parent mac-mgmt workspace, so headless `cargo build --workspace`
+# never pulls in the wry/webkitgtk desktop stack. The daemon depends on it by
+# path, behind the optional `usb-ui` feature.
+[workspace]
+
+# [patch] only applies from the root of the current build. When built as a path
+# dependency of the parent workspace, the parent's [patch] applies; these are
+# for standalone builds. Keep in sync with the parent workspace + plan-ai-design.
+[patch.crates-io]
+dioxus = { git = "https://github.com/mkg20001/dioxus.git", branch = "feat/embed" }
+dioxus-server = { git = "https://github.com/mkg20001/dioxus.git", branch = "feat/embed" }
+dioxus-i18n = { git = "https://github.com/mkg20001/dioxus-i18n.git", branch = "feat/dioxus-0.8" }
+dioxus-tabular = { git = "https://github.com/mkg20001/dioxus-tabular.git", branch = "feat/dioxus-0.8" }
+
+[lib]
+name = "mac_mgmt_overview"
+path = "src/lib.rs"
+
+[dependencies]
+# Native desktop renderer (wry/tao webview). Requires webkit2gtk at build time
+# on Linux (added to flake.nix).
+dioxus = { version = "0.8.0-alpha.0", features = ["desktop"] }
+plan-ai-design = { path = "../memvault/plan-ai-design" }
+# Loopback http only — no TLS backend needed.
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"

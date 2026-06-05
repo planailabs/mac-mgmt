@@ -449,8 +449,20 @@ async fn maybe_serve_memvault(_opts: &StackOpts) -> Option<String> {
     None
 }
 
-/// Run the native overview desktop window on the main thread. Implemented in
-/// the overview phase; until then this is unavailable.
+/// Run the native overview desktop window on the main thread (it owns the wry
+/// event loop). Requires the `usb-ui` feature; otherwise the caller must use
+/// `--headless`.
+#[cfg(feature = "usb-ui")]
+fn run_overview_ui(handle: &StackHandle, _runtime: &tokio::runtime::Runtime) -> Result<()> {
+    mac_mgmt_overview::launch(handle.metrics_port, handle.memvault_url.clone());
+    // The window has closed — ask the stack to shut down.
+    handle.request_shutdown();
+    Ok(())
+}
+
+#[cfg(not(feature = "usb-ui"))]
 fn run_overview_ui(_handle: &StackHandle, _runtime: &tokio::runtime::Runtime) -> Result<()> {
-    anyhow::bail!("overview desktop UI is not yet available — use --headless")
+    anyhow::bail!(
+        "this build has no desktop overview (built without the `usb-ui` feature) — use --headless"
+    )
 }

@@ -28,6 +28,10 @@ usb = [
     "services", "memvault", "embed",
     "dep:self-replace", "dep:tar", "dep:flate2",
 ]
+# The native overview desktop app (wry/webkitgtk). Kept separate from `usb` so
+# the headless stack (and all tests/CI) builds without the desktop GUI stack;
+# the release build adds it. Requires webkit2gtk at build time (see flake.nix).
+usb-ui = ["usb", "dep:mac-mgmt-overview"]
 sim = []
 # WASM client for the memvault web UI — built by dx for embedding.
 # Both `web` and `server` (via memvault) compile the same App component from
@@ -114,3 +118,6 @@ memvault-net = { path = "../memvault/crates/memvault-net", optional = true }
 memvault-swarm = { path = "../memvault/crates/memvault-swarm", optional = true }
 memvault-query = { path = "../memvault/crates/memvault-query", optional = true }
 axum = { version = "0.8", optional = true }
+# Native overview desktop app — its own workspace root; pulled in only by the
+# `usb-ui` feature so headless builds never touch the wry/webkitgtk stack.
+mac-mgmt-overview = { path = "../mac-mgmt-overview", optional = true }

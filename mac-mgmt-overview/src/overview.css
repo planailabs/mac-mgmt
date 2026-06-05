@@ -1,0 +1,18 @@
+/* Minimal standalone styling for the overview window. plan-ai-design component
+   classes (btn, badge) degrade gracefully even without the full design CSS. */
+:root { color-scheme: light dark; }
+body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
+.overview { padding: 1.25rem; max-width: 880px; margin: 0 auto; }
+.overview-head { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+.overview-head h1 { font-size: 1.25rem; margin: 0; flex: 0 0 auto; }
+.overview-head .btn { margin-left: auto; }
+.overview-head .btn + .btn { margin-left: 0.5rem; }
+.overview-table { width: 100%; border-collapse: collapse; }
+.overview-table th, .overview-table td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid rgba(128,128,128,0.25); }
+.overview-table th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+.overview-actions { display: flex; gap: 0.4rem; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; opacity: 0.85; }
+.overview-error { color: #c0392b; }
+.btn { cursor: pointer; padding: 0.3rem 0.6rem; border-radius: 6px; border: 1px solid rgba(128,128,128,0.4); background: transparent; font-size: 0.85rem; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid rgba(128,128,128,0.4); }
