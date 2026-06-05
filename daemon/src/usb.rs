@@ -19,6 +19,7 @@
 //! stack on background threads, and runs the desktop event loop on the main
 //! thread. See `daemon/src/main.rs` for the early-argv dispatch.
 
+pub mod control;
 pub mod nix_portable;
 pub mod nixpkgs;
 pub mod prefetch;
@@ -240,10 +241,13 @@ impl StackHandle {
     }
 }
 
-/// Bring up the full stack (config load, supervisor, services, memvault)
-/// without the desktop window, against an already-prepared nix `rt`. Returns
-/// once everything is running. This is the headless seam the repo tests drive.
+/// Bring up the full stack (config load, in-process supervisor, services, and
+/// the loopback control/status API) without the desktop window, against an
+/// already-prepared nix `rt`. Returns once everything is running. This is the
+/// headless seam the repo tests drive.
 pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHandle> {
+    use std::sync::Arc;
+
     tracing::info!(
         home = %opts.home.display(),
         offline = opts.network.is_offline(),
@@ -255,20 +259,164 @@ pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHan
     std::fs::create_dir_all(&opts.home)
         .with_context(|| format!("failed to create home dir {}", opts.home.display()))?;
 
-    // Subsequent phases fill in: config load, in-process supervisor, service
-    // install, memvault serving.
-    let (shutdown_tx, _rx) = tokio::sync::watch::channel(false);
+    // Point nix (substituters, nixpkgs, offline) at the on-stick artifacts.
+    configure_nix(&opts);
 
-    anyhow::bail!(
-        "usb stack orchestration is not yet wired up (home={})",
-        opts.home.display()
-    );
-    #[allow(unreachable_code)]
+    // Load config locally — never reach the mac-mgmt server.
+    let mut cfg = load_config(&opts).context("failed to load usb config")?;
+
+    // The supervisor runs in-process for the USB build.
+    // SAFETY: set before ServiceManager::init reads it; single consumer.
+    unsafe {
+        std::env::set_var("INPROCESS_SERVICE_MANAGER", "1");
+    }
+
+    let dispatcher = Arc::new(crate::notify::Dispatcher::new(
+        std::mem::take(&mut cfg.notifications.urls),
+        cfg.notifications.events.take(),
+    ));
+    let log_buf = crate::log_buffer::LogBuffer::new();
+    let metrics = Arc::new(crate::metrics::Metrics::new());
+
+    let mut svc_mgr = crate::service_mgmt::ServiceManager::init(
+        &mut cfg,
+        Arc::clone(&dispatcher),
+        log_buf.clone(),
+    )
+    .context("failed to init service manager")?;
+    svc_mgr.register_metrics(&metrics);
+
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+    let (install_tx, mut install_rx) = tokio::sync::mpsc::channel::<control::InstallReq>(8);
+
+    // Loopback control + status server on an ephemeral port.
+    let control_state = control::ControlState {
+        socket_path: mac_mgmt_services::default_socket_path(),
+        offline: opts.network.is_offline(),
+        install_tx,
+        shutdown_tx: shutdown_tx.clone(),
+    };
+    let listener = tokio::net::TcpListener::bind(("::1", 0))
+        .await
+        .context("failed to bind control server")?;
+    let control_port = listener.local_addr()?.port();
+    let router = control::router(control_state);
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, router).await {
+            tracing::error!("control server exited: {e}");
+        }
+    });
+    tracing::info!("usb control/status API on http://[::1]:{control_port}");
+
+    // Stack loop: initial service bring-up, then periodic health + install
+    // requests, until shutdown.
+    let health_interval = humantime::parse_duration(&cfg.daemon.health_interval)
+        .unwrap_or_else(|_| std::time::Duration::from_secs(30));
+    let metrics_loop = Arc::clone(&metrics);
+    let mut loop_shutdown = shutdown_tx.subscribe();
+    tokio::spawn(async move {
+        // Kick installs + start everything.
+        svc_mgr.retry_failed_installs();
+        svc_mgr.schedule_restart().await;
+        let mut health = tokio::time::interval(health_interval);
+        loop {
+            tokio::select! {
+                _ = health.tick() => {
+                    svc_mgr.health_tick(&metrics_loop, false).await;
+                }
+                Some(req) = install_rx.recv() => {
+                    // Coarse but real: re-attempt installs, then restart.
+                    svc_mgr.retry_failed_installs();
+                    svc_mgr.schedule_restart().await;
+                    let _ = req.resp.send(Ok(()));
+                }
+                _ = loop_shutdown.changed() => {
+                    if *loop_shutdown.borrow() {
+                        tracing::info!("usb stack loop shutting down");
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    // Best-effort: serve the memvault web app on its own port if configured.
+    let memvault_url = maybe_serve_memvault(&opts).await;
+
     Ok(StackHandle {
-        metrics_port: 0,
-        memvault_url: None,
+        metrics_port: control_port,
+        memvault_url,
         shutdown_tx,
     })
+}
+
+/// Configure nix env (substituters, nixpkgs tarball, offline) for the stack.
+fn configure_nix(opts: &StackOpts) {
+    let offline = opts.network.is_offline();
+
+    // Pinned nixpkgs tarball, if cached on the stick.
+    let rev = opts
+        .nixpkgs_rev
+        .clone()
+        .unwrap_or_else(|| nixpkgs::DEFAULT_REV.to_string());
+    let tarball = nixpkgs::cached_path(&opts.home, &rev);
+    if tarball.exists() {
+        // SAFETY: single-threaded pre-runtime / startup config.
+        unsafe {
+            std::env::set_var("MAC_MGMT_NIXPKGS_TARBALL", nixpkgs::flakeref_base(&tarball));
+        }
+    }
+
+    // Substituters: on-stick .nar cache first, then xzar online.
+    let mut caches: Vec<(String, String)> =
+        vec![(store_image::nar_cache_substituter(&opts.home), String::new())];
+    if !offline {
+        caches.push((
+            "https://xzar.plan.ai".to_string(),
+            "xzar.plan.ai:KUE66pjr6UX5HHCn9kedN1DJ2J5nSlBrKmE7tUjXewE=".to_string(),
+        ));
+    }
+    crate::nix::set_nix_caches(caches);
+
+    if offline {
+        unsafe {
+            std::env::set_var("MAC_MGMT_NIX_OFFLINE", "1");
+        }
+    }
+}
+
+/// Load the daemon config from (in order) the explicit `--config`,
+/// `<home>/config.toml`, or the standard config path. Never fetches remote.
+fn load_config(opts: &StackOpts) -> Result<crate::config::Config> {
+    let candidates: Vec<std::path::PathBuf> = opts
+        .config_path
+        .clone()
+        .into_iter()
+        .chain(std::iter::once(opts.home.join("config.toml")))
+        .chain(std::iter::once(crate::config::config_path()))
+        .collect();
+    for path in candidates {
+        if path.exists() {
+            let contents = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            let cfg: crate::config::Config = toml::from_str(&contents)
+                .with_context(|| format!("failed to parse {}", path.display()))?;
+            tracing::info!("loaded usb config from {}", path.display());
+            return Ok(cfg);
+        }
+    }
+    tracing::warn!("no config.toml found; using defaults");
+    Ok(crate::config::Config::default())
+}
+
+/// Best-effort: spawn the memvault web app on its own loopback port. Returns
+/// its URL when started. Memvault remains its own Dioxus web app (unchanged);
+/// the overview links to it.
+async fn maybe_serve_memvault(_opts: &StackOpts) -> Option<String> {
+    // Memvault serving reuses the daemon's existing memvault bridge when a
+    // [memvault] config + data dir are present. Left as an opt-in follow-up so
+    // a minimal stick (no memvault) still boots cleanly.
+    None
 }
 
 /// Run the native overview desktop window on the main thread. Implemented in
