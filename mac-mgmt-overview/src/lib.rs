@@ -12,7 +12,8 @@
 use dioxus::prelude::*;
 use mac_mgmt_config_ui::ConfigEditor;
 use plan_ai_design::{
-    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ThemeToggle, THEME_INIT_SCRIPT,
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, LanguagePicker, ThemeToggle,
+    THEME_INIT_SCRIPT,
 };
 use serde::Deserialize;
 
@@ -118,7 +119,7 @@ fn App() -> Element {
     // Concatenate plan-ai-design + config-ui translations.
     use dioxus_i18n::prelude::*;
     use unic_langid::langid;
-    use_init_i18n(|| {
+    let mut i18n = use_init_i18n(|| {
         let en: &'static str = Box::leak(
             format!(
                 "{}\n{}",
@@ -144,6 +145,21 @@ fn App() -> Element {
     // ThemeToggle in the header then cycles system → light → dark.
     use_effect(|| {
         document::eval(THEME_INIT_SCRIPT);
+    });
+
+    // Restore the saved language (localStorage['lang']); the LanguagePicker
+    // in the header changes + persists it.
+    use_effect(move || {
+        spawn(async move {
+            if let Ok(val) =
+                document::eval("try { return localStorage.getItem('lang') || ''; } catch(e) { return ''; }")
+                    .await
+            {
+                if val.as_str() == Some("de-DE") {
+                    let _ = i18n.set_language(langid!("de-DE"));
+                }
+            }
+        });
     });
 
     let mut status = use_resource(|| async move { fetch_status().await });
@@ -192,6 +208,7 @@ fn App() -> Element {
                         "Open Memvault"
                     }
                 }
+                LanguagePicker {}
                 ThemeToggle {}
             }
 
