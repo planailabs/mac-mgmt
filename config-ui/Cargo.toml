@@ -27,3 +27,7 @@ serde_json = "1"
 # For ModelSource (the model-picker modal). common doesn't use dioxus, so the
 # patch above doesn't affect it.
 mac-mgmt-common = { path = "../common" }
+
+[dev-dependencies]
+# Same parser dioxus-i18n/fluent uses — to assert our bundled FTL is valid.
+fluent-syntax = "0.12"

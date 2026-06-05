@@ -1,4 +1,4 @@
-# Config-editor i18n keys, extracted from server/src/web/en-US.ftl.
+# Config-editor i18n keys, extracted (full multiline entries) from server/src/web/en-US.ftl.
 loading = Loading…
 save = Save
 cancel = Cancel
@@ -10,6 +10,12 @@ config-editor-loading-schema = Loading schema...
 config-editor-save = Save Config
 config-save-unsaved = Unsaved changes
 config-save-summary = { $fields ->
+    [one] { $fields } unsaved change
+   *[other] { $fields } unsaved changes
+} in { $sections ->
+    [one] { $sections } section
+   *[other] { $sections } sections
+}
 config-save-discard = Discard
 config-save-draft = Draft
 config-save-review-diff = Review diff
@@ -35,10 +41,14 @@ config-editor-secret-hint = Use secret:NAME to reference a vault secret, or ente
 config-editor-convert-to-secret = Move to vault
 config-editor-converting = Converting...
 config-editor-advanced = Advanced · { $count } { $count ->
+    [one] field
+    *[other] fields
+}
 config-editor-enabled-suffix = enabled
 config-editor-remove = Remove
 config-editor-on-this-page = On this page
 config-editor-sections-count = sections
+
 category-identity = Identity
 category-llm-providers = LLM Providers
 category-agents = Agents
@@ -46,6 +56,7 @@ category-infra = Infrastructure
 category-ops = Operations
 category-custom = Custom Services
 category-other = Other
+
 extra-config-label = extra_config
 extra-config-help = Arbitrary openclaw.json keys merged after typed fields.
 extra-config-values-set = { $count } value(s) set
@@ -63,4 +74,5 @@ extra-config-loading-schema = Loading schema…
 extra-config-key = key
 extra-config-add = + add
 extra-config-add-item = + add item
+
 secrets-title = Secrets Vault

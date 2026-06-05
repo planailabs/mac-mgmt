@@ -27,3 +27,27 @@ pub use config_editor::ConfigEditor;
 pub const EN_US: &str = include_str!("../i18n/en-US.ftl");
 /// Config-editor Fluent translations (de-DE).
 pub const DE_DE: &str = include_str!("../i18n/de-DE.ftl");
+
+#[cfg(test)]
+mod ftl_tests {
+    use super::*;
+
+    /// The bundled FTL must parse cleanly — a malformed entry (e.g. a truncated
+    /// `{ $n -> … }` select) makes `dioxus_i18n` panic at runtime when the app
+    /// builds its bundle, which is invisible at compile time.
+    fn assert_parses(name: &str, src: &str) {
+        if let Err((_ast, errors)) = fluent_syntax::parser::parse(src) {
+            panic!("{name} has {} Fluent parse error(s): {errors:?}", errors.len());
+        }
+    }
+
+    #[test]
+    fn en_us_ftl_is_valid() {
+        assert_parses("en-US.ftl", EN_US);
+    }
+
+    #[test]
+    fn de_de_ftl_is_valid() {
+        assert_parses("de-DE.ftl", DE_DE);
+    }
+}

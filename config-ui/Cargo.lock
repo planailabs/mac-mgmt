@@ -1057,6 +1057,7 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dioxus-i18n",
+ "fluent-syntax",
  "mac-mgmt-common",
  "serde",
  "serde_json",

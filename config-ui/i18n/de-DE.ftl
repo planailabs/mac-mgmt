@@ -1,4 +1,4 @@
-# Config-editor i18n keys, extracted from server/src/web/de-DE.ftl.
+# Config-editor i18n keys, extracted (full multiline entries) from server/src/web/de-DE.ftl.
 loading = Wird geladen…
 save = Speichern
 cancel = Abbrechen
@@ -10,6 +10,12 @@ config-editor-loading-schema = Schema wird geladen...
 config-editor-save = Konfiguration speichern
 config-save-unsaved = Ungespeicherte Änderungen
 config-save-summary = { $fields ->
+    [one] { $fields } ungespeicherte Änderung
+   *[other] { $fields } ungespeicherte Änderungen
+} in { $sections ->
+    [one] { $sections } Abschnitt
+   *[other] { $sections } Abschnitten
+}
 config-save-discard = Verwerfen
 config-save-draft = Entwurf
 config-save-review-diff = Änderungen prüfen
@@ -35,10 +41,14 @@ config-editor-secret-hint = Nutze secret:NAME um ein Vault-Secret zu referenzier
 config-editor-convert-to-secret = In Vault verschieben
 config-editor-converting = Wird konvertiert...
 config-editor-advanced = Erweitert · { $count } { $count ->
+    [one] Feld
+    *[other] Felder
+}
 config-editor-enabled-suffix = aktiviert
 config-editor-remove = Entfernen
 config-editor-on-this-page = Auf dieser Seite
 config-editor-sections-count = Abschnitte
+
 category-identity = Identität
 category-llm-providers = LLM-Anbieter
 category-agents = Agenten
@@ -46,6 +56,7 @@ category-infra = Infrastruktur
 category-ops = Betrieb
 category-custom = Benutzerdefinierte Dienste
 category-other = Sonstiges
+
 extra-config-label = extra_config
 extra-config-help = Beliebige openclaw.json-Schlüssel, die nach typisierten Feldern zusammengeführt werden.
 extra-config-values-set = { $count } Wert(e) gesetzt
@@ -63,4 +74,5 @@ extra-config-loading-schema = Schema wird geladen…
 extra-config-key = Schlüssel
 extra-config-add = + hinzufügen
 extra-config-add-item = + Element hinzufügen
+
 secrets-title = Secret-Vault
