@@ -340,6 +340,36 @@ pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHan
         }
     });
 
+    // Self-contained binary updater (online only): periodically check GitLab
+    // releases and, on a newer build, self-replace + re-exec.
+    if !opts.network.is_offline() {
+        let mut up_shutdown = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+            // Skip the immediate first tick.
+            tick.tick().await;
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        match crate::usb_update::check_and_apply().await {
+                            Ok(true) => {
+                                tracing::info!("usb update applied; re-exec");
+                                if let Err(e) = crate::usb_update::reexec_self() {
+                                    tracing::error!("re-exec after update failed: {e:#}");
+                                }
+                            }
+                            Ok(false) => {}
+                            Err(e) => tracing::warn!("usb update check failed: {e:#}"),
+                        }
+                    }
+                    _ = up_shutdown.changed() => {
+                        if *up_shutdown.borrow() { break; }
+                    }
+                }
+            }
+        });
+    }
+
     // Best-effort: serve the memvault web app on its own port if configured.
     let memvault_url = maybe_serve_memvault(&opts).await;
 
