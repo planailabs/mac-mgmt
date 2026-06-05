@@ -122,6 +122,21 @@ enum Commands {
     McpMemvault(memvault_mcp::Cli),
     /// Memvault management CLI (memctl)
     Memctl(memctl::Cli),
+    /// Headlessly pre-download everything the USB stick needs (nix-portable,
+    /// pinned nixpkgs, and the dependency closure cache) so it can later boot
+    /// fully offline. Run once online after install.
+    #[cfg(feature = "usb")]
+    UsbPrefetch {
+        /// Stick/home directory to provision (default: the binary's directory).
+        #[arg(long)]
+        home: Option<String>,
+        /// Config path (default: `<home>/config.toml`).
+        #[arg(long)]
+        config: Option<String>,
+        /// Download nix-portable for all supported arches, not just the host's.
+        #[arg(long)]
+        all_arches: bool,
+    },
     /// systemctl compatibility shim for managed services
     Systemctl {
         /// systemctl arguments (e.g. "start ollama.service")
@@ -547,6 +562,24 @@ async fn run(
         }
         Commands::Memctl(cli) => {
             memctl::run(cli).await?;
+        }
+        #[cfg(feature = "usb")]
+        Commands::UsbPrefetch {
+            home,
+            config,
+            all_arches,
+        } => {
+            let home = match home {
+                Some(h) => std::path::PathBuf::from(h),
+                None => mac_mgmt_daemon::usb::default_home_dir()?,
+            };
+            let opts = mac_mgmt_daemon::usb::prefetch::PrefetchOpts {
+                home,
+                config_path: config.map(std::path::PathBuf::from),
+                all_arches,
+            };
+            let manifest = mac_mgmt_daemon::usb::prefetch::run(opts).await?;
+            println!("prefetch complete: {manifest:?}");
         }
         Commands::Systemctl { args } => {
             let code = mac_mgmt_daemon::systemctl::run(args, false).await?;

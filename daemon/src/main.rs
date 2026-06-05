@@ -13,14 +13,30 @@ mod daemon_main;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    let argv0 = std::env::args().next().unwrap_or_default();
+    let args: Vec<String> = std::env::args().collect();
+    let argv0 = args.first().cloned().unwrap_or_default();
     let basename = std::path::Path::new(&argv0)
         .file_name()
         .and_then(|f| f.to_str())
         .unwrap_or("");
     if basename == "systemctl" {
         daemon_main::systemctl_main();
-    } else {
-        daemon_main::main();
     }
+
+    // USB-run mode: when built with `--features usb`, running with no
+    // subcommand (the default-command flip) or an explicit `usb` subcommand
+    // boots the sovereign-AI stack. This is intercepted *before* the tokio
+    // runtime so the desktop event loop can own the main thread (a hard
+    // requirement on macOS). `usb-prefetch` and all other subcommands fall
+    // through to the normal async entry below.
+    #[cfg(feature = "usb")]
+    {
+        let first = args.get(1).map(String::as_str);
+        let usb_run = first.is_none() || first == Some("usb");
+        if usb_run {
+            mac_mgmt_daemon::usb::main(args);
+        }
+    }
+
+    daemon_main::main();
 }

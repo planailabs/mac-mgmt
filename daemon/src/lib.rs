@@ -61,6 +61,10 @@ pub mod status;
 pub mod systemctl;
 #[cfg(feature = "services")]
 pub mod unmanaged;
+#[cfg(feature = "usb")]
+pub mod usb;
+#[cfg(feature = "usb")]
+pub mod usb_update;
 pub mod validator;
 
 /// Git commit this binary was built from. Captured at build time by

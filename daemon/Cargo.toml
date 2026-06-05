@@ -19,6 +19,15 @@ relay = ["dep:libp2p-stream"]
 memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-swarm", "dep:memvault-web", "memvault-web/server", "memctl/daemon", "dep:memvault-query", "dep:axum", "dep:serde_ipld_dagcbor", "relay"]
 healer = ["dep:mac-mgmt-healer", "services", "relay"]
 embed = ["memvault-web/embed", "memctl/embed"]
+# Sovereign-AI USB build: self-contained, relocatable stack run off a flash
+# stick. Pulls in the service supervisor, memvault, embedded UI assets, the
+# self-contained binary updater (self-replace), and tarball/extraction helpers
+# for nix-portable + GitLab release downloads. The native overview desktop app
+# is an optional workspace crate pulled in separately.
+usb = [
+    "services", "memvault", "embed",
+    "dep:self-replace", "dep:tar", "dep:flate2",
+]
 sim = []
 # WASM client for the memvault web UI — built by dx for embedding.
 # Both `web` and `server` (via memvault) compile the same App component from
@@ -51,6 +60,8 @@ sentry = { workspace = true, features = ["log"] }
 rust-embed = { version = "8", features = ["include-exclude", "debug-embed"] }
 tempfile = "3"
 self-replace = { version = "1", optional = true }
+tar = { version = "0.4", optional = true }
+flate2 = { version = "1", optional = true }
 sha2 = "0.10"
 libc = "0.2"
 pty-process = { version = "0.5", features = ["async"] }
