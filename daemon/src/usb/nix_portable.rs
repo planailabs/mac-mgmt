@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// The nix-portable release tag the USB build pins to. Bumped deliberately;
 /// the per-asset SHA-256 digests below must be updated in lockstep.
@@ -142,6 +143,78 @@ pub async fn download_and_verify(asset: &Asset, dest: &Path) -> Result<()> {
     write_executable_atomic(dest, &bytes)?;
     tracing::info!("nix-portable ready at {}", dest.display());
     Ok(())
+}
+
+/// Blocking variant of [`ensure`], for use before the async runtime is built
+/// (the mount-namespace setup must happen single-threaded). Uses blocking
+/// reqwest so it spawns no lasting threads in the old namespace.
+pub fn ensure_blocking(home: &Path, allow_network: bool) -> Result<PathBuf> {
+    let dest = cached_path(home);
+    if dest.exists() {
+        return Ok(dest);
+    }
+    let arch = host_arch();
+    let asset = asset_for_arch(&arch)
+        .with_context(|| format!("no nix-portable asset for host arch {arch}"))?;
+
+    let per_arch = cached_path_for_arch(home, &arch);
+    if per_arch.exists() {
+        copy_executable(&per_arch, &dest)?;
+        return Ok(dest);
+    }
+    if !allow_network {
+        anyhow::bail!(
+            "nix-portable missing at {} and running offline — run `usb prefetch` online first",
+            dest.display()
+        );
+    }
+    let url = asset_url(PINNED_TAG, &asset);
+    tracing::info!("downloading nix-portable (blocking) from {url}");
+    let bytes = reqwest::blocking::Client::new()
+        .get(&url)
+        .send()
+        .with_context(|| format!("failed to GET {url}"))?
+        .error_for_status()
+        .with_context(|| format!("bad status from {url}"))?
+        .bytes()
+        .context("failed to read nix-portable body")?;
+    verify_sha256(&bytes, asset.sha256)
+        .with_context(|| format!("nix-portable {} checksum mismatch", asset.file_name))?;
+    write_executable_atomic(&dest, &bytes)?;
+    tracing::info!("nix-portable ready at {}", dest.display());
+    Ok(dest)
+}
+
+/// Path to the static `nix` binary nix-portable unpacks under `home`.
+pub fn static_nix_path(home: &Path) -> PathBuf {
+    home.join(".nix-portable/bin/nix")
+}
+
+/// Ensure nix-portable has unpacked its bundled static `nix` binary under
+/// `home`, by invoking it once. Returns the path to that static `nix`, which
+/// can be run directly against a real (image-backed) `/nix` — no proot/bwrap.
+pub fn extract_static_nix(home: &Path, np: &Path) -> Result<PathBuf> {
+    let nix = static_nix_path(home);
+    if nix.exists() {
+        return Ok(nix);
+    }
+    // Invoking nix-portable unpacks its static binaries (nix, proot, …) into
+    // `$NP_LOCATION/.nix-portable/bin`. `nix --version` is cheap and needs no
+    // build.
+    let out = Command::new(np)
+        .args(["nix", "--version"])
+        .env("NP_LOCATION", home)
+        .env("NP_RUNTIME", "nix")
+        .output()
+        .context("failed to run nix-portable to unpack static nix")?;
+    if !nix.exists() {
+        anyhow::bail!(
+            "nix-portable did not unpack a static nix at {} (stderr: {})",
+            nix.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(nix)
 }
 
 /// Verify `bytes` hash to the expected lowercase-hex SHA-256.

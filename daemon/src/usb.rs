@@ -154,26 +154,35 @@ fn run_main(mut args: Vec<String>) -> Result<()> {
 
     init_tracing();
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    std::fs::create_dir_all(&opts.home)
+        .with_context(|| format!("failed to create home dir {}", opts.home.display()))?;
+
+    // Select + prepare the nix runtime *before* building the tokio runtime: the
+    // Portable path enters a mount namespace, which only moves the calling
+    // thread, so it must happen while we are still single-threaded.
+    let rt = runtime::prepare(&opts.home, opts.network.is_offline())
+        .context("failed to prepare nix runtime")?;
+
+    let tokio_rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to build tokio runtime for usb stack")?;
 
     // Bring the stack up on the runtime's background threads.
-    let handle = runtime
-        .block_on(async { run_stack(opts.clone()).await })
+    let handle = tokio_rt
+        .block_on(async { run_stack(opts.clone(), rt).await })
         .context("failed to start usb stack")?;
 
     if opts.ui {
         // The overview desktop window owns the main thread. When it closes we
         // tear the stack down. (Implemented in the overview phase.)
-        run_overview_ui(&handle, &runtime)?;
+        run_overview_ui(&handle, &tokio_rt)?;
     } else {
         // Headless: block until a shutdown signal, then tear down.
-        runtime.block_on(handle.wait_for_shutdown());
+        tokio_rt.block_on(handle.wait_for_shutdown());
     }
 
-    runtime.block_on(handle.shutdown());
+    tokio_rt.block_on(handle.shutdown());
     Ok(())
 }
 
@@ -230,23 +239,23 @@ impl StackHandle {
     }
 }
 
-/// Bring up the full stack (runtime selection, store, supervisor, services,
-/// memvault) without the desktop window. Returns once everything is running.
-///
-/// This is the headless seam the repo tests drive directly.
-pub async fn run_stack(opts: StackOpts) -> Result<StackHandle> {
+/// Bring up the full stack (config load, supervisor, services, memvault)
+/// without the desktop window, against an already-prepared nix `rt`. Returns
+/// once everything is running. This is the headless seam the repo tests drive.
+pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHandle> {
     tracing::info!(
         home = %opts.home.display(),
         offline = opts.network.is_offline(),
         ui = opts.ui,
+        runtime = ?rt,
         "starting sovereign-AI usb stack",
     );
 
     std::fs::create_dir_all(&opts.home)
         .with_context(|| format!("failed to create home dir {}", opts.home.display()))?;
 
-    // Subsequent phases fill in: runtime selection + store mount, config load,
-    // in-process supervisor, service install, memvault serving.
+    // Subsequent phases fill in: config load, in-process supervisor, service
+    // install, memvault serving.
     let (shutdown_tx, _rx) = tokio::sync::watch::channel(false);
 
     anyhow::bail!(

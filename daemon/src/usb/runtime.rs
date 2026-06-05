@@ -12,7 +12,9 @@
 //! All three keep the standard `/nix/store` prefix, so the `.nar` cache and
 //! xzar substitute identically regardless of runtime.
 
-use std::path::PathBuf;
+use super::{nix_portable, store_image};
+use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Runtime {
@@ -76,6 +78,67 @@ impl std::fmt::Display for RuntimeError {
 }
 
 impl std::error::Error for RuntimeError {}
+
+/// Prepare the nix runtime for the stack. **Sync and must run single-threaded**
+/// (before the tokio runtime) because the Portable path enters a mount
+/// namespace, which only moves the calling thread.
+///
+/// On success the process is ready to run nix (host nix on PATH, or the static
+/// nix from nix-portable against an image-backed `/nix`), and the relevant
+/// environment (`PATH`, `MAC_MGMT_NIXPKGS_TARBALL` consumers) is configured.
+///
+/// `offline` forbids any network (no nix-portable download); `home` is the
+/// stick directory.
+pub fn prepare(home: &Path, offline: bool) -> Result<Runtime> {
+    if let Some(nix_bin) = detect_host_nix() {
+        tracing::info!(nix = %nix_bin.display(), "using existing host nix");
+        return Ok(Runtime::HostNix { nix_bin });
+    }
+    match std::env::consts::OS {
+        "linux" => prepare_portable(home, offline),
+        "macos" => Err(RuntimeError::MacOsFollowOn.into()),
+        other => Err(RuntimeError::UnsupportedOs(other.to_string()).into()),
+    }
+}
+
+/// Linux, no host nix: bootstrap nix-portable + an ext4 store image mounted at
+/// `/nix` in a private namespace, then expose nix-portable's static `nix` on
+/// PATH so it drives the real `/nix` directly.
+fn prepare_portable(home: &Path, offline: bool) -> Result<Runtime> {
+    let np = nix_portable::ensure_blocking(home, !offline)
+        .context("failed to bootstrap nix-portable")?;
+    store_image::ensure_image(home, store_image::DEFAULT_IMAGE_SIZE)
+        .context("failed to create store image")?;
+    store_image::ensure_nar_cache(home).context("failed to init on-stick nar cache")?;
+    // Unpack the static nix *before* entering the namespace (it writes under
+    // HOME, which we want visible to the host's filesystem, not the image).
+    let static_nix =
+        nix_portable::extract_static_nix(home, &np).context("failed to extract static nix")?;
+
+    store_image::enter_namespace_and_mount(home)
+        .context("failed to mount store image at /nix")?;
+
+    // Put the static nix's directory first on PATH so `nix_command("nix")`
+    // (daemon/src/nix.rs) resolves to it, operating on the real mounted /nix.
+    if let Some(bin_dir) = static_nix.parent() {
+        prepend_path(bin_dir);
+    }
+
+    Ok(Runtime::Portable { nix_portable: np })
+}
+
+/// Prepend `dir` to the process `PATH`.
+fn prepend_path(dir: &Path) {
+    let existing = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths: Vec<PathBuf> = vec![dir.to_path_buf()];
+    paths.extend(std::env::split_paths(&existing));
+    if let Ok(joined) = std::env::join_paths(paths) {
+        // SAFETY: called single-threaded during pre-runtime setup.
+        unsafe {
+            std::env::set_var("PATH", joined);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
