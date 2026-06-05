@@ -26,7 +26,7 @@ embed = ["memvault-web/embed", "memctl/embed"]
 # is an optional workspace crate pulled in separately.
 usb = [
     "services", "memvault", "embed",
-    "dep:self-replace", "dep:tar", "dep:flate2",
+    "dep:self-replace", "dep:tar", "dep:flate2", "dep:schemars",
 ]
 # The native overview desktop app (wry/webkitgtk). Kept separate from `usb` so
 # the headless stack (and all tests/CI) builds without the desktop GUI stack;
@@ -66,6 +66,7 @@ tempfile = "3"
 self-replace = { version = "1", optional = true }
 tar = { version = "0.4", optional = true }
 flate2 = { version = "1", optional = true }
+schemars = { version = "1.2.1", features = ["derive"], optional = true }
 sha2 = "0.10"
 libc = "0.2"
 pty-process = { version = "0.5", features = ["async"] }

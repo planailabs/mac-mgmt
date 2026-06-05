@@ -1430,7 +1430,7 @@ impl Default for MetricsConfig {
 
 // ── Server (daemon → server connection) ─────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct DaemonServerConfig {
     pub url: Option<String>,
     pub token: Option<Secret>,
@@ -2059,7 +2059,7 @@ impl RelayConfig {
 
 // ── Daemon Config (full config including server section) ────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct DaemonConfig {
     #[serde(default)]
     pub daemon: DaemonSettings,

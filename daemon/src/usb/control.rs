@@ -28,6 +28,10 @@ pub struct ControlState {
     pub install_tx: mpsc::Sender<InstallReq>,
     /// Signal stack shutdown (e.g. overview window closed).
     pub shutdown_tx: watch::Sender<bool>,
+    /// Config read candidates (priority order) for `GET /config`.
+    pub config_read: Vec<PathBuf>,
+    /// Where `PUT /config` persists the edited config (JSON).
+    pub config_write: PathBuf,
 }
 
 /// A request to (online-)install a service, answered by the stack loop.
@@ -50,7 +54,88 @@ pub fn router(state: ControlState) -> Router {
         .route("/usb/restart", post(restart))
         .route("/usb/install", post(install))
         .route("/usb/shutdown", post(shutdown))
+        .route("/config", get(get_config).put(put_config))
+        .route("/config/schema", get(config_schema))
         .with_state(state)
+}
+
+/// GET /config — the current daemon config as JSON (defaults if none on disk).
+/// Mirrors the mac-mgmt-server `GET /setting/config` method.
+async fn get_config(State(state): State<ControlState>) -> impl IntoResponse {
+    let cfg = state
+        .config_read
+        .iter()
+        .find(|p| p.exists())
+        .and_then(|p| super::parse_config_file(p).ok())
+        .unwrap_or_default();
+    match serde_json::to_value(&cfg) {
+        Ok(v) => (StatusCode::OK, Json(v)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+/// GET /config/schema — JSON Schema for the config (same generator as the
+/// server's `GET /setting/config/schema`), so the shared editor can render a
+/// schema-driven form.
+async fn config_schema() -> impl IntoResponse {
+    let schema = schemars::schema_for!(mac_mgmt_common::DaemonConfig);
+    Json(serde_json::to_value(&schema).unwrap_or_default())
+}
+
+/// PUT /config — validate (migrate → deserialize → validate) and persist the
+/// edited config to `config_write` as JSON. Mirrors `PUT /setting/config`.
+/// Returns 422 on invalid config. Takes effect on restart.
+async fn put_config(
+    State(state): State<ControlState>,
+    Json(mut body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    mac_mgmt_common::config_migrate::migrate(&mut body);
+
+    let cfg: mac_mgmt_common::DaemonConfig = match serde_json::from_value(body.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({ "ok": false, "error": format!("invalid config: {e}") })),
+            );
+        }
+    };
+    if let Err(e) = cfg.daemon.validate() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "ok": false, "error": format!("{e}") })),
+        );
+    }
+
+    let pretty = match serde_json::to_string_pretty(&cfg) {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+            );
+        }
+    };
+    if let Some(parent) = state.config_write.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(&state.config_write, pretty) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+        );
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "saved_to": state.config_write.display().to_string(),
+            "note": "restart the usb stack to apply",
+        })),
+    )
 }
 
 /// Connect a short-lived supervisor client.

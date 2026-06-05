@@ -333,6 +333,8 @@ pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHan
         offline: opts.network.is_offline(),
         install_tx,
         shutdown_tx: shutdown_tx.clone(),
+        config_read: config_read_candidates(&opts.home, opts.config_path.as_deref()),
+        config_write: config_write_path(&opts.home),
     };
     let listener = tokio::net::TcpListener::bind(("::1", 0))
         .await
@@ -453,27 +455,55 @@ fn configure_nix(opts: &StackOpts) {
     }
 }
 
-/// Load the daemon config from (in order) the explicit `--config`,
-/// `<home>/config.toml`, or the standard config path. Never fetches remote.
+/// Config read candidates, in priority order: explicit `--config`,
+/// `<home>/config.json` (the UI-editable format), `<home>/config.toml`, then
+/// the standard config path.
+pub(crate) fn config_read_candidates(
+    home: &std::path::Path,
+    explicit: Option<&std::path::Path>,
+) -> Vec<std::path::PathBuf> {
+    let mut v: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(p) = explicit {
+        v.push(p.to_path_buf());
+    }
+    v.push(home.join("config.json"));
+    v.push(home.join("config.toml"));
+    v.push(crate::config::config_path());
+    v
+}
+
+/// Where the UI writes config: `<home>/config.json` (JSON is easier to
+/// round-trip from the overview editor and is preferred on load).
+pub(crate) fn config_write_path(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("config.json")
+}
+
+/// Parse a config file by extension (`.json` → JSON, else TOML).
+pub(crate) fn parse_config_file(path: &std::path::Path) -> Result<crate::config::Config> {
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let is_json = path.extension().and_then(|e| e.to_str()) == Some("json");
+    let cfg: crate::config::Config = if is_json {
+        serde_json::from_str(&contents)
+            .with_context(|| format!("failed to parse JSON {}", path.display()))?
+    } else {
+        toml::from_str(&contents)
+            .with_context(|| format!("failed to parse TOML {}", path.display()))?
+    };
+    Ok(cfg)
+}
+
+/// Load the daemon config from the first existing read candidate, else defaults.
+/// Never fetches remote.
 fn load_config(opts: &StackOpts) -> Result<crate::config::Config> {
-    let candidates: Vec<std::path::PathBuf> = opts
-        .config_path
-        .clone()
-        .into_iter()
-        .chain(std::iter::once(opts.home.join("config.toml")))
-        .chain(std::iter::once(crate::config::config_path()))
-        .collect();
-    for path in candidates {
+    for path in config_read_candidates(&opts.home, opts.config_path.as_deref()) {
         if path.exists() {
-            let contents = std::fs::read_to_string(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?;
-            let cfg: crate::config::Config = toml::from_str(&contents)
-                .with_context(|| format!("failed to parse {}", path.display()))?;
+            let cfg = parse_config_file(&path)?;
             tracing::info!("loaded usb config from {}", path.display());
             return Ok(cfg);
         }
     }
-    tracing::warn!("no config.toml found; using defaults");
+    tracing::warn!("no config.json/config.toml found; using defaults");
     Ok(crate::config::Config::default())
 }
 

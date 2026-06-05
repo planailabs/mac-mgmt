@@ -51,6 +51,15 @@ async fn http_post(url: &str, body: serde_json::Value) -> reqwest::Response {
         .unwrap()
 }
 
+async fn http_post_put(url: &str, body: serde_json::Value) -> reqwest::Response {
+    reqwest::Client::new()
+        .put(url)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
 /// The control API lists supervisor services, start/stop/restart work (offline-
 /// safe), and install is refused (409) when offline.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -79,11 +88,14 @@ async fn control_api_offline_lists_and_controls_services() {
     // Stand up the control server in offline mode.
     let (install_tx, _install_rx) = tokio::sync::mpsc::channel(4);
     let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+    let cfg_write = tmp.path().join("config.json");
     let state = usb::control::ControlState {
         socket_path: socket.clone(),
         offline: true,
         install_tx,
         shutdown_tx,
+        config_read: vec![cfg_write.clone()],
+        config_write: cfg_write.clone(),
     };
     let listener = tokio::net::TcpListener::bind(("::1", 0)).await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -144,6 +156,36 @@ async fn control_api_offline_lists_and_controls_services() {
         409,
         "install must be refused (conflict) when offline"
     );
+
+    // ── Config editing (same method as mac-mgmt-server) ────────────────
+    // GET /config returns the current config as JSON (defaults, none on disk).
+    let cfg = http_get_json(&format!("{base}/config")).await;
+    assert!(cfg.get("daemon").is_some(), "config JSON has a daemon section");
+
+    // GET /config/schema returns a JSON Schema.
+    let schema = http_get_json(&format!("{base}/config/schema")).await;
+    assert!(
+        schema.get("properties").is_some() || schema.get("$schema").is_some(),
+        "schema looks like JSON Schema"
+    );
+
+    // PUT a valid config round-trips and is persisted to config.json.
+    let mut edited = cfg.clone();
+    edited["daemon"]["health_interval"] = serde_json::json!("45s");
+    let r = http_post_put(&format!("{base}/config"), edited).await;
+    assert!(r.status().is_success(), "valid config saves");
+    assert!(cfg_write.exists(), "config.json written");
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cfg_write).unwrap()).unwrap();
+    assert_eq!(saved["daemon"]["health_interval"], serde_json::json!("45s"));
+
+    // PUT garbage is rejected with 422.
+    let r = http_post_put(&format!("{base}/config"), serde_json::json!({"daemon": "not-an-object"}))
+        .await;
+    assert_eq!(r.status().as_u16(), 422, "invalid config rejected");
+
+    // Tidy up the supervisor child so the test leaves no orphan `sleep`.
+    let _ = client.unregister("test-svc").await;
 }
 
 /// `run_stack` boots headlessly offline with a minimal config and serves the
