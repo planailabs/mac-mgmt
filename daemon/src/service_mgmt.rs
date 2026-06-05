@@ -1233,6 +1233,83 @@ impl ServiceManager {
         self.collect_connector_env_for_new();
     }
 
+    /// Apply an edited config at runtime (USB apply-on-save). Reconciles the
+    /// running service set against the new config — installs + starts
+    /// newly-enabled services, stops + unregisters ones that were disabled —
+    /// and rebuilds connectors. No process restart required.
+    ///
+    /// Caller should run `retry_failed_installs()` + `schedule_restart()`
+    /// afterwards to bring the new services up.
+    pub async fn apply_config(&mut self, cfg: &mut crate::config::Config) {
+        use std::collections::HashSet;
+
+        // Update the config store + connectors first — this reads the per-
+        // provider sections, which `build_services` below then consumes.
+        self.reload_connectors(cfg);
+
+        // Desired vs current service sets (by name).
+        let desired = connectors::build_services(cfg);
+        let desired_names: HashSet<String> =
+            desired.iter().map(|s| s.name().to_string()).collect();
+        let current_names: HashSet<String> = self
+            .services
+            .iter()
+            .map(|s| s.name.clone())
+            .chain(self.install_only.iter().map(|s| s.name().to_string()))
+            .collect();
+
+        // ── Stop + unregister services that are no longer enabled.
+        let to_remove: Vec<String> =
+            current_names.difference(&desired_names).cloned().collect();
+        if !to_remove.is_empty() && self.ensure_client().await {
+            if let Some(client) = self.client.as_mut() {
+                for name in &to_remove {
+                    tracing::info!("apply_config: stopping disabled service {name}");
+                    let _ = client.stop_service(name).await;
+                    let _ = client.unregister(name).await;
+                }
+            }
+        }
+        self.services.retain(|s| !to_remove.contains(&s.name));
+        self.install_only
+            .retain(|s| !to_remove.contains(&s.name().to_string()));
+
+        // ── Add newly-enabled services and install them.
+        let mut added: Vec<Arc<dyn ManagedService>> = Vec::new();
+        for svc in desired {
+            if current_names.contains(svc.name()) {
+                continue; // already present; config-only change handled above
+            }
+            let name = svc.name().to_string();
+            tracing::info!("apply_config: enabling service {name}");
+            if svc.service_mode() == ServiceMode::InstallOnly {
+                self.install_only.push(Arc::clone(&svc));
+            } else {
+                self.services.push(ServiceState {
+                    name,
+                    service: Arc::clone(&svc),
+                    phase: ServicePhase::Installing,
+                    upgrade_pending: false,
+                    restart_pending: false,
+                    post_start_done: false,
+                    consecutive_crashes: 0,
+                    running_store_path: None,
+                    registered: false,
+                    restart_at: None,
+                    connector_env: std::collections::HashMap::new(),
+                    connector_env_collected: false,
+                });
+            }
+            added.push(svc);
+        }
+        if !added.is_empty() {
+            // The install runs in this detached task even though we drop the
+            // update receiver (the USB loop tracks phases best-effort);
+            // schedule_restart() then starts them once installed.
+            let _ = Self::spawn_install_task(added.into_iter());
+        }
+    }
+
     // ── Status collection ────────────────────────────────────────────
 
     pub fn collect_statuses(&self) -> Vec<serde_json::Value> {

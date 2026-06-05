@@ -334,7 +334,7 @@ fn ConfigView() -> Element {
                                 match put_config(json).await {
                                     Ok(()) => {
                                         save_err.set(None);
-                                        saved_note.set(Some("Saved to config.json — restart the stack to apply.".into()));
+                                        saved_note.set(Some("Saved and applied — newly enabled services install/start in the background.".into()));
                                         config.restart();
                                     }
                                     Err(e) => save_err.set(Some(e)),

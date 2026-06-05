@@ -24,8 +24,8 @@ pub struct ControlState {
     pub socket_path: PathBuf,
     /// True when the stack is running offline (install/update disabled).
     pub offline: bool,
-    /// Channel to the stack loop for online install requests.
-    pub install_tx: mpsc::Sender<InstallReq>,
+    /// Channel to the stack loop (install requests + apply-on-save).
+    pub loop_tx: mpsc::Sender<LoopMsg>,
     /// Signal stack shutdown (e.g. overview window closed).
     pub shutdown_tx: watch::Sender<bool>,
     /// Config read candidates (priority order) for `GET /config`.
@@ -34,10 +34,20 @@ pub struct ControlState {
     pub config_write: PathBuf,
 }
 
-/// A request to (online-)install a service, answered by the stack loop.
-pub struct InstallReq {
-    pub name: String,
-    pub resp: oneshot::Sender<Result<(), String>>,
+/// A message to the stack loop (which owns the ServiceManager + nix), answered
+/// via the oneshot `resp`.
+pub enum LoopMsg {
+    /// (Online-)install/retry the registered services.
+    Install {
+        name: String,
+        resp: oneshot::Sender<Result<(), String>>,
+    },
+    /// Apply an edited config at runtime: install/start newly-enabled services,
+    /// stop/unregister disabled ones — no process restart.
+    ApplyConfig {
+        cfg: Box<crate::config::Config>,
+        resp: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -128,12 +138,38 @@ async fn put_config(
             Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
         );
     }
+
+    // Apply the new config live (install/start newly-enabled services, stop the
+    // disabled ones) without a process restart.
+    let (tx, rx) = oneshot::channel();
+    let applied = if state
+        .loop_tx
+        .send(LoopMsg::ApplyConfig {
+            cfg: Box::new(cfg),
+            resp: tx,
+        })
+        .await
+        .is_ok()
+    {
+        rx.await.unwrap_or_else(|_| Err("apply dropped".into()))
+    } else {
+        Err("stack loop is gone".into())
+    };
+
+    let (note, applied_ok) = match &applied {
+        Ok(()) => ("applied live", true),
+        Err(e) => {
+            tracing::warn!("config saved but live-apply failed: {e}");
+            ("saved; restart to apply (live apply failed)", false)
+        }
+    };
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "ok": true,
+            "applied": applied_ok,
             "saved_to": state.config_write.display().to_string(),
-            "note": "restart the usb stack to apply",
+            "note": note,
         })),
     )
 }
@@ -242,8 +278,8 @@ async fn install(
     }
     let (tx, rx) = oneshot::channel();
     if state
-        .install_tx
-        .send(InstallReq {
+        .loop_tx
+        .send(LoopMsg::Install {
             name: req.name.clone(),
             resp: tx,
         })

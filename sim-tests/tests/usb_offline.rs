@@ -86,13 +86,27 @@ async fn control_api_offline_lists_and_controls_services() {
         .unwrap();
 
     // Stand up the control server in offline mode.
-    let (install_tx, _install_rx) = tokio::sync::mpsc::channel(4);
+    let (loop_tx, mut loop_rx) = tokio::sync::mpsc::channel(4);
+    // No real stack loop here — drain loop messages and ack so PUT /config's
+    // live-apply round-trip completes.
+    tokio::spawn(async move {
+        while let Some(msg) = loop_rx.recv().await {
+            match msg {
+                usb::control::LoopMsg::Install { resp, .. } => {
+                    let _ = resp.send(Ok(()));
+                }
+                usb::control::LoopMsg::ApplyConfig { resp, .. } => {
+                    let _ = resp.send(Ok(()));
+                }
+            }
+        }
+    });
     let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
     let cfg_write = tmp.path().join("config.json");
     let state = usb::control::ControlState {
         socket_path: socket.clone(),
         offline: true,
-        install_tx,
+        loop_tx,
         shutdown_tx,
         config_read: vec![cfg_write.clone()],
         config_write: cfg_write.clone(),

@@ -325,13 +325,13 @@ pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHan
     svc_mgr.register_metrics(&metrics);
 
     let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
-    let (install_tx, mut install_rx) = tokio::sync::mpsc::channel::<control::InstallReq>(8);
+    let (loop_tx, mut loop_rx) = tokio::sync::mpsc::channel::<control::LoopMsg>(8);
 
     // Loopback control + status server on an ephemeral port.
     let control_state = control::ControlState {
         socket_path: mac_mgmt_services::default_socket_path(),
         offline: opts.network.is_offline(),
-        install_tx,
+        loop_tx,
         shutdown_tx: shutdown_tx.clone(),
         config_read: config_read_candidates(&opts.home, opts.config_path.as_deref()),
         config_write: config_write_path(&opts.home),
@@ -364,11 +364,24 @@ pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHan
                 _ = health.tick() => {
                     svc_mgr.health_tick(&metrics_loop, false).await;
                 }
-                Some(req) = install_rx.recv() => {
-                    // Coarse but real: re-attempt installs, then restart.
-                    svc_mgr.retry_failed_installs();
-                    svc_mgr.schedule_restart().await;
-                    let _ = req.resp.send(Ok(()));
+                Some(msg) = loop_rx.recv() => {
+                    match msg {
+                        control::LoopMsg::Install { resp, .. } => {
+                            // Coarse but real: re-attempt installs, then restart.
+                            svc_mgr.retry_failed_installs();
+                            svc_mgr.schedule_restart().await;
+                            let _ = resp.send(Ok(()));
+                        }
+                        control::LoopMsg::ApplyConfig { cfg, resp } => {
+                            // Reconcile the running service set against the edited
+                            // config, then (re)install + (re)start as needed.
+                            let mut cfg = *cfg;
+                            svc_mgr.apply_config(&mut cfg).await;
+                            svc_mgr.retry_failed_installs();
+                            svc_mgr.schedule_restart().await;
+                            let _ = resp.send(Ok(()));
+                        }
+                    }
                 }
                 _ = loop_shutdown.changed() => {
                     if *loop_shutdown.borrow() {
