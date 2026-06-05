@@ -2,6 +2,11 @@
    plan-ai-design + the shared config editor) is loaded separately from the
    compiled `assets/tailwind.css`; this file only adds the few overview-specific
    layout classes that aren't part of the design system. */
+/* The design system locks html/body to height:100% + overflow:hidden for its
+   app-shell (scroll is delegated to an inner <main>). The overview is a single
+   pane with no inner scroller, so restore normal document scrolling — otherwise
+   tall content like the Config tab is clipped. */
+html, body { height: auto; min-height: 100%; overflow-y: auto; }
 .overview { padding: 1.25rem; max-width: 980px; margin: 0 auto; }
 .overview-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .overview-head h1 { font-size: 1.25rem; margin: 0; flex: 0 0 auto; }
