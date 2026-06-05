@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+# Opt-in: builds the daemon with the sovereign-AI USB feature so the
+# usb_offline integration test can exercise usb::control + usb::run_stack.
+# Heavy (pulls memvault); off by default. Run: cargo test -p sim-tests --features usb
+usb = ["mac-mgmt-daemon/usb"]
+
 [dependencies]
 axum = { version = "0.8", features = ["json"] }
 chrono = { version = "0.4", features = ["serde"] }

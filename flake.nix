@@ -357,7 +357,8 @@
             pkgs.atk
             pkgs.gdk-pixbuf
             pkgs.librsvg
-            pkgs.wrapGAppsHook
+            pkgs.xdotool       # libxdo — required by the wry/dioxus-desktop link
+            pkgs.wrapGAppsHook3
           ];
 
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
@@ -440,6 +441,9 @@
           };
           sse-push = pkgs.callPackage ./tests/sse-push.nix { };
           sse-daemon = pkgs.callPackage ./tests/sse-daemon.nix { };
+          # Sovereign-AI USB build: root image extraction + private /nix mount +
+          # offline run, with no host nix (nix.enable = false).
+          usb = pkgs.callPackage ./tests/usb.nix { };
 
           # Deterministic simulation tests — mock server + real daemon code.
           # Fast (seconds) compared to VM-based tests above (minutes).
