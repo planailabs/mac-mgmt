@@ -1316,6 +1316,16 @@ async fn handle_streamed_proxy(
             for ovr in ovrs {
                 if ovr.path.is_match(path) {
                     if let Some(resp) = (ovr.override_fn)(path, &headers) {
+                        let location = resp
+                            .headers
+                            .iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case("location"))
+                            .map(|(_, v)| format!(" -> {v}"))
+                            .unwrap_or_default();
+                        tracing::debug!(
+                            "tunnel override fired: tunnel={tunnel_name} path={path} status={}{location}",
+                            resp.status
+                        );
                         let resp_headers: Vec<[&str; 2]> = resp
                             .headers
                             .iter()
@@ -1332,6 +1342,9 @@ async fn handle_streamed_proxy(
                         let _ = stream_framing::write_end(stream).await;
                         return;
                     }
+                    tracing::trace!(
+                        "tunnel override matched path but passed through: tunnel={tunnel_name} path={path}"
+                    );
                 }
             }
         }

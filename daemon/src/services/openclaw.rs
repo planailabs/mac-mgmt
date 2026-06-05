@@ -452,17 +452,71 @@ impl ManagedService for OpenClaw {
             vec![TunnelOverride {
                 path: regex::Regex::new(r"^/$").unwrap(),
                 override_fn: Arc::new(|_path, _headers| {
-                    let cfg_path = config_path().ok()?;
-                    let contents = std::fs::read_to_string(&cfg_path).ok()?;
-                    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
-                    let auth = json.pointer("/gateway/auth").and_then(|v| v.as_str())?;
-                    if auth.eq_ignore_ascii_case("token") {
-                        let token = json
-                            .pointer("/gateway/auth/token")
-                            .and_then(|v| v.as_str())?;
-                        Some(OverrideResponse::redirect(&format!("/chat?token={token}")))
-                    } else {
-                        None
+                    let cfg_path = match config_path() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(
+                                "openclaw redirect override: cannot resolve config path: {e}; passing through"
+                            );
+                            return None;
+                        }
+                    };
+                    let contents = match std::fs::read_to_string(&cfg_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::debug!(
+                                "openclaw redirect override: cannot read {}: {e}; passing through",
+                                cfg_path.display()
+                            );
+                            return None;
+                        }
+                    };
+                    let json: serde_json::Value = match serde_json::from_str(&contents) {
+                        Ok(j) => j,
+                        Err(e) => {
+                            tracing::warn!(
+                                "openclaw redirect override: invalid JSON in {}: {e}; passing through",
+                                cfg_path.display()
+                            );
+                            return None;
+                        }
+                    };
+                    // `gateway.auth` is an OBJECT, not a string: the auth mode lives
+                    // at `gateway.auth.mode` ("none" | "token" | "password" |
+                    // "trusted-proxy"). Only token mode needs the `/` -> `/chat`
+                    // redirect that injects the token into the URL.
+                    let mode = json
+                        .pointer("/gateway/auth/mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("none");
+                    if !mode.eq_ignore_ascii_case("token") {
+                        tracing::debug!(
+                            "openclaw redirect override: auth mode is {mode:?}, not \"token\"; passing through"
+                        );
+                        return None;
+                    }
+                    // `gateway.auth.token` is either a literal string token or a
+                    // secret-reference object ({id, provider, source}). Only a
+                    // literal can be embedded into the redirect URL.
+                    match json.pointer("/gateway/auth/token") {
+                        Some(serde_json::Value::String(token)) => {
+                            tracing::info!(
+                                "openclaw redirect override: token auth detected, redirecting / -> /chat?token=<redacted>"
+                            );
+                            Some(OverrideResponse::redirect(&format!("/chat?token={token}")))
+                        }
+                        Some(_) => {
+                            tracing::warn!(
+                                "openclaw redirect override: gateway.auth.token is a secret reference, not a literal string; cannot embed in redirect, passing through"
+                            );
+                            None
+                        }
+                        None => {
+                            tracing::warn!(
+                                "openclaw redirect override: auth mode is \"token\" but gateway.auth.token is missing; passing through"
+                            );
+                            None
+                        }
                     }
                 }),
             }],
