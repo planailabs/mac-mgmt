@@ -114,6 +114,9 @@ pub struct ServiceManager {
     inprocess: bool,
     /// Receives per-service install completions from the background task.
     pub install_rx: Option<tokio::sync::mpsc::Receiver<InstallUpdate>>,
+    /// Full config as JSON from the last init/apply, for per-service change
+    /// detection in `apply_config` (USB apply-on-save).
+    last_config: serde_json::Value,
 }
 
 impl ServiceManager {
@@ -131,6 +134,7 @@ impl ServiceManager {
             config_store: ConfigStore::new(None),
             inprocess: false,
             install_rx: None,
+            last_config: serde_json::Value::Null,
         }
     }
 
@@ -176,6 +180,7 @@ impl ServiceManager {
             config_store: ConfigStore::new(None),
             inprocess: true,
             install_rx: None,
+            last_config: serde_json::Value::Null,
         }
     }
 
@@ -184,6 +189,10 @@ impl ServiceManager {
         dispatcher: Arc<Dispatcher>,
         log_buf: LogBuffer,
     ) -> Result<Self> {
+        // Snapshot the full config before build_services consumes its sections,
+        // for per-service change detection in apply_config (USB apply-on-save).
+        let last_config = serde_json::to_value(&*cfg).unwrap_or(serde_json::Value::Null);
+
         let inprocess = inprocess_enabled();
         if inprocess {
             tracing::info!("{INPROCESS_ENV}=1, launching services supervisor in-process");
@@ -282,6 +291,7 @@ impl ServiceManager {
             config_store,
             inprocess,
             install_rx,
+            last_config,
         })
     }
 
@@ -1243,6 +1253,11 @@ impl ServiceManager {
     pub async fn apply_config(&mut self, cfg: &mut crate::config::Config) {
         use std::collections::HashSet;
 
+        // Snapshot for per-service change detection, before build_services
+        // consumes the per-provider sections.
+        let new_config = serde_json::to_value(&*cfg).unwrap_or(serde_json::Value::Null);
+        let old_config = std::mem::replace(&mut self.last_config, new_config.clone());
+
         // Update the config store + connectors first — this reads the per-
         // provider sections, which `build_services` below then consumes.
         self.reload_connectors(cfg);
@@ -1304,9 +1319,44 @@ impl ServiceManager {
         }
         if !added.is_empty() {
             // The install runs in this detached task even though we drop the
-            // update receiver (the USB loop tracks phases best-effort);
-            // schedule_restart() then starts them once installed.
+            // update receiver (the USB loop tracks phases best-effort); the
+            // restart_pending set below starts them once installed.
             let _ = Self::spawn_install_task(added.into_iter());
+        }
+
+        // ── Selective restart — only what actually changed:
+        //   • newly-added running services → start them;
+        //   • existing services whose config section changed → restart (or
+        //     hot-reload). Unchanged services keep running untouched.
+        for state in &mut self.services {
+            if !current_names.contains(&state.name) {
+                state.restart_pending = true; // newly added → bring up
+                continue;
+            }
+            // Sub-services (e.g. `hermes-dashboard`) follow their parent
+            // section (`hermes`).
+            let section = state.name.split('-').next().unwrap_or(&state.name);
+            if old_config.get(section) == new_config.get(section) {
+                continue; // unchanged — leave it running
+            }
+            if state.service.supports_hot_reload() {
+                match state.service.configure() {
+                    Ok(()) => tracing::info!(
+                        "apply_config: {} reconfigured (hot reload, no restart)",
+                        state.name
+                    ),
+                    Err(e) => {
+                        tracing::warn!(
+                            "apply_config: {} configure failed, restarting: {e}",
+                            state.name
+                        );
+                        state.restart_pending = true;
+                    }
+                }
+            } else {
+                tracing::info!("apply_config: {} config changed, restart pending", state.name);
+                state.restart_pending = true;
+            }
         }
     }
 

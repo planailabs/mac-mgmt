@@ -374,11 +374,13 @@ pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHan
                         }
                         control::LoopMsg::ApplyConfig { cfg, resp } => {
                             // Reconcile the running service set against the edited
-                            // config, then (re)install + (re)start as needed.
+                            // config. apply_config marks only newly-enabled and
+                            // config-changed services for (re)start; a health tick
+                            // acts on those flags now instead of waiting.
                             let mut cfg = *cfg;
                             svc_mgr.apply_config(&mut cfg).await;
                             svc_mgr.retry_failed_installs();
-                            svc_mgr.schedule_restart().await;
+                            svc_mgr.health_tick(&metrics_loop, false).await;
                             let _ = resp.send(Ok(()));
                         }
                     }
@@ -423,8 +425,8 @@ pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHan
         });
     }
 
-    // Best-effort: serve the memvault web app on its own port if configured.
-    let memvault_url = maybe_serve_memvault(&opts).await;
+    // Serve the memvault web app on its own port when [memvault] is enabled.
+    let memvault_url = maybe_serve_memvault(&cfg).await;
 
     Ok(StackHandle {
         metrics_port: control_port,
@@ -523,11 +525,48 @@ fn load_config(opts: &StackOpts) -> Result<crate::config::Config> {
 /// Best-effort: spawn the memvault web app on its own loopback port. Returns
 /// its URL when started. Memvault remains its own Dioxus web app (unchanged);
 /// the overview links to it.
-async fn maybe_serve_memvault(_opts: &StackOpts) -> Option<String> {
-    // Memvault serving reuses the daemon's existing memvault bridge when a
-    // [memvault] config + data dir are present. Left as an opt-in follow-up so
-    // a minimal stick (no memvault) still boots cleanly.
-    None
+async fn maybe_serve_memvault(cfg: &crate::config::Config) -> Option<String> {
+    // Reuse the daemon's in-process memvault bridge (MemvaultHandle): opens the
+    // store, starts host services + the fullstack web app on a loopback port.
+    // Only when [memvault] is enabled, so a minimal stick still boots cleanly.
+    let mut mv = cfg.memvault.clone();
+    if !mv.enabled {
+        return None;
+    }
+    // Ensure the web app has a port so the overview can link to it.
+    if mv.port == 0 {
+        mv.port = 8088;
+    }
+
+    // Derive the libp2p peer_id from the (stick-local) SSH host key, matching
+    // the daemon (design A-1: node key = libp2p key).
+    let peer_id = match (|| -> anyhow::Result<Vec<u8>> {
+        let hk = crate::host_keys::load_or_generate()?;
+        let kp = crate::p2p::identity::keypair_from_russh(&hk)?;
+        Ok(kp.public().to_peer_id().to_bytes())
+    })() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("memvault: failed to derive peer_id: {e:#}");
+            return None;
+        }
+    };
+
+    match crate::memvault::MemvaultHandle::init(&mv, peer_id).await {
+        Ok(handle) => {
+            // The web server + watchers are detached tasks holding the store/
+            // client Arcs; keep the handle alive for the process lifetime so the
+            // subsystem isn't torn down when this function returns.
+            std::mem::forget(handle);
+            let url = format!("http://127.0.0.1:{}", mv.port);
+            tracing::info!("memvault web app serving at {url}");
+            Some(url)
+        }
+        Err(e) => {
+            tracing::error!("memvault: failed to start: {e:#}");
+            None
+        }
+    }
 }
 
 /// Run the native overview desktop window on the main thread (it owns the wry
