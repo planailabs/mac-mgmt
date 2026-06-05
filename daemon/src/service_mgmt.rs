@@ -223,6 +223,9 @@ impl ServiceManager {
         if let Ok(v) = serde_json::to_value(&cfg.opencode) {
             config_store.set("opencode", v);
         }
+        if let Ok(v) = serde_json::to_value(&cfg.hermes) {
+            config_store.set("hermes", v);
+        }
         if let Ok(v) = serde_json::to_value(&cfg.cloud) {
             config_store.set("cloud", v);
         }
@@ -1204,6 +1207,9 @@ impl ServiceManager {
         }
         if let Ok(v) = serde_json::to_value(&cfg.opencode) {
             self.config_store.set("opencode", v);
+        }
+        if let Ok(v) = serde_json::to_value(&cfg.hermes) {
+            self.config_store.set("hermes", v);
         }
         if let Ok(v) = serde_json::to_value(&cfg.cloud) {
             self.config_store.set("cloud", v);
