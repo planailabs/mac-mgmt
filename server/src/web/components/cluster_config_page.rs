@@ -35,7 +35,7 @@ fn encrypt_secret_value(plaintext: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-use super::config_editor::ConfigEditor;
+use super::config_editor_panel::ConfigEditorPanel;
 use super::config_history::ConfigHistory;
 use super::topbar::use_topbar;
 
@@ -293,7 +293,7 @@ pub fn ClusterConfigPage(id: String) -> Element {
                 PageHeader { class: "mb-4", "{name} — {t!(\"cluster-detail-tab-config\")}" }
             }
 
-            ConfigEditor { cluster_id: id.clone(), read_only }
+            ConfigEditorPanel { cluster_id: id.clone(), read_only }
 
             // Secrets + history land below the editor as full-width
             // sections (the right rail handles drill-down navigation,

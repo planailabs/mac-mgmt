@@ -9372,6 +9372,7 @@ dependencies = [
  "http 1.4.0",
  "jsonschema 0.45.1",
  "mac-mgmt-common",
+ "mac-mgmt-config-ui",
  "mac-mgmt-healer",
  "multihash",
  "plan-ai-auth",

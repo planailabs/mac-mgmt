@@ -16,15 +16,15 @@ pub mod cluster_mcp_servers;
 pub mod cluster_packages;
 pub mod cluster_skills;
 pub mod cluster_ssh_keys;
-pub mod config_editor;
-pub mod config_filter_chips;
+// config_editor / config_filter_chips / config_save_bar / extra_config_modal /
+// model_select_modal now live in the shared `mac-mgmt-config-ui` crate; the
+// server's data-layer wrapper is `config_editor_panel`.
+pub mod config_editor_panel;
 pub mod config_history;
-pub mod config_save_bar;
 pub mod daemon_version_detail;
 pub mod daemon_version_list;
 pub mod docs;
 pub mod easy_access;
-pub mod extra_config_modal;
 pub mod federation_token_list;
 pub mod file_editor;
 pub mod fleet_dashboard;
@@ -41,7 +41,6 @@ pub mod mcp_bundle_form;
 pub mod mcp_bundle_list;
 pub mod mcp_server_detail;
 pub mod mcp_server_list;
-pub mod model_select_modal;
 pub mod navbar;
 pub mod organization_client_cas;
 pub mod organization_client_certs;
