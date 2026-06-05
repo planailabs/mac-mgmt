@@ -60,8 +60,38 @@ fn cache_nix_caches_to_disk(caches: &[(String, String)]) -> std::io::Result<()> 
 
 /// Return extra args to append to nix commands for substituters.
 /// Empty vec when no caches are configured.
+///
+/// In the USB build's offline mode (`MAC_MGMT_NIX_OFFLINE=1`) this becomes a
+/// hard override: `--offline` plus `--option substituters <on-stick caches>`
+/// (replacing, not extending, the default substituters) so nix never reaches
+/// the network and resolves only from the on-stick `.nar` cache.
 pub fn extra_substituter_args() -> Vec<String> {
     let caches = nix_caches_cell().read().unwrap();
+    let offline = std::env::var("MAC_MGMT_NIX_OFFLINE")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    if offline {
+        let urls: Vec<&str> = caches.iter().map(|(url, _)| url.as_str()).collect();
+        let keys: Vec<&str> = caches
+            .iter()
+            .map(|(_, key)| key.as_str())
+            .filter(|k| !k.is_empty())
+            .collect();
+        let mut args = vec![
+            "--offline".into(),
+            "--option".into(),
+            "substituters".into(),
+            urls.join(" "),
+        ];
+        if !keys.is_empty() {
+            args.push("--option".into());
+            args.push("trusted-public-keys".into());
+            args.push(keys.join(" "));
+        }
+        return args;
+    }
+
     if caches.is_empty() {
         return Vec::new();
     }
@@ -1055,6 +1085,29 @@ mod tests {
             nixpkgs_base_from_src("https://example/nixpkgs.tar.gz"),
             Some("https://example/nixpkgs.tar.gz".to_string())
         );
+    }
+
+    #[test]
+    fn offline_substituters_override_and_add_offline_flag() {
+        // Only this test touches these globals (the caches cell + the offline
+        // env var), so the mutation is safe within the module's test run.
+        set_nix_caches(vec![(
+            "file:///stick/home/nix-cache".to_string(),
+            String::new(),
+        )]);
+        unsafe {
+            std::env::set_var("MAC_MGMT_NIX_OFFLINE", "1");
+        }
+        let args = extra_substituter_args();
+        assert!(args.contains(&"--offline".to_string()));
+        // Hard override uses `substituters`, not `extra-substituters`.
+        assert!(args.contains(&"substituters".to_string()));
+        assert!(!args.contains(&"extra-substituters".to_string()));
+        assert!(args.contains(&"file:///stick/home/nix-cache".to_string()));
+        unsafe {
+            std::env::remove_var("MAC_MGMT_NIX_OFFLINE");
+        }
+        set_nix_caches(Vec::new());
     }
 
     #[test]

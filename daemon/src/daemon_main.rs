@@ -573,10 +573,16 @@ async fn run(
                 Some(h) => std::path::PathBuf::from(h),
                 None => mac_mgmt_daemon::usb::default_home_dir()?,
             };
+            let config_path = config.map(std::path::PathBuf::from);
             let opts = mac_mgmt_daemon::usb::prefetch::PrefetchOpts {
                 home,
-                config_path: config.map(std::path::PathBuf::from),
+                config_path,
                 all_arches,
+                nixpkgs_rev: None,
+                // Core-service closures are populated by the online install +
+                // store-export path (see usb::run_stack); explicit packages can
+                // be mirrored directly here when provided.
+                packages: Vec::new(),
             };
             let manifest = mac_mgmt_daemon::usb::prefetch::run(opts).await?;
             println!("prefetch complete: {manifest:?}");
