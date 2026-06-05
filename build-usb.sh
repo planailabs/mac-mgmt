@@ -49,9 +49,13 @@ if [ "$status" -ne 0 ]; then
   exit "$status"
 fi
 
-# ── 2. Tailwind CSS (memvault web UI) ───────────────────────────────────
-echo "▸ Building Tailwind CSS…"
+# ── 2. Tailwind CSS ─────────────────────────────────────────────────────
+echo "▸ Building Tailwind CSS (memvault web UI)…"
 (cd "$WEB_DIR" && npm run tailwind:build)
+# The overview desktop app inlines its own compiled CSS (design system + the
+# shared config-ui editor classes); regenerate it so include_str! is current.
+echo "▸ Building Tailwind CSS (overview)…"
+(cd "$SCRIPT_DIR/mac-mgmt-overview" && npm install --no-audit --no-fund >/dev/null 2>&1 && npm run tailwind:build)
 
 # ── 3. Dioxus fullstack build (client WASM + native server w/ usb-ui) ───
 # @client gets only the `web` feature (WASM, no native deps); @server is the

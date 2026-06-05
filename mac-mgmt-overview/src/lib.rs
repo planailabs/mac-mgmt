@@ -144,6 +144,9 @@ fn App() -> Element {
     let snapshot = status.read().clone();
 
     rsx! {
+        // Design system (Tailwind tokens + plan-ai-design + the shared config
+        // editor's classes), compiled from plan-ai-design/assets/input.css.
+        style { {include_str!("../assets/tailwind.css")} }
         style { {include_str!("overview.css")} }
         main { class: "overview",
             header { class: "overview-head",

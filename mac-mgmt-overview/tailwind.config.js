@@ -1,23 +1,18 @@
 /** @type {import('tailwindcss').Config} */
 //
-// Color tokens are defined as CSS variables in input.css. Each Tailwind
-// color resolves to `rgb(var(--c-x) / <alpha-value>)` so opacity modifiers
-// (e.g. `bg-brand/40`) keep working. Light/dark themes are pure CSS-variable
-// swaps — utility classes like `bg-brand` automatically follow the theme.
-//
-// Adding a new design token: declare the CSS variable in input.css under
-// both `:root` and `.dark`, then add a key here.
+// Tailwind for the sovereign-AI overview desktop app. Scans the overview's own
+// sources PLUS the shared config-ui crate (the config editor) and plan-ai-design
+// so the design system + editor classes survive purge. Theme mirrors the
+// server / memvault-web configs (CSS-variable color tokens from input.css).
 const tokenColor = (v) => `rgb(var(--${v}) / <alpha-value>)`;
 
 module.exports = {
   darkMode: 'selector',
-  // Scan both the server's own `.rs` files AND the design crate's
-  // shared component sources so Tailwind's class extractor doesn't
-  // purge any class emitted by the imported components.
-  content: ["./src/**/*.rs", "../memvault/plan-ai-design/src/**/*.rs", "../config-ui/src/**/*.rs"],
-  // `td` and `th` collide with HTML element names; Tailwind's content
-  // extractor heuristically drops them. Safelist so the @layer rules
-  // for our `<Td>` / `<TdMono>` / `<TdMuted>` cells survive purge.
+  content: [
+    "./src/**/*.rs",
+    "../config-ui/src/**/*.rs",
+    "../memvault/plan-ai-design/src/**/*.rs",
+  ],
   safelist: ['td', 'th'],
   theme: {
     extend: {

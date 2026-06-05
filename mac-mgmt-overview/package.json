@@ -1,0 +1,12 @@
+{
+  "name": "mac-mgmt-overview",
+  "private": true,
+  "scripts": {
+    "tailwind": "tailwindcss -i ../memvault/plan-ai-design/assets/input.css -o assets/tailwind.css --watch",
+    "tailwind:build": "tailwindcss -i ../memvault/plan-ai-design/assets/input.css -o assets/tailwind.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/typography": "^0.5",
+    "tailwindcss": "^3"
+  }
+}

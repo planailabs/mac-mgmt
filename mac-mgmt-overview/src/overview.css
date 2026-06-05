@@ -1,33 +1,14 @@
-/* Minimal standalone styling for the overview window. plan-ai-design component
-   classes (btn, badge) degrade gracefully even without the full design CSS. */
-:root { color-scheme: light dark; }
-body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
-.overview { padding: 1.25rem; max-width: 880px; margin: 0 auto; }
-.overview-head { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+/* Custom layout for the overview window. The design system (Tailwind +
+   plan-ai-design + the shared config editor) is loaded separately from the
+   compiled `assets/tailwind.css`; this file only adds the few overview-specific
+   layout classes that aren't part of the design system. */
+.overview { padding: 1.25rem; max-width: 980px; margin: 0 auto; }
+.overview-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .overview-head h1 { font-size: 1.25rem; margin: 0; flex: 0 0 auto; }
-.overview-head .btn { margin-left: auto; }
-.overview-head .btn + .btn { margin-left: 0.5rem; }
 .overview-table { width: 100%; border-collapse: collapse; }
 .overview-table th, .overview-table td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid rgba(128,128,128,0.25); }
 .overview-table th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
 .overview-actions { display: flex; gap: 0.4rem; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; opacity: 0.85; }
-.overview-error { color: #c0392b; }
-.btn { cursor: pointer; padding: 0.3rem 0.6rem; border-radius: 6px; border: 1px solid rgba(128,128,128,0.4); background: transparent; font-size: 0.85rem; }
-.btn:disabled { opacity: 0.4; cursor: default; }
-.badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid rgba(128,128,128,0.4); }
-
-/* Shared config editor */
-.config-editor-bar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
-.config-editor-dirty { color: #d35400; font-size: 0.8rem; }
-.config-editor-error { color: #c0392b; }
-.config-saved-note { color: #27ae60; font-size: 0.85rem; }
-.config-editor-raw { width: 100%; min-height: 360px; font-family: ui-monospace, monospace; font-size: 0.82rem; }
-.config-section { margin-bottom: 0.5rem; }
-.config-section h3 { margin: 0 0 0.25rem; font-size: 0.95rem; }
-.config-section-desc { margin: 0 0 0.5rem; opacity: 0.65; font-size: 0.8rem; }
-.config-field { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
-.config-field-label { flex: 0 0 220px; font-size: 0.85rem; }
-.config-field-help { opacity: 0.5; cursor: help; }
-.config-field-json { flex: 1; min-height: 4rem; font-family: ui-monospace, monospace; font-size: 0.8rem; }
-.config-field input[type=text], .config-field input[type=number] { flex: 1; padding: 0.25rem 0.4rem; }
+.overview-error { color: rgb(var(--c-danger-strong) / 1); }
+.config-saved-note { color: rgb(var(--c-success) / 1); font-size: 0.85rem; margin: 0 0 0.5rem; }
