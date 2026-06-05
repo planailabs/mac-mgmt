@@ -32,27 +32,33 @@ if [ "$HEADLESS" = "1" ] || [ -z "${DISPLAY:-}" ]; then
 fi
 
 # ── Windowed: plumb the X display through to the daemon user ─────────────
-# Grant the daemon user access to this X server (server-interpreted auth, so no
-# cookie is needed), and revoke it when we exit. Force the GTK/webkit X11
-# backend so it works the same under Wayland (via XWayland).
+# Two things are needed for `daemon` to draw on your X server:
+#   1. an auth cookie it can actually READ — your ~/.Xauthority is unreachable
+#      because $HOME is 0700, so copy the cookie into the daemon-owned USB_HOME.
+#   2. server-side access — `xhost +SI:localuser:daemon` as a belt-and-suspenders
+#      (revoked on exit).
+# GDK_BACKEND=x11 makes GTK/webkit use X11 (works under Wayland via XWayland).
+DAEMON_XAUTH="$USB_HOME/.Xauthority"
+: > "$DAEMON_XAUTH"
+if command -v xauth >/dev/null 2>&1; then
+  xauth extract - "$DISPLAY" 2>/dev/null | xauth -f "$DAEMON_XAUTH" merge - 2>/dev/null || true
+fi
+chmod 0644 "$DAEMON_XAUTH" 2>/dev/null || true
+chown daemon:daemon "$DAEMON_XAUTH" 2>/dev/null || true
+
 GRANTED=0
 if command -v xhost >/dev/null 2>&1; then
-  if xhost +SI:localuser:daemon >/dev/null 2>&1; then GRANTED=1; fi
+  xhost +SI:localuser:daemon >/dev/null 2>&1 && GRANTED=1
 fi
 cleanup() {
   [ "$GRANTED" = "1" ] && xhost -SI:localuser:daemon >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-# Make the inviting user's X cookie readable too (belt-and-suspenders for
-# servers that still require it).
-XAUTH="${XAUTHORITY:-$HOME/.Xauthority}"
-[ -f "$XAUTH" ] && chmod a+r "$XAUTH" 2>/dev/null || true
-
 echo "▸ launching overview window as 'daemon' on DISPLAY=$DISPLAY"
 sudo su -l daemon -s /bin/bash -c \
   "env RUST_BACKTRACE=1 RUST_LOG=debug INPROCESS_SERVICE_MANAGER=1 \
-   DISPLAY='$DISPLAY' XAUTHORITY='$XAUTH' GDK_BACKEND=x11 \
+   DISPLAY='$DISPLAY' XAUTHORITY='$DAEMON_XAUTH' GDK_BACKEND=x11 \
    WEBKIT_DISABLE_COMPOSITING_MODE=1 \
    /tmp/mac-mgmt usb --home '$USB_HOME'" \
   | tee /tmp/mac-mgmt-usb-daemon.log

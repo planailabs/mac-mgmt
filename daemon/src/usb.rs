@@ -156,6 +156,12 @@ fn run_main(mut args: Vec<String>) -> Result<()> {
 
     init_tracing();
 
+    // Install the rustls crypto provider before any TLS/reqwest client is built
+    // (the overview's control-API client, the updater, memvault). The usb entry
+    // bypasses daemon_main::main(), which is where the daemon normally does this
+    // — without it, reqwest::Client construction panics with "No provider set".
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     std::fs::create_dir_all(&opts.home)
         .with_context(|| format!("failed to create home dir {}", opts.home.display()))?;
 
