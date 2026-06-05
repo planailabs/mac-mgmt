@@ -69,22 +69,28 @@ pub fn router(state: ControlState) -> Router {
         .with_state(state)
 }
 
-/// GET /config — the current daemon config as JSON (defaults if none on disk).
-/// Mirrors the mac-mgmt-server `GET /setting/config` method.
+/// Read the first existing config file as a raw JSON value (migrated), WITHOUT
+/// inflating through `DaemonConfig` — so the editor sees only the values that
+/// are actually stored, never the defaults. `.toml` is parsed and converted.
+fn read_stored_config(paths: &[PathBuf]) -> Option<serde_json::Value> {
+    let path = paths.iter().find(|p| p.exists())?;
+    let contents = std::fs::read_to_string(path).ok()?;
+    let is_json = path.extension().and_then(|e| e.to_str()) == Some("json");
+    let mut v: serde_json::Value = if is_json {
+        serde_json::from_str(&contents).ok()?
+    } else {
+        toml::from_str(&contents).ok()?
+    };
+    mac_mgmt_common::config_migrate::migrate(&mut v);
+    Some(v)
+}
+
+/// GET /config — the config as actually stored on disk (only the values the
+/// user set; `{}` when none). Mirrors mac-mgmt-server's `GET /setting/config`,
+/// which returns the stored sparse JSON rather than a full defaults dump.
 async fn get_config(State(state): State<ControlState>) -> impl IntoResponse {
-    let cfg = state
-        .config_read
-        .iter()
-        .find(|p| p.exists())
-        .and_then(|p| super::parse_config_file(p).ok())
-        .unwrap_or_default();
-    match serde_json::to_value(&cfg) {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ),
-    }
+    let v = read_stored_config(&state.config_read).unwrap_or_else(|| serde_json::json!({}));
+    (StatusCode::OK, Json(v))
 }
 
 /// GET /config/schema — JSON Schema for the config (same generator as the
@@ -120,7 +126,11 @@ async fn put_config(
         );
     }
 
-    let pretty = match serde_json::to_string_pretty(&cfg) {
+    // Persist the editor's (migrated) body verbatim — only the values it sent,
+    // not a full dump of every default. Matches mac-mgmt-server, which stores
+    // the body and deserializes only to validate. `cfg` above is used solely for
+    // validation + the live apply below. Loading fills defaults back in.
+    let pretty = match serde_json::to_string_pretty(&body) {
         Ok(s) => s,
         Err(e) => {
             return (

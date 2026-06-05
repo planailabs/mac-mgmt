@@ -172,9 +172,10 @@ async fn control_api_offline_lists_and_controls_services() {
     );
 
     // ── Config editing (same method as mac-mgmt-server) ────────────────
-    // GET /config returns the current config as JSON (defaults, none on disk).
+    // GET /config returns ONLY what's stored — empty object when none on disk,
+    // not a full defaults dump.
     let cfg = http_get_json(&format!("{base}/config")).await;
-    assert!(cfg.get("daemon").is_some(), "config JSON has a daemon section");
+    assert_eq!(cfg, serde_json::json!({}), "empty config when nothing stored");
 
     // GET /config/schema returns a JSON Schema.
     let schema = http_get_json(&format!("{base}/config/schema")).await;
@@ -183,15 +184,21 @@ async fn control_api_offline_lists_and_controls_services() {
         "schema looks like JSON Schema"
     );
 
-    // PUT a valid config round-trips and is persisted to config.json.
-    let mut edited = cfg.clone();
-    edited["daemon"]["health_interval"] = serde_json::json!("45s");
+    // PUT a valid config persists ONLY the values sent (sparse — no defaults).
+    let edited = serde_json::json!({ "daemon": { "health_interval": "45s" } });
     let r = http_post_put(&format!("{base}/config"), edited).await;
     assert!(r.status().is_success(), "valid config saves");
     assert!(cfg_write.exists(), "config.json written");
     let saved: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_write).unwrap()).unwrap();
     assert_eq!(saved["daemon"]["health_interval"], serde_json::json!("45s"));
+    // Sparse: no default sections like `global`/`ollama` were written.
+    assert_eq!(saved.as_object().unwrap().len(), 1, "only the daemon section saved");
+    assert!(saved.get("global").is_none(), "defaults not persisted");
+
+    // GET now reflects exactly what was saved (still sparse).
+    let cfg2 = http_get_json(&format!("{base}/config")).await;
+    assert_eq!(cfg2, serde_json::json!({ "daemon": { "health_interval": "45s" } }));
 
     // PUT garbage is rejected with 422.
     let r = http_post_put(&format!("{base}/config"), serde_json::json!({"daemon": "not-an-object"}))
