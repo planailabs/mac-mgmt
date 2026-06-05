@@ -11,7 +11,9 @@
 
 use dioxus::prelude::*;
 use mac_mgmt_config_ui::ConfigEditor;
-use plan_ai_design::{Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card};
+use plan_ai_design::{
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ThemeToggle, THEME_INIT_SCRIPT,
+};
 use serde::Deserialize;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -138,6 +140,12 @@ fn App() -> Element {
             .with_locale(Locale::new_static(langid!("de-DE"), de))
     });
 
+    // Apply the saved/system theme on startup (sets `.dark` on <html>); the
+    // ThemeToggle in the header then cycles system → light → dark.
+    use_effect(|| {
+        document::eval(THEME_INIT_SCRIPT);
+    });
+
     let mut status = use_resource(|| async move { fetch_status().await });
     let mut tab = use_signal(|| Tab::Services);
 
@@ -184,6 +192,7 @@ fn App() -> Element {
                         "Open Memvault"
                     }
                 }
+                ThemeToggle {}
             }
 
             match *tab.read() {
