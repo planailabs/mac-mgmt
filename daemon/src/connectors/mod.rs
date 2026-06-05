@@ -27,6 +27,8 @@ pub mod unsloth_opencode;
 use std::sync::Arc;
 
 use anyhow::Result;
+#[cfg(feature = "memvault")]
+use anyhow::Context as _;
 
 use crate::managed_service::ManagedService;
 #[cfg(feature = "memvault")]
@@ -421,6 +423,66 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
 /// Return Some only if the string is non-empty.
 pub(crate) fn non_empty(s: &Option<String>) -> Option<&str> {
     s.as_deref().filter(|s| !s.is_empty())
+}
+
+/// Provision the per-agent `AgentIdentity` (private key + node-signed
+/// `AgentAttestation` + metadata) that an agent's memvault MCP subprocess
+/// expects to find at `MEMVAULT_IDENTITY_DIR`. Reuses the daemon's
+/// already-running `LocalClient` — the same one that holds the node signing
+/// key, the cluster_id, and the sigchain — instead of opening a second redb
+/// handle from the connector.
+///
+/// Nothing else in the daemon does this — without it the MCP server fails on
+/// its first connect with "failed to load agent identity from …" because
+/// `ClientArgs::connect()` calls `AgentIdentity::load` and there's no file on
+/// disk yet.
+///
+/// `enroll_local_agent` is idempotent (it reuses an unexpired identity signed
+/// by the current node key, regenerates on key rotation, and re-publishes the
+/// attestation in either case), so re-running the connector is safe.
+#[cfg(feature = "memvault")]
+pub(crate) fn ensure_agent_identity(identity_dir: &std::path::Path, agent_id: &str) -> Result<()> {
+    // The daemon parks its LocalClient in the memvault-web state cache
+    // (`set_client` at MemvaultHandle::init). PreStart connectors run after
+    // that, so the global is populated by the time we reach here. If it
+    // isn't, the daemon never came up with memvault enabled and we have
+    // nothing to enroll against — return early.
+    let client = match memvault_web::ui::state::local_client() {
+        Ok(c) => c,
+        Err(_) => {
+            tracing::warn!(
+                agent_id,
+                "memvault LocalClient not yet available; \
+                 skipping agent enrollment for this tick"
+            );
+            return Ok(());
+        }
+    };
+    let identity = memvault_api::agent_identity::enroll_local_agent(
+        &client,
+        agent_id,
+        identity_dir,
+        memvault_auth::AgentRole::AgentHost,
+        // Daemon-managed identity — no expiry. `generate_local` saturates so
+        // this is treated as effectively never-expires.
+        u64::MAX,
+    )
+    .with_context(|| format!("enroll local agent {agent_id}"))?;
+
+    // Ensure the agent's default bucket exists now (the bucket-create path is
+    // sync, so this works from the connector's non-async context).
+    if let Err(e) =
+        client.ensure_agent_bucket_for_pubkey_sync(&identity.verifying_key.to_bytes(), agent_id)
+    {
+        tracing::warn!(agent_id, error = %e, "could not ensure agent bucket");
+    }
+
+    tracing::info!(
+        agent_id,
+        identity_dir = %identity_dir.display(),
+        "ensured agent identity via daemon LocalClient"
+    );
+    Ok(())
 }
 
 /// Return Some only if the secret is present and non-empty.

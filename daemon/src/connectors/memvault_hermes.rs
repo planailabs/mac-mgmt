@@ -74,6 +74,20 @@ impl Connector for MemvaultHermes {
         });
 
         merge_and_validate(&path, &patch)?;
+
+        // Bootstrap the hermes agent identity at MEMVAULT_IDENTITY_DIR.
+        // Without it the MCP server fails on its first connect with "failed
+        // to load agent identity from …" because ClientArgs::connect() calls
+        // AgentIdentity::load and there's no file on disk yet. Idempotent.
+        if let Err(e) = super::ensure_agent_identity(&identity_dir, "hermes") {
+            tracing::warn!(
+                error = %e,
+                identity_dir = %identity_dir.display(),
+                "could not bootstrap hermes agent identity; \
+                 the MCP server will fail until this is fixed manually"
+            );
+        }
+
         tracing::info!("memvault→hermes connected");
         Ok(())
     }
