@@ -12,7 +12,7 @@
 //! All three keep the standard `/nix/store` prefix, so the `.nar` cache and
 //! xzar substitute identically regardless of runtime.
 
-use super::{nix_portable, store_image};
+use super::{nix_darwin, nix_portable, store_image};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -48,7 +48,7 @@ pub fn select(host_nix: Option<PathBuf>, os: &str) -> Result<Runtime, RuntimeErr
         return Ok(Runtime::HostNix { nix_bin });
     }
     match os {
-        "macos" => Err(RuntimeError::MacOsFollowOn),
+        "macos" => Err(RuntimeError::NeedsMacImage),
         "linux" => Err(RuntimeError::NeedsPortable),
         other => Err(RuntimeError::UnsupportedOs(other.to_string())),
     }
@@ -60,8 +60,9 @@ pub fn select(host_nix: Option<PathBuf>, os: &str) -> Result<Runtime, RuntimeErr
 pub enum RuntimeError {
     /// Linux without host nix → bootstrap nix-portable + ext4 image.
     NeedsPortable,
-    /// macOS support is a follow-on phase.
-    MacOsFollowOn,
+    /// macOS without host nix → bootstrap native nix + a case-sensitive APFS
+    /// store image mounted at `/nix`.
+    NeedsMacImage,
     UnsupportedOs(String),
 }
 
@@ -69,8 +70,8 @@ impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RuntimeError::NeedsPortable => write!(f, "no host nix; portable runtime required"),
-            RuntimeError::MacOsFollowOn => {
-                write!(f, "macOS sovereign-AI runtime is a follow-on phase")
+            RuntimeError::NeedsMacImage => {
+                write!(f, "no host nix; macOS APFS store image + native nix required")
             }
             RuntimeError::UnsupportedOs(os) => write!(f, "unsupported OS for usb runtime: {os}"),
         }
@@ -96,7 +97,7 @@ pub fn prepare(home: &Path, offline: bool) -> Result<Runtime> {
     }
     match std::env::consts::OS {
         "linux" => prepare_portable(home, offline),
-        "macos" => Err(RuntimeError::MacOsFollowOn.into()),
+        "macos" => prepare_macos(home, offline),
         other => Err(RuntimeError::UnsupportedOs(other.to_string()).into()),
     }
 }
@@ -125,6 +126,28 @@ fn prepare_portable(home: &Path, offline: bool) -> Result<Runtime> {
     }
 
     Ok(Runtime::Portable { nix_portable: np })
+}
+
+/// macOS, no host nix: create + attach a case-sensitive APFS store image at
+/// `/nix` (the data lives on the stick, like the official installer but
+/// relocated), then bootstrap a native `nix` into it. Keeps the standard
+/// `/nix/store` prefix → full cache.nixos.org + xzar reuse, no rebuild.
+///
+/// Requires root the first time (to create the `/nix` synthetic mountpoint via
+/// `/etc/synthetic.conf`); `hdiutil` + `apfs.util` are stock macOS tools.
+fn prepare_macos(home: &Path, offline: bool) -> Result<Runtime> {
+    store_image::ensure_image_macos(home, store_image::DEFAULT_IMAGE_SIZE)
+        .context("failed to create APFS store image")?;
+    store_image::ensure_nar_cache(home).context("failed to init on-stick nar cache")?;
+    store_image::mount_macos(home).context("failed to mount APFS store image at /nix")?;
+
+    // Bring up a native nix that operates on the mounted /nix store.
+    let nix_bin = nix_darwin::ensure_blocking(home, !offline)
+        .context("failed to bootstrap native nix for macOS")?;
+    if let Some(bin_dir) = nix_bin.parent() {
+        prepend_path(bin_dir);
+    }
+    Ok(Runtime::MacNative { nix_bin })
 }
 
 /// Prepend `dir` to the process `PATH`.
@@ -161,8 +184,8 @@ mod tests {
     }
 
     #[test]
-    fn macos_without_host_nix_is_follow_on() {
-        assert_eq!(select(None, "macos"), Err(RuntimeError::MacOsFollowOn));
+    fn macos_without_host_nix_needs_image() {
+        assert_eq!(select(None, "macos"), Err(RuntimeError::NeedsMacImage));
     }
 
     #[test]

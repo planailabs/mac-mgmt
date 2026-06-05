@@ -20,6 +20,7 @@
 //! thread. See `daemon/src/main.rs` for the early-argv dispatch.
 
 pub mod control;
+pub mod nix_darwin;
 pub mod nix_portable;
 pub mod nixpkgs;
 pub mod prefetch;

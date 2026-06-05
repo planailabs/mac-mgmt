@@ -97,6 +97,7 @@ pub fn ensure_nar_cache(home: &Path) -> Result<PathBuf> {
 /// Must run as root and **single-threaded** (before the tokio runtime). After
 /// this returns, this process and every thread/child it later spawns see the
 /// image-backed `/nix`, invisible to the host.
+#[cfg(target_os = "linux")]
 pub fn enter_namespace_and_mount(home: &Path) -> Result<()> {
     let img = image_path(home);
     if !img.exists() {
@@ -136,7 +137,16 @@ pub fn enter_namespace_and_mount(home: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Non-Linux fallback: the private-namespace mount is Linux-specific. macOS
+/// uses [`mount_macos`] instead; this stub keeps `prepare_portable` compiling
+/// cross-platform (it is never called off Linux).
+#[cfg(not(target_os = "linux"))]
+pub fn enter_namespace_and_mount(_home: &Path) -> Result<()> {
+    anyhow::bail!("private-namespace /nix mount is only supported on Linux")
+}
+
 /// `mount(NULL, "/", NULL, MS_REC|MS_PRIVATE, NULL)` — stop mount propagation.
+#[cfg(target_os = "linux")]
 fn make_rprivate() -> Result<()> {
     let root = std::ffi::CString::new("/").unwrap();
     let rc = unsafe {
@@ -150,6 +160,111 @@ fn make_rprivate() -> Result<()> {
     };
     if rc != 0 {
         return Err(std::io::Error::last_os_error()).context("mount --make-rprivate /");
+    }
+    Ok(())
+}
+
+// ── macOS: case-sensitive APFS sparsebundle mounted at /nix ──────────────
+
+/// Path of the macOS APFS sparsebundle store image under `home`.
+pub fn sparsebundle_path(home: &Path) -> PathBuf {
+    home.join("nix-store.sparsebundle")
+}
+
+/// Create a case-sensitive APFS sparsebundle store image if it does not yet
+/// exist (macOS). Band files are small (FAT32-safe) while the total can exceed
+/// 4 GiB. Requires `hdiutil` (stock macOS).
+pub fn ensure_image_macos(home: &Path, size_bytes: u64) -> Result<PathBuf> {
+    let img = sparsebundle_path(home);
+    if img.exists() {
+        return Ok(img);
+    }
+    if let Some(parent) = img.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let size_g = (size_bytes / (1024 * 1024 * 1024)).max(1);
+    let st = Command::new("hdiutil")
+        .args([
+            "create",
+            "-type",
+            "SPARSEBUNDLE",
+            "-fs",
+            "Case-sensitive APFS",
+            "-volname",
+            "nix",
+            "-size",
+            &format!("{size_g}g"),
+        ])
+        .arg(&img)
+        .status()
+        .context("failed to run hdiutil create")?;
+    if !st.success() {
+        anyhow::bail!("hdiutil create failed for {}", img.display());
+    }
+    tracing::info!("created APFS store image at {}", img.display());
+    Ok(img)
+}
+
+/// Ensure `/nix` exists as a synthetic mountpoint and attach the sparsebundle
+/// there (macOS). Requires root the first time (to write `/etc/synthetic.conf`
+/// + apply it). Idempotent: a no-op when `/nix/store` is already present.
+pub fn mount_macos(home: &Path) -> Result<()> {
+    let img = sparsebundle_path(home);
+    if !img.exists() {
+        anyhow::bail!(
+            "store image {} does not exist — run `usb prefetch` first",
+            img.display()
+        );
+    }
+    ensure_nix_synthetic()?;
+    if Path::new("/nix/store").exists() {
+        return Ok(()); // already attached
+    }
+    let st = Command::new("hdiutil")
+        .args(["attach", "-mountpoint", "/nix"])
+        .arg(&img)
+        .status()
+        .context("failed to run hdiutil attach")?;
+    if !st.success() {
+        anyhow::bail!("hdiutil attach of {} at /nix failed", img.display());
+    }
+    tracing::info!("attached APFS store image at /nix");
+    Ok(())
+}
+
+/// Add `/nix` to `/etc/synthetic.conf` and apply it so the empty firmlink
+/// mountpoint exists (macOS, root once). Idempotent.
+fn ensure_nix_synthetic() -> Result<()> {
+    let conf = Path::new("/etc/synthetic.conf");
+    let has_entry = std::fs::read_to_string(conf)
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l.split('\t').next() == Some("nix") || l.trim() == "nix");
+    if !has_entry {
+        use std::io::Write;
+        // synthetic.conf entries are tab-separated; a bare name creates an empty
+        // mountpoint at `/name`.
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(conf)
+            .context("failed to open /etc/synthetic.conf (root required)")?;
+        writeln!(f, "nix").context("failed to write /etc/synthetic.conf")?;
+    }
+    if !Path::new("/nix").exists() {
+        // Apply synthetic.conf without a reboot.
+        let _ = Command::new(
+            "/System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util",
+        )
+        .arg("-B")
+        .status();
+    }
+    if !Path::new("/nix").exists() {
+        anyhow::bail!(
+            "/nix synthetic mountpoint not present — reboot once after writing \
+             /etc/synthetic.conf, then re-run"
+        );
     }
     Ok(())
 }

@@ -6,7 +6,7 @@
 //! on-stick `.nar` cache). Shares its download/cache helpers with the online
 //! first-run path. No webview — this is an ordinary async command.
 
-use super::{nix_portable, nixpkgs, runtime, store_image};
+use super::{nix_darwin, nix_portable, nixpkgs, runtime, store_image};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -54,8 +54,21 @@ pub async fn run(opts: PrefetchOpts) -> Result<Manifest> {
     let mut manifest: Manifest = tokio::task::spawn_blocking(move || -> Result<Manifest> {
         let mut m = Manifest::default();
 
-        // 1. nix-portable (host arch, or every supported arch).
-        if all_arches {
+        // 1. Runtime bootstrap: nix-portable on Linux, the native nix install
+        //    tarball on macOS (nix-portable can't run on Darwin).
+        if std::env::consts::OS == "macos" {
+            if let Some(system) = nix_darwin::darwin_system() {
+                let tb = home2.join(".cache/usb").join(format!(
+                    "nix-{}-{}.tar.xz",
+                    nix_darwin::PINNED_NIX_VERSION,
+                    system
+                ));
+                if !tb.exists() {
+                    nix_darwin::download_tarball(&tb, system).context("native nix tarball")?;
+                }
+                m.nix_portable.push(system.to_string());
+            }
+        } else if all_arches {
             for (arch, asset) in nix_portable::all_assets() {
                 let dest = nix_portable::cached_path_for_arch(&home2, arch);
                 if !dest.exists() {
@@ -73,9 +86,14 @@ pub async fn run(opts: PrefetchOpts) -> Result<Manifest> {
         nixpkgs::ensure_blocking(&home2, &rev2, true).context("nixpkgs tarball")?;
         m.nixpkgs_rev = Some(rev2.clone());
 
-        // 3. Store image + on-stick nar cache scaffolding.
-        store_image::ensure_image(&home2, store_image::DEFAULT_IMAGE_SIZE)
-            .context("store image")?;
+        // 3. Store image (ext4 on Linux, APFS sparsebundle on macOS) + nar cache.
+        if std::env::consts::OS == "macos" {
+            store_image::ensure_image_macos(&home2, store_image::DEFAULT_IMAGE_SIZE)
+                .context("APFS store image")?;
+        } else {
+            store_image::ensure_image(&home2, store_image::DEFAULT_IMAGE_SIZE)
+                .context("store image")?;
+        }
         store_image::ensure_nar_cache(&home2).context("nar cache")?;
 
         Ok(m)
