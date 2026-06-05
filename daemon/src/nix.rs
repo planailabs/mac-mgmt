@@ -77,6 +77,45 @@ pub fn extra_substituter_args() -> Vec<String> {
     ]
 }
 
+/// Build a `Command` for a nix executable (`nix`, `nix-instantiate`, …),
+/// routing through the USB nix wrapper when one is configured.
+///
+/// In the sovereign-AI USB build there is no system-wide nix — it is provided
+/// by nix-portable. Setting `MAC_MGMT_NIX_WRAPPER` to the nix-portable path
+/// makes every nix invocation run as `<wrapper> <prog> …`. When unset (the
+/// normal daemon) `<prog>` is invoked directly from `PATH`, exactly as before.
+pub fn nix_command(prog: &str) -> Command {
+    match std::env::var("MAC_MGMT_NIX_WRAPPER") {
+        Ok(wrapper) if !wrapper.is_empty() => {
+            let mut cmd = Command::new(wrapper);
+            cmd.arg(prog);
+            cmd
+        }
+        _ => Command::new(prog),
+    }
+}
+
+/// USB build: flakeref base for a locally-downloaded nixpkgs tarball, if
+/// configured via `MAC_MGMT_NIXPKGS_TARBALL`. Accepts either a full
+/// flakeref/URL (used as-is) or a bare filesystem path (wrapped in `file://`).
+/// This pins nixpkgs evaluation without the mac-mgmt server.
+fn usb_nixpkgs_base() -> Option<String> {
+    nixpkgs_base_from_src(&std::env::var("MAC_MGMT_NIXPKGS_TARBALL").ok()?)
+}
+
+/// Pure form of [`usb_nixpkgs_base`]: turn a configured source string into a
+/// flakeref base, or `None` when empty.
+fn nixpkgs_base_from_src(src: &str) -> Option<String> {
+    if src.is_empty() {
+        return None;
+    }
+    if src.contains("://") || src.starts_with("flake:") || src.starts_with("tarball") {
+        Some(src.to_string())
+    } else {
+        Some(format!("file://{src}"))
+    }
+}
+
 /// Server URL for constructing nixpkgs archive download URLs.
 static SERVER_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 
@@ -132,6 +171,11 @@ fn nixpkgs_tarball_url(commit: &str) -> String {
 /// and nixpkgs commit are configured, uses the server's archive endpoint.
 /// Otherwise falls back to the standard `nixpkgs` channel (standalone mode).
 fn desired_flake_base() -> Result<String> {
+    // USB build: a locally-downloaded nixpkgs tarball pins evaluation with no
+    // server dependency. Takes precedence over the server archive endpoint.
+    if let Some(base) = usb_nixpkgs_base() {
+        return Ok(base);
+    }
     if let Some(sha) = current_nixpkgs_commit() {
         if current_nixpkgs_server_url().is_some() {
             return Ok(nixpkgs_tarball_url(&sha));
@@ -149,6 +193,11 @@ pub fn desired_flake_ref(pkg: &str) -> Result<String> {
 /// instead of the git.plan.ai custom tarball. This makes unmanaged
 /// services follow the host's nixpkgs pin rather than the cluster's.
 pub fn nixpkgs_flake_ref(pkg: &str) -> String {
+    // USB build: resolve unmanaged installs from the on-stick nixpkgs tarball
+    // too, so they work offline with no server / channel.
+    if let Some(base) = usb_nixpkgs_base() {
+        return format!("{base}#{pkg}");
+    }
     format!("nixpkgs#{pkg}")
 }
 
@@ -182,7 +231,7 @@ pub fn current_system() -> Result<&'static str> {
 fn nix_current_system() -> Result<&'static str> {
     static CACHED: OnceLock<Result<String, String>> = OnceLock::new();
     let result = CACHED.get_or_init(|| {
-        let output = Command::new("nix-instantiate")
+        let output = nix_command("nix-instantiate")
             .args(["--eval", "--expr", "builtins.currentSystem"])
             .output()
             .map_err(|e| format!("failed to run nix-instantiate: {e}"))?;
@@ -228,7 +277,7 @@ fn probe_nix_capability(
     if let Some(v) = *cache.read().unwrap() {
         return v;
     }
-    let output = Command::new("nix").args(args).output();
+    let output = nix_command("nix").args(args).output();
     let supported = match output {
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -273,7 +322,7 @@ fn has_replace_support() -> bool {
 /// Run `nix profile list --json` and return the parsed JSON.
 /// Optionally targets a specific profile path.
 fn profile_list_json(profile: Option<&str>) -> Result<serde_json::Value> {
-    let mut cmd = Command::new("nix");
+    let mut cmd = nix_command("nix");
     cmd.args(["profile", "list", "--json"]);
     if let Some(p) = profile {
         cmd.args(["--profile", p]);
@@ -326,7 +375,7 @@ fn has_dry_run_support() -> bool {
 /// Requires nix with https://github.com/NixOS/nix/pull/15545
 fn packages_with_upgrades_dry_run(packages: &[&str]) -> Result<Vec<String>> {
     let cache_args = extra_substituter_args();
-    let mut cmd = Command::new("nix");
+    let mut cmd = nix_command("nix");
     cmd.env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .args(["profile", "upgrade", "--dry-run", "--impure"])
@@ -402,7 +451,7 @@ fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>>
     let current_profile = current_profile.to_string_lossy();
 
     // Copy current profile to temp
-    let status = Command::new("nix")
+    let status = nix_command("nix")
         .args(["profile", "list", "--profile", &current_profile])
         .status()
         .context("failed to verify current profile")?;
@@ -420,7 +469,7 @@ fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>>
 
     // Upgrade the temp profile
     let cache_args = extra_substituter_args();
-    let output = Command::new("nix")
+    let output = nix_command("nix")
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .args([
@@ -583,7 +632,7 @@ fn profile_original_urls() -> Result<HashMap<String, String>> {
 fn pre_build_package(nix_bin: &str, pkg: &str, flake_ref: &str) -> Result<()> {
     tracing::info!("pre-building {pkg} from {flake_ref}");
     let cache_args = extra_substituter_args();
-    let build = Command::new(nix_bin)
+    let build = nix_command(nix_bin)
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .args(["build", "--no-link", "--impure", flake_ref])
@@ -608,7 +657,7 @@ fn pre_build_package(nix_bin: &str, pkg: &str, flake_ref: &str) -> Result<()> {
 fn run_profile_cmd(nix_bin: &str, action: &str, pkg: &str, args: &[&str]) -> Result<()> {
     tracing::info!("running nix profile {action} {pkg}");
     let cache_args = extra_substituter_args();
-    let output = Command::new(nix_bin)
+    let output = nix_command(nix_bin)
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .arg("profile")
@@ -886,7 +935,7 @@ fn upgrade_nix_inner() -> Result<()> {
 
     // Stage 1: try nix upgrade-nix
     tracing::info!("trying nix upgrade-nix");
-    let output = Command::new(nix_bin_str)
+    let output = nix_command(nix_bin_str)
         .args(["upgrade-nix"])
         .output()
         .context("failed to run nix upgrade-nix")?;
@@ -922,7 +971,7 @@ fn upgrade_nix_inner() -> Result<()> {
     }
 
     let cache_args = extra_substituter_args();
-    let output = Command::new(nix_bin_str)
+    let output = nix_command(nix_bin_str)
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .args(["profile", "upgrade", "nix", "--impure"])
@@ -973,4 +1022,65 @@ fn upgrade_nix_inner() -> Result<()> {
     tracing::info!("nix profile upgrade nix succeeded");
     sentry_ext::breadcrumb("nix", "nix profile upgrade succeeded", &[]);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nixpkgs_base_empty_is_none() {
+        assert_eq!(nixpkgs_base_from_src(""), None);
+    }
+
+    #[test]
+    fn nixpkgs_base_bare_path_wrapped_in_file_url() {
+        assert_eq!(
+            nixpkgs_base_from_src("/stick/home/nixpkgs.tar.gz"),
+            Some("file:///stick/home/nixpkgs.tar.gz".to_string())
+        );
+    }
+
+    #[test]
+    fn nixpkgs_base_url_passed_through() {
+        assert_eq!(
+            nixpkgs_base_from_src("file:///x/nixpkgs.tar.gz"),
+            Some("file:///x/nixpkgs.tar.gz".to_string())
+        );
+        assert_eq!(
+            nixpkgs_base_from_src("tarball+file:///x/np.tar.gz"),
+            Some("tarball+file:///x/np.tar.gz".to_string())
+        );
+        assert_eq!(
+            nixpkgs_base_from_src("https://example/nixpkgs.tar.gz"),
+            Some("https://example/nixpkgs.tar.gz".to_string())
+        );
+    }
+
+    #[test]
+    fn nix_command_routing() {
+        // This is the only test that touches MAC_MGMT_NIX_WRAPPER, so the env
+        // mutation is safe within this module's test run.
+        unsafe {
+            std::env::remove_var("MAC_MGMT_NIX_WRAPPER");
+        }
+        let direct = nix_command("nix");
+        assert_eq!(direct.get_program().to_string_lossy(), "nix");
+        assert_eq!(direct.get_args().count(), 0);
+
+        unsafe {
+            std::env::set_var("MAC_MGMT_NIX_WRAPPER", "/np/nix-portable");
+        }
+        let wrapped = nix_command("nix-instantiate");
+        assert_eq!(wrapped.get_program().to_string_lossy(), "/np/nix-portable");
+        let args: Vec<String> = wrapped
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["nix-instantiate".to_string()]);
+
+        unsafe {
+            std::env::remove_var("MAC_MGMT_NIX_WRAPPER");
+        }
+    }
 }
