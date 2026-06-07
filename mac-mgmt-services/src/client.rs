@@ -2,15 +2,16 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 use tokio::sync::mpsc;
+
+use crate::transport::{self, IpcStream};
 
 use crate::protocol::{Message, Notification, Request, Response, ServiceStatus, SpawnSpec};
 
 /// Daemon-side RPC client. Spawns a background reader that forwards responses
 /// and notifications through bounded channels.
 pub struct Client {
-    writer: tokio::io::WriteHalf<UnixStream>,
+    writer: tokio::io::WriteHalf<IpcStream>,
     notif_rx: mpsc::Receiver<Notification>,
     resp_rx: mpsc::Receiver<Response>,
 }
@@ -22,7 +23,7 @@ impl Client {
         let mut delay = Duration::from_millis(200);
 
         let stream = loop {
-            match UnixStream::connect(path).await {
+            match transport::connect(path).await {
                 Ok(s) => break s,
                 Err(e) => {
                     if tokio::time::Instant::now() + delay > deadline {

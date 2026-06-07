@@ -6,8 +6,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, Command};
+
+use crate::transport::{self, IpcStream};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
@@ -62,11 +63,7 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    if socket_path.exists() {
-        std::fs::remove_file(socket_path).ok();
-    }
-    let listener = UnixListener::bind(socket_path)
-        .with_context(|| format!("bind {}", socket_path.display()))?;
+    let listener = transport::bind(socket_path)?;
 
     // Ensure log directory exists.
     let logdir = log_dir(socket_path);
@@ -108,8 +105,8 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
         let notif_tx = notif_tx.clone();
         tokio::spawn(async move {
             loop {
-                match listener.accept().await {
-                    Ok((stream, _)) => {
+                match transport::accept(&listener).await {
+                    Ok(stream) => {
                         let req_tx = req_tx.clone();
                         let notif_rx = notif_tx.subscribe();
                         tokio::spawn(handle_client(stream, req_tx, notif_rx));
@@ -201,7 +198,7 @@ pub fn reexec_self() -> ! {
 // ── Per-connection handler ───────────────────────────────────────────
 
 async fn handle_client(
-    stream: UnixStream,
+    stream: IpcStream,
     req_tx: mpsc::Sender<(Request, mpsc::Sender<Response>)>,
     mut notif_rx: broadcast::Receiver<Notification>,
 ) {
@@ -264,7 +261,7 @@ async fn handle_client(
     }
 }
 
-async fn write_msg(writer: &mut tokio::io::WriteHalf<UnixStream>, msg: Message) -> Result<()> {
+async fn write_msg(writer: &mut tokio::io::WriteHalf<IpcStream>, msg: Message) -> Result<()> {
     let mut line = serde_json::to_string(&msg).context("serialize")?;
     line.push('\n');
     writer.write_all(line.as_bytes()).await.context("write")?;
