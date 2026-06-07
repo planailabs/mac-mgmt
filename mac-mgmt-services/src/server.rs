@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
+use crate::procutil;
 use crate::transport::{self, IpcStream};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
@@ -120,21 +121,20 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
         });
     }
 
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .context("SIGTERM handler")?;
-    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-        .context("SIGINT handler")?;
+    // OS shutdown signal, registered once on a background task (cross-platform:
+    // SIGTERM/SIGINT on unix, Ctrl-C/console-close on windows).
+    let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+    tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
+        let _ = shutdown_tx.send(()).await;
+    });
 
     let mut reexec = false;
 
     loop {
         tokio::select! {
-            _ = sigterm.recv() => {
-                tracing::info!("supervisor received SIGTERM");
-                break;
-            }
-            _ = sigint.recv() => {
-                tracing::info!("supervisor received SIGINT");
+            _ = shutdown_rx.recv() => {
+                tracing::info!("supervisor received shutdown signal");
                 break;
             }
             Some((req, resp_tx)) = req_rx.recv() => {
@@ -176,23 +176,64 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
     Ok(reexec)
 }
 
+/// Resolve once the OS asks us to shut down.
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut term = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => { tracing::warn!("SIGTERM handler: {e}"); return std::future::pending().await; }
+    };
+    let mut int = match signal(SignalKind::interrupt()) {
+        Ok(s) => s,
+        Err(e) => { tracing::warn!("SIGINT handler: {e}"); return std::future::pending().await; }
+    };
+    tokio::select! {
+        _ = term.recv() => {}
+        _ = int.recv() => {}
+    }
+}
+
+/// Resolve once the OS asks us to shut down (windows: Ctrl-C / console close).
+#[cfg(windows)]
+async fn wait_for_shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 /// Re-exec the current binary with its original argv. Call after
 /// `run()` returns `Ok(true)`. Child processes survive the exec because
 /// the PID stays the same — the new process image adopts them via
 /// the state file written by `save_state_for_reexec`.
 pub fn reexec_self() -> ! {
-    use std::os::unix::process::CommandExt;
     // Use argv[0] (the symlink path) instead of current_exe() (which
     // resolves symlinks). After self-update the symlink points to the
-    // new binary, so exec through it picks up the new version.
+    // new binary, so re-exec through it picks up the new version.
     let argv0 = std::env::args()
         .next()
         .unwrap_or_else(|| "mac-mgmt".to_string());
     let args: Vec<String> = std::env::args().skip(1).collect();
-    tracing::info!("supervisor exec {argv0:?} {args:?}");
-    let err = std::process::Command::new(&argv0).args(&args).exec();
-    tracing::error!("supervisor exec failed: {err}");
-    std::process::exit(1);
+    tracing::info!("supervisor reexec {argv0:?} {args:?}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // execv: the PID stays the same, so children keep their parent.
+        let err = std::process::Command::new(&argv0).args(&args).exec();
+        tracing::error!("supervisor exec failed: {err}");
+        std::process::exit(1);
+    }
+    #[cfg(windows)]
+    {
+        // No execv on windows: spawn a fresh copy (it adopts the running
+        // children via the saved state file) then exit. The children are
+        // separate processes and survive the parent exiting.
+        match std::process::Command::new(&argv0).args(&args).spawn() {
+            Ok(_) => std::process::exit(0),
+            Err(e) => {
+                tracing::error!("supervisor respawn failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
 }
 
 // ── Per-connection handler ───────────────────────────────────────────
@@ -406,7 +447,7 @@ impl SupervisorState {
         notif_tx: broadcast::Sender<Notification>,
     ) {
         // Check if the PID is still alive.
-        let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+        let alive = procutil::is_alive(pid);
         if !alive {
             tracing::warn!("supervisor: cannot adopt {name} (pid {pid}): process not found");
             return;
@@ -552,14 +593,11 @@ impl SupervisorState {
                 message: format!("service '{name}' has no running process"),
             };
         }
-        let ret = unsafe { libc::kill(pid as i32, signal) };
-        if ret == 0 {
-            Response::Ok
-        } else {
-            let err = std::io::Error::last_os_error();
-            Response::Error {
+        match procutil::send_signal(pid, signal) {
+            Ok(()) => Response::Ok,
+            Err(err) => Response::Error {
                 message: format!("kill({pid}, {signal}): {err}"),
-            }
+            },
         }
     }
 
@@ -660,10 +698,9 @@ async fn monitor_adopted(
     // table — kill returns success for them, so we'd never detect the exit.
     // waitpid both detects AND reaps the zombie in one call.
     let exited = loop {
-        let status =
-            unsafe { libc::waitpid(adopted_pid as i32, std::ptr::null_mut(), libc::WNOHANG) };
-        // status > 0: child reaped; status == 0: still running; status < 0: not our child / gone
-        if status != 0 {
+        // reap_if_exited detects AND reaps the zombie in one call (unix); on
+        // windows it just checks liveness (no zombies).
+        if procutil::reap_if_exited(adopted_pid) {
             break true;
         }
         tokio::select! {
@@ -671,15 +708,12 @@ async fn monitor_adopted(
             _ = stop_rx.recv() => {
                 // Stop requested — kill the adopted child.
                 tracing::info!("supervisor: stopping adopted {name} (pid {adopted_pid})");
-                unsafe { libc::kill(adopted_pid as i32, libc::SIGTERM) };
+                let _ = procutil::send_signal(adopted_pid, procutil::SIGTERM);
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                let reaped = unsafe {
-                    libc::waitpid(adopted_pid as i32, std::ptr::null_mut(), libc::WNOHANG)
-                };
-                if reaped == 0 {
+                if !procutil::reap_if_exited(adopted_pid) {
                     // Still running after grace period — force kill and reap.
-                    unsafe { libc::kill(adopted_pid as i32, libc::SIGKILL) };
-                    unsafe { libc::waitpid(adopted_pid as i32, std::ptr::null_mut(), 0) };
+                    let _ = procutil::send_signal(adopted_pid, procutil::SIGKILL);
+                    procutil::reap_blocking(adopted_pid);
                 }
                 pid.store(0, Ordering::Relaxed);
                 tail_handle.abort();
@@ -813,10 +847,8 @@ async fn wait_child(
 
 async fn stop_child(child: &mut Child) {
     if let Some(pid) = child.id() {
-        // SAFETY: libc::kill is always safe to call with an i32 pid/signum.
-        unsafe {
-            libc::kill(pid as i32, libc::SIGTERM);
-        }
+        // Graceful stop: SIGTERM on unix, TerminateProcess on windows.
+        let _ = procutil::send_signal(pid, procutil::SIGTERM);
         let deadline = tokio::time::Instant::now() + STOP_GRACE;
         loop {
             match child.try_wait() {
@@ -1084,7 +1116,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // SIGTERM — supervisor will respawn.
-        c.kill_service("test-svc", libc::SIGTERM).await.unwrap();
+        c.kill_service("test-svc", crate::procutil::SIGTERM).await.unwrap();
         // Give supervisor time to detect exit and respawn.
         tokio::time::sleep(Duration::from_secs(3)).await;
 

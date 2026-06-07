@@ -36,14 +36,13 @@ pub fn bind(socket_path: &Path) -> Result<Listener> {
     }
     #[cfg(windows)]
     {
-        let stem = pipe_stem(socket_path);
-        let name = stem
+        let name = pipe_stem(socket_path)
             .to_ns_name::<GenericNamespaced>()
             .context("named-pipe ns name")?;
         ListenerOptions::new()
             .name(name)
             .create_tokio()
-            .with_context(|| format!("bind named pipe {stem}"))
+            .with_context(|| format!("bind named pipe for {}", socket_path.display()))
     }
 }
 
