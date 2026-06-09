@@ -30,7 +30,7 @@ pub struct DeployState {
 /// Maximum tarball upload size: 10 GiB. The body is streamed to disk and this
 /// cap is enforced as the bytes arrive (plus an early Content-Length check), so
 /// no oversized upload is ever buffered in memory.
-const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024 * 1024;
+const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024 * 1024;
 
 /// How long a single deploy request may take. Uploading a multi-gigabyte
 /// tarball over a slow link can run for many minutes, so allow up to an hour
