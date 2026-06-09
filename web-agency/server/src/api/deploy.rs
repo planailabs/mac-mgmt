@@ -8,8 +8,8 @@
 
 use dioxus::fullstack::axum::{
     self as axum, Router,
-    body::Bytes,
-    extract::{DefaultBodyLimit, Path, State},
+    body::Body,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::Json,
     routing::{get, post},
@@ -27,8 +27,9 @@ pub struct DeployState {
     pub active_deploys: Arc<AtomicUsize>,
 }
 
-/// Maximum tarball upload size: 10 GiB. The default axum body limit (2 MiB) is
-/// far too small for real site bundles, so we raise it just for these routes.
+/// Maximum tarball upload size: 10 GiB. The body is streamed to disk and this
+/// cap is enforced as the bytes arrive (plus an early Content-Length check), so
+/// no oversized upload is ever buffered in memory.
 const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024 * 1024;
 
 /// How long a single deploy request may take. Uploading a multi-gigabyte
@@ -41,11 +42,13 @@ pub fn router(state: DeployState) -> Router<()> {
         .route("/api/v1/deploy/whoami", get(whoami))
         .route("/api/v1/deploy/{webspace_id}", post(upload_deploy))
         .route("/api/v1/deploy/{webspace_id}/status", get(deploy_status))
-        // Allow large tarball uploads and give them plenty of time. These layers
-        // are scoped to the deploy routes only — the rest of the app keeps the
-        // default limits.
-        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
-        .layer(tower_http::timeout::TimeoutLayer::new(UPLOAD_TIMEOUT))
+        // Tarball uploads can run for many minutes; give them up to an hour. The
+        // body itself is streamed to disk and size-capped in the handler. Scoped
+        // to the deploy routes only — the rest of the app keeps its defaults.
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            UPLOAD_TIMEOUT,
+        ))
         .with_state(state)
 }
 
@@ -218,7 +221,7 @@ async fn upload_deploy(
     Path(webspace_id): Path<Uuid>,
     axum::extract::Query(query): axum::extract::Query<UploadQuery>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Result<Json<UploadResponse>, (StatusCode, String)> {
     authenticate_deploy(&state.pool, &headers, webspace_id).await?;
 
@@ -268,7 +271,62 @@ async fn upload_deploy(
         }
     };
 
-    let tarball_size = body.len() as i64;
+    // Reject obviously-oversized uploads up front via Content-Length, then
+    // stream the body straight to a temp file on disk — the full multi-gigabyte
+    // tarball is never held in memory.
+    if let Some(len) = headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        if len > MAX_UPLOAD_BYTES as u64 {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!("upload exceeds the {MAX_UPLOAD_BYTES} byte limit"),
+            ));
+        }
+    }
+
+    let upload = tempfile::Builder::new()
+        .prefix("web-agency-deploy-")
+        .suffix(".tar.gz")
+        .tempfile()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("tempfile: {e}")))?;
+    let (std_file, upload_path) = upload.into_parts();
+    let mut file = tokio::fs::File::from_std(std_file);
+
+    let mut tarball_size: i64 = 0;
+    {
+        use futures_core::Stream as _;
+        use tokio::io::AsyncWriteExt as _;
+        let mut stream = std::pin::pin!(body.into_data_stream());
+        loop {
+            match std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
+                Some(Ok(chunk)) => {
+                    tarball_size += chunk.len() as i64;
+                    if tarball_size > MAX_UPLOAD_BYTES as i64 {
+                        return Err((
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            format!("upload exceeds the {MAX_UPLOAD_BYTES} byte limit"),
+                        ));
+                    }
+                    file.write_all(&chunk).await.map_err(|e| {
+                        (StatusCode::INTERNAL_SERVER_ERROR, format!("write upload: {e}"))
+                    })?;
+                }
+                Some(Err(e)) => {
+                    return Err((StatusCode::BAD_REQUEST, format!("upload stream error: {e}")));
+                }
+                None => break,
+            }
+        }
+        file.flush()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("flush upload: {e}")))?;
+    }
+    // Close the write handle so the background deploy can re-open the file.
+    drop(file);
+
     tracing::info!(
         webspace_id = %webspace_id,
         target = target.label(),
@@ -299,6 +357,7 @@ async fn upload_deploy(
                 Err(e) => {
                     active.fetch_sub(1, Ordering::Relaxed);
                     set_failed(&state.pool, deployment_id, &e).await;
+                    // `upload_path` drops here, deleting the staged tarball.
                     return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
                 }
             };
@@ -330,15 +389,18 @@ async fn upload_deploy(
                     cf_token,
                     account_id,
                     branch,
-                    body,
+                    upload_path.to_path_buf(),
                 )
                 .await;
+                let _ = upload_path.close(); // delete the staged tarball
                 active.fetch_sub(1, Ordering::Relaxed);
             });
         }
         DeployTarget::LocalStatic => {
             tokio::spawn(async move {
-                run_static_deploy(pool, deployment_id, webspace_id, body).await;
+                run_static_deploy(pool, deployment_id, webspace_id, upload_path.to_path_buf())
+                    .await;
+                let _ = upload_path.close(); // delete the staged tarball
                 active.fetch_sub(1, Ordering::Relaxed);
             });
         }
@@ -439,15 +501,13 @@ async fn run_wrangler_deploy(
     cf_token: String,
     account_id: String,
     branch: Option<String>,
-    tarball: Bytes,
+    tarball_path: std::path::PathBuf,
 ) {
     let branch_label = branch.as_deref().unwrap_or("production");
-    let tarball_len = tarball.len();
     tracing::info!(
         deployment_id = %deployment_id,
         project = %project_name,
         branch = %branch_label,
-        tarball_bytes = tarball_len,
         "starting deployment"
     );
 
@@ -470,7 +530,7 @@ async fn run_wrangler_deploy(
     let extract_dir = tmp_dir.path().join("site");
 
     tracing::info!(deployment_id = %deployment_id, "extracting tarball");
-    if let Err(e) = extract_tarball(tarball, extract_dir.clone()).await {
+    if let Err(e) = extract_tarball(tarball_path, extract_dir.clone()).await {
         tracing::error!(deployment_id = %deployment_id, error = %e, "tar extraction failed");
         set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
         return;
@@ -562,13 +622,15 @@ async fn run_wrangler_deploy(
     // tmp_dir dropped here, auto-cleaned
 }
 
-/// Extract a gzipped tarball into `dest` (created if missing).
-async fn extract_tarball(tarball: Bytes, dest: std::path::PathBuf) -> Result<(), String> {
+/// Extract a gzipped tarball file into `dest` (created if missing). The archive
+/// is read and decompressed straight from disk so it is never buffered in RAM.
+async fn extract_tarball(src: std::path::PathBuf, dest: std::path::PathBuf) -> Result<(), String> {
     tokio::fs::create_dir_all(&dest)
         .await
         .map_err(|e| format!("mkdir: {e}"))?;
     tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let gz = flate2::read::GzDecoder::new(std::io::Cursor::new(&tarball));
+        let f = std::fs::File::open(&src).map_err(|e| format!("open tarball: {e}"))?;
+        let gz = flate2::read::GzDecoder::new(std::io::BufReader::new(f));
         let mut archive = tar::Archive::new(gz);
         archive.set_overwrite(true);
         archive.unpack(&dest).map_err(|e| e.to_string())
@@ -595,7 +657,7 @@ async fn run_static_deploy(
     pool: PgPool,
     deployment_id: Uuid,
     webspace_id: Uuid,
-    tarball: Bytes,
+    tarball_path: std::path::PathBuf,
 ) {
     tracing::info!(deployment_id = %deployment_id, webspace_id = %webspace_id, "starting static deploy");
     let _ = sqlx::query("UPDATE deployments SET status = 'deploying', updated_at = now() WHERE id = $1")
@@ -615,7 +677,7 @@ async fn run_static_deploy(
     }
     let _ = tokio::fs::remove_dir_all(&staging).await;
 
-    if let Err(e) = extract_tarball(tarball, staging.clone()).await {
+    if let Err(e) = extract_tarball(tarball_path, staging.clone()).await {
         let _ = tokio::fs::remove_dir_all(&staging).await;
         set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
         return;
