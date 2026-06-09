@@ -294,6 +294,15 @@ impl ProxyHttp for WebAgencyProxy {
         let host = extract_host(session);
         let req_path = session.req_header().uri.path().to_string();
 
+        // Tarball uploads to the deploy API can stream for many minutes. The
+        // default downstream read timeout (60s) would abort them mid-upload, so
+        // give these requests up to an hour. Scoped to the deploy POST route.
+        if req_path.starts_with("/api/v1/deploy/")
+            && session.req_header().method == http::Method::POST
+        {
+            session.set_read_timeout(Some(std::time::Duration::from_secs(3600)));
+        }
+
         // Clone the matched folder's auth so we don't hold the routes guard
         // across awaits. Upstream selection happens in upstream_peer.
         let auth = {

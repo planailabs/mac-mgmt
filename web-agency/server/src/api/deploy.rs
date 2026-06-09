@@ -9,7 +9,7 @@
 use dioxus::fullstack::axum::{
     self as axum, Router,
     body::Bytes,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode},
     response::Json,
     routing::{get, post},
@@ -27,11 +27,25 @@ pub struct DeployState {
     pub active_deploys: Arc<AtomicUsize>,
 }
 
+/// Maximum tarball upload size: 10 GiB. The default axum body limit (2 MiB) is
+/// far too small for real site bundles, so we raise it just for these routes.
+const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024 * 1024;
+
+/// How long a single deploy request may take. Uploading a multi-gigabyte
+/// tarball over a slow link can run for many minutes, so allow up to an hour
+/// before the request is considered timed out.
+const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+
 pub fn router(state: DeployState) -> Router<()> {
     Router::new()
         .route("/api/v1/deploy/whoami", get(whoami))
         .route("/api/v1/deploy/{webspace_id}", post(upload_deploy))
         .route("/api/v1/deploy/{webspace_id}/status", get(deploy_status))
+        // Allow large tarball uploads and give them plenty of time. These layers
+        // are scoped to the deploy routes only — the rest of the app keeps the
+        // default limits.
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
+        .layer(tower_http::timeout::TimeoutLayer::new(UPLOAD_TIMEOUT))
         .with_state(state)
 }
 

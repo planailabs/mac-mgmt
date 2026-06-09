@@ -96,6 +96,8 @@ async fn add_credential(
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Credential set changed — tell the proxy to reload its basic-auth lists.
+    crate::api::internal::notify_proxy_reload();
     Ok(())
 }
 
@@ -122,6 +124,8 @@ async fn remove_credential(credential_id: Uuid) -> Result<(), ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Credential set changed — tell the proxy to reload its basic-auth lists.
+    crate::api::internal::notify_proxy_reload();
     Ok(())
 }
 
