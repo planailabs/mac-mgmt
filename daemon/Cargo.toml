@@ -37,6 +37,13 @@ usbd = [
     "services", "memvault", "relay",
     "dep:self-replace", "dep:tar", "dep:flate2", "dep:schemars",
 ]
+# Gate the USB daemon's "network parts" — heartbeat, relay + relay-ssh, server
+# push, and remote config sync — behind an opt-in feature. OFF by default: the
+# shipped daemon runs a purely local stack (supervisor + spawn-from-mount
+# services + control API + local probes), with no phone-home. Turn on `future`
+# (e.g. `usbd-future`) to enable the management-server / relay plane.
+future = []
+usbd-future = [ "usbd", "future" ]
 # The native overview desktop app (wry/webkitgtk). Kept separate from `usb` so
 # the headless stack (and all tests/CI) builds without the desktop GUI stack;
 # the release build adds it. Requires webkit2gtk at build time (see flake.nix).

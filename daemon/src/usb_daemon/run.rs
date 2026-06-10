@@ -195,17 +195,27 @@ pub async fn run_stack(opts: UsbdOpts) -> Result<StackHandle> {
     let _ = std::fs::write(opts.home.join(".usbd-control-port"), control_port.to_string());
     tracing::info!("usb daemon control/status API on http://[::1]:{control_port}");
 
-    // Relay + relay-ssh + p2p swarm.
-    let server_url = cfg.server.url.clone();
-    let server_token = cfg.server.token.as_ref().map(|s| s.expose().to_string());
+    // Relay + relay-ssh + p2p swarm + heartbeat/sync are the "network parts",
+    // gated behind the `future` feature. With it OFF (default) we run a purely
+    // local stack: no server (→ heartbeat/probe-upload/sync all no-op), no relay
+    // registration, no p2p swarm, no server push. relay_mgr is still built (its
+    // FIFO watcher is local), but without the p2p swarm it never reaches a relay.
+    let future = cfg!(feature = "future");
+    let server_url = if future { cfg.server.url.clone() } else { None };
+    let server_token = if future {
+        cfg.server.token.as_ref().map(|s| s.expose().to_string())
+    } else {
+        None
+    };
 
     let (relay_mgr, relay_heartbeat_rx) = crate::remote_ssh::RemoteSshState::new(
         server_url.clone(),
         server_token.clone(),
-        cfg.relay.remote_ssh_enabled,
+        future && cfg.relay.remote_ssh_enabled,
     );
 
-    let p2p_mgr = if !opts.offline
+    let p2p_mgr = if future
+        && !opts.offline
         && (cfg.relay.relay_multiaddr.is_some() || cfg.relay.mdns_enabled || memvault_url.is_some())
     {
         build_p2p(&cfg, &host_key, &instance_id, control_port, &relay_mgr, &server_token).await
@@ -213,9 +223,9 @@ pub async fn run_stack(opts: UsbdOpts) -> Result<StackHandle> {
         None
     };
 
-    // Server push (SSE) — optional.
-    let push_rx = if let (false, Some(url), Some(token)) =
-        (opts.offline, server_url.as_deref(), server_token.as_deref())
+    // Server push (SSE) — gated behind `future`.
+    let push_rx = if let (true, Some(url), Some(token)) =
+        (future && !opts.offline, server_url.as_deref(), server_token.as_deref())
     {
         let (_h, rx) = crate::server_push::start(url, token);
         Some(rx)

@@ -88,6 +88,10 @@ pub async fn load(home: &Path, explicit: Option<&Path>, offline: bool) -> Result
 
     let env_vars = crate::config::load_env_file();
 
+    // Remote config sync is a "network part" — gated behind the `future` feature.
+    // Without it (the default), only the on-stick config file is honoured.
+    let net = !offline && cfg!(feature = "future");
+
     // 2. Server coordinates (from the local file) drive the optional sync.
     let server_url = local_value
         .as_ref()
@@ -99,8 +103,8 @@ pub async fn load(home: &Path, explicit: Option<&Path>, offline: bool) -> Result
         .map(|s| resolve_token(s, &env_vars));
 
     // 3. Secrets vault (optional) for env:/secret: resolution.
-    let vault = if let (false, Some(url), Some(token)) =
-        (offline, server_url.as_deref(), server_token.as_deref())
+    let vault = if let (true, Some(url), Some(token)) =
+        (net, server_url.as_deref(), server_token.as_deref())
     {
         crate::config::fetch_secrets(url, token).await
     } else {
@@ -108,8 +112,8 @@ pub async fn load(home: &Path, explicit: Option<&Path>, offline: bool) -> Result
     };
 
     // 4. Optional remote config sync (subset honoured automatically).
-    let mut cfg = if let (false, Some(url), Some(token)) =
-        (offline, server_url.as_deref(), server_token.as_deref())
+    let mut cfg = if let (true, Some(url), Some(token)) =
+        (net, server_url.as_deref(), server_token.as_deref())
     {
         match crate::config::fetch_remote_config(url, token).await {
             Ok(Some(mut remote)) => {
