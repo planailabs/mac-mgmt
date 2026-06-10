@@ -38,5 +38,16 @@ fn main() {
         }
     }
 
+    // USB-daemon mode: `mac-mgmt usbd …` boots the reduced phone-home control
+    // plane for the plan-ai-usb-minimal stack. Intercepted before the tokio
+    // runtime so HOME can be pinned single-threaded (and, on macOS, so any
+    // future event loop can own the main thread), matching `usb` above.
+    #[cfg(feature = "usbd")]
+    {
+        if args.get(1).map(String::as_str) == Some("usbd") {
+            mac_mgmt_daemon::usb_daemon::main(args);
+        }
+    }
+
     daemon_main::main();
 }

@@ -63,7 +63,9 @@ pub mod systemctl;
 pub mod unmanaged;
 #[cfg(feature = "usb")]
 pub mod usb;
-#[cfg(feature = "usb")]
+#[cfg(feature = "usbd")]
+pub mod usb_daemon;
+#[cfg(any(feature = "usb", feature = "usbd"))]
 pub mod usb_update;
 pub mod validator;
 

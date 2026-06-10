@@ -931,6 +931,66 @@ impl Default for OllamaConfig {
     }
 }
 
+// ── Open-WebUI ───────────────────────────────────────────────────────────
+
+fn default_openwebui_port() -> u16 {
+    8088
+}
+
+/// Configuration for Open-WebUI (the chat front-end shipped on the USB stick).
+///
+/// On the USB build the binary is run from the mounted dmg/squashfs, never
+/// installed via nix — so this config carries only runtime settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenWebuiConfig {
+    #[schemars(description = "Whether Open-WebUI is started")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "Open-WebUI listen address")]
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[schemars(
+        description = "Preferred Open-WebUI listen port. This is a PREFERENCE, not a \
+                       guarantee: if the port is already in use the daemon \
+                       auto-selects a free port and reports the effective port via \
+                       the dashboard."
+    )]
+    #[serde(default = "default_openwebui_port")]
+    pub port: u16,
+    #[schemars(description = "Data directory (sqlite db, uploads); created on first run", extend("x-advanced" = true))]
+    #[serde(default)]
+    pub data_dir: String,
+    #[schemars(description = "Require login (WEBUI_AUTH). Default false for a single-user stick.")]
+    #[serde(default)]
+    pub auth: bool,
+    #[schemars(description = "Persistent WEBUI_SECRET_KEY; generated and stored under data_dir when unset", extend("x-advanced" = true))]
+    #[serde(default)]
+    pub secret_key: Option<Secret>,
+}
+
+impl Default for OpenWebuiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: default_host(),
+            port: default_openwebui_port(),
+            data_dir: String::new(),
+            auth: false,
+            secret_key: None,
+        }
+    }
+}
+
+impl OpenWebuiConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.port == 0 {
+            return Err(ValidationError("openwebui.port must be > 0".into()));
+        }
+        Ok(())
+    }
+}
+
 // ── LM Studio (lms) ────────────────────────────────────────────────────
 
 fn default_lms_port() -> u16 {
@@ -1864,6 +1924,9 @@ pub struct ClusterConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     #[schemars(extend("x-category" = "llm-providers"))]
+    pub openwebui: OpenWebuiConfig,
+    #[serde(default)]
+    #[schemars(extend("x-category" = "llm-providers"))]
     pub lms: LmsConfig,
     #[serde(default)]
     #[schemars(extend("x-category" = "llm-providers"))]
@@ -1936,6 +1999,9 @@ impl ClusterConfig {
         self.global.validate().map_err(|e| e.to_string())?;
         if self.ollama.enabled {
             self.ollama.validate().map_err(|e| e.to_string())?;
+        }
+        if self.openwebui.enabled {
+            self.openwebui.validate().map_err(|e| e.to_string())?;
         }
         if self.lms.enabled {
             self.lms.validate().map_err(|e| e.to_string())?;
@@ -2076,6 +2142,8 @@ pub struct DaemonConfig {
     #[serde(default)]
     pub ollama: OllamaConfig,
     #[serde(default)]
+    pub openwebui: OpenWebuiConfig,
+    #[serde(default)]
     pub lms: LmsConfig,
     #[serde(default)]
     pub unsloth: UnslothConfig,
@@ -2178,6 +2246,118 @@ impl DaemonConfig {
         if let Some(ref mut tg) = self.openclaw.telegram {
             if let Err(e) = tg.bot_token.resolve(env_vars, vault) {
                 errors.push(format!("openclaw.telegram.bot_token: {e}"));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+// ── USB Config (reduced subset for the sovereign-AI USB daemon) ──────────
+
+/// The reduced config the USB daemon honours: ollama + open-webui + memvault,
+/// plus the server connection (for optional config sync), relay, metrics, and
+/// daemon settings. It is a strict **subset** of [`ClusterConfig`]/[`DaemonConfig`]
+/// using the **same field names + types**, so a full cluster config fetched from
+/// the management server deserializes straight into this struct — the
+/// non-subset sections (openclaw, hermes, lms, cloud, …) are silently dropped.
+///
+/// NOTE: deliberately NOT `#[serde(deny_unknown_fields)]`. That tolerance is what
+/// makes "only honour the subset" automatic when syncing a full cluster config.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct UsbConfig {
+    #[serde(default)]
+    #[schemars(extend("x-category" = "infra"))]
+    pub daemon: DaemonSettings,
+    #[serde(default)]
+    #[schemars(extend("x-category" = "ops"))]
+    pub notifications: NotificationsConfig,
+    #[serde(default)]
+    #[schemars(extend("x-category" = "identity", "x-always-on" = true))]
+    pub global: GlobalConfig,
+    #[serde(default)]
+    #[schemars(extend("x-category" = "llm-providers"))]
+    pub ollama: OllamaConfig,
+    #[serde(default)]
+    #[schemars(extend("x-category" = "llm-providers"))]
+    pub openwebui: OpenWebuiConfig,
+    #[serde(default)]
+    #[schemars(extend("x-category" = "infra"))]
+    pub memvault: MemvaultConfig,
+    #[serde(default)]
+    #[schemars(extend("x-category" = "ops"))]
+    pub metrics: MetricsConfig,
+    #[serde(default)]
+    pub server: DaemonServerConfig,
+    #[serde(default)]
+    #[schemars(extend("x-category" = "infra"))]
+    pub relay: RelayConfig,
+    #[schemars(extend("x-category" = "custom", "x-array-entry-label" = "name"))]
+    #[serde(default, rename = "custom-service")]
+    pub custom_services: Vec<custom_service::CustomServiceConfig>,
+}
+
+impl UsbConfig {
+    /// Parse and validate a TOML string as a USB config.
+    pub fn from_toml(toml_str: &str) -> Result<Self, String> {
+        let config: Self = toml::from_str(toml_str).map_err(|e| e.to_string())?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Parse and validate a JSON value as a USB config. Used when syncing the
+    /// (full) cluster config from the management server — extra sections are
+    /// ignored, only the subset is kept.
+    pub fn from_json(json: &serde_json::Value) -> Result<Self, String> {
+        let config: Self = serde_json::from_value(json.clone()).map_err(|e| e.to_string())?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        self.daemon.validate().map_err(|e| e.to_string())?;
+        self.global.validate().map_err(|e| e.to_string())?;
+        if self.ollama.enabled {
+            self.ollama.validate().map_err(|e| e.to_string())?;
+        }
+        if self.openwebui.enabled {
+            self.openwebui.validate().map_err(|e| e.to_string())?;
+        }
+        self.relay.validate().map_err(|e| e.to_string())?;
+        let mut seen_names = std::collections::HashSet::new();
+        for cs in &self.custom_services {
+            cs.validate().map_err(|e| e.to_string())?;
+            if !seen_names.insert(&cs.name) {
+                return Err(format!("custom-service: duplicate name '{}'", cs.name));
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve `env:` and `secret:` references in all Secret fields (server
+    /// token, relay PSK, open-webui secret key).
+    pub fn resolve_secrets(
+        &mut self,
+        env_vars: &std::collections::HashMap<String, String>,
+        vault: &std::collections::HashMap<String, String>,
+    ) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
+        if let Some(ref mut token) = self.server.token {
+            if let Err(e) = token.resolve(env_vars, vault) {
+                errors.push(format!("server.token: {e}"));
+            }
+        }
+        if let Some(ref mut psk) = self.relay.cluster_psk {
+            if let Err(e) = psk.resolve(env_vars, vault) {
+                errors.push(format!("relay.cluster_psk: {e}"));
+            }
+        }
+        if let Some(ref mut key) = self.openwebui.secret_key {
+            if let Err(e) = key.resolve(env_vars, vault) {
+                errors.push(format!("openwebui.secret_key: {e}"));
             }
         }
         if errors.is_empty() {
@@ -2879,4 +3059,86 @@ pub struct HealerStaffPing {
     pub message: String,
     pub resolved: bool,
     pub created_at: String,
+}
+
+#[cfg(test)]
+mod usb_config_tests {
+    use super::*;
+
+    #[test]
+    fn usb_minimal_defaults() {
+        let cfg = UsbConfig::from_toml("").unwrap();
+        assert!(!cfg.ollama.enabled);
+        assert!(!cfg.openwebui.enabled);
+        assert!(!cfg.memvault.enabled);
+        assert_eq!(cfg.openwebui.port, 8088);
+        assert_eq!(cfg.openwebui.host, "127.0.0.1");
+    }
+
+    #[test]
+    fn usb_parses_subset_toml() {
+        let toml = r#"
+[ollama]
+enabled = true
+models = ["qwen3.5"]
+default_model = "qwen3.5"
+
+[openwebui]
+enabled = true
+port = 9999
+auth = true
+
+[server]
+url = "https://mgmt.example.com"
+token = "secret-token"
+"#;
+        let cfg = UsbConfig::from_toml(toml).unwrap();
+        assert!(cfg.ollama.enabled);
+        assert_eq!(cfg.openwebui.port, 9999);
+        assert!(cfg.openwebui.auth);
+        assert_eq!(cfg.server.url.as_deref(), Some("https://mgmt.example.com"));
+    }
+
+    /// A FULL cluster config (with sections the USB daemon doesn't support)
+    /// must deserialize into UsbConfig, keeping the subset and silently
+    /// dropping openclaw/hermes/lms/cloud/etc. This is the "honour only the
+    /// subset" guarantee for config-server sync.
+    #[test]
+    fn usb_keeps_only_subset_from_full_cluster_json() {
+        let full = serde_json::json!({
+            "ollama": { "enabled": true, "models": ["qwen3.5"], "default_model": "qwen3.5" },
+            "openwebui": { "enabled": true, "port": 8181 },
+            "memvault": { "enabled": true },
+            "openclaw": { "enabled": true },
+            "hermes": { "enabled": true },
+            "lms": { "enabled": true },
+            "cloud": [{ "enabled": true, "provider": "anthropic" }],
+            "ai_proxy": { "enabled": true },
+            "global": { "default_llm": "ollama" },
+        });
+        let cfg = UsbConfig::from_json(&full).unwrap();
+        assert!(cfg.ollama.enabled);
+        assert_eq!(cfg.openwebui.port, 8181);
+        assert!(cfg.memvault.enabled);
+        assert_eq!(cfg.global.default_llm, LlmProvider::Ollama);
+        // openclaw/hermes/lms/cloud are not fields of UsbConfig — dropped.
+        let reserialized = serde_json::to_value(&cfg).unwrap();
+        assert!(reserialized.get("openclaw").is_none());
+        assert!(reserialized.get("lms").is_none());
+        assert!(reserialized.get("cloud").is_none());
+    }
+
+    #[test]
+    fn usb_full_cluster_config_has_openwebui() {
+        // OpenWebui is also exposed on ClusterConfig so the server can manage it.
+        let cfg = ClusterConfig::from_toml("[openwebui]\nenabled = true\nport = 7000\n").unwrap();
+        assert!(cfg.openwebui.enabled);
+        assert_eq!(cfg.openwebui.port, 7000);
+    }
+
+    #[test]
+    fn usb_rejects_zero_openwebui_port() {
+        let err = UsbConfig::from_toml("[openwebui]\nenabled = true\nport = 0\n").unwrap_err();
+        assert!(err.contains("openwebui.port"), "got: {err}");
+    }
 }
