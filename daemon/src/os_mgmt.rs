@@ -8,7 +8,7 @@ use std::process::Command;
 pub struct OsConfigs;
 
 fn is_root() -> bool {
-    unsafe { libc::geteuid() == 0 }
+    crate::platform::is_root()
 }
 
 fn sudo_mkdir_p(path: &Path) -> Result<()> {

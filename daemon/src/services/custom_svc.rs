@@ -290,8 +290,6 @@ async fn evaluate_security_check(def: &CustomSecurityDef) -> bool {
 }
 
 fn evaluate_file_check(fc: &mac_mgmt_common::custom_service::SecurityFileCheckDef) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
     let meta = match std::fs::metadata(&fc.path) {
         Ok(m) => m,
         Err(_) => return !fc.exists, // file doesn't exist — pass only if exists=false
@@ -302,32 +300,43 @@ fn evaluate_file_check(fc: &mac_mgmt_common::custom_service::SecurityFileCheckDe
         return false; // file exists but we expected it not to
     }
 
-    // Permission check
-    if let Some(max_mode_str) = &fc.max_mode {
-        if let Ok(max_mode) = u32::from_str_radix(max_mode_str.trim_start_matches('0'), 8) {
-            let actual_mode = meta.mode() & 0o7777;
-            // "not more permissive" = actual must be a subset of max_mode bits
-            if actual_mode & !max_mode != 0 {
-                return false;
-            }
-        }
-    }
+    // Permission + owner checks read Unix metadata (st_mode / st_uid); on
+    // non-Unix those fields don't exist, so the existence check above is the
+    // only enforceable part.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
 
-    // Owner check
-    if let Some(expected_owner) = &fc.owner {
-        // Resolve username to uid
-        let actual_uid = meta.uid();
-        let expected_uid = resolve_uid(expected_owner);
-        if let Some(uid) = expected_uid {
-            if actual_uid != uid {
-                return false;
+        // Permission check
+        if let Some(max_mode_str) = &fc.max_mode {
+            if let Ok(max_mode) = u32::from_str_radix(max_mode_str.trim_start_matches('0'), 8) {
+                let actual_mode = meta.mode() & 0o7777;
+                // "not more permissive" = actual must be a subset of max_mode bits
+                if actual_mode & !max_mode != 0 {
+                    return false;
+                }
+            }
+        }
+
+        // Owner check
+        if let Some(expected_owner) = &fc.owner {
+            // Resolve username to uid
+            let actual_uid = meta.uid();
+            let expected_uid = resolve_uid(expected_owner);
+            if let Some(uid) = expected_uid {
+                if actual_uid != uid {
+                    return false;
+                }
             }
         }
     }
+    #[cfg(not(unix))]
+    let _ = &meta;
 
     true
 }
 
+#[cfg(unix)]
 fn resolve_uid(username: &str) -> Option<u32> {
     // Try numeric first
     if let Ok(uid) = username.parse::<u32>() {

@@ -337,10 +337,11 @@ fn parse_kill_signal(flags: &[String]) -> i32 {
             return parse_signal(val);
         }
     }
-    libc::SIGTERM
+    crate::platform::SIGTERM
 }
 
 fn parse_signal(s: &str) -> i32 {
+    use crate::platform as sig;
     // Try numeric first.
     if let Ok(n) = s.parse::<i32>() {
         return n;
@@ -348,18 +349,18 @@ fn parse_signal(s: &str) -> i32 {
     // Strip optional SIG prefix.
     let name = s.strip_prefix("SIG").unwrap_or(s);
     match name.to_uppercase().as_str() {
-        "HUP" => libc::SIGHUP,
-        "INT" => libc::SIGINT,
-        "QUIT" => libc::SIGQUIT,
-        "KILL" => libc::SIGKILL,
-        "TERM" => libc::SIGTERM,
-        "USR1" => libc::SIGUSR1,
-        "USR2" => libc::SIGUSR2,
-        "CONT" => libc::SIGCONT,
-        "STOP" => libc::SIGSTOP,
+        "HUP" => sig::SIGHUP,
+        "INT" => sig::SIGINT,
+        "QUIT" => sig::SIGQUIT,
+        "KILL" => sig::SIGKILL,
+        "TERM" => sig::SIGTERM,
+        "USR1" => sig::SIGUSR1,
+        "USR2" => sig::SIGUSR2,
+        "CONT" => sig::SIGCONT,
+        "STOP" => sig::SIGSTOP,
         _ => {
             eprintln!("Unknown signal '{s}', using SIGTERM");
-            libc::SIGTERM
+            sig::SIGTERM
         }
     }
 }

@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use rust_embed::Embed;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 #[derive(Embed)]
@@ -18,8 +17,7 @@ pub fn run(name: &str) -> Result<()> {
     tmp.flush()?;
 
     // Make executable
-    let perms = std::fs::Permissions::from_mode(0o755);
-    std::fs::set_permissions(tmp.path(), perms)?;
+    crate::platform::set_mode(tmp.path(), 0o755)?;
 
     tracing::info!(
         "running embedded script '{}' via {}",

@@ -418,14 +418,13 @@ async fn event_loop(
         .unwrap_or_else(|_| std::time::Duration::from_secs(3600));
     let mut config_poll_tick = time::interval(update_interval);
 
-    let mut sigterm =
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("failed to register SIGTERM: {e}");
-                return;
-            }
-        };
+    let mut sigterm = match crate::platform::ShutdownSignal::terminate() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("failed to register SIGTERM: {e}");
+            return;
+        }
+    };
     let mut shutdown_rx = shutdown_tx.subscribe();
 
     loop {

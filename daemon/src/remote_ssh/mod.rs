@@ -1,7 +1,14 @@
+// The interactive relay-SSH shell is built on a real PTY and a control FIFO —
+// both Unix-only mechanisms (openpty / mkfifo). They are gated to Unix; the
+// Windows build keeps the rest of the relay state machine but cannot serve an
+// interactive shell (the relay/SSH plane is `future`-gated and off by default).
+#[cfg(unix)]
 pub mod fifo_watcher;
 pub mod host_keys;
+#[cfg(unix)]
 pub mod pty;
 pub mod ssh_keys;
+#[cfg(unix)]
 pub mod ssh_server;
 
 use russh::keys::PublicKey;
@@ -57,13 +64,15 @@ impl RemoteSshState {
         let shell_tunnel_registry = Arc::new(RwLock::new(ShellTunnelRegistry::new()));
 
         let (ssh_cmd_tx, ssh_cmd_rx) = tokio::sync::mpsc::channel(4);
-        #[cfg(not(feature = "sim"))]
+        // The FIFO watcher is a Unix mechanism (named pipe); on non-Unix the
+        // control FIFO does not exist, so the sender is simply dropped.
+        #[cfg(all(unix, not(feature = "sim")))]
         tokio::spawn(async move {
             if let Err(e) = fifo_watcher::watch(ssh_cmd_tx).await {
                 tracing::error!("FIFO watcher failed: {e:#}");
             }
         });
-        #[cfg(feature = "sim")]
+        #[cfg(not(all(unix, not(feature = "sim"))))]
         drop(ssh_cmd_tx);
 
         (
@@ -220,9 +229,14 @@ impl RemoteSshState {
                 tracing::info!("restart-daemon: sending SIGTERM to self for graceful restart");
                 std::thread::spawn(|| {
                     std::thread::sleep(std::time::Duration::from_secs(1));
+                    // Graceful self-restart: SIGTERM on Unix; on non-Unix exit
+                    // and let the launcher/supervisor respawn the daemon.
+                    #[cfg(unix)]
                     unsafe {
                         libc::kill(libc::getpid(), libc::SIGTERM);
                     }
+                    #[cfg(not(unix))]
+                    std::process::exit(0);
                 });
                 VirtualOutput {
                     lines: vec![(
@@ -237,6 +251,7 @@ impl RemoteSshState {
 
     /// Clean up resources (FIFO) on shutdown.
     pub fn cleanup(&self) {
+        #[cfg(unix)]
         fifo_watcher::cleanup();
     }
 

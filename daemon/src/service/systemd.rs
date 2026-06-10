@@ -7,7 +7,7 @@ const SERVICE_NAME: &str = "mac-mgmt";
 const SYSTEMD_UNIT: &str = "mac-mgmt.service";
 
 fn is_root() -> bool {
-    unsafe { libc::geteuid() == 0 }
+    crate::platform::is_root()
 }
 
 /// Run a command, prefixing with sudo if not root.
@@ -300,7 +300,7 @@ fn cleanup_legacy_user_units() {
         tracing::info!("removing legacy user unit {unit}");
         let mut cmd = Command::new("systemctl");
         cmd.arg("--user").args(["disable", "--now", &unit]);
-        let uid = unsafe { libc::getuid() };
+        let uid = crate::platform::current_uid();
         if std::env::var("XDG_RUNTIME_DIR").is_err() {
             cmd.env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"));
         }
@@ -316,7 +316,7 @@ fn cleanup_legacy_user_units() {
     if had_any {
         let mut cmd = Command::new("systemctl");
         cmd.arg("--user").arg("daemon-reload");
-        let uid = unsafe { libc::getuid() };
+        let uid = crate::platform::current_uid();
         if std::env::var("XDG_RUNTIME_DIR").is_err() {
             cmd.env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"));
         }

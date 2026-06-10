@@ -24,10 +24,15 @@ pub fn output_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<Outpu
     match rx.recv_timeout(timeout) {
         Ok(result) => result.context("command execution failed"),
         Err(_) => {
-            // Kill the process on timeout.
+            // Kill the process on timeout. The child was moved into the waiter
+            // thread, so we signal by pid (Unix); on non-Unix the spawned waiter
+            // owns the only handle and we simply report the timeout.
+            #[cfg(unix)]
             unsafe {
                 libc::kill(pid as i32, libc::SIGKILL);
             }
+            #[cfg(not(unix))]
+            let _ = pid;
             anyhow::bail!("command timed out after {timeout:?}");
         }
     }

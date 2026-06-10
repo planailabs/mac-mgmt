@@ -492,8 +492,14 @@ fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>>
     // Copy profile by creating a symlink to the same generation
     let real_profile = std::fs::read_link(&*current_profile)
         .with_context(|| format!("failed to read profile link {current_profile}"))?;
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&real_profile, &tmp_profile)
         .context("failed to symlink temp profile")?;
+    #[cfg(not(unix))]
+    {
+        let _ = &real_profile;
+        anyhow::bail!("nix profile upgrade is not supported on this platform");
+    }
 
     let before = profile_store_paths(Some(tmp_profile.to_str().unwrap()))?;
 

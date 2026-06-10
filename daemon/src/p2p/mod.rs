@@ -1771,6 +1771,10 @@ async fn handle_streamed_shell(
 
 /// Handle an SSH session over a tunnel substream.
 /// The substream acts as the transport for the russh SSH server.
+///
+/// Unix-only: the interactive shell needs a PTY (see `remote_ssh::ssh_server`),
+/// which has no Windows implementation. The non-Unix stub below rejects.
+#[cfg(unix)]
 async fn handle_ssh_session(stream: libp2p::Stream, handler_state: &Arc<handler::HandlerState>) {
     use tokio_util::compat::FuturesAsyncReadCompatExt;
 
@@ -1812,6 +1816,16 @@ async fn handle_ssh_session(stream: libp2p::Stream, handler_state: &Arc<handler:
             tracing::warn!("SSH session failed: {e}");
         }
     }
+}
+
+/// Non-Unix stub: interactive relay-SSH needs a PTY, unavailable on Windows.
+#[cfg(not(unix))]
+async fn handle_ssh_session(mut stream: libp2p::Stream, _handler_state: &Arc<handler::HandlerState>) {
+    use mac_mgmt_common::framing as stream_framing;
+    tracing::warn!("SSH session rejected: interactive shell unsupported on this platform");
+    let err = serde_json::json!({ "exit_code": -1, "error": "ssh unsupported on this platform" });
+    let _ = stream_framing::write_json(&mut stream, &err).await;
+    let _ = stream_framing::write_end(&mut stream).await;
 }
 
 /// Build a `libp2p_websocket::tls::Config` that skips certificate verification.

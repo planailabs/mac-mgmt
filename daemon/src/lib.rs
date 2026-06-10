@@ -39,6 +39,7 @@ pub mod notify;
 pub mod os_mgmt;
 #[cfg(feature = "relay")]
 pub mod p2p;
+pub mod platform;
 pub mod packages;
 #[cfg(feature = "relay")]
 pub mod remote_ssh;

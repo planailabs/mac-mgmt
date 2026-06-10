@@ -921,15 +921,18 @@ pub async fn run(
 
     // Ensure /run/opengl-driver symlink exists if the driver is mounted at
     // /var/lib/opengl-driver (Incus disk device). The /run tmpfs loses the
-    // symlink on reboot, so recreate it every daemon start.
-    let opengl_var = std::path::Path::new("/var/lib/opengl-driver");
-    if opengl_var.exists() {
-        let link = std::path::Path::new("/run/opengl-driver");
-        if !link.exists() {
-            if let Err(e) = std::os::unix::fs::symlink(opengl_var, link) {
-                tracing::warn!("failed to create /run/opengl-driver symlink: {e}");
-            } else {
-                tracing::info!("created /run/opengl-driver -> /var/lib/opengl-driver symlink");
+    // symlink on reboot, so recreate it every daemon start. Linux/Incus-only.
+    #[cfg(unix)]
+    {
+        let opengl_var = std::path::Path::new("/var/lib/opengl-driver");
+        if opengl_var.exists() {
+            let link = std::path::Path::new("/run/opengl-driver");
+            if !link.exists() {
+                if let Err(e) = std::os::unix::fs::symlink(opengl_var, link) {
+                    tracing::warn!("failed to create /run/opengl-driver symlink: {e}");
+                } else {
+                    tracing::info!("created /run/opengl-driver -> /var/lib/opengl-driver symlink");
+                }
             }
         }
     }
@@ -1153,9 +1156,9 @@ pub async fn run(
     // Track whether a disk-pressure GC is already running to avoid piling up.
     let nix_gc_running = Arc::new(AtomicBool::new(false));
 
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    let mut sigterm = crate::platform::ShutdownSignal::terminate()
         .context("failed to register SIGTERM handler")?;
-    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+    let mut sigint = crate::platform::ShutdownSignal::interrupt()
         .context("failed to register SIGINT handler")?;
 
     // Services are registered incrementally by health_tick as they
@@ -2445,14 +2448,19 @@ pub async fn run_sim_with_services(
 /// matching its device ID against the tracked mounts.  Falls back to `/`
 /// if `/nix/store` doesn't exist or can't be matched.
 fn nix_store_mount() -> String {
-    use std::os::unix::fs::MetadataExt;
-    let nix_dev = std::fs::metadata("/nix/store").ok().map(|m| m.dev());
-    if let Some(dev) = nix_dev {
-        // Walk the tracked mounts and pick the longest prefix whose dev matches.
-        for candidate in &["/nix/store", "/nix", "/"] {
-            if let Ok(m) = std::fs::metadata(candidate) {
-                if m.dev() == dev {
-                    return candidate.to_string();
+    // Device-ID matching needs Unix metadata (`st_dev`); nix-store disk-pressure
+    // GC is a Unix/NixOS concern anyway. Non-Unix falls back to "/".
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let nix_dev = std::fs::metadata("/nix/store").ok().map(|m| m.dev());
+        if let Some(dev) = nix_dev {
+            // Walk the tracked mounts and pick the longest prefix whose dev matches.
+            for candidate in &["/nix/store", "/nix", "/"] {
+                if let Ok(m) = std::fs::metadata(candidate) {
+                    if m.dev() == dev {
+                        return candidate.to_string();
+                    }
                 }
             }
         }

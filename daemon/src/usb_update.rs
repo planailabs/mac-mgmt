@@ -198,7 +198,6 @@ fn verify_sha256(bytes: &[u8], expected: &str) -> Result<()> {
 /// Extract `bin/mac-mgmt` from a `.tar.gz` into a temp file (mode 0755) and
 /// return its path.
 fn extract_binary(tar_gz: &[u8]) -> Result<std::path::PathBuf> {
-    use std::os::unix::fs::PermissionsExt;
     let gz = flate2::read::GzDecoder::new(tar_gz);
     let mut archive = tar::Archive::new(gz);
     let tmp = std::env::temp_dir().join(format!("mac-mgmt-update-{}", std::process::id()));
@@ -211,7 +210,7 @@ fn extract_binary(tar_gz: &[u8]) -> Result<std::path::PathBuf> {
             entry
                 .unpack(&tmp)
                 .with_context(|| format!("failed to unpack to {}", tmp.display()))?;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+            crate::platform::set_mode(&tmp, 0o755)?;
             return Ok(tmp);
         }
     }
@@ -220,10 +219,9 @@ fn extract_binary(tar_gz: &[u8]) -> Result<std::path::PathBuf> {
 
 /// Re-exec the (now self-replaced) running binary with the original argv.
 pub fn reexec_self() -> Result<()> {
-    use std::os::unix::process::CommandExt;
     let exe = std::env::current_exe().context("failed to resolve current exe")?;
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let err = std::process::Command::new(exe).args(args).exec();
+    let err = crate::platform::reexec(&exe, &args);
     Err(err).context("failed to re-exec updated binary")
 }
 

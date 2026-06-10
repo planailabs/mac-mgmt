@@ -85,7 +85,6 @@ flate2 = { version = "1", optional = true }
 schemars = { version = "1.2.1", features = ["derive"], optional = true }
 sha2 = "0.10"
 libc = "0.2"
-pty-process = { version = "0.5", features = ["async"] }
 jsonschema = { version = "0.46", default-features = false }
 yaml_serde = "0.10"
 toml = "0.8"
@@ -138,3 +137,10 @@ axum = { version = "0.8", optional = true }
 # Native overview desktop app — its own workspace root; pulled in only by the
 # `usb-ui` feature so headless builds never touch the wry/webkitgtk stack.
 mac-mgmt-overview = { path = "../mac-mgmt-overview", optional = true }
+
+# Unix-only deps. pty-process wraps a real PTY (openpty/forkpty) for the
+# relay-SSH interactive shell — it has no Windows implementation. The relay-SSH
+# PTY/FIFO subsystem is `#[cfg(unix)]`-gated in src (remote_ssh::pty / ssh_server
+# / fifo_watcher), so the Windows build never references it.
+[target.'cfg(unix)'.dependencies]
+pty-process = { version = "0.5", features = ["async"] }
