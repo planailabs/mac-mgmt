@@ -298,6 +298,83 @@ impl ServiceManager {
         })
     }
 
+    /// Init with an explicit, pre-built service list — the seam the USB daemon
+    /// uses. Identical to [`init`] except it does NOT call
+    /// `connectors::build_services` (which unconditionally pushes the nix-backed
+    /// McPorter/Apprise/Nvidia/Rocm install-only services — undesirable on a
+    /// nix-free USB stick) and registers no connectors. The provided services are
+    /// expected to be self-contained (e.g. spawn-from-mount custom services whose
+    /// `ensure_installed` is a no-op).
+    pub fn init_with_services(
+        cfg: &mut crate::config::Config,
+        provided: Vec<Arc<dyn ManagedService>>,
+        dispatcher: Arc<Dispatcher>,
+        log_buf: LogBuffer,
+    ) -> Result<Self> {
+        // Snapshot the full config for per-service change detection in apply_config.
+        let last_config = serde_json::to_value(&*cfg).unwrap_or(serde_json::Value::Null);
+
+        let inprocess = inprocess_enabled();
+        if inprocess {
+            tracing::info!("{INPROCESS_ENV}=1, launching services supervisor in-process");
+            spawn_inprocess_supervisor();
+        }
+
+        // Minimal config store — no connectors consume it on the USB build, but
+        // keep ollama/memvault so any service `configure()` that reads it works.
+        let cache_dir = crate::config::config_dir().join("config_providers.json");
+        let mut config_store = ConfigStore::new(Some(cache_dir));
+        if let Ok(v) = serde_json::to_value(&cfg.ollama) {
+            config_store.set("ollama", v);
+        }
+        if let Ok(v) = serde_json::to_value(&cfg.memvault) {
+            config_store.set("memvault", v);
+        }
+
+        let mut install_only: Vec<Arc<dyn ManagedService>> = Vec::new();
+        let mut services: Vec<ServiceState> = Vec::new();
+        for svc in provided {
+            let name = svc.name().to_string();
+            if svc.service_mode() == ServiceMode::InstallOnly {
+                install_only.push(svc);
+            } else {
+                services.push(ServiceState {
+                    name,
+                    service: svc,
+                    phase: ServicePhase::Installing,
+                    upgrade_pending: false,
+                    restart_pending: false,
+                    post_start_done: false,
+                    consecutive_crashes: 0,
+                    running_store_path: None,
+                    registered: false,
+                    restart_at: None,
+                    connector_env: std::collections::HashMap::new(),
+                    connector_env_collected: true,
+                });
+            }
+        }
+
+        let to_install = services
+            .iter()
+            .map(|s| Arc::clone(&s.service))
+            .chain(install_only.iter().map(Arc::clone));
+        let install_rx = Some(Self::spawn_install_task(to_install));
+
+        Ok(Self {
+            services,
+            install_only,
+            connectors: Vec::new(),
+            client: None,
+            dispatcher,
+            log_buf,
+            config_store,
+            inprocess,
+            install_rx,
+            last_config,
+        })
+    }
+
     /// Add an integrated service after init (e.g. p2p probe services that
     /// depend on state only available after the swarm has started).
     /// The service starts in `Healthy` phase and skips installation.
@@ -1361,6 +1438,89 @@ impl ServiceManager {
                 }
             } else {
                 tracing::info!("apply_config: {} config changed, restart pending", state.name);
+                state.restart_pending = true;
+            }
+        }
+    }
+
+    /// Config-agnostic reconcile for the USB daemon: take an explicit, pre-built
+    /// desired service set (e.g. spawn-from-mount services) and bring the running
+    /// set in line — start newly-enabled, stop+unregister removed, and mark
+    /// `restart_names` for restart. Unlike [`apply_config`], it never calls
+    /// `connectors::build_services` (no nix services) and the caller owns the
+    /// config-section → service-name change detection.
+    pub async fn apply_services(
+        &mut self,
+        desired: Vec<Arc<dyn ManagedService>>,
+        restart_names: std::collections::HashSet<String>,
+    ) {
+        use std::collections::HashSet;
+
+        let desired_names: HashSet<String> =
+            desired.iter().map(|s| s.name().to_string()).collect();
+        // Only config-derived (Managed/InstallOnly) services participate in
+        // reconciliation. Integrated services (memvault, swarm, relay) are
+        // managed out-of-band and must never be removed by a config apply.
+        let current_names: HashSet<String> = self
+            .services
+            .iter()
+            .filter(|s| s.service.service_mode() != ServiceMode::Integrated)
+            .map(|s| s.name.clone())
+            .chain(self.install_only.iter().map(|s| s.name().to_string()))
+            .collect();
+
+        // Stop + unregister services that are no longer desired.
+        let to_remove: Vec<String> =
+            current_names.difference(&desired_names).cloned().collect();
+        if !to_remove.is_empty() && self.ensure_client().await {
+            if let Some(client) = self.client.as_mut() {
+                for name in &to_remove {
+                    tracing::info!("apply_services: stopping removed service {name}");
+                    let _ = client.stop_service(name).await;
+                    let _ = client.unregister(name).await;
+                }
+            }
+        }
+        self.services.retain(|s| !to_remove.contains(&s.name));
+        self.install_only
+            .retain(|s| !to_remove.contains(&s.name().to_string()));
+
+        // Add newly-desired services and install them.
+        let mut added: Vec<Arc<dyn ManagedService>> = Vec::new();
+        for svc in desired {
+            if current_names.contains(svc.name()) {
+                continue;
+            }
+            let name = svc.name().to_string();
+            tracing::info!("apply_services: enabling service {name}");
+            if svc.service_mode() == ServiceMode::InstallOnly {
+                self.install_only.push(Arc::clone(&svc));
+            } else {
+                self.services.push(ServiceState {
+                    name,
+                    service: Arc::clone(&svc),
+                    phase: ServicePhase::Installing,
+                    upgrade_pending: false,
+                    restart_pending: true,
+                    post_start_done: false,
+                    consecutive_crashes: 0,
+                    running_store_path: None,
+                    registered: false,
+                    restart_at: None,
+                    connector_env: std::collections::HashMap::new(),
+                    connector_env_collected: true,
+                });
+            }
+            added.push(svc);
+        }
+        if !added.is_empty() {
+            let _ = Self::spawn_install_task(added.into_iter());
+        }
+
+        // Restart services the caller flagged as config-changed.
+        for state in &mut self.services {
+            if restart_names.contains(&state.name) {
+                tracing::info!("apply_services: {} config changed, restart pending", state.name);
                 state.restart_pending = true;
             }
         }

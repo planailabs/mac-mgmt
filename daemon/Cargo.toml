@@ -28,6 +28,15 @@ usb = [
     "services", "memvault", "embed",
     "dep:self-replace", "dep:tar", "dep:flate2", "dep:schemars",
 ]
+# Sovereign-AI USB *daemon*: the reduced phone-home control plane for the
+# plan-ai-usb-minimal stack. Reuses the heartbeat / probe / relay / config-sync
+# machinery but is driven by the reduced `UsbConfig` and runs its services
+# spawn-from-mount (no nix install/upgrade). Distinct from `usb` (the nix-portable
+# stack): no `embed`, no nix-portable / store-image machinery.
+usbd = [
+    "services", "memvault", "relay",
+    "dep:self-replace", "dep:tar", "dep:flate2", "dep:schemars",
+]
 # The native overview desktop app (wry/webkitgtk). Kept separate from `usb` so
 # the headless stack (and all tests/CI) builds without the desktop GUI stack;
 # the release build adds it. Requires webkit2gtk at build time (see flake.nix).

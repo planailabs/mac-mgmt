@@ -1805,7 +1805,7 @@ async fn fetch_nixpkgs_pin(server_url: &str, server_token: &str) {
 /// gate one-shot follow-up work (e.g. the initial assessment inventory
 /// send, which would otherwise race the heartbeat that creates its FK
 /// parent row — see migration 031).
-async fn do_send_heartbeat(
+pub(crate) async fn do_send_heartbeat(
     server_url: &str,
     server_token: &str,
     instance_id: &str,

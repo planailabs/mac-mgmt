@@ -17,6 +17,18 @@ pub fn asset_name(arch: &str) -> String {
     format!("mac-mgmt-usb-{arch}.tar.gz")
 }
 
+/// Host arch tag (e.g. "x86_64-linux", "aarch64-darwin") for release asset
+/// selection. Independent of the heavy `usb` (nix-portable) module so the
+/// `usbd` build doesn't pull it in.
+pub fn host_arch() -> String {
+    let arch = std::env::consts::ARCH;
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    format!("{arch}-{os}")
+}
+
 /// GitLab releases API URL (newest first).
 pub fn releases_url() -> String {
     format!("https://{GITLAB_HOST}/api/v4/projects/{GITLAB_PROJECT}/releases?per_page=20")
@@ -105,7 +117,7 @@ pub fn parse_best_release(
 /// (see [`reexec_self`]).
 pub async fn check_and_apply() -> Result<bool> {
     let current = env!("CARGO_PKG_VERSION");
-    let arch = crate::usb::nix_portable::host_arch();
+    let arch = host_arch();
     let url = releases_url();
     let client = reqwest::Client::new();
 
