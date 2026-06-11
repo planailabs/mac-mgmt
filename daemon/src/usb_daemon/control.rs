@@ -27,9 +27,11 @@ pub struct InfoSnapshot {
     pub webui_port: Option<u16>,
     pub memvault_port: Option<u16>,
     pub hermes_port: Option<u16>,
+    pub llamacpp_port: Option<u16>,
     pub webui_url: Option<String>,
     pub memvault_url: Option<String>,
     pub hermes_url: Option<String>,
+    pub llamacpp_url: Option<String>,
 }
 
 #[derive(Clone)]

@@ -1048,6 +1048,61 @@ impl UsbHermesConfig {
     }
 }
 
+// ── llama.cpp (llama-server, USB) ──────────────────────────────────────
+
+fn default_usb_llamacpp_port() -> u16 {
+    8090
+}
+
+/// REDUCED llama.cpp config for the USB stick (the optional "llamacpp"
+/// feature): `llama-server` run from the mounted component (GPU-detected
+/// flavour), runtime settings only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UsbLlamaCppConfig {
+    #[schemars(description = "Whether llama-server is started")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "llama-server listen address")]
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[schemars(
+        description = "Preferred llama-server listen port. A PREFERENCE, not a \
+                       guarantee: if taken the daemon auto-selects a free port and \
+                       reports the effective port via the dashboard."
+    )]
+    #[serde(default = "default_usb_llamacpp_port")]
+    pub port: u16,
+    #[schemars(description = "GGUF model path; when unset the first local ollama model's \
+                              weights blob is used", extend("x-advanced" = true))]
+    #[serde(default)]
+    pub model: Option<String>,
+    #[schemars(description = "Extra llama-server arguments (advanced)", extend("x-advanced" = true))]
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+}
+
+impl Default for UsbLlamaCppConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: default_host(),
+            port: default_usb_llamacpp_port(),
+            model: None,
+            extra_args: Vec::new(),
+        }
+    }
+}
+
+impl UsbLlamaCppConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.port == 0 {
+            return Err(ValidationError("llamacpp.port must be > 0".into()));
+        }
+        Ok(())
+    }
+}
+
 // ── LM Studio (lms) ────────────────────────────────────────────────────
 
 fn default_lms_port() -> u16 {
@@ -2345,6 +2400,9 @@ pub struct UsbConfig {
     #[schemars(extend("x-category" = "llm-providers"))]
     pub hermes: UsbHermesConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "llm-providers"))]
+    pub llamacpp: UsbLlamaCppConfig,
+    #[serde(default)]
     #[schemars(extend("x-category" = "infra"))]
     pub memvault: MemvaultConfig,
     #[serde(default)]
@@ -2388,6 +2446,9 @@ impl UsbConfig {
         }
         if self.hermes.enabled {
             self.hermes.validate().map_err(|e| e.to_string())?;
+        }
+        if self.llamacpp.enabled {
+            self.llamacpp.validate().map_err(|e| e.to_string())?;
         }
         self.relay.validate().map_err(|e| e.to_string())?;
         let mut seen_names = std::collections::HashSet::new();
