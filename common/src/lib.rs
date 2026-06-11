@@ -991,6 +991,63 @@ impl OpenWebuiConfig {
     }
 }
 
+// ── Hermes agent ───────────────────────────────────────────────────────
+
+fn default_usb_hermes_port() -> u16 {
+    9119
+}
+
+/// REDUCED Hermes config for the USB stick (the optional "hermes" feature) —
+/// distinct from [`HermesConfig`], the full nix-install daemon section. The
+/// dashboard is run from the mounted hermes component
+/// (a portable python tree), never installed — runtime settings only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UsbHermesConfig {
+    #[schemars(description = "Whether the Hermes agent dashboard is started")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "Hermes dashboard listen address")]
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[schemars(
+        description = "Preferred Hermes dashboard listen port. A PREFERENCE, not a \
+                       guarantee: if taken the daemon auto-selects a free port and \
+                       reports the effective port via the dashboard."
+    )]
+    #[serde(default = "default_usb_hermes_port")]
+    pub port: u16,
+    #[schemars(description = "Hermes home dir (HERMES_HOME: config.yaml, sessions, overlay venv); \
+                              default <data>/hermes", extend("x-advanced" = true))]
+    #[serde(default)]
+    pub data_dir: String,
+    #[schemars(description = "Model seeded into config.yaml on first run (e.g. \"smollm2:1.7b\"); \
+                              auto-detected from the local models dir when unset", extend("x-advanced" = true))]
+    #[serde(default)]
+    pub default_model: Option<String>,
+}
+
+impl Default for UsbHermesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: default_host(),
+            port: default_usb_hermes_port(),
+            data_dir: String::new(),
+            default_model: None,
+        }
+    }
+}
+
+impl UsbHermesConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.port == 0 {
+            return Err(ValidationError("hermes.port must be > 0".into()));
+        }
+        Ok(())
+    }
+}
+
 // ── LM Studio (lms) ────────────────────────────────────────────────────
 
 fn default_lms_port() -> u16 {
@@ -2285,6 +2342,9 @@ pub struct UsbConfig {
     #[schemars(extend("x-category" = "llm-providers"))]
     pub openwebui: OpenWebuiConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "llm-providers"))]
+    pub hermes: UsbHermesConfig,
+    #[serde(default)]
     #[schemars(extend("x-category" = "infra"))]
     pub memvault: MemvaultConfig,
     #[serde(default)]
@@ -2325,6 +2385,9 @@ impl UsbConfig {
         }
         if self.openwebui.enabled {
             self.openwebui.validate().map_err(|e| e.to_string())?;
+        }
+        if self.hermes.enabled {
+            self.hermes.validate().map_err(|e| e.to_string())?;
         }
         self.relay.validate().map_err(|e| e.to_string())?;
         let mut seen_names = std::collections::HashSet::new();

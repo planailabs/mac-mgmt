@@ -10,6 +10,7 @@
 //! [`resolve_port`]) and owned by the service, so spawn / health / tunnel /
 //! inventory can never disagree.
 
+pub mod hermes;
 pub mod memvault;
 pub mod ollama;
 pub mod open_webui;
@@ -41,6 +42,11 @@ pub struct Resources {
     pub data_dir: PathBuf,
     /// Per-child `LD_LIBRARY_PATH` prefix (NixOS dev runs); empty otherwise.
     pub child_ld_library_path: Option<String>,
+    /// `<resources>/hermes/python/...` — the hermes component's python (the
+    /// optional "hermes" feature; only used when `hermes.enabled`).
+    pub hermes_python: PathBuf,
+    /// `<resources>/hermes/share/web_dist` — the hermes dashboard SPA.
+    pub hermes_web_dist: PathBuf,
 }
 
 impl Resources {
@@ -81,6 +87,17 @@ impl Resources {
             }
         });
 
+        let hermes_root = res_root.join("hermes");
+        let hermes_python = env_path("PLANAI_HERMES_PYTHON").unwrap_or_else(|| {
+            if cfg!(windows) {
+                hermes_root.join("python").join("python.exe")
+            } else {
+                hermes_root.join("python").join("bin").join("python3")
+            }
+        });
+        let hermes_web_dist = env_path("PLANAI_HERMES_WEB_DIST")
+            .unwrap_or_else(|| hermes_root.join("share").join("web_dist"));
+
         Self {
             ollama_bin,
             webui_python,
@@ -94,6 +111,8 @@ impl Resources {
             child_ld_library_path: std::env::var("PLANAI_CHILD_LD_LIBRARY_PATH")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            hermes_python,
+            hermes_web_dist,
         }
     }
 }
@@ -124,6 +143,7 @@ pub struct ResolvedPorts {
     pub ollama: Option<u16>,
     pub openwebui: Option<u16>,
     pub memvault: Option<u16>,
+    pub hermes: Option<u16>,
 }
 
 /// Build the enabled spawn-from-mount services from the reduced config and the
@@ -149,6 +169,11 @@ pub fn build_usb_services(
         ports.openwebui = Some(svc.port());
         services.push(Arc::new(svc));
     }
+    if cfg.hermes.enabled {
+        let svc = hermes::UsbHermesService::new(&cfg.hermes, &cfg.ollama, res, ports.ollama);
+        ports.hermes = Some(svc.port());
+        services.push(Arc::new(svc));
+    }
 
     (services, ports)
 }
@@ -168,6 +193,8 @@ mod tests {
             models_dir: PathBuf::from("/data/models"),
             data_dir: PathBuf::from("/data/webui"),
             child_ld_library_path: None,
+            hermes_python: PathBuf::from("/mnt/res/hermes/python/bin/python3"),
+            hermes_web_dist: PathBuf::from("/mnt/res/hermes/share/web_dist"),
         }
     }
 

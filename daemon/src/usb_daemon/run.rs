@@ -86,6 +86,9 @@ fn changed_service_names(old: &UsbConfig, new: &UsbConfig) -> std::collections::
     if ov.get("openwebui") != nv.get("openwebui") {
         set.insert("open-webui".to_string());
     }
+    if ov.get("hermes") != nv.get("hermes") {
+        set.insert("hermes".to_string());
+    }
     set
 }
 
@@ -94,8 +97,10 @@ fn info_snapshot(ports: &ResolvedPorts, memvault_url: &Option<String>) -> InfoSn
         ollama_port: ports.ollama,
         webui_port: ports.openwebui,
         memvault_port: ports.memvault,
+        hermes_port: ports.hermes,
         webui_url: ports.openwebui.map(|p| format!("http://127.0.0.1:{p}")),
         memvault_url: memvault_url.clone(),
+        hermes_url: ports.hermes.map(|p| format!("http://127.0.0.1:{p}")),
     }
 }
 
