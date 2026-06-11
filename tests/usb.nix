@@ -13,6 +13,15 @@
 { pkgs, ... }:
 
 let
+  nixPortableX86_64 = pkgs.fetchurl {
+    url = "https://github.com/DavHau/nix-portable/releases/download/v012/nix-portable-x86_64";
+    sha256 = "0an72ija1m1kxifim8qvvnfsi1lz659i5yx3xlxaq2f90icwa2dl";
+  };
+  nixpkgsTarball = pkgs.fetchurl {
+    url = "https://github.com/NixOS/nixpkgs/archive/d99b013d5d1931ad77fe3912ed218170dec5d9a4.tar.gz";
+    sha256 = "1fqrzzak2x2igmh960f3qgj1y01scq4ff58dbkql04drycjg1alh";
+  };
+
   # Build mac-mgmt with the headless USB feature (no usb-ui: the VM has no
   # display). Distribution builds use static musl; here a normal build is enough
   # to exercise the mechanics — its libs are mmap'd before /nix is overmounted.
@@ -23,7 +32,12 @@ let
     cargoLock.lockFile = ../Cargo.lock;
     cargoLock.outputHashes = import ../extra-hashes.nix;
     cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" "--features" "usb" ];
-    nativeBuildInputs = [ pkgs.lld pkgs.pkg-config ];
+    # The mac-mgmt USB binary depends on memvault-web even in headless mode, and
+    # memvault-web's build script regenerates Tailwind CSS with `npm run
+    # tailwind:build`. Keep the Node/Tailwind tools in this derivation so CI
+    # fails at the real USB integration boundary instead of during build-script
+    # tool discovery.
+    nativeBuildInputs = [ pkgs.lld pkgs.pkg-config pkgs.nodejs pkgs.tailwindcss_3 ];
     env.MEMVAULT_EXTRACT_GUEST_WASM = "${pkgs.memvault-extract-guest-wasm}/memvault_extract_guest.wasm";
     doCheck = false;
   };
@@ -62,9 +76,19 @@ pkgs.testers.nixosTest {
     machine.log(f"host /nix/store entries before: {host_store_before}")
 
     stick = "/root/stick"
-    machine.succeed(f"mkdir -p {stick}")
+    machine.succeed(f"mkdir -p {stick}/.local/bin {stick}/.cache/nixpkgs")
 
-    # ── Prefetch (online): nix-portable + ext4 image + .nar cache ──────────
+    # NixOS VM tests intentionally do not rely on guest internet access. Seed
+    # the artifacts that `usb-prefetch` would otherwise download so the check
+    # still exercises the prefetch, image setup, and offline runtime paths.
+    machine.succeed(
+        f"install -m 0755 ${nixPortableX86_64} {stick}/.local/bin/nix-portable-x86_64-linux"
+    )
+    machine.succeed(
+        f"cp ${nixpkgsTarball} {stick}/.cache/nixpkgs/nixpkgs-d99b013d5d1931ad77fe3912ed218170dec5d9a4.tar.gz"
+    )
+
+    # ── Prefetch (seeded online artifacts): nix-portable + ext4 image + .nar cache ──────────
     machine.succeed(f"mac-mgmt usb-prefetch --home {stick} 2>&1 | tee /tmp/prefetch.log")
     machine.succeed(f"test -f {stick}/nix-store.img")
     machine.succeed(f"test -f {stick}/.local/bin/nix-portable")
