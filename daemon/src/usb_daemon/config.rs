@@ -88,9 +88,10 @@ pub async fn load(home: &Path, explicit: Option<&Path>, offline: bool) -> Result
 
     let env_vars = crate::config::load_env_file();
 
-    // Remote config sync is a "network part" — gated behind the `future` feature.
-    // Without it (the default), only the on-stick config file is honoured.
-    let net = !offline && cfg!(feature = "future");
+    // Remote config sync is a "network part" — gated behind the runtime
+    // `USBD_NETWORKED` flag (the launcher's `mgmt` feature). Without it (the
+    // default), only the on-stick config file is honoured.
+    let net = !offline && super::networked();
 
     // 2. Server coordinates (from the local file) drive the optional sync.
     let server_url = local_value

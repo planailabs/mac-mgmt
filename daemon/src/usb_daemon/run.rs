@@ -196,11 +196,13 @@ pub async fn run_stack(opts: UsbdOpts) -> Result<StackHandle> {
     tracing::info!("usb daemon control/status API on http://[::1]:{control_port}");
 
     // Relay + relay-ssh + p2p swarm + heartbeat/sync are the "network parts",
-    // gated behind the `future` feature. With it OFF (default) we run a purely
-    // local stack: no server (→ heartbeat/probe-upload/sync all no-op), no relay
-    // registration, no p2p swarm, no server push. relay_mgr is still built (its
-    // FIFO watcher is local), but without the p2p swarm it never reaches a relay.
-    let future = cfg!(feature = "future");
+    // gated behind the runtime `USBD_NETWORKED` flag (the launcher exports it
+    // when the drive's `mgmt` feature is on). With it OFF (default) we run a
+    // purely local stack: no server (→ heartbeat/probe-upload/sync all no-op),
+    // no relay registration, no p2p swarm, no server push. relay_mgr is still
+    // built (its FIFO watcher is local), but without the p2p swarm it never
+    // reaches a relay.
+    let future = super::networked();
     let server_url = if future { cfg.server.url.clone() } else { None };
     let server_token = if future {
         cfg.server.token.as_ref().map(|s| s.expose().to_string())
