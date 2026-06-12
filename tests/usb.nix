@@ -99,7 +99,7 @@ pkgs.testers.nixosTest {
     # Cut the network to prove no fetch happens.
     machine.succeed("systemctl stop systemd-networkd || true")
     machine.execute(
-        f"mac-mgmt usb --headless --offline --home {stick} >/tmp/usb.log 2>&1 &"
+        f"mac-mgmt usb --headless --offline --home {stick} >/tmp/usb.log 2>&1 & echo $! >/tmp/usb.pid"
     )
 
     # The control API binds an ephemeral [::1] port; discover it from the log.
@@ -109,13 +109,44 @@ pkgs.testers.nixosTest {
         )
         return out.strip()
 
+    def usb_diagnostics():
+        return machine.succeed(
+            """
+            echo '--- usb process ---'
+            if test -r /tmp/usb.pid; then
+              pid=$(cat /tmp/usb.pid)
+              echo "pid=$pid"
+              ps -o pid,ppid,stat,etime,comm,args -p "$pid" || true
+            else
+              echo 'no /tmp/usb.pid'
+            fi
+            echo '--- recent mac-mgmt processes ---'
+            ps -eo pid,ppid,stat,etime,comm,args | grep '[m]ac-mgmt usb' || true
+            echo '--- loop devices ---'
+            losetup -a || true
+            echo '--- /nix mount ---'
+            mount | grep ' on /nix ' || true
+            echo '--- usb.log ---'
+            tail -200 /tmp/usb.log || true
+            """
+        )
+
     port = ""
-    for _ in range(120):
+    # Slow CI runners may execute the VM without KVM, making nix-portable
+    # extraction and the private loop mount much slower than local runs. Keep
+    # polling the real readiness signal, but fail early if the process exits and
+    # print enough state to debug mount/runtime hangs.
+    for attempt in range(420):
         port = control_port()
         if port:
             break
+        rc, _ = machine.execute("test -r /tmp/usb.pid && kill -0 $(cat /tmp/usb.pid)")
+        if rc != 0:
+            raise AssertionError("usb stack exited before reporting a control port\n" + usb_diagnostics())
+        if attempt > 0 and attempt % 30 == 0:
+            machine.log(f"waiting for usb control API ({attempt}s elapsed)")
         time.sleep(1)
-    assert port, "usb stack did not report a control port\n" + machine.succeed("tail -50 /tmp/usb.log || true")
+    assert port, "usb stack did not report a control port before timeout\n" + usb_diagnostics()
     machine.log(f"usb control API on port {port}")
 
     # /status reports offline.
