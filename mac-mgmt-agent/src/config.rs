@@ -11,7 +11,13 @@ pub fn config_path() -> PathBuf {
 }
 
 /// Returns ~/.config/mac-mgmt/, falling back to /root/.config/mac-mgmt/.
+/// MAC_MGMT_CONFIG_DIR overrides the whole path — the plan-ai-usb daemon pins
+/// its state to the stick this way (`HOME` pinning alone is unix-only:
+/// dirs::home_dir() ignores the env var on windows).
 pub fn config_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("MAC_MGMT_CONFIG_DIR") {
+        return PathBuf::from(d);
+    }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/root"))
         .join(".config/mac-mgmt")
