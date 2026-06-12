@@ -156,8 +156,6 @@ impl ManagedService for UsbHermesService {
         env.insert("HERMES_HOME".into(), s(&self.home_dir));
         // The vite-built dashboard SPA — also suppresses the npm build path.
         env.insert("HERMES_WEB_DIST".into(), s(&self.web_dist));
-        // Managed bundle: `hermes update` / gateway install are refused cleanly.
-        env.insert("HERMES_MANAGED".into(), "1".into());
         if let Some(extra) = &self.child_ld {
             env.insert("LD_LIBRARY_PATH".into(), extra.clone());
         }
@@ -268,7 +266,6 @@ mod tests {
         assert!(spec.args.contains(&"--no-open".to_string()));
         assert!(spec.args.contains(&"--skip-build".to_string()));
         assert_eq!(spec.env.get("HERMES_HOME").map(String::as_str), Some("/data/hermes"));
-        assert_eq!(spec.env.get("HERMES_MANAGED").map(String::as_str), Some("1"));
         assert!(spec.env.contains_key("HERMES_WEB_DIST"));
     }
 }
