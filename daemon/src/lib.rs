@@ -69,8 +69,6 @@ pub mod systemctl;
 pub use mac_mgmt_agent::unmanaged;
 #[cfg(feature = "usb")]
 pub mod usb;
-#[cfg(feature = "usbd")]
-pub mod usb_daemon;
 #[cfg(feature = "usb")]
 pub mod usb_update;
 pub use mac_mgmt_agent::validator;
