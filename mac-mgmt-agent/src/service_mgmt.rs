@@ -89,7 +89,7 @@ struct ServiceState {
     connector_env_collected: bool,
 }
 
-pub(crate) struct InstallUpdate {
+pub struct InstallUpdate {
     name: String,
     result: anyhow::Result<()>,
 }

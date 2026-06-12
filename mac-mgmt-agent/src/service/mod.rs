@@ -5,23 +5,28 @@ pub(crate) mod systemd;
 
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
-/// Resolve the binary path to use in service unit files.
-///
-/// When the `self-update` feature is enabled, this first ensures the
-/// binary is a symlink into the nix store (so future updates are atomic
-/// symlink swaps that never hit "text file busy"). The returned path is
-/// the stable symlink — not the resolved nix store path — so the unit
-/// survives across updates.
-///
-/// Without `self-update`, falls back to `current_exe()`.
+/// Optional hook resolving the stable binary path to bake into service unit
+/// files. The daemon registers its self-update `ensure_symlink` here (so the
+/// unit points at a symlink that survives atomic update swaps); consumers
+/// without a self-updater leave it unset and `current_exe()` is used.
+static BIN_PATH_RESOLVER: OnceLock<fn() -> Result<PathBuf>> = OnceLock::new();
+
+/// Register the binary-path resolver used by [`install`]. First call wins;
+/// later calls are ignored.
+pub fn set_bin_path_resolver(f: fn() -> Result<PathBuf>) {
+    let _ = BIN_PATH_RESOLVER.set(f);
+}
+
+/// Resolve the binary path to use in service unit files: the registered
+/// resolver (see [`set_bin_path_resolver`]) with `current_exe()` fallback.
 fn service_bin_path() -> Result<PathBuf> {
-    #[cfg(feature = "self-update")]
-    {
-        match crate::self_update::ensure_symlink() {
+    if let Some(resolver) = BIN_PATH_RESOLVER.get() {
+        match resolver() {
             Ok(p) => return Ok(p),
             Err(e) => {
-                tracing::warn!("ensure_symlink failed, falling back to current_exe: {e}");
+                tracing::warn!("bin path resolver failed, falling back to current_exe: {e}");
             }
         }
     }

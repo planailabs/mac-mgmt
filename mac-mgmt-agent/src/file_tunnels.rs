@@ -290,7 +290,7 @@ pub fn handle_list(tunnel: &FileTunnel, rel_path: Option<&str>) -> (u16, serde_j
 /// Read a file from a tunnel. Returns `(content, mtime)` on success.
 /// Error tuple is `(HTTP status code, error message)`.
 #[cfg(feature = "services")]
-pub(crate) fn read_file(
+pub fn read_file(
     tunnel: &FileTunnel,
     rel_path: Option<&str>,
 ) -> Result<(Vec<u8>, Option<i64>), (u16, String)> {
@@ -317,7 +317,7 @@ pub(crate) fn read_file(
 /// Performs atomic write with backup + validation + rollback.
 /// Error tuple is `(HTTP status code, error message)`.
 #[cfg(feature = "services")]
-pub(crate) fn write_file(
+pub fn write_file(
     tunnel: &FileTunnel,
     rel_path: Option<&str>,
     content: &[u8],

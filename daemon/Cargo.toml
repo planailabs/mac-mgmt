@@ -13,10 +13,10 @@ path = "src/main.rs"
 
 [features]
 default = ["services", "relay", "memvault"]
-services = []
+services = ["mac-mgmt-agent/services"]
 self-update = ["dep:self_update", "dep:self-replace"]
-relay = ["dep:libp2p-stream"]
-memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-swarm", "dep:memvault-web", "memvault-web/server", "memctl/daemon", "dep:memvault-query", "dep:axum", "dep:serde_ipld_dagcbor", "relay"]
+relay = ["mac-mgmt-agent/relay"]
+memvault = ["mac-mgmt-agent/memvault", "memctl/daemon", "relay"]
 healer = ["dep:mac-mgmt-healer", "services", "relay"]
 embed = ["memvault-web/embed", "memctl/embed"]
 # Sovereign-AI USB build: self-contained, relocatable stack run off a flash
@@ -26,22 +26,19 @@ embed = ["memvault-web/embed", "memctl/embed"]
 # is an optional workspace crate pulled in separately.
 usb = [
     "services", "memvault", "embed",
-    "dep:self-replace", "dep:tar", "dep:flate2", "dep:schemars",
+    "dep:self-replace", "dep:tar", "dep:flate2", "dep:schemars", "dep:axum",
 ]
 # Sovereign-AI USB *daemon*: the reduced phone-home control plane for the
 # plan-ai-usb-minimal stack. Reuses the heartbeat / probe / relay / config-sync
 # machinery but is driven by the reduced `UsbConfig` and runs its services
 # spawn-from-mount (no nix install/upgrade). Distinct from `usb` (the nix-portable
 # stack): no `embed`, no nix-portable / store-image machinery.
-usbd = [
-    "services", "memvault", "relay",
-    "dep:self-replace", "dep:tar", "dep:flate2", "dep:schemars",
-]
+usbd = ["services", "memvault", "relay", "dep:schemars", "dep:axum"]
 # The native overview desktop app (wry/webkitgtk). Kept separate from `usb` so
 # the headless stack (and all tests/CI) builds without the desktop GUI stack;
 # the release build adds it. Requires webkit2gtk at build time (see flake.nix).
 usb-ui = ["usb", "dep:mac-mgmt-overview"]
-sim = []
+sim = ["mac-mgmt-agent/sim"]
 # WASM client for the memvault web UI — built by dx for embedding.
 # Both `web` and `server` (via memvault) compile the same App component from
 # the same crate, ensuring hydration entry ordering matches perfectly.
@@ -66,8 +63,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 async-trait = "0.1"
-base64 = "0.22"
-bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 sentry = { workspace = true, features = ["log"] }
 rust-embed = { version = "8", features = ["include-exclude", "debug-embed"] }
@@ -78,62 +73,36 @@ flate2 = { version = "1", optional = true }
 schemars = { version = "1.2.1", features = ["derive"], optional = true }
 sha2 = "0.10"
 libc = "0.2"
-jsonschema = { version = "0.46", default-features = false }
-yaml_serde = "0.10"
 toml = "0.8"
 rocket = { version = "0.5", default-features = false, features = ["json"] }
-prometheus = "0.14"
 reqwest = { workspace = true, features = ["blocking", "stream"] }
 rustls = { workspace = true }
 russh = { version = "0.60", default-features = false, features = ["ring", "flate2"] }
 rand = "0.9"
 futures-util = "0.3"
-futures-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 uuid = { version = "1", features = ["v4"] }
 mac-mgmt-common = { path = "../common", features = ["sentry"] }
 mac-mgmt-services = { path = "../mac-mgmt-services" }
+mac-mgmt-agent = { path = "../mac-mgmt-agent" }
+axum = { version = "0.8", optional = true }
 dirs = "6"
-glob = "0.3"
 hex = "0.4"
 multihash = "0.19"
 hostname = "0.4"
 humantime = "2"
 notify = "7"
-strip-ansi-escapes = "0.2"
-sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "network"] }
-regex = "1"
 which = { workspace = true }
 ramhorns = "1"
 mac-mgmt-healer = { path = "../mac-mgmt-healer", default-features = false, optional = true }
 plan-ai-cleaner = { path = "../plan-ai-cleaner" }
 plan-ai-cloud = { path = "../plan-ai-cloud" }
 memvault-mcp = { path = "../memvault/crates/memvault-mcp" }
-memvault-api = { path = "../memvault/crates/memvault-api" }
 memctl = { path = "../memvault/crates/memctl", default-features = false }
-aes-gcm = "0.10"
-tokio-tungstenite = "0.26"
-tokio-util = { version = "0.7", features = ["compat"] }
 libp2p = { version = "0.56", default-features = false, features = [
     "tokio", "noise", "yamux", "quic", "tcp", "websocket", "dns",
     "mdns", "relay", "request-response", "identify", "ping",
     "gossipsub", "macros", "serde", "kad",
 ] }
-libp2p-stream = { version = "0.4.0-alpha", optional = true }
-memvault-core = { path = "../memvault/crates/memvault-core", optional = true }
-memvault-auth = { path = "../memvault/crates/memvault-auth", optional = true }
-serde_ipld_dagcbor = { version = "0.6", optional = true }
-memvault-store = { path = "../memvault/crates/memvault-store", optional = true }
-memvault-net = { path = "../memvault/crates/memvault-net", optional = true }
-memvault-swarm = { path = "../memvault/crates/memvault-swarm", optional = true }
-memvault-query = { path = "../memvault/crates/memvault-query", optional = true }
-axum = { version = "0.8", optional = true }
 # Native overview desktop app — its own workspace root; pulled in only by the
 # `usb-ui` feature so headless builds never touch the wry/webkitgtk stack.
 mac-mgmt-overview = { path = "../mac-mgmt-overview", optional = true }
-
-# Unix-only deps. pty-process wraps a real PTY (openpty/forkpty) for the
-# relay-SSH interactive shell — it has no Windows implementation. The relay-SSH
-# PTY/FIFO subsystem is `#[cfg(unix)]`-gated in src (remote_ssh::pty / ssh_server
-# / fifo_watcher), so the Windows build never references it.
-[target.'cfg(unix)'.dependencies]
-pty-process = { version = "0.5", features = ["async"] }

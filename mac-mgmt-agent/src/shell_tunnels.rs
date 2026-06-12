@@ -92,13 +92,13 @@ impl ShellTunnelRegistry {
 
 /// Default maximum execution time for a shell command (5 minutes).
 #[cfg(feature = "services")]
-pub(crate) const DEFAULT_EXEC_SECS: u64 = 300;
+pub const DEFAULT_EXEC_SECS: u64 = 300;
 
 // ── Shared helpers ─────────────────────────────────────────────────────
 
 /// Validate the user argument against the tunnel's arg_template regex.
 #[cfg(feature = "services")]
-pub(crate) fn validate_args(tunnel: &ShellTunnel, user_arg: Option<&str>) -> Result<(), String> {
+pub fn validate_args(tunnel: &ShellTunnel, user_arg: Option<&str>) -> Result<(), String> {
     if let Some(ref tmpl) = tunnel.def.arg_template {
         if let Some(arg) = user_arg {
             if let Some(ref pattern) = tmpl.validation {
@@ -124,7 +124,7 @@ pub(crate) fn validate_args(tunnel: &ShellTunnel, user_arg: Option<&str>) -> Res
 /// Build a tokio Command from a tunnel definition + optional user arg.
 /// Stdout/stderr are piped, stdin is null.
 #[cfg(feature = "services")]
-pub(crate) fn build_command(
+pub fn build_command(
     tunnel: &ShellTunnel,
     user_arg: Option<&str>,
 ) -> tokio::process::Command {

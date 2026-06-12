@@ -1,0 +1,93 @@
+# The reusable agent control plane: host assessment + heartbeat, the service
+# supervisor (managed_service/service_mgmt + the service catalog), the libp2p
+# relay/tunnel stack and the embedded-memvault wrapper. Extracted from the
+# daemon crate so consumers (the daemon itself, plan-ai-usb's `usbd`) can build
+# the machinery without the daemon's CLI/dashboard/MCP/cloud surface.
+#
+# Like mac-mgmt-services, this crate uses direct version deps (not
+# `workspace = true`) so it builds standalone when consumed as a path/git
+# dependency outside the mac-mgmt workspace (plan-ai-usb).
+[package]
+name = "mac-mgmt-agent"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+# deterministic-simulation hooks (no real PTYs / suppressed side effects)
+sim = []
+# the service supervisor + catalog (managed_service, service_mgmt, services/,
+# connectors/, config_providers, unmanaged). Needs `relay`: the supervisor
+# wires p2p tunnel overrides (p2p::proxy_helpers) into managed services —
+# every real consumer (daemon default, usb, usbd) enables both anyway.
+services = ["relay"]
+# libp2p relay + SSH/file/shell tunnels (p2p, remote_ssh, file/shell_tunnels)
+relay = ["dep:libp2p-stream"]
+# embedded memvault node (the `memvault` wrapper module)
+memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-swarm", "dep:memvault-web", "memvault-web/server", "memctl/daemon", "dep:memvault-query", "dep:axum", "dep:serde_ipld_dagcbor", "relay"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom_04 = { package = "getrandom", version = "0.4" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+rust-embed = { version = "8", features = ["include-exclude", "debug-embed"] }
+tempfile = "3"
+sha2 = "0.10"
+jsonschema = { version = "0.46", default-features = false }
+yaml_serde = "0.10"
+toml = "0.8"
+prometheus = "0.14"
+# direct versions (not `workspace = true`) — see header comment
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "query", "blocking", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+russh = { version = "0.60", default-features = false, features = ["ring", "flate2"] }
+rand = "0.9"
+futures-util = "0.3"
+futures-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+uuid = { version = "1", features = ["v4"] }
+mac-mgmt-common = { path = "../common", features = ["sentry"] }
+mac-mgmt-services = { path = "../mac-mgmt-services" }
+dirs = "6"
+glob = "0.3"
+hex = "0.4"
+hostname = "0.4"
+strip-ansi-escapes = "0.2"
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "network"] }
+regex = "1"
+which = "7"
+memvault-api = { path = "../memvault/crates/memvault-api" }
+memctl = { path = "../memvault/crates/memctl", default-features = false }
+aes-gcm = "0.10"
+tokio-tungstenite = "0.26"
+tokio-util = { version = "0.7", features = ["compat"] }
+libp2p = { version = "0.56", default-features = false, features = [
+    "tokio", "noise", "yamux", "quic", "tcp", "websocket", "dns",
+    "mdns", "relay", "request-response", "identify", "ping",
+    "gossipsub", "macros", "serde", "kad",
+] }
+libp2p-stream = { version = "0.4.0-alpha", optional = true }
+memvault-core = { path = "../memvault/crates/memvault-core", optional = true }
+memvault-auth = { path = "../memvault/crates/memvault-auth", optional = true }
+serde_ipld_dagcbor = { version = "0.6", optional = true }
+memvault-store = { path = "../memvault/crates/memvault-store", optional = true }
+memvault-net = { path = "../memvault/crates/memvault-net", optional = true }
+memvault-swarm = { path = "../memvault/crates/memvault-swarm", optional = true }
+memvault-query = { path = "../memvault/crates/memvault-query", optional = true }
+memvault-web = { path = "../memvault/crates/memvault-web", optional = true, default-features = false }
+axum = { version = "0.8", optional = true }
+libc = "0.2"
+
+# Unix-only deps. pty-process wraps a real PTY (openpty/forkpty) for the
+# relay-SSH interactive shell — it has no Windows implementation. The relay-SSH
+# PTY/FIFO subsystem is `#[cfg(unix)]`-gated in src (remote_ssh::pty / ssh_server
+# / fifo_watcher), so the Windows build never references it.
+[target.'cfg(unix)'.dependencies]
+pty-process = { version = "0.5", features = ["async"] }

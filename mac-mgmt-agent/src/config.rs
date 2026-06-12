@@ -29,7 +29,7 @@ pub fn read_metrics_port() -> u16 {
         .unwrap_or(DEFAULT_METRICS_PORT)
 }
 
-pub(crate) fn merge_json(base: &mut serde_json::Value, overlay: &serde_json::Value) {
+pub fn merge_json(base: &mut serde_json::Value, overlay: &serde_json::Value) {
     match (base, overlay) {
         (serde_json::Value::Object(b), serde_json::Value::Object(o)) => {
             for (k, v) in o {
@@ -97,7 +97,7 @@ fn load_cached_remote_config() -> Option<serde_json::Value> {
     }
 }
 
-pub(crate) async fn fetch_remote_config(
+pub async fn fetch_remote_config(
     url: &str,
     token: &str,
 ) -> Result<Option<serde_json::Value>> {
@@ -125,7 +125,7 @@ pub(crate) async fn fetch_remote_config(
 
 /// Fetch all secrets for this cluster from the server vault.
 /// Returns an empty map on failure (secrets are optional).
-pub(crate) async fn fetch_secrets(
+pub async fn fetch_secrets(
     url: &str,
     token: &str,
 ) -> std::collections::HashMap<String, String> {

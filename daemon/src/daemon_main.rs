@@ -236,6 +236,12 @@ async fn run(
         impl tracing::Subscriber,
     >,
 ) -> Result<()> {
+    // Service unit files should point at the self-update symlink (atomic
+    // update swaps) rather than the raw current_exe path. The hook lives in
+    // mac-mgmt-agent, which has no self-update — register ours.
+    #[cfg(feature = "self-update")]
+    service::set_bin_path_resolver(mac_mgmt_daemon::self_update::ensure_symlink);
+
     match cli.command {
         Commands::Setup => {
             scripts::run("setup.sh")?;
