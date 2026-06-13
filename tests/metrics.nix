@@ -176,6 +176,9 @@ pkgs.testers.nixosTest {
         metrics_path = "/metrics";
         scheme = "https";
         bearer_token = settingToken;
+        tls_config = {
+          ca_file = "${testTlsDir}/ca-cert.pem";
+        };
         scrape_interval = "3s";
         scrape_timeout = "2s";
         static_configs = [{
@@ -223,16 +226,31 @@ pkgs.testers.nixosTest {
         machine.log("--- mac-mgmt.service journal ---")
         machine.log(machine.succeed("journalctl -u mac-mgmt.service --no-pager -n 200 || true"))
 
+    relay_curl = "curl --cacert ${testTlsDir}/ca-cert.pem"
+
     def wait_for_pid_health(name, pid_file, health_cmd, log_file, attempts=120):
+        last_health_error = ""
         for _ in range(attempts):
-            if machine.execute(health_cmd)[0] == 0:
+            status, out = machine.execute(health_cmd)
+            if status == 0:
                 return
+            last_health_error = out
             if machine.execute(f"kill -0 $(cat {pid_file}) 2>/dev/null")[0] != 0:
                 service_log = machine.succeed(f"cat {log_file} || true")
-                raise Exception(f"{name} exited before readiness:\n{service_log}")
+                raise Exception(
+                    f"{name} exited before readiness; last health probe output:\n"
+                    f"{last_health_error}\n{service_log}"
+                )
             time.sleep(1)
         service_log = machine.succeed(f"cat {log_file} || true")
-        raise Exception(f"{name} did not become ready within {attempts}s:\n{service_log}")
+        verbose_health = machine.succeed(
+            health_cmd.replace(" -sf ", " -sv ").replace(" >/dev/null", "") + " 2>&1 || true"
+        )
+        raise Exception(
+            f"{name} did not become ready within {attempts}s; "
+            f"last health probe output:\n{last_health_error}\n"
+            f"verbose health probe:\n{verbose_health}\n{service_log}"
+        )
 
     # Start the relay and poll its real health endpoint.  Do not rely only on
     # wait_for_open_port: if the relay exits early, dump its log immediately
@@ -243,15 +261,15 @@ pkgs.testers.nixosTest {
     wait_for_pid_health(
         "mac-mgmt-relay",
         "/tmp/relay.pid",
-        "curl -sf https://127.0.0.1:8080/health >/dev/null",
+        relay_curl + " -sf https://127.0.0.1:8080/health >/dev/null",
         "/tmp/relay.log",
     )
     machine.log("Relay running on port 8080")
 
     # Sanity-check the federated /metrics endpoint reachable + auth-gated
-    machine.fail("curl -sf https://127.0.0.1:8080/metrics")  # 401 — no token
+    machine.fail(relay_curl + " -sf https://127.0.0.1:8080/metrics")  # 401 — no token
     machine.succeed(
-        "curl -sf -H 'Authorization: Bearer ${settingToken}' https://127.0.0.1:8080/metrics >/tmp/relay-metrics-empty.txt"
+        relay_curl + " -sf -H 'Authorization: Bearer ${settingToken}' https://127.0.0.1:8080/metrics >/tmp/relay-metrics-empty.txt"
     )
     machine.log("Relay /metrics is reachable with bearer auth (no daemons yet)")
 
@@ -276,7 +294,7 @@ pkgs.testers.nixosTest {
     for _ in range(120):
         try:
             tunnels_json = machine.succeed(
-                "curl -sf -H 'Authorization: Bearer ${settingToken}' "
+                relay_curl + " -sf -H 'Authorization: Bearer ${settingToken}' "
                 "https://127.0.0.1:8080/api/tunnels"
             )
             tunnels = json.loads(tunnels_json)
@@ -300,7 +318,7 @@ pkgs.testers.nixosTest {
     # Hit the federated /metrics directly to confirm the daemon scrape now
     # produces synthetic relay metrics carrying the federation labels.
     direct = machine.succeed(
-        "curl -sf -H 'Authorization: Bearer ${settingToken}' https://127.0.0.1:8080/metrics"
+        relay_curl + " -sf -H 'Authorization: Bearer ${settingToken}' https://127.0.0.1:8080/metrics"
     )
     machine.log("Federated /metrics body (first 1KB):")
     machine.log(direct[:1024])
