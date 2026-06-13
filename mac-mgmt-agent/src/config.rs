@@ -23,6 +23,29 @@ pub fn config_dir() -> PathBuf {
         .join(".config/mac-mgmt")
 }
 
+/// Directory for runtime control files that must live on a filesystem
+/// supporting special files (FIFOs, sockets). The config dir can sit on FAT32
+/// — the plan-ai-usb stick pins all daemon state there (`MAC_MGMT_CONFIG_DIR`)
+/// so it travels with the drive — where `mkfifo`/`bind` fail with EPERM. The
+/// relay-SSH control FIFO and the supervisor socket therefore live here, on a
+/// host-local filesystem that supports them, never on the (portable) config dir.
+///
+/// `MAC_MGMT_RUNTIME_DIR` overrides the whole path — the plan-ai-usb launcher
+/// pins it to a host-local dir so the daemon (server) and any `enable-ssh`
+/// (writer) agree. Otherwise it is the OS runtime dir: `$XDG_RUNTIME_DIR` on
+/// Linux (a tmpfs, and crucially NOT derived from `$HOME`, which the usb daemon
+/// repins to the stick), falling back to the user cache dir, then the system
+/// temp dir.
+pub fn runtime_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("MAC_MGMT_RUNTIME_DIR") {
+        return PathBuf::from(d);
+    }
+    dirs::runtime_dir()
+        .or_else(dirs::cache_dir)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("mac-mgmt")
+}
+
 /// Read the metrics port from the config file without fully loading/merging.
 /// Used by CLI commands (status, logs) that need the port before the daemon starts.
 pub fn read_metrics_port() -> u16 {

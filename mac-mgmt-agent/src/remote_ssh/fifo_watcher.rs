@@ -9,7 +9,9 @@ use tokio::sync::mpsc;
 use super::RemoteSshCommand;
 
 fn fifo_path() -> PathBuf {
-    crate::config::config_dir().join("remote-ssh")
+    // Runtime dir, NOT config_dir: the config dir can be on FAT32 (the
+    // plan-ai-usb stick) where mkfifo fails with EPERM. See config::runtime_dir.
+    crate::config::runtime_dir().join("remote-ssh")
 }
 
 fn create_fifo(path: &std::path::Path) -> Result<()> {

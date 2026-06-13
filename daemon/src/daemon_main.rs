@@ -166,7 +166,9 @@ enum SupervisorCmd {
 }
 
 fn write_ssh_fifo(command: &str) -> Result<()> {
-    let path = config::config_dir().join("remote-ssh");
+    // Must match the daemon's fifo_watcher (config::runtime_dir, not the config
+    // dir, which can be on FAT32 where the FIFO can't be created).
+    let path = config::runtime_dir().join("remote-ssh");
     std::fs::write(&path, format!("{command}\n"))
         .map_err(|e| anyhow::anyhow!("failed to write to {}: {e}", path.display()))?;
     println!("remote SSH {command}d");

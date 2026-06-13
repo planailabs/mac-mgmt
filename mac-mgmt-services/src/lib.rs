@@ -19,7 +19,16 @@ pub use protocol::{Notification, Request, Response, ServiceStatus, SpawnSpec};
 use std::path::PathBuf;
 
 /// Default socket path the daemon and supervisor agree on.
+///
+/// `MAC_MGMT_RUNTIME_DIR` relocates it off the config/home dir: on plan-ai-usb
+/// `HOME` is the FAT32 stick, where binding a unix socket fails with EPERM, so
+/// the launcher pins this to a host-local runtime dir (the same one the agent's
+/// `config::runtime_dir()` resolves). On Windows the path is only mapped to a
+/// named-pipe name (see `transport`), so the relocation is inert there.
 pub fn default_socket_path() -> PathBuf {
+    if let Some(d) = std::env::var_os("MAC_MGMT_RUNTIME_DIR") {
+        return PathBuf::from(d).join("services.sock");
+    }
     let base = dirs_home()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".config/mac-mgmt");
