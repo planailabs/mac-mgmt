@@ -190,22 +190,36 @@ pkgs.testers.nixosTest {
     assert self_info["token_kind"] == "setting", f"unexpected token kind: {self_info}"
     machine.log("Token validation via mac-mgmt-server verified")
 
-    # Start the relay and fail with its log if it exits before becoming ready.
+    relay_curl = "curl --connect-timeout 1 --max-time 1"
+
+    def relay_log_with_probe():
+        last_probe = machine.succeed(
+            relay_curl + " -sv https://127.0.0.1:8080/health >/tmp/relay-health.body 2>/tmp/relay-health.err || true; "
+            "printf '--- verbose health probe stderr ---\\n'; "
+            "cat /tmp/relay-health.err || true; "
+            "printf '\\n--- health response body ---\\n'; "
+            "cat /tmp/relay-health.body || true"
+        )
+        relay_log = machine.succeed("cat /tmp/relay.log || true")
+        return f"{last_probe}\n--- relay log ---\n{relay_log}"
+
+    # Start the relay and poll its real HTTPS health endpoint. The test CA is
+    # installed into the VM trust store via the NixOS module above, so probes use
+    # normal certificate validation. Dump the client-side TLS/probe error on
+    # timeout so readiness failures are self-diagnosing.
     machine.execute(
-        "RUST_LOG=info mac-mgmt-relay -c ${relayConfig} >/tmp/relay.log 2>&1 & echo $! >/tmp/relay.pid"
+        "setsid -f env RUST_LOG=info mac-mgmt-relay -c ${relayConfig} </dev/null >/tmp/relay.log 2>&1"
     )
     attempts = 0
     while attempts < 120:
-        if machine.execute("curl -sf https://127.0.0.1:8080/health >/dev/null")[0] == 0:
+        if machine.execute(relay_curl + " -sf https://127.0.0.1:8080/health >/dev/null")[0] == 0:
             break
-        if machine.execute("kill -0 $(cat /tmp/relay.pid) 2>/dev/null")[0] != 0:
-            relay_log = machine.succeed("cat /tmp/relay.log || true")
-            raise Exception(f"relay exited before readiness:\n{relay_log}")
+        if machine.execute("pgrep -x mac-mgmt-relay >/dev/null")[0] != 0:
+            raise Exception(f"relay exited before readiness:\n{relay_log_with_probe()}")
         time.sleep(1)
         attempts += 1
     else:
-        relay_log = machine.succeed("cat /tmp/relay.log || true")
-        raise Exception(f"relay did not become ready on port 8080:\n{relay_log}")
+        raise Exception(f"relay did not become ready on port 8080:\n{relay_log_with_probe()}")
     machine.log("Relay started on port 8080 and health check passed")
 
     # Set up the daemon environment
@@ -215,13 +229,42 @@ pkgs.testers.nixosTest {
         "cp ${testKeyDir}/id_ed25519.pub /root/.config/mac-mgmt/authorized_keys"
     )
 
-    # Start the daemon
+    daemon_runtime_dir = "/tmp/mac-mgmt-runtime"
+
+    def daemon_diagnostics():
+        return machine.succeed(
+            "printf '--- daemon process ---\\n'; "
+            "ps -ef | grep '[m]ac-mgmt daemon' || true; "
+            "printf '\\n--- runtime dir ---\\n'; "
+            f"ls -la {daemon_runtime_dir} || true; "
+            "printf '\\n--- daemon log ---\\n'; "
+            "cat /tmp/daemon.log || true; "
+            "printf '\\n--- relay log ---\\n'; "
+            "cat /tmp/relay.log || true"
+        )
+
+    # Start the daemon with an explicit runtime dir. The remote SSH FIFO lives in
+    # config::runtime_dir(), not the config directory, so keep the path
+    # deterministic and make startup waits bounded/self-diagnosing.
     machine.execute(
-        "mac-mgmt daemon >/tmp/daemon.log 2>&1 &"
+        f"mkdir -p {daemon_runtime_dir} && "
+        f"setsid -f env MAC_MGMT_RUNTIME_DIR={daemon_runtime_dir} mac-mgmt daemon </dev/null >/tmp/daemon.log 2>&1"
     )
 
-    # Wait for the FIFO file as a "daemon main loop is running" signal.
-    machine.wait_for_file("/root/.config/mac-mgmt/remote-ssh")
+    # Wait for the FIFO file as a "daemon main loop is running" signal, but do
+    # not use an unbounded wait: if daemon startup regresses, dump process,
+    # runtime-directory, daemon, and relay diagnostics instead of hanging CI.
+    attempts = 0
+    fifo_path = f"{daemon_runtime_dir}/remote-ssh"
+    while attempts < 120:
+        if machine.execute(f"test -p {fifo_path}")[0] == 0:
+            break
+        if machine.execute("pgrep -x mac-mgmt >/dev/null")[0] != 0:
+            raise Exception(f"daemon exited before FIFO readiness:\n{daemon_diagnostics()}")
+        time.sleep(1)
+        attempts += 1
+    else:
+        raise Exception(f"daemon did not create FIFO {fifo_path} within 120s:\n{daemon_diagnostics()}")
     machine.log("Daemon main loop reached (FIFO created)")
 
     # Wait for the daemon to register with the relay via libp2p.
@@ -229,26 +272,30 @@ pkgs.testers.nixosTest {
     # RPC stream registration completes.
     attempts = 0
     instance_id = None
-    while attempts < 120:
-        try:
-            tunnels_json = machine.succeed(
-                "curl -sf -H 'Authorization: Bearer ${settingToken}' "
-                "https://127.0.0.1:8080/api/tunnels"
-            )
-            tunnels = json.loads(tunnels_json)
-            if len(tunnels) > 0:
-                instance_id = tunnels[0]["instance_id"]
-                break
-        except Exception:
-            pass
+    last_tunnel_probe = ""
+    while attempts < 90:
+        status, last_tunnel_probe = machine.execute(
+            relay_curl + " -sf -H 'Authorization: Bearer ${settingToken}' "
+            "https://127.0.0.1:8080/api/tunnels"
+        )
+        if status == 0:
+            try:
+                tunnels = json.loads(last_tunnel_probe)
+                if len(tunnels) > 0:
+                    instance_id = tunnels[0]["instance_id"]
+                    break
+            except Exception as e:
+                last_tunnel_probe = f"invalid tunnel list JSON: {e}: {last_tunnel_probe!r}"
         time.sleep(1)
         attempts += 1
 
     if instance_id is None:
         machine.log("daemon did not register; dumping logs:")
+        machine.log(f"last /api/tunnels probe: {last_tunnel_probe}")
         machine.log(machine.succeed("cat /tmp/relay.log || true"))
         machine.log(machine.succeed("cat /tmp/daemon.log || true"))
-    assert instance_id is not None, "daemon did not register with relay within 120s"
+    assert instance_id is not None, "daemon did not register with relay within 90s"
+    tunnels_json = last_tunnel_probe
     machine.log(f"Daemon registered with instance_id: {instance_id}")
 
     # Verify tunnel metadata
