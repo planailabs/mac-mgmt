@@ -658,7 +658,12 @@ async fn proxy_catchall(
     let mut builder = axum::response::Response::builder().status(status);
     for (k, v) in &resp_headers {
         let lk = k.to_lowercase();
-        if lk == "transfer-encoding" || lk == "content-length" || lk == "content-encoding" {
+        // transfer-encoding + content-length describe the upstream's framing, which we
+        // re-frame here (axum sets a correct content-length for the body we send), so
+        // drop them. But content-encoding describes the BODY's compression (gzip/zstd/
+        // br) and we forward the body verbatim — still compressed — so it MUST be
+        // preserved, else the client renders raw compressed bytes as garbage.
+        if lk == "transfer-encoding" || lk == "content-length" {
             continue;
         }
         if let Ok(val) = HeaderValue::from_str(v) {
