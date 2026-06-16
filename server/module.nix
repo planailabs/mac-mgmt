@@ -63,8 +63,8 @@ in
   config = lib.mkIf cfg.enable {
     systemd.services.mac-mgmt = {
       description = "mac-mgmt server";
-      after = [ "network.target" "postgresql.service" ];
-      wants = [ "network.target" ];
+      after = [ "network.target" "postgresql.service" "postgresql.target" ];
+      wants = [ "network.target" "postgresql.target" ];
       wantedBy = [ "multi-user.target" ];
 
       environment.CONFIG_PATH = configFile;

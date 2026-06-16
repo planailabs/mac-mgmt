@@ -60,13 +60,15 @@ let
 
   # Release relay builds require TLS material. Generate a local test CA and a
   # relay server certificate signed by that CA so curl and Prometheus can
-  # verify HTTPS normally instead of relying on certificate bypasses.
+  # verify HTTPS normally instead of relying on certificate bypasses. Keep the
+  # validity window long because this derivation can be reused from the Nix
+  # store/cache well after it was originally built.
   testTlsDir = pkgs.runCommand "test-relay-tls" {} ''
     mkdir -p $out
     ${pkgs.openssl}/bin/openssl req -x509 -newkey rsa:2048 \
       -keyout $out/ca-key.pem \
       -out $out/ca-cert.pem \
-      -days 1 \
+      -days 3650 \
       -nodes \
       -subj "/CN=mac-mgmt metrics federation test CA" \
       -addext "basicConstraints=critical,CA:TRUE" \
@@ -83,7 +85,7 @@ let
       -CAkey $out/ca-key.pem \
       -CAcreateserial \
       -out $out/cert.pem \
-      -days 1 \
+      -days 3650 \
       -copy_extensions copyall
     rm $out/cert.csr
   '';
