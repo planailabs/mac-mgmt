@@ -27,40 +27,62 @@ let
       chmod +x $out/bin/mac-mgmt-server${pnameSuffix}
     '';
   wasmToolchain = prev.rust-bin.stable.latest.default.override {
-    targets = [ "wasm32-unknown-unknown" ];
+    targets = [ "wasm32-unknown-unknown" "wasm32-wasip1" ];
   };
   wasmRustPlatform = prev.makeRustPlatform {
     cargo = wasmToolchain;
     rustc = wasmToolchain;
   };
-  memvaultExtractGuestWasm = wasmRustPlatform.buildRustPackage {
-    pname = "memvault-extract-guest-wasm";
-    version = "0.1.0";
-    src = ./memvault;
-    cargoLock = {
-      lockFile = ./memvault/Cargo.lock;
-      outputHashes = import ./memvault/extra-hashes.nix;
+  mkMemvaultExtractGuestWasm = { crate, target }:
+    wasmRustPlatform.buildRustPackage {
+      pname = "${crate}-wasm";
+      version = "0.1.0";
+      src = ./memvault;
+      cargoLock = {
+        lockFile = ./memvault/Cargo.lock;
+        outputHashes = import ./memvault/extra-hashes.nix;
+      };
+      nativeBuildInputs = [ prev.lld ];
+      cargoBuildFlags = [
+        "-p"
+        crate
+        "--target"
+        target
+      ];
+      doCheck = false;
+      installPhase = ''
+        runHook preInstall
+        mkdir -p $out
+        cp target/${target}/release/${prev.lib.replaceStrings [ "-" ] [ "_" ] crate}.wasm \
+          $out/${prev.lib.replaceStrings [ "-" ] [ "_" ] crate}.wasm
+        runHook postInstall
+      '';
     };
-    nativeBuildInputs = [ prev.lld ];
-    cargoBuildFlags = [
-      "-p"
-      "memvault-extract-guest"
-      "--target"
-      "wasm32-unknown-unknown"
-    ];
-    doCheck = false;
-    installPhase = ''
-      runHook preInstall
-      mkdir -p $out
-      cp target/wasm32-unknown-unknown/release/memvault_extract_guest.wasm \
-        $out/memvault_extract_guest.wasm
-      runHook postInstall
-    '';
+  memvaultExtractGuestTextWasm = mkMemvaultExtractGuestWasm {
+    crate = "memvault-extract-guest-text";
+    target = "wasm32-unknown-unknown";
+  };
+  memvaultExtractGuestPdfRenderWasm = mkMemvaultExtractGuestWasm {
+    crate = "memvault-extract-guest-pdfrender";
+    target = "wasm32-wasip1";
+  };
+  memvaultExtractGuestOcrWasm = mkMemvaultExtractGuestWasm {
+    crate = "memvault-extract-guest-ocr";
+    target = "wasm32-wasip1";
+  };
+  memvaultExtractGuestAudioWasm = mkMemvaultExtractGuestWasm {
+    crate = "memvault-extract-guest-audio";
+    target = "wasm32-wasip1";
   };
 in
 {
   inherit dioxus-cli-patched;
-  memvault-extract-guest-wasm = memvaultExtractGuestWasm;
+  memvault-extract-guest-text-wasm = memvaultExtractGuestTextWasm;
+  memvault-extract-guest-pdfrender-wasm = memvaultExtractGuestPdfRenderWasm;
+  memvault-extract-guest-ocr-wasm = memvaultExtractGuestOcrWasm;
+  memvault-extract-guest-audio-wasm = memvaultExtractGuestAudioWasm;
+  # Backwards-compatible alias for callers that only need the text extractor.
+  memvault-extract-guest-wasm = memvaultExtractGuestTextWasm;
 
   mac-mgmt = prev.rustPlatform.buildRustPackage {
     pname = "mac-mgmt";
@@ -80,7 +102,10 @@ in
     ];
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
-    env.MEMVAULT_EXTRACT_GUEST_WASM = "${memvaultExtractGuestWasm}/memvault_extract_guest.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_TEXT_WASM = "${memvaultExtractGuestTextWasm}/memvault_extract_guest_text.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_PDFRENDER_WASM = "${memvaultExtractGuestPdfRenderWasm}/memvault_extract_guest_pdfrender.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_OCR_WASM = "${memvaultExtractGuestOcrWasm}/memvault_extract_guest_ocr.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_AUDIO_WASM = "${memvaultExtractGuestAudioWasm}/memvault_extract_guest_audio.wasm";
     # Fullstack build via dx: @client gets only the web feature (no native
     # deps), @server gets default features + `embed`. --embed bakes the
     # client's public assets into the server binary via rust-embed;

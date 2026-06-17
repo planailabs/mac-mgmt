@@ -33,7 +33,10 @@ let
     cargoLock.outputHashes = import ../extra-hashes.nix;
     cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" "--features" "relay" ];
     nativeBuildInputs = [ pkgs.lld ];
-    env.MEMVAULT_EXTRACT_GUEST_WASM = "${pkgs.memvault-extract-guest-wasm}/memvault_extract_guest.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_TEXT_WASM = "${pkgs.memvault-extract-guest-text-wasm}/memvault_extract_guest_text.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_PDFRENDER_WASM = "${pkgs.memvault-extract-guest-pdfrender-wasm}/memvault_extract_guest_pdfrender.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_OCR_WASM = "${pkgs.memvault-extract-guest-ocr-wasm}/memvault_extract_guest_ocr.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_AUDIO_WASM = "${pkgs.memvault-extract-guest-audio-wasm}/memvault_extract_guest_audio.wasm";
     doCheck = false;
   };
 

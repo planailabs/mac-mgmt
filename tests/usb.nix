@@ -38,7 +38,10 @@ let
     # fails at the real USB integration boundary instead of during build-script
     # tool discovery.
     nativeBuildInputs = [ pkgs.lld pkgs.pkg-config pkgs.nodejs pkgs.tailwindcss_3 ];
-    env.MEMVAULT_EXTRACT_GUEST_WASM = "${pkgs.memvault-extract-guest-wasm}/memvault_extract_guest.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_TEXT_WASM = "${pkgs.memvault-extract-guest-text-wasm}/memvault_extract_guest_text.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_PDFRENDER_WASM = "${pkgs.memvault-extract-guest-pdfrender-wasm}/memvault_extract_guest_pdfrender.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_OCR_WASM = "${pkgs.memvault-extract-guest-ocr-wasm}/memvault_extract_guest_ocr.wasm";
+    env.MEMVAULT_EXTRACT_GUEST_AUDIO_WASM = "${pkgs.memvault-extract-guest-audio-wasm}/memvault_extract_guest_audio.wasm";
     doCheck = false;
   };
 in

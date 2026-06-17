@@ -383,6 +383,10 @@
           macosx-sdk = macosx-sdk;
           nix-driver-sync = nix-driver-sync;
           dioxus-cli-patched = pkgs.dioxus-cli-patched;
+          memvault-extract-guest-text-wasm = pkgs.memvault-extract-guest-text-wasm;
+          memvault-extract-guest-pdfrender-wasm = pkgs.memvault-extract-guest-pdfrender-wasm;
+          memvault-extract-guest-ocr-wasm = pkgs.memvault-extract-guest-ocr-wasm;
+          memvault-extract-guest-audio-wasm = pkgs.memvault-extract-guest-audio-wasm;
           memvault-extract-guest-wasm = pkgs.memvault-extract-guest-wasm;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux (
           let images = import ./docker.nix {
