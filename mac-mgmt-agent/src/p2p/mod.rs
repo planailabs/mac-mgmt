@@ -352,6 +352,12 @@ impl P2pManager {
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
                     .heartbeat_interval(Duration::from_secs(10))
                     .validation_mode(gossipsub::ValidationMode::Strict)
+                    // Peer eXchange: on PRUNE, hand the pruned peer a set of
+                    // alternative mesh members so peers discover more of the
+                    // cluster through the gossip mesh itself. `prune_peers > 0`
+                    // is what turns PX on for outgoing prunes.
+                    .do_px()
+                    .prune_peers(16)
                     .build()
                     .expect("gossipsub config");
                 let gossipsub_behaviour = gossipsub::Behaviour::new(
@@ -583,6 +589,11 @@ async fn swarm_loop(
     #[cfg_attr(not(feature = "memvault"), allow(unused_mut))]
     let mut kad_bootstrap_timer: Option<tokio::time::Interval> = None;
 
+    // Optional periodic bootstrap re-dial timer; armed from the driver's
+    // configured interval in the memvault init below (None disables it).
+    #[cfg_attr(not(feature = "memvault"), allow(unused_mut))]
+    let mut bootstrap_redial_timer: Option<tokio::time::Interval> = None;
+
     #[cfg(feature = "memvault")]
     let (mut mv_driver, mut mv_head_rx) = match config.memvault.take() {
         Some(mv) => {
@@ -626,6 +637,16 @@ async fn swarm_loop(
                 Some(d) => {
                     let mut t = tokio::time::interval(d);
                     t.tick().await; // consume immediate; on_start already bootstrapped
+                    Some(t)
+                }
+                None => None,
+            };
+            // Arm the bootstrap re-dial timer. The initial dial already happened
+            // above, so consume the immediate tick.
+            bootstrap_redial_timer = match driver.bootstrap_redial_interval() {
+                Some(d) => {
+                    let mut t = tokio::time::interval(d);
+                    t.tick().await;
                     Some(t)
                 }
                 None => None,
@@ -819,6 +840,18 @@ async fn swarm_loop(
                 #[cfg(feature = "memvault")]
                 if let Some(driver) = mv_driver.as_ref() {
                     driver.tick_kad_bootstrap(&mut DaemonHost(&mut swarm));
+                }
+            }
+            // ── memvault: periodic bootstrap re-dial (None disables) ──
+            _ = async {
+                match bootstrap_redial_timer.as_mut() {
+                    Some(t) => { t.tick().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                #[cfg(feature = "memvault")]
+                if let Some(driver) = mv_driver.as_ref() {
+                    driver.tick_redial_bootstrap(&mut DaemonHost(&mut swarm));
                 }
             }
             _ = relay_tick.tick() => {

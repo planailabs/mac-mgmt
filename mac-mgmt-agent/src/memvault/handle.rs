@@ -314,13 +314,6 @@ impl MemvaultHandle {
             node_pubkey,
         );
 
-        let sync_config = memvault_swarm::SyncConfig {
-            cluster_id: self.cluster_id.clone(),
-            kad_server: self.config.kad_server,
-            kad_bootstrap_interval_secs: self.config.kad_bootstrap_interval_secs,
-            ..Default::default()
-        };
-
         let bootstrap_peers: Vec<libp2p::Multiaddr> = self
             .config
             .bootstrap_peers
@@ -333,6 +326,16 @@ impl MemvaultHandle {
                 }
             })
             .collect();
+
+        let sync_config = memvault_swarm::SyncConfig {
+            cluster_id: self.cluster_id.clone(),
+            kad_server: self.config.kad_server,
+            kad_bootstrap_interval_secs: self.config.kad_bootstrap_interval_secs,
+            // Give the driver the parsed peers so it can re-dial lost ones.
+            bootstrap_peers: bootstrap_peers.clone(),
+            bootstrap_redial_interval_secs: self.config.bootstrap_redial_interval_secs,
+            ..Default::default()
+        };
 
         let (head_tx, head_rx) = memvault_swarm::head_channel();
         memvault_swarm::spawn_event_bridge(Arc::clone(&self.event_bus), head_tx);

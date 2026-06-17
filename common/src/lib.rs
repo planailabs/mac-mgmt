@@ -1894,6 +1894,20 @@ pub struct MemvaultConfig {
     )]
     #[serde(default)]
     pub kad_bootstrap_interval_secs: u64,
+    #[schemars(
+        description = "Interval in seconds between bootstrap re-dial rounds. Re-dials \
+                       configured bootstrap peers we've lost so a node behind a one-shot \
+                       dial (especially a /p2p-less addr, which is never registered in \
+                       Kademlia) doesn't island after a failed initial dial or a dropped \
+                       link. 0 disables; default 60.",
+        extend("x-advanced" = true),
+    )]
+    #[serde(default = "default_bootstrap_redial_interval_secs")]
+    pub bootstrap_redial_interval_secs: u64,
+}
+
+fn default_bootstrap_redial_interval_secs() -> u64 {
+    60
 }
 
 // ── Cluster Config (what the server manages per-cluster) ──────────────

@@ -268,6 +268,9 @@
             "aarch64-unknown-linux-musl"
             "x86_64-unknown-linux-musl"
             "wasm32-unknown-unknown"
+            # memvault-extract builds WASI guest modules (OCR/audio/text/pdf)
+            # via a build.rs that cross-compiles to wasm32-wasip1.
+            "wasm32-wasip1"
           ];
         };
 
