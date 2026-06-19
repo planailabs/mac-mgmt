@@ -644,6 +644,142 @@ async fn unbind_domain(
     Ok(())
 }
 
+// ── Rename / transfer / delete ─────────────────────────────────────────
+
+#[server]
+async fn update_host_settings(host_id: Uuid, name: String) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+    let (org_id, _) = host_org(&pool, host_id).await?;
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+
+    // CF Pages project name lives on the folder; the host name is for display.
+    sqlx::query("UPDATE webspace_hosts SET name = $1, updated_at = now() WHERE id = $2")
+        .bind(&name)
+        .bind(host_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| match e.as_database_error() {
+            Some(db) if db.is_unique_violation() => {
+                ServerFnError::new("a host with that name already exists in this organization")
+            }
+            _ => ServerFnError::new(e.to_string()),
+        })?;
+    Ok(())
+}
+
+#[server]
+async fn list_host_move_target_orgs() -> Result<Vec<crate::web::user::OrgOption>, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+    crate::web::user::list_user_write_orgs(&user, &pool).await
+}
+
+#[server]
+async fn move_host(host_id: Uuid, target_org_id: Uuid) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+    let (org_id, _) = host_org(&pool, host_id).await?;
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+    user.require_org_write(&target_org_id)?;
+
+    if org_id == target_org_id {
+        return Err(ServerFnError::new("host is already in that organization"));
+    }
+
+    // Host and its child folders both carry organization_id; move them together.
+    // Their org-scoped UNIQUE(name) constraints catch collisions and roll back.
+    // ponytail: domain bindings keep pointing at source-org domains; rebinding is manual.
+    let mut tx = pool.begin().await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("UPDATE webspace_hosts SET organization_id = $1, updated_at = now() WHERE id = $2")
+        .bind(target_org_id)
+        .bind(host_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| match e.as_database_error() {
+            Some(db) if db.is_unique_violation() => {
+                ServerFnError::new("a host with the same name already exists in the target organization")
+            }
+            _ => ServerFnError::new(e.to_string()),
+        })?;
+    sqlx::query("UPDATE webspaces SET organization_id = $1 WHERE webspace_host_id = $2")
+        .bind(target_org_id)
+        .bind(host_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| match e.as_database_error() {
+            Some(db) if db.is_unique_violation() => {
+                ServerFnError::new("a folder with the same name already exists in the target organization")
+            }
+            _ => ServerFnError::new(e.to_string()),
+        })?;
+    tx.commit().await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    crate::api::internal::notify_proxy_reload();
+    Ok(())
+}
+
+#[server]
+async fn delete_host(host_id: Uuid) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+    let (org_id, kind) = host_org(&pool, host_id).await?;
+    use crate::web::user::WebUserExt;
+    user.require_org_write(&org_id)?;
+
+    // Folders, bindings, and ChangeDetection rows cascade on FK delete, but the
+    // bindings own external CNAMEs (and CF custom domains) that won't — clean them
+    // up first, mirroring unbind_domain. ponytail: CF Pages project itself is left.
+    let bindings = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
+        "SELECT whd.domain_id, d.name, s.name \
+         FROM webspace_host_domains whd \
+         JOIN domains d ON d.id = whd.domain_id \
+         LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
+         WHERE whd.webspace_host_id = $1",
+    )
+    .bind(host_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let cf = if kind == "cloudflare" {
+        cloudflare_folder(&pool, host_id).await.ok()
+    } else {
+        None
+    };
+
+    for (domain_id, domain_name, subdomain_name) in bindings {
+        let hostname = match &subdomain_name {
+            Some(sub) if sub != "@" => format!("{sub}.{domain_name}"),
+            _ => domain_name.clone(),
+        };
+        if let Some((project_name, cred_id)) = &cf {
+            if let Ok((client, account_id)) =
+                crate::credentials::cf_client_with_account(&pool, *cred_id).await
+            {
+                let _ = client
+                    .remove_pages_custom_domain(&account_id, project_name, &hostname)
+                    .await;
+            }
+            let cname_target = format!("{project_name}.pages.dev");
+            remove_host_cname(&pool, domain_id, &hostname, &cname_target).await;
+        } else if let Some(ad) = agency_domain() {
+            remove_host_cname(&pool, domain_id, &hostname, &ad).await;
+        }
+    }
+
+    sqlx::query("DELETE FROM webspace_hosts WHERE id = $1")
+        .bind(host_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    crate::api::internal::notify_proxy_reload();
+    Ok(())
+}
+
 // ── Component ─────────────────────────────────────────────────────────
 
 #[component]
@@ -778,6 +914,149 @@ pub fn WebspaceHostDetail(id: String) -> Element {
             host_id: data.id,
             kind: data.kind.clone(),
             bindings: data.bindings.clone(),
+        }
+
+        // Settings
+        SectionHeading { class: "mt-6", "Settings" }
+        HostSettingsSection { host_id: data.id, current_name: data.name.clone() }
+        MoveHostSection { host_id: data.id, current_org_id: data.organization_id }
+        DeleteHostSection { host_id: data.id }
+    }
+}
+
+#[component]
+fn HostSettingsSection(host_id: Uuid, current_name: String) -> Element {
+    let mut refresh: Signal<u32> = use_context();
+    let mut name = use_signal(move || current_name.clone());
+    let mut saving = use_signal(|| false);
+    let mut message = use_signal(|| None::<String>);
+
+    rsx! {
+        Card {
+            div { class: "p-4 flex items-end gap-3",
+                FormField { label: "Name",
+                    input {
+                        class: "input w-64",
+                        value: "{name}",
+                        oninput: move |evt| name.set(evt.value()),
+                    }
+                }
+                Button {
+                    variant: ButtonVariant::Primary,
+                    disabled: name.read().is_empty() || *saving.read(),
+                    onclick: move |_| {
+                        let n = name.read().clone();
+                        saving.set(true);
+                        message.set(None);
+                        spawn(async move {
+                            match update_host_settings(host_id, n).await {
+                                Ok(()) => { message.set(Some("Saved".into())); refresh += 1; }
+                                Err(e) => message.set(Some(format!("{e}"))),
+                            }
+                            saving.set(false);
+                        });
+                    },
+                    if *saving.read() { "Saving..." } else { "Save" }
+                }
+                if let Some(ref msg) = *message.read() {
+                    span { class: "text-sm text-fg-muted", "{msg}" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn MoveHostSection(host_id: Uuid, current_org_id: Uuid) -> Element {
+    let mut refresh: Signal<u32> = use_context();
+    let orgs = use_server_future(list_host_move_target_orgs)?;
+    let mut selected_org = use_signal(String::new);
+    let mut moving = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    let targets: Vec<_> = match &*orgs.read() {
+        Some(Ok(list)) => list.iter().filter(|o| o.id != current_org_id).cloned().collect(),
+        _ => vec![],
+    };
+    if targets.is_empty() {
+        return rsx! {};
+    }
+
+    rsx! {
+        Card { class: "mt-2",
+            div { class: "p-4 flex items-center justify-between gap-4",
+                div {
+                    div { class: "font-medium", "Move to another organization" }
+                    div { class: "text-sm text-fg-muted", "Transfers this host and its folders to a different organization." }
+                }
+                div { class: "flex items-center gap-2",
+                    select {
+                        class: "input w-48",
+                        value: "{selected_org}",
+                        onchange: move |evt| selected_org.set(evt.value()),
+                        option { value: "", "Select org..." }
+                        for org in &targets {
+                            option { value: "{org.id}", "{org.name}" }
+                        }
+                    }
+                    Button {
+                        variant: ButtonVariant::Danger,
+                        disabled: selected_org.read().is_empty() || *moving.read(),
+                        onclick: move |_| {
+                            let target = selected_org.read().clone();
+                            if let Ok(tid) = Uuid::parse_str(&target) {
+                                moving.set(true);
+                                error.set(None);
+                                spawn(async move {
+                                    match move_host(host_id, tid).await {
+                                        Ok(()) => { refresh += 1; }
+                                        Err(e) => { error.set(Some(format!("{e}"))); moving.set(false); }
+                                    }
+                                });
+                            }
+                        },
+                        if *moving.read() { "Moving..." } else { "Move Host" }
+                    }
+                }
+            }
+            if let Some(err) = &*error.read() {
+                div { class: "px-4 pb-4 text-danger text-sm", "{err}" }
+            }
+        }
+    }
+}
+
+#[component]
+fn DeleteHostSection(host_id: Uuid) -> Element {
+    let mut deleting = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    rsx! {
+        Card { class: "mt-2",
+            div { class: "p-4 flex items-center justify-between",
+                div {
+                    div { class: "text-sm font-medium text-danger", "Delete this host" }
+                    div { class: "text-sm text-fg-muted", "All folders, domain bindings, and deployments will be removed." }
+                }
+                Button {
+                    variant: ButtonVariant::Danger,
+                    disabled: *deleting.read(),
+                    onclick: move |_| {
+                        deleting.set(true);
+                        error.set(None);
+                        spawn(async move {
+                            match delete_host(host_id).await {
+                                Ok(()) => { navigator().push(crate::web::app::Route::WebspaceHostList {}); }
+                                Err(e) => { error.set(Some(format!("{e}"))); deleting.set(false); }
+                            }
+                        });
+                    },
+                    if *deleting.read() { "Deleting..." } else { "Delete Host" }
+                }
+            }
+            if let Some(err) = &*error.read() {
+                div { class: "px-4 pb-4 text-danger text-sm", "{err}" }
+            }
         }
     }
 }
