@@ -192,7 +192,25 @@ pkgs.testers.nixosTest {
       }];
     };
 
+    # GitLab's Nix image runner currently has no KVM, so this VM boots under
+    # TCG. On those hosts, PCI/virtio device discovery and PostgreSQL initdb can
+    # legitimately take several minutes; the default NixOS test manager device
+    # timeout can expire the hvc0/ttyS0 backdoor before the driver can run any
+    # in-guest diagnostics. Keep the timeout bounded but long enough for the
+    # backdoor and first PostgreSQL initialization to survive slow software
+    # emulation.
+    systemd.settings.Manager = {
+      DefaultDeviceTimeoutSec = lib.mkForce 900;
+      DefaultTimeoutStartSec = lib.mkForce 900;
+    };
+    systemd.services.postgresql.serviceConfig.TimeoutStartSec = "15min";
+
     networking.firewall.enable = false;
+    # The relay/daemon libp2p WebSocket transport constructs a system DNS
+    # resolver even when this test uses only /ip4/127.0.0.1 multiaddrs. The
+    # isolated VM otherwise boots with an empty resolv.conf, causing relay
+    # startup to fail before the readiness loop can exercise the metrics path.
+    networking.nameservers = [ "10.0.2.3" ];
   };
 
   testScript = ''
