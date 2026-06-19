@@ -169,6 +169,12 @@ pkgs.testers.nixosTest {
     '';
 
     networking.firewall.enable = false;
+
+    # libp2p constructs a DNS-capable WebSocket transport even for IP-only
+    # multiaddrs. NixOS VM tests do not always provide resolv.conf nameservers,
+    # so give hickory/libp2p a deterministic QEMU user-network resolver instead
+    # of letting relay startup fail before the readiness probe can reach it.
+    networking.nameservers = [ "10.0.2.3" ];
   };
 
   testScript = ''
@@ -198,9 +204,9 @@ pkgs.testers.nixosTest {
     def relay_log_with_probe():
         last_probe = machine.succeed(
             relay_curl + " -sv https://127.0.0.1:8080/health >/tmp/relay-health.body 2>/tmp/relay-health.err || true; "
-            "printf '--- verbose health probe stderr ---\\n'; "
+            "printf -- '--- verbose health probe stderr ---\\n'; "
             "cat /tmp/relay-health.err || true; "
-            "printf '\\n--- health response body ---\\n'; "
+            "printf -- '\\n--- health response body ---\\n'; "
             "cat /tmp/relay-health.body || true"
         )
         relay_log = machine.succeed("cat /tmp/relay.log || true")
@@ -236,13 +242,13 @@ pkgs.testers.nixosTest {
 
     def daemon_diagnostics():
         return machine.succeed(
-            "printf '--- daemon process ---\\n'; "
+            "printf -- '--- daemon process ---\\n'; "
             "ps -ef | grep '[m]ac-mgmt daemon' || true; "
-            "printf '\\n--- runtime dir ---\\n'; "
+            "printf -- '\\n--- runtime dir ---\\n'; "
             f"ls -la {daemon_runtime_dir} || true; "
-            "printf '\\n--- daemon log ---\\n'; "
+            "printf -- '\\n--- daemon log ---\\n'; "
             "cat /tmp/daemon.log || true; "
-            "printf '\\n--- relay log ---\\n'; "
+            "printf -- '\\n--- relay log ---\\n'; "
             "cat /tmp/relay.log || true"
         )
 
