@@ -51,13 +51,15 @@ let
 
   # Release relay builds require TLS material. Generate a local test CA and a
   # relay server certificate signed by that CA so test clients can verify TLS
-  # normally, without disabling certificate validation.
+  # normally, without disabling certificate validation. The validity window is
+  # intentionally long because this derivation can be reused from the Nix store
+  # or binary cache well after it was originally built.
   testTlsDir = pkgs.runCommand "test-relay-tls" {} ''
     mkdir -p $out
     ${pkgs.openssl}/bin/openssl req -x509 -newkey rsa:2048 \
       -keyout $out/ca-key.pem \
       -out $out/ca-cert.pem \
-      -days 1 \
+      -days 3650 \
       -nodes \
       -subj "/CN=mac-mgmt relay integration test CA" \
       -addext "basicConstraints=critical,CA:TRUE" \
@@ -74,7 +76,7 @@ let
       -CAkey $out/ca-key.pem \
       -CAcreateserial \
       -out $out/cert.pem \
-      -days 1 \
+      -days 3650 \
       -copy_extensions copyall
     rm $out/cert.csr
   '';
