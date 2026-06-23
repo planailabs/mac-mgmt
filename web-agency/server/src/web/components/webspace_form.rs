@@ -140,9 +140,6 @@ async fn create_folder(
     while path.len() > 1 && path.ends_with('/') {
         path.pop();
     }
-    if path == "/" {
-        return Err(ServerFnError::new("\"/\" is reserved for the main folder"));
-    }
     let path = path.as_str();
 
     let id = sqlx::query_scalar::<_, Uuid>(

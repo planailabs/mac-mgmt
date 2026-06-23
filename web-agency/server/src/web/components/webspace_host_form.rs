@@ -1,8 +1,8 @@
 //! Create a webspace-host.
 //!
-//! A `proxy` host is created with a default `local`/`static` main-folder at `/`
-//! (editable afterwards; more folders can be added). A `cloudflare` host
-//! provisions a Cloudflare Pages project as its single main-folder.
+//! A `proxy` host is created with no folders (add them afterwards, including
+//! one at `/`). A `cloudflare` host provisions a Cloudflare Pages project as
+//! its single main-folder.
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -104,17 +104,8 @@ async fn create_host(
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    } else {
-        // Proxy host: default local/static main-folder.
-        sqlx::query(
-            "INSERT INTO webspaces (organization_id, webspace_host_id, name, path_prefix, hosting_type, runtime, local_status) \
-             VALUES ($1, $2, $3, '/', 'local', 'static', 'stopped')",
-        )
-        .bind(org_id).bind(host_id).bind(&name)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
     }
+    // Proxy hosts start with no folders — add them (including one at "/") afterwards.
 
     crate::api::internal::notify_proxy_reload();
     Ok(host_id)
@@ -214,7 +205,7 @@ pub fn WebspaceHostForm() -> Element {
                 }
             } else {
                 div { class: "text-sm text-fg-muted",
-                    "A default local/static folder will be created at \"/\". Add more folders and set runtimes afterwards."
+                    "No folders are created automatically. Add folders (including one at \"/\") and set runtimes afterwards."
                 }
             }
 
