@@ -36,14 +36,11 @@ fn main() {
         Vec<proxy::Folder>,
     >::new()));
 
-    // Initial load from server API
-    {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt.block_on(sync::initial_load(cfg, &routes, &cert_store));
-    }
+    // Note: we deliberately do NOT block on an initial route/cert fetch here.
+    // Pingora starts immediately so it can accept connections and serve the
+    // localized "starting up" page (empty route table) while the background sync
+    // service performs the first load. TLS uses the self-signed fallback cert
+    // until real certs arrive.
 
     // Set up Pingora
     let mut server = pingora::prelude::Server::new(None).unwrap();

@@ -246,29 +246,6 @@ async fn reload_all(
     token_lifetime
 }
 
-/// Do the initial load (blocking before Pingora starts accepting).
-/// Retries every 10 seconds until both routes and certs load successfully.
-pub async fn initial_load(
-    cfg: &ProxyConfig,
-    routes: &ArcSwap<HashMap<String, Vec<(String, Route, AuthMode)>>>,
-    cert_store: &CertStore,
-) {
-    let token = cfg.internal_token();
-    let client = build_client(&token);
-    loop {
-        let routes_ok = reload_routes(&client, &cfg.server_url, routes)
-            .await
-            .is_some();
-        let certs_ok = reload_certs(&client, &cfg.server_url, cert_store).await;
-        if routes_ok && certs_ok {
-            trigger_missing_certs(&client, &cfg.server_url, routes, cert_store).await;
-            return;
-        }
-        tracing::warn!("initial sync failed, retrying in 10s");
-        tokio::time::sleep(Duration::from_secs(10)).await;
-    }
-}
-
 /// Build a Pingora background service that spawns the sync loop.
 ///
 /// The sync task carries no important state — it only writes into shared
