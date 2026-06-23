@@ -16,12 +16,14 @@
 
 use dioxus::fullstack::axum::{
     Router,
-    extract::{Json, State},
-    http::{HeaderMap, StatusCode},
-    routing::post,
+    extract::{Json, Path, Query, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::config;
@@ -69,14 +71,7 @@ fn enc(s: &str) -> String {
     utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
 }
 
-/// Minimal HTML escaping for interpolating untrusted values into a page.
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
+use plan_ai_html::escape as esc;
 
 /// The shared HMAC key (same internal token the proxy holds).
 fn internal_token() -> Result<String, (StatusCode, String)> {
@@ -92,15 +87,6 @@ fn internal_token() -> Result<String, (StatusCode, String)> {
         )
     })?;
     Ok(tok.trim().to_string())
-}
-
-fn agency_domain() -> Result<String, (StatusCode, String)> {
-    let cfg = config::config();
-    let proxy_cfg = cfg.proxy.as_ref().ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "proxy not configured".to_string(),
-    ))?;
-    Ok(proxy_cfg.agency_domain.clone())
 }
 
 // ── signed handoff token (agency → proxy → internal /session) ────────────
@@ -291,6 +277,463 @@ async fn logout_ep(
     .execute(&pool)
     .await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── agency HTML pages (public; NOT behind OIDC require_auth) ─────────────
+
+pub fn agency_router(pool: PgPool) -> Router<()> {
+    Router::new()
+        .route(
+            "/agency/basic/{list_id}/login",
+            get(login_page).post(login_submit),
+        )
+        .route("/agency/basic/{list_id}/logout", get(logout_page))
+        .route("/agency/basic/{list_id}/profile", get(profile_page))
+        .route("/agency/basic/profile", get(global_profile))
+        .route("/agency/basic/profile/logout", post(global_logout))
+        .with_state(pool)
+}
+
+// -- form / url helpers --
+
+fn url_host(u: &str) -> String {
+    u.strip_prefix("https://")
+        .or_else(|| u.strip_prefix("http://"))
+        .and_then(|s| s.split('/').next())
+        .map(|s| s.split(':').next().unwrap_or(s))
+        .unwrap_or("")
+        .to_lowercase()
+}
+
+fn urldecode(s: &str) -> String {
+    let s = s.replace('+', " ");
+    percent_encoding::percent_decode_str(&s)
+        .decode_utf8_lossy()
+        .into_owned()
+}
+
+fn parse_form(body: &str) -> HashMap<String, String> {
+    body.split('&')
+        .filter_map(|kv| {
+            let (k, v) = kv.split_once('=')?;
+            Some((urldecode(k), urldecode(v)))
+        })
+        .collect()
+}
+
+/// True if `cb` points at a domain actually bound to a webspace using `list_id`.
+/// Blocks open-redirect via a forged callback host.
+async fn cb_host_ok(pool: &PgPool, list_id: Uuid, cb: &str) -> bool {
+    let host = url_host(cb);
+    if host.is_empty() {
+        return false;
+    }
+    sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM webspaces w \
+         JOIN webspace_hosts h ON h.id = w.webspace_host_id \
+         JOIN webspace_host_domains whd ON whd.webspace_host_id = h.id \
+         JOIN domains d ON d.id = whd.domain_id \
+         LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
+         WHERE w.auth_basic_list_id = $1 \
+           AND (CASE WHEN s.name IS NOT NULL AND s.name != '@' \
+                THEN s.name || '.' || d.name ELSE d.name END) = $2 \
+         LIMIT 1",
+    )
+    .bind(list_id)
+    .bind(host)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .is_some()
+}
+
+// -- sso/identity DB helpers --
+
+async fn sso_from_cookie(pool: &PgPool, headers: &HeaderMap) -> Option<Uuid> {
+    let tok = extract_cookie(cookie_header(headers), "__agency_basic_sso")?;
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT s.sso_id FROM basic_auth_sessions s \
+         JOIN basic_auth_sso o ON o.id = s.sso_id \
+         WHERE s.token_hash = $1 AND s.expires_at > now() AND o.expires_at > now()",
+    )
+    .bind(sha256_hex(tok))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+async fn sso_list_username(pool: &PgPool, sso_id: Uuid, list_id: Uuid) -> Option<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT username FROM basic_auth_sso_lists WHERE sso_id = $1 AND list_id = $2",
+    )
+    .bind(sso_id)
+    .bind(list_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+async fn creds_ok(pool: &PgPool, list_id: Uuid, username: &str, password: &str) -> bool {
+    let stored = sqlx::query_scalar::<_, String>(
+        "SELECT password_hash FROM basic_auth_credentials WHERE list_id = $1 AND username = $2",
+    )
+    .bind(list_id)
+    .bind(username)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    match stored {
+        Some(hash) => constant_time_eq(&hash, &sha256_hex(password)),
+        None => false,
+    }
+}
+
+async fn ensure_sso(
+    pool: &PgPool,
+    headers: &HeaderMap,
+    keep: bool,
+) -> Result<(Uuid, Option<String>), String> {
+    let ttl = if keep { KEEP_SECS } else { SESSION_SECS };
+    let new_exp = chrono::Utc::now() + chrono::Duration::seconds(ttl);
+    if let Some(sso_id) = sso_from_cookie(pool, headers).await {
+        // Extend the identity's life; reuse the existing agency cookie.
+        let _ = sqlx::query("UPDATE basic_auth_sso SET expires_at = GREATEST(expires_at, $2) WHERE id = $1")
+            .bind(sso_id)
+            .bind(new_exp)
+            .execute(pool)
+            .await;
+        return Ok((sso_id, None));
+    }
+    let sso_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO basic_auth_sso (expires_at) VALUES ($1) RETURNING id",
+    )
+    .bind(new_exp)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let (cookie_token, _) = create_session(pool, sso_id, keep).await?;
+    Ok((sso_id, Some(agency_cookie(&cookie_token, keep))))
+}
+
+fn agency_cookie(token: &str, keep: bool) -> String {
+    let base = format!("__agency_basic_sso={token}; Path=/; HttpOnly; Secure; SameSite=Lax");
+    if keep {
+        format!("{base}; Max-Age={KEEP_SECS}")
+    } else {
+        base
+    }
+}
+
+fn clear_agency_cookie() -> String {
+    "__agency_basic_sso=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string()
+}
+
+/// Mint a handoff token and redirect the browser back to the webspace callback.
+fn handoff_redirect(
+    sso_id: Uuid,
+    list_id: Uuid,
+    username: &str,
+    keep: bool,
+    cb: &str,
+    back: &str,
+) -> Response {
+    let key = match internal_token() {
+        Ok(k) => k,
+        Err(e) => return e.into_response(),
+    };
+    let h = Handoff {
+        sso: sso_id,
+        list: list_id,
+        u: username.to_string(),
+        keep,
+        exp: chrono::Utc::now().timestamp() + 120,
+    };
+    let token = mint_handoff(&key, &h);
+    let url = format!("{cb}/login?token={token}&back={}", enc(back));
+    Redirect::to(&url).into_response()
+}
+
+// -- HTML rendering (plan-ai-design via plan_ai_html) --
+
+/// Wrap a pre-rendered body in the plan-ai-design page chrome.
+fn page(title: &str, body: &str) -> Html<String> {
+    Html(plan_ai_html::Page::new(title, body).render())
+}
+
+const LOGIN_TPL: &str = r#"<h1 class="h-page">Sign in</h1>
+<form method="post" action="/agency/basic/{{list_id}}/login">
+<input type="hidden" name="cb" value="{{cb}}">
+<input type="hidden" name="back" value="{{back}}">
+<label class="label" for="u">Username</label>
+<input class="input" id="u" type="text" name="username" autofocus autocomplete="username">
+<label class="label" for="p" style="margin-top:.75rem">Password</label>
+<input class="input" id="p" type="password" name="password" autocomplete="current-password">
+<label class="help" style="display:flex;align-items:center;gap:.45rem;margin-top:.8rem"><input type="checkbox" name="keep" value="on"> Keep me signed in</label>
+{{#has_error}}<div class="err" style="margin-top:.6rem">{{error}}</div>{{/has_error}}
+<button class="btn btn-primary btn-lg" type="submit" style="width:100%;margin-top:1rem">Sign in</button>
+</form>"#;
+
+fn login_form_html(list_id: Uuid, cb: &str, back: &str, error: Option<&str>) -> Html<String> {
+    let data = plan_ai_html::mustache::MapBuilder::new()
+        .insert_str("list_id", list_id.to_string())
+        .insert_str("cb", cb)
+        .insert_str("back", back)
+        .insert_bool("has_error", error.is_some())
+        .insert_str("error", error.unwrap_or(""))
+        .build();
+    page("Sign in", &plan_ai_html::render_data(LOGIN_TPL, &data))
+}
+
+// -- handlers --
+
+async fn login_page(
+    State(pool): State<PgPool>,
+    Path(list_id): Path<Uuid>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let back = q.get("back").cloned().unwrap_or_default();
+    let cb = q.get("cb").cloned().unwrap_or_default();
+    if !cb_host_ok(&pool, list_id, &cb).await {
+        return (StatusCode::BAD_REQUEST, "invalid callback").into_response();
+    }
+    // Silent SSO: already proved this list on this browser → hand off, no form.
+    if let Some(sso_id) = sso_from_cookie(&pool, &headers).await {
+        if let Some(username) = sso_list_username(&pool, sso_id, list_id).await {
+            return handoff_redirect(sso_id, list_id, &username, true, &cb, &back);
+        }
+    }
+    login_form_html(list_id, &cb, &back, None).into_response()
+}
+
+async fn login_submit(
+    State(pool): State<PgPool>,
+    Path(list_id): Path<Uuid>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    let form = parse_form(&body);
+    let username = form.get("username").cloned().unwrap_or_default();
+    let password = form.get("password").cloned().unwrap_or_default();
+    let keep = form.get("keep").map(|v| v == "on").unwrap_or(false);
+    let back = form.get("back").cloned().unwrap_or_default();
+    let cb = form.get("cb").cloned().unwrap_or_default();
+
+    if !cb_host_ok(&pool, list_id, &cb).await {
+        return (StatusCode::BAD_REQUEST, "invalid callback").into_response();
+    }
+    if !creds_ok(&pool, list_id, &username, &password).await {
+        return login_form_html(list_id, &cb, &back, Some("Invalid username or password"))
+            .into_response();
+    }
+
+    let (sso_id, set_cookie) = match ensure_sso(&pool, &headers, keep).await {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    };
+    let _ = sqlx::query(
+        "INSERT INTO basic_auth_sso_lists (sso_id, list_id, username) VALUES ($1, $2, $3) \
+         ON CONFLICT (sso_id, list_id) DO UPDATE SET username = $3",
+    )
+    .bind(sso_id)
+    .bind(list_id)
+    .bind(&username)
+    .execute(&pool)
+    .await;
+
+    let mut resp = handoff_redirect(sso_id, list_id, &username, keep, &cb, &back);
+    if let Some(c) = set_cookie {
+        if let Ok(v) = c.parse() {
+            resp.headers_mut().append(header::SET_COOKIE, v);
+        }
+    }
+    resp
+}
+
+async fn logout_page(
+    State(pool): State<PgPool>,
+    Path(list_id): Path<Uuid>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    // The proxy already dropped this list from the identity before redirecting
+    // here; this page is purely informational.
+    let back = q.get("back").cloned().unwrap_or_default();
+    let cb = q.get("cb").cloned().unwrap_or_default();
+    if !cb.is_empty() && !cb_host_ok(&pool, list_id, &cb).await {
+        return (StatusCode::BAD_REQUEST, "invalid callback").into_response();
+    }
+    let login = format!("{cb}/login?back={}", enc(&back));
+    let body = format!(
+        "<h1 class=\"h-page\">Signed out</h1>\
+         <p class=\"help\">You've been signed out of this area.</p>\
+         <p style=\"margin-top:1rem\"><a class=\"btn btn-primary btn-lg\" href=\"{}\">Sign in again</a></p>\
+         <p class=\"help\" style=\"margin-top:1rem\"><a class=\"link\" href=\"/agency/basic/profile\">Manage all sessions</a>{}</p>",
+        esc(&login),
+        if back.is_empty() {
+            String::new()
+        } else {
+            format!(" · <a class=\"link\" href=\"{}\">Back to site</a>", esc(&back))
+        },
+    );
+    page("Signed out", &body).into_response()
+}
+
+async fn profile_page(
+    State(pool): State<PgPool>,
+    Path(list_id): Path<Uuid>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let back = q.get("back").cloned().unwrap_or_default();
+    let cb = q.get("cb").cloned().unwrap_or_default();
+    if !cb_host_ok(&pool, list_id, &cb).await {
+        return (StatusCode::BAD_REQUEST, "invalid callback").into_response();
+    }
+    let sso_id = sso_from_cookie(&pool, &headers).await;
+    let this_user = match sso_id {
+        Some(id) => sso_list_username(&pool, id, list_id).await,
+        None => None,
+    };
+
+    let status = match &this_user {
+        Some(u) => format!(
+            "<p>Signed in as <strong>{}</strong>.</p>\
+             <p style=\"margin-top:1rem\"><a class=\"btn btn-secondary btn-lg\" href=\"{}/logout?back={}\">Sign out of this area</a></p>",
+            esc(u),
+            esc(&cb),
+            enc(&back),
+        ),
+        None => format!(
+            "<p class=\"help\">Not signed in to this area.</p>\
+             <p style=\"margin-top:1rem\"><a class=\"btn btn-primary btn-lg\" href=\"{}/login?back={}\">Sign in</a></p>",
+            esc(&cb),
+            enc(&back),
+        ),
+    };
+
+    // Other lists this identity is signed into.
+    let mut others = String::new();
+    if let Some(id) = sso_id {
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT l.name, sl.username FROM basic_auth_sso_lists sl \
+             JOIN basic_auth_lists l ON l.id = sl.list_id \
+             WHERE sl.sso_id = $1 AND sl.list_id <> $2 ORDER BY l.name",
+        )
+        .bind(id)
+        .bind(list_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+        if !rows.is_empty() {
+            others.push_str("<p class=\"help\" style=\"margin-top:1rem\">Also signed in:</p><ul class=\"help\">");
+            for (name, user) in rows {
+                others.push_str(&format!("<li>{} as {}</li>", esc(&name), esc(&user)));
+            }
+            others.push_str("</ul>");
+        }
+    }
+
+    let body = format!(
+        "<h1 class=\"h-page\">Profile</h1>{status}{others}\
+         <p class=\"help\" style=\"margin-top:1rem\"><a class=\"link\" href=\"/agency/basic/profile\">Manage all sessions</a>{}</p>",
+        if back.is_empty() {
+            String::new()
+        } else {
+            format!(" · <a class=\"link\" href=\"{}\">Back to site</a>", esc(&back))
+        },
+    );
+    page("Profile", &body).into_response()
+}
+
+async fn global_profile(State(pool): State<PgPool>, headers: HeaderMap) -> Response {
+    let Some(sso_id) = sso_from_cookie(&pool, &headers).await else {
+        return page(
+            "Sessions",
+            "<h1 class=\"h-page\">Sessions</h1><p class=\"help\">You're not signed in to anything.</p>",
+        )
+        .into_response();
+    };
+    let rows = sqlx::query_as::<_, (Uuid, String, String)>(
+        "SELECT l.id, l.name, sl.username FROM basic_auth_sso_lists sl \
+         JOIN basic_auth_lists l ON l.id = sl.list_id \
+         WHERE sl.sso_id = $1 ORDER BY l.name",
+    )
+    .bind(sso_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    if rows.is_empty() {
+        return page(
+            "Sessions",
+            "<h1 class=\"h-page\">Sessions</h1><p class=\"help\">You're not signed in to anything.</p>",
+        )
+        .into_response();
+    }
+
+    let mut items = String::from("<ul style=\"list-style:none;padding:0;margin:.5rem 0 0\">");
+    for (id, name, user) in rows {
+        items.push_str(&format!(
+            "<li style=\"display:flex;justify-content:space-between;align-items:center;\
+             gap:1rem;padding:.6rem 0;border-bottom:1px solid rgb(var(--c-line))\">\
+             <span>{} <span class=\"help\">as {}</span></span>\
+             <form method=post action=\"/agency/basic/profile/logout\" style=\"margin:0\">\
+             <input type=hidden name=list_id value=\"{}\">\
+             <button class=\"btn btn-secondary btn-sm\" type=submit>Sign out</button></form></li>",
+            esc(&name),
+            esc(&user),
+            id,
+        ));
+    }
+    items.push_str("</ul>");
+
+    let body = format!(
+        "<h1 class=\"h-page\">Sessions</h1>\
+         <p class=\"help\">Areas you're currently signed in to:</p>{items}\
+         <form method=post action=\"/agency/basic/profile/logout\" style=\"margin-top:1.25rem\">\
+         <input type=hidden name=all value=1>\
+         <button class=\"btn btn-danger btn-lg\" type=submit style=\"width:100%\">Sign out of everything</button></form>"
+    );
+    page("Sessions", &body).into_response()
+}
+
+async fn global_logout(
+    State(pool): State<PgPool>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    let form = parse_form(&body);
+    let Some(sso_id) = sso_from_cookie(&pool, &headers).await else {
+        return Redirect::to("/agency/basic/profile").into_response();
+    };
+
+    if form.get("all").map(|v| v == "1").unwrap_or(false) {
+        // Nuclear: drop the whole identity everywhere + clear the agency cookie.
+        let _ = sqlx::query("DELETE FROM basic_auth_sso WHERE id = $1")
+            .bind(sso_id)
+            .execute(&pool)
+            .await;
+        let mut resp = Redirect::to("/agency/basic/profile").into_response();
+        if let Ok(v) = clear_agency_cookie().parse() {
+            resp.headers_mut().append(header::SET_COOKIE, v);
+        }
+        return resp;
+    }
+
+    if let Some(list_id) = form.get("list_id").and_then(|s| Uuid::parse_str(s).ok()) {
+        let _ = sqlx::query(
+            "DELETE FROM basic_auth_sso_lists WHERE sso_id = $1 AND list_id = $2",
+        )
+        .bind(sso_id)
+        .bind(list_id)
+        .execute(&pool)
+        .await;
+    }
+    Redirect::to("/agency/basic/profile").into_response()
 }
 
 #[cfg(test)]

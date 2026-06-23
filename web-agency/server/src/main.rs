@@ -335,12 +335,21 @@ fn main() {
                 },
             );
 
+            // Public basic-auth gate pages (login/logout/profile). These are
+            // reached by users of basic-auth-protected webspaces and must NOT
+            // sit behind the agency's OIDC require_auth, so they're merged
+            // separately from web_router.
+            let basic_auth_router = crate::api::basic_auth::agency_router(
+                crate::server_pool().expect("pool for basic-auth pages"),
+            );
+
             // The agency app router (Dioxus + APIs, with their own auth).
             let agency_router = axum::Router::new()
                 .merge(deploy_router)
                 .merge(internal_router)
                 .merge(metrics_router)
                 .merge(cd_router)
+                .merge(basic_auth_router)
                 .merge(web_router);
 
             // A fully separate router for proxy-forwarded static webspace
