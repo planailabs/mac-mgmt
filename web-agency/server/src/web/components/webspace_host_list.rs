@@ -48,13 +48,13 @@ async fn list_hosts() -> Result<Vec<HostRow>, ServerFnError> {
         return Ok(vec![]);
     }
 
-    // hostname: first bound (domain, subdomain) for the host, rendered as a FQDN.
-    let hostname_subquery = "(SELECT CASE WHEN s.name IS NOT NULL AND s.name != '@' \
-            THEN s.name || '.' || d.name ELSE d.name END \
+    // hostname: all bound (domain, subdomain) FQDNs for the host, comma-joined.
+    let hostname_subquery = "(SELECT string_agg(CASE WHEN s.name IS NOT NULL AND s.name != '@' \
+            THEN s.name || '.' || d.name ELSE d.name END, ', ' ORDER BY d.name) \
          FROM webspace_host_domains whd \
          JOIN domains d ON d.id = whd.domain_id \
          LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
-         WHERE whd.webspace_host_id = h.id ORDER BY d.name LIMIT 1)";
+         WHERE whd.webspace_host_id = h.id)";
 
     // has_missing_cname: the host has at least one domain binding where no CNAME
     // dns_record exists for that subdomain on that domain.
