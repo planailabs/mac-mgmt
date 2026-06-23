@@ -183,8 +183,8 @@ impl WebAgencyProxy {
             .get("cookie")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        for tok in cookie_values(cookies, "__basic_session").collect::<Vec<_>>() {
-            if self.basic_verify_info(tok, list_id).await.is_some() {
+        for tok in cookie_values(cookies, "__basic_session") {
+            if self.basic_verify_info(&tok, list_id).await.is_some() {
                 return Ok(false); // authorized — pass through
             }
         }
@@ -228,12 +228,15 @@ impl WebAgencyProxy {
                             } else {
                                 format!("https://{host}{mp}/")
                             };
-                            let mut cookie = format!(
-                                "__basic_session={sess}; Path=/; HttpOnly; Secure; SameSite=Lax"
-                            );
+                            let mut builder = cookie::Cookie::build(("__basic_session", sess))
+                                .path("/")
+                                .http_only(true)
+                                .secure(true)
+                                .same_site(cookie::SameSite::Lax);
                             if let Some(ma) = max_age {
-                                cookie.push_str(&format!("; Max-Age={ma}"));
+                                builder = builder.max_age(cookie::time::Duration::seconds(ma));
                             }
+                            let cookie = builder.build().to_string();
                             self.send_redirect(session, &dest, Some(&cookie)).await?;
                         }
                         None => {
@@ -265,7 +268,7 @@ impl WebAgencyProxy {
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
                 if let Some(tok) = extract_cookie(cookies, "__basic_session") {
-                    self.basic_logout(tok, list_id).await;
+                    self.basic_logout(&tok, list_id).await;
                 }
                 let loc = format!(
                     "https://{}/agency/basic/{}/logout?back={}&cb={}",
@@ -368,8 +371,8 @@ impl WebAgencyProxy {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
         let mut info = None;
-        for tok in cookie_values(cookies, "__basic_session").collect::<Vec<_>>() {
-            info = self.basic_verify_info(tok, list_id).await;
+        for tok in cookie_values(cookies, "__basic_session") {
+            info = self.basic_verify_info(&tok, list_id).await;
             if info.is_some() {
                 break;
             }
@@ -459,6 +462,14 @@ impl WebAgencyProxy {
                         // Valid gate token — set cookie and redirect to clean URL
                         let clean_url = strip_gate_params(&path_query);
                         let cookie_value = self.make_gate_cookie(org_id);
+                        let gate_cookie = cookie::Cookie::build(("__proxy_gate", cookie_value))
+                            .path("/")
+                            .http_only(true)
+                            .secure(true)
+                            .same_site(cookie::SameSite::Lax)
+                            .max_age(cookie::time::Duration::seconds(86400))
+                            .build()
+                            .to_string();
                         let location = format!("https://{host}{clean_url}");
                         let mut resp =
                             pingora::http::ResponseHeader::build(302, None).map_err(|e| {
@@ -469,12 +480,7 @@ impl WebAgencyProxy {
                                 )
                             })?;
                         let _ = resp.insert_header("Location", &location);
-                        let _ = resp.insert_header(
-                            "Set-Cookie",
-                            &format!(
-                                "__proxy_gate={cookie_value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400"
-                            ),
-                        );
+                        let _ = resp.insert_header("Set-Cookie", &gate_cookie);
                         session.write_response_header(Box::new(resp), false).await?;
                         session
                             .write_response_body(Some(bytes::Bytes::new()), true)
@@ -928,18 +934,20 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
         == 0
 }
 
-fn extract_cookie<'a>(cookies: &'a str, name: &'a str) -> Option<&'a str> {
-    cookie_values(cookies, name).next()
+/// First value for a cookie name in a `Cookie` request header.
+fn extract_cookie(header: &str, name: &str) -> Option<String> {
+    cookie_values(header, name).into_iter().next()
 }
 
 /// All values for a cookie name. A browser can send several same-named cookies
-/// (e.g. one left over at a different Path); the gate must try each.
-fn cookie_values<'a>(cookies: &'a str, name: &'a str) -> impl Iterator<Item = &'a str> {
-    cookies.split(';').filter_map(move |part| {
-        part.trim()
-            .strip_prefix(name)
-            .and_then(|rest| rest.strip_prefix('='))
-    })
+/// (e.g. one left over at a different Path); the gate must try each. Parsed with
+/// the `cookie` crate at the header boundary (Pingora exposes plain header strs).
+fn cookie_values(header: &str, name: &str) -> Vec<String> {
+    cookie::Cookie::split_parse(header)
+        .filter_map(Result::ok)
+        .filter(|c| c.name() == name)
+        .map(|c| c.value().to_string())
+        .collect()
 }
 
 /// Parse gate params from a URI query string.
