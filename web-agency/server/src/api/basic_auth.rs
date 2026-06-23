@@ -147,13 +147,15 @@ fn random_token() -> String {
     hex::encode(b)
 }
 
-/// Verify a cookie token grants access to `list_id`. Returns the username if so.
-async fn verify_session(pool: &PgPool, token: &str, list_id: Uuid) -> Option<String> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT sl.username \
+/// Verify a cookie token grants access to `list_id`. Returns (username,
+/// list_name) if so.
+async fn verify_session(pool: &PgPool, token: &str, list_id: Uuid) -> Option<(String, String)> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT sl.username, l.name \
          FROM basic_auth_sessions s \
          JOIN basic_auth_sso o ON o.id = s.sso_id \
          JOIN basic_auth_sso_lists sl ON sl.sso_id = o.id \
+         JOIN basic_auth_lists l ON l.id = sl.list_id \
          WHERE s.token_hash = $1 AND s.expires_at > now() AND o.expires_at > now() \
            AND sl.list_id = $2",
     )
@@ -202,6 +204,8 @@ struct VerifyResp {
     valid: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    list_name: Option<String>,
 }
 
 async fn verify_ep(
@@ -210,10 +214,16 @@ async fn verify_ep(
     Json(req): Json<VerifyReq>,
 ) -> Result<Json<VerifyResp>, (StatusCode, String)> {
     crate::api::internal::authenticate(&headers)?;
-    let username = verify_session(&pool, &req.session_token, req.list_id).await;
+    let found = verify_session(&pool, &req.session_token, req.list_id).await;
+    let valid = found.is_some();
+    let (username, list_name) = match found {
+        Some((u, n)) => (Some(u), Some(n)),
+        None => (None, None),
+    };
     Ok(Json(VerifyResp {
-        valid: username.is_some(),
+        valid,
         username,
+        list_name,
     }))
 }
 

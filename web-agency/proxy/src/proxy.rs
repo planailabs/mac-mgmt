@@ -159,6 +159,10 @@ impl WebAgencyProxy {
         let path_only = session.req_header().uri.path().to_string();
         let sub = strip_mount_prefix(&path_only, mount);
 
+        // JSON whoami at the cgi base path itself.
+        if sub == "/cgi-webagency/basic" || sub == "/cgi-webagency/basic/" {
+            return self.handle_basic_whoami(session, list_id).await;
+        }
         if let Some(action) = sub.strip_prefix("/cgi-webagency/basic/") {
             return self
                 .handle_basic_cgi(session, host, &mp, list_id, action)
@@ -173,7 +177,7 @@ impl WebAgencyProxy {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
         if let Some(tok) = extract_cookie(cookies, "__basic_session") {
-            if self.basic_verify(tok, list_id).await {
+            if self.basic_verify_info(tok, list_id).await.is_some() {
                 return Ok(false); // authorized — pass through
             }
         }
@@ -311,26 +315,76 @@ impl WebAgencyProxy {
         Ok(())
     }
 
-    /// Verify a `__basic_session` cookie grants access to `list_id`.
-    /// Fails closed (false) if the internal API is unreachable.
-    async fn basic_verify(&self, token: &str, list_id: uuid::Uuid) -> bool {
+    /// Verify a `__basic_session` cookie grants access to `list_id`. Returns
+    /// `(username, list_name)` when valid, `None` otherwise. Fails closed (None)
+    /// if the internal API is unreachable.
+    async fn basic_verify_info(
+        &self,
+        token: &str,
+        list_id: uuid::Uuid,
+    ) -> Option<(String, Option<String>)> {
         let url = format!("{}/api/internal/basic/verify", self.server_url);
-        match self
+        let r = self
             .client
             .post(&url)
             .bearer_auth(&self.internal_token)
             .json(&serde_json::json!({ "session_token": token, "list_id": list_id }))
             .send()
             .await
-        {
-            Ok(r) if r.status().is_success() => r
-                .json::<serde_json::Value>()
-                .await
-                .ok()
-                .and_then(|v| v.get("valid").and_then(|b| b.as_bool()))
-                .unwrap_or(false),
-            _ => false,
+            .ok()?;
+        if !r.status().is_success() {
+            return None;
         }
+        let v = r.json::<serde_json::Value>().await.ok()?;
+        if v.get("valid").and_then(|b| b.as_bool()) != Some(true) {
+            return None;
+        }
+        let username = v.get("username").and_then(|x| x.as_str())?.to_string();
+        let list_name = v
+            .get("list_name")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
+        Some((username, list_name))
+    }
+
+    /// JSON identity at the cgi base path: `{username, list_id, list_name}` when
+    /// signed in, else 401 `{error}`.
+    async fn handle_basic_whoami(
+        &self,
+        session: &mut Session,
+        list_id: uuid::Uuid,
+    ) -> Result<bool> {
+        let cookies = session
+            .req_header()
+            .headers
+            .get("cookie")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let info = match extract_cookie(cookies, "__basic_session") {
+            Some(tok) => self.basic_verify_info(tok, list_id).await,
+            None => None,
+        };
+        let (status, body) = match info {
+            Some((username, list_name)) => (
+                200u16,
+                serde_json::json!({
+                    "username": username,
+                    "list_id": list_id,
+                    "list_name": list_name,
+                })
+                .to_string(),
+            ),
+            None => (401u16, serde_json::json!({ "error": "not signed in" }).to_string()),
+        };
+        let bytes = bytes::Bytes::from(body);
+        let mut resp = pingora::http::ResponseHeader::build(status, None).map_err(|e| {
+            pingora::Error::because(pingora::ErrorType::InternalError, "build whoami response", e)
+        })?;
+        let _ = resp.insert_header("Content-Type", "application/json");
+        let _ = resp.insert_header("Content-Length", &bytes.len().to_string());
+        session.write_response_header(Box::new(resp), false).await?;
+        session.write_response_body(Some(bytes), true).await?;
+        Ok(true)
     }
 
     /// Exchange a signed handoff token for a persisted session token.
