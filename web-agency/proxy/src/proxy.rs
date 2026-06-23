@@ -35,7 +35,10 @@ pub enum Route {
 pub enum AuthMode {
     None,
     Oidc { org_id: uuid::Uuid },
-    Basic { credentials: Vec<(String, String)> }, // Vec<(username, password_hash)>
+    /// Cookie-based basic-auth gate. The proxy holds only the credential list
+    /// id; credentials are validated on the agency login form, and sessions are
+    /// verified per-request via the internal API.
+    Basic { list_id: uuid::Uuid },
 }
 
 /// Per-request context — carries relay info from upstream_peer to upstream_request_filter.
@@ -66,6 +69,10 @@ pub struct WebAgencyProxy {
     pub routes: Arc<ArcSwap<HashMap<String, Vec<Folder>>>>,
     pub agency_domain: String,
     pub internal_token: String,
+    /// Base URL of the agency server's internal API (basic-auth verify/session).
+    pub server_url: String,
+    /// HTTP client for internal API calls made during request handling.
+    pub client: reqwest::Client,
 }
 
 /// True if `prefix` is a path-prefix of `path` ("/" matches everything).
@@ -99,6 +106,27 @@ fn rewrite_redirect_location(loc: &str, relay_prefix: &str, mount_prefix: &str) 
     }
 }
 
+/// Normalize a mount prefix for URL building: "" for the root folder ("/" or
+/// ""), otherwise the prefix without a trailing slash (e.g. "/customer").
+fn mount_prefix_clean(mount: &str) -> String {
+    let m = mount.trim_end_matches('/');
+    if m.is_empty() { String::new() } else { m.to_string() }
+}
+
+/// Get a raw (still percent-encoded) query parameter value by name.
+fn query_param(query: &str, name: &str) -> Option<String> {
+    let needle = format!("{name}=");
+    query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix(&needle))
+        .map(|v| v.to_string())
+}
+
+/// True if `back` is same-origin with `host` (blocks open redirects).
+fn validate_back(back: &str, host: &str) -> bool {
+    back == format!("https://{host}") || back.starts_with(&format!("https://{host}/"))
+}
+
 /// Strip a folder mount prefix from a path (a folder at "/api" sees "/").
 /// Trailing slashes on the prefix are ignored, so the stripped path keeps its
 /// leading slash (e.g. prefix "/static/", path "/static/da/" → "/da/").
@@ -116,47 +144,225 @@ fn strip_mount_prefix(path: &str, prefix: &str) -> String {
 }
 
 impl WebAgencyProxy {
-    async fn handle_basic_auth(
+    /// Cookie-based basic-auth gate. Intercepts the `cgi-webagency/basic/*`
+    /// control paths (login/logout/profile) and otherwise verifies the
+    /// `__basic_session` cookie against the internal API, redirecting to the
+    /// login dance when it's missing or not authorized for this list.
+    async fn handle_basic(
         &self,
         session: &mut Session,
-        credentials: &[(String, String)],
+        host: &str,
+        mount: &str,
+        list_id: uuid::Uuid,
     ) -> Result<bool> {
-        let auth_header = session
+        let mp = mount_prefix_clean(mount);
+        let path_only = session.req_header().uri.path().to_string();
+        let sub = strip_mount_prefix(&path_only, mount);
+
+        if let Some(action) = sub.strip_prefix("/cgi-webagency/basic/") {
+            return self
+                .handle_basic_cgi(session, host, &mp, list_id, action)
+                .await;
+        }
+
+        // Gate: verify the session cookie for this list.
+        let cookies = session
             .req_header()
             .headers
-            .get("authorization")
+            .get("cookie")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-
-        if let Some(ref auth) = auth_header {
-            if let Some(encoded) = auth.strip_prefix("Basic ") {
-                use base64::Engine;
-                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
-                    if let Ok(cred_str) = std::str::from_utf8(&decoded) {
-                        if let Some((user, pass)) = cred_str.split_once(':') {
-                            let hash = sha256_hex(pass);
-                            for (expected_user, expected_hash) in credentials {
-                                if user == expected_user && constant_time_eq(&hash, expected_hash) {
-                                    return Ok(false); // auth passed
-                                }
-                            }
-                        }
-                    }
-                }
+            .unwrap_or("");
+        if let Some(tok) = extract_cookie(cookies, "__basic_session") {
+            if self.basic_verify(tok, list_id).await {
+                return Ok(false); // authorized — pass through
             }
         }
 
-        // Return 401
-        let mut resp = pingora::http::ResponseHeader::build(401, None).map_err(|e| {
-            pingora::Error::because(pingora::ErrorType::InternalError, "build 401 response", e)
+        // Unauthorized → start the login dance at the folder's cgi entrypoint.
+        let full = format!("https://{host}{}", safe_path_and_query(&session.req_header().uri));
+        let loc = format!(
+            "https://{host}{mp}/cgi-webagency/basic/login?back={}",
+            urlencoding::encode(&full)
+        );
+        self.send_redirect(session, &loc, None).await?;
+        Ok(true)
+    }
+
+    async fn handle_basic_cgi(
+        &self,
+        session: &mut Session,
+        host: &str,
+        mp: &str,
+        list_id: uuid::Uuid,
+        action: &str,
+    ) -> Result<bool> {
+        let query = safe_path_and_query(&session.req_header().uri)
+            .split_once('?')
+            .map(|(_, q)| q.to_string())
+            .unwrap_or_default();
+        let cgi_base = format!("https://{host}{mp}/cgi-webagency/basic");
+        let back = match query_param(&query, "back") {
+            Some(b) => urlencoding::decode(&b).map(|c| c.into_owned()).unwrap_or(b),
+            None => format!("https://{host}{mp}/"),
+        };
+
+        match action {
+            "login" => {
+                if let Some(token) = query_param(&query, "token") {
+                    // Callback from the agency form: persist a session, set cookie.
+                    match self.basic_create_session(&token).await {
+                        Some((sess, max_age)) => {
+                            let dest = if validate_back(&back, host) {
+                                back
+                            } else {
+                                format!("https://{host}{mp}/")
+                            };
+                            let mut cookie = format!(
+                                "__basic_session={sess}; Path=/; HttpOnly; Secure; SameSite=Lax"
+                            );
+                            if let Some(ma) = max_age {
+                                cookie.push_str(&format!("; Max-Age={ma}"));
+                            }
+                            self.send_redirect(session, &dest, Some(&cookie)).await?;
+                        }
+                        None => {
+                            // Handoff invalid/expired — restart the login.
+                            let loc = format!(
+                                "{cgi_base}/login?back={}",
+                                urlencoding::encode(&back)
+                            );
+                            self.send_redirect(session, &loc, None).await?;
+                        }
+                    }
+                } else {
+                    // Initiate: hand off to the agency login form.
+                    let loc = format!(
+                        "https://{}/agency/basic/{}/login?back={}&cb={}",
+                        self.agency_domain,
+                        list_id,
+                        urlencoding::encode(&back),
+                        urlencoding::encode(&cgi_base),
+                    );
+                    self.send_redirect(session, &loc, None).await?;
+                }
+            }
+            "logout" => {
+                let cookies = session
+                    .req_header()
+                    .headers
+                    .get("cookie")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                if let Some(tok) = extract_cookie(cookies, "__basic_session") {
+                    self.basic_logout(tok, list_id).await;
+                }
+                let loc = format!(
+                    "https://{}/agency/basic/{}/logout?back={}&cb={}",
+                    self.agency_domain,
+                    list_id,
+                    urlencoding::encode(&back),
+                    urlencoding::encode(&cgi_base),
+                );
+                self.send_redirect(session, &loc, None).await?;
+            }
+            "profile" => {
+                let loc = format!(
+                    "https://{}/agency/basic/{}/profile?back={}&cb={}",
+                    self.agency_domain,
+                    list_id,
+                    urlencoding::encode(&back),
+                    urlencoding::encode(&cgi_base),
+                );
+                self.send_redirect(session, &loc, None).await?;
+            }
+            _ => {
+                let mut resp = pingora::http::ResponseHeader::build(404, None).map_err(|e| {
+                    pingora::Error::because(pingora::ErrorType::InternalError, "build 404", e)
+                })?;
+                let _ = resp.insert_header("Content-Length", "0");
+                session.write_response_header(Box::new(resp), false).await?;
+                session
+                    .write_response_body(Some(bytes::Bytes::new()), true)
+                    .await?;
+            }
+        }
+        Ok(true)
+    }
+
+    /// 302 redirect, optionally setting a cookie. Short-circuits the request.
+    async fn send_redirect(
+        &self,
+        session: &mut Session,
+        location: &str,
+        set_cookie: Option<&str>,
+    ) -> Result<()> {
+        let mut resp = pingora::http::ResponseHeader::build(302, None).map_err(|e| {
+            pingora::Error::because(pingora::ErrorType::InternalError, "build 302 response", e)
         })?;
-        let _ = resp.insert_header("WWW-Authenticate", "Basic realm=\"Protected\"");
-        let _ = resp.insert_header("Content-Type", "text/plain");
+        let _ = resp.insert_header("Location", location);
+        if let Some(c) = set_cookie {
+            let _ = resp.insert_header("Set-Cookie", c);
+        }
+        let _ = resp.insert_header("Content-Length", "0");
         session.write_response_header(Box::new(resp), false).await?;
         session
-            .write_response_body(Some(bytes::Bytes::from_static(b"Unauthorized")), true)
+            .write_response_body(Some(bytes::Bytes::new()), true)
             .await?;
-        Ok(true) // short-circuit
+        Ok(())
+    }
+
+    /// Verify a `__basic_session` cookie grants access to `list_id`.
+    /// Fails closed (false) if the internal API is unreachable.
+    async fn basic_verify(&self, token: &str, list_id: uuid::Uuid) -> bool {
+        let url = format!("{}/api/internal/basic/verify", self.server_url);
+        match self
+            .client
+            .post(&url)
+            .bearer_auth(&self.internal_token)
+            .json(&serde_json::json!({ "session_token": token, "list_id": list_id }))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => r
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|v| v.get("valid").and_then(|b| b.as_bool()))
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    /// Exchange a signed handoff token for a persisted session token.
+    async fn basic_create_session(&self, handoff: &str) -> Option<(String, Option<i64>)> {
+        let url = format!("{}/api/internal/basic/session", self.server_url);
+        let r = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.internal_token)
+            .json(&serde_json::json!({ "handoff_token": handoff }))
+            .send()
+            .await
+            .ok()?;
+        if !r.status().is_success() {
+            return None;
+        }
+        let v = r.json::<serde_json::Value>().await.ok()?;
+        let sess = v.get("session_token")?.as_str()?.to_string();
+        let max_age = v.get("max_age_secs").and_then(|x| x.as_i64());
+        Some((sess, max_age))
+    }
+
+    /// Drop the current list's authorization for the session's identity.
+    async fn basic_logout(&self, token: &str, list_id: uuid::Uuid) {
+        let url = format!("{}/api/internal/basic/logout", self.server_url);
+        let _ = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.internal_token)
+            .json(&serde_json::json!({ "session_token": token, "list_id": list_id }))
+            .send()
+            .await;
     }
 
     async fn handle_oidc_auth(
@@ -320,19 +526,21 @@ impl ProxyHttp for WebAgencyProxy {
             session.set_read_timeout(Some(std::time::Duration::from_secs(3600)));
         }
 
-        // Clone the matched folder's auth so we don't hold the routes guard
-        // across awaits. Upstream selection happens in upstream_peer.
-        let auth = {
+        // Clone the matched folder's mount + auth so we don't hold the routes
+        // guard across awaits. Upstream selection happens in upstream_peer.
+        let (mount, auth) = {
             let routes = self.routes.load();
             match routes.get(&host).and_then(|f| match_folder(f, &req_path)) {
-                Some((_, _, auth)) => auth.clone(),
+                Some((mount, _, auth)) => (mount.clone(), auth.clone()),
                 None => return Ok(false), // will 404 in upstream_peer
             }
         };
 
         let blocked = match &auth {
             AuthMode::None => false,
-            AuthMode::Basic { credentials } => self.handle_basic_auth(session, credentials).await?,
+            AuthMode::Basic { list_id } => {
+                self.handle_basic(session, &host, &mount, *list_id).await?
+            }
             AuthMode::Oidc { org_id } => self.handle_oidc_auth(session, &host, org_id).await?,
         };
         if blocked { Ok(true) } else { Ok(false) }
@@ -545,10 +753,6 @@ fn extract_host(session: &Session) -> String {
     raw.split(':').next().unwrap_or(raw).to_lowercase()
 }
 
-fn sha256_hex(input: &str) -> String {
-    use sha2::{Digest, Sha256};
-    hex::encode(Sha256::digest(input.as_bytes()))
-}
 
 fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
@@ -621,10 +825,16 @@ pub fn build_service(
     cert_store: Arc<crate::cert_store::CertStore>,
 ) -> pingora::services::listening::Service<pingora::proxy::HttpProxy<WebAgencyProxy>> {
     let internal_token = cfg.internal_token().trim().to_string();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .expect("failed to build internal API client");
     let proxy = WebAgencyProxy {
         routes,
         agency_domain: cfg.agency_domain.clone(),
         internal_token,
+        server_url: cfg.server_url.trim_end_matches('/').to_string(),
+        client,
     };
 
     let mut svc = http_proxy_service(server_conf, proxy);

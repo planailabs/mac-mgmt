@@ -41,13 +41,7 @@ struct RelayInfoEntry {
 struct AuthInfoEntry {
     mode: String,
     org_id: Option<uuid::Uuid>,
-    basic_credentials: Option<Vec<BasicCredentialEntry>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BasicCredentialEntry {
-    username: String,
-    password_hash: String,
+    basic_list_id: Option<uuid::Uuid>,
 }
 
 fn auth_headers(token: &str) -> reqwest::header::HeaderMap {
@@ -126,15 +120,10 @@ async fn reload_routes(
                         Some(a) if a.mode == "oidc" => AuthMode::Oidc {
                             org_id: a.org_id.unwrap_or_default(),
                         },
-                        Some(a) if a.mode == "basic" => {
-                            let creds = a
-                                .basic_credentials
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|c| (c.username, c.password_hash))
-                                .collect();
-                            AuthMode::Basic { credentials: creds }
-                        }
+                        Some(a) if a.mode == "basic" => match a.basic_list_id {
+                            Some(list_id) => AuthMode::Basic { list_id },
+                            None => AuthMode::None,
+                        },
                         _ => AuthMode::None,
                     };
 
