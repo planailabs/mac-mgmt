@@ -96,26 +96,26 @@ pub async fn issue_cert(pool: &PgPool, domain: &str) -> anyhow::Result<()> {
     result.map(|_| ())
 }
 
-async fn run_acme_flow(
-    pool: &PgPool,
-    domain: &str,
-    cred_id: Uuid,
-    zone_id: &str,
-) -> anyhow::Result<(String, String)> {
-    use instant_acme::{
-        Account, AuthorizationStatus, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
-        OrderStatus,
-    };
+/// Singleton name of the shared ACME account credential row.
+const ACME_CREDENTIAL_NAME: &str = "acme-account";
 
-    let cfg = crate::config::config();
-    let contact_email = cfg
-        .proxy
-        .as_ref()
-        .and_then(|p| p.acme_email.clone())
-        .unwrap_or_else(|| format!("admin@{domain}"));
+/// Load the single shared ACME account, creating and persisting it once if absent.
+async fn acme_account(pool: &PgPool, contact_email: &str) -> anyhow::Result<instant_acme::Account> {
+    use instant_acme::{Account, AccountCredentials, LetsEncrypt, NewAccount};
 
-    // Create ACME account
-    let (account, _creds) = Account::create(
+    if let Some(enc) = sqlx::query_scalar::<_, Vec<u8>>(
+        "SELECT encrypted_data FROM credentials WHERE credential_type = 'acme-account' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?
+    {
+        let json = crate::crypto::decrypt(&enc)
+            .map_err(|e| anyhow::anyhow!("decrypt acme account: {e}"))?;
+        let creds: AccountCredentials = serde_json::from_slice(&json)?;
+        return Ok(Account::from_credentials(creds).await?);
+    }
+
+    let (account, creds) = Account::create(
         &NewAccount {
             contact: &[&format!("mailto:{contact_email}")],
             terms_of_service_agreed: true,
@@ -125,6 +125,44 @@ async fn run_acme_flow(
         None,
     )
     .await?;
+
+    let enc = crate::crypto::encrypt(&serde_json::to_vec(&creds)?)
+        .map_err(|e| anyhow::anyhow!("encrypt acme account: {e}"))?;
+    // The UNIQUE name makes this row a singleton; ON CONFLICT guards the race
+    // where two issuances create an account at once.
+    sqlx::query(
+        "INSERT INTO credentials (name, credential_type, encrypted_data) \
+         VALUES ($1, 'acme-account', $2) ON CONFLICT (name) DO NOTHING",
+    )
+    .bind(ACME_CREDENTIAL_NAME)
+    .bind(&enc)
+    .execute(pool)
+    .await?;
+
+    Ok(account)
+}
+
+async fn run_acme_flow(
+    pool: &PgPool,
+    domain: &str,
+    cred_id: Uuid,
+    zone_id: &str,
+) -> anyhow::Result<(String, String)> {
+    use instant_acme::{
+        AuthorizationStatus, ChallengeType, Identifier, NewOrder, OrderStatus,
+    };
+
+    let cfg = crate::config::config();
+    let contact_email = cfg
+        .proxy
+        .as_ref()
+        .and_then(|p| p.acme_email.clone())
+        .unwrap_or_else(|| format!("admin@{domain}"));
+
+    // Reuse one ACME account across all domains. Creating a fresh account per
+    // issuance trips Let's Encrypt's new-registration rate limit, so hosts with
+    // several domain bindings would fail on the later domains.
+    let account = acme_account(pool, &contact_email).await?;
 
     // Create order
     let mut order = account
