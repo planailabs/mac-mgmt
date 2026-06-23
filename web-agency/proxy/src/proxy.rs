@@ -82,6 +82,23 @@ fn match_folder<'a>(folders: &'a [Folder], path: &str) -> Option<&'a Folder> {
     folders.iter().find(|(prefix, _, _)| path_matches(prefix, path))
 }
 
+/// Reverse the request-path rewrite for a root-relative redirect Location:
+/// strip the relay URL's path prefix we prepended, then re-add the folder mount
+/// prefix we stripped. Inverse of the rewrite in `upstream_request_filter`.
+fn rewrite_redirect_location(loc: &str, relay_prefix: &str, mount_prefix: &str) -> String {
+    let mut path = loc;
+    if !relay_prefix.is_empty() {
+        if let Some(rest) = path.strip_prefix(relay_prefix) {
+            path = if rest.is_empty() { "/" } else { rest };
+        }
+    }
+    if !mount_prefix.is_empty() && mount_prefix != "/" {
+        format!("{}{path}", mount_prefix.trim_end_matches('/'))
+    } else {
+        path.to_string()
+    }
+}
+
 /// Strip a folder mount prefix from a path (a folder at "/api" sees "/").
 /// Trailing slashes on the prefix are ignored, so the stripped path keeps its
 /// leading slash (e.g. prefix "/static/", path "/static/da/" → "/da/").
@@ -463,6 +480,42 @@ impl ProxyHttp for WebAgencyProxy {
         }
         Ok(())
     }
+
+    async fn response_filter(
+        &self,
+        _session: &mut Session,
+        upstream_response: &mut pingora::http::ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        // Redirects: upstream issues an absolute path in its own path space, but
+        // the request path was rewritten on the way out (mount prefix stripped,
+        // relay path prefix prepended). Reverse that transform so the browser
+        // gets a Location that resolves under this folder.
+        if !upstream_response.status.is_redirection() {
+            return Ok(());
+        }
+        let Some(loc) = upstream_response
+            .headers
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+        else {
+            return Ok(());
+        };
+        // Only rewrite root-relative paths ("/x"); leave "//host", full URLs,
+        // and relative paths alone.
+        if !loc.starts_with('/') || loc.starts_with("//") {
+            return Ok(());
+        }
+
+        let relay_prefix = ctx.relay.as_ref().map(|r| r.path_prefix.as_str()).unwrap_or("");
+        let rewritten = rewrite_redirect_location(&loc, relay_prefix, &ctx.mount_prefix);
+
+        if rewritten != loc {
+            let _ = upstream_response.insert_header("location", &rewritten);
+        }
+        Ok(())
+    }
 }
 
 /// Extract path+query from a URI, handling both origin-form (`/path?q=1`)
@@ -585,4 +638,23 @@ pub fn build_service(
     svc.add_tls_with_settings(&cfg.https_addr, None, tls_settings);
 
     svc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rewrite_redirect_location;
+
+    #[test]
+    fn redirect_location_rewrite() {
+        // Mount at /customer, no relay path prefix: re-add the mount.
+        assert_eq!(rewrite_redirect_location("/chat/login", "", "/customer"), "/customer/chat/login");
+        // Relay URL has a /v1 path prefix: strip it, then add the mount.
+        assert_eq!(rewrite_redirect_location("/v1/chat/login", "/v1", "/customer"), "/customer/chat/login");
+        // Relay prefix maps to root.
+        assert_eq!(rewrite_redirect_location("/v1", "/v1", "/customer"), "/customer/");
+        // Root mount: unchanged.
+        assert_eq!(rewrite_redirect_location("/chat/login", "", "/"), "/chat/login");
+        // Redirect outside the relay prefix: best-effort, just add the mount.
+        assert_eq!(rewrite_redirect_location("/other", "/v1", "/customer"), "/customer/other");
+    }
 }
