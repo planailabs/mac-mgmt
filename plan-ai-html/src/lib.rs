@@ -234,6 +234,18 @@ pub fn render(template: &str, pairs: &[(&str, &str)]) -> String {
     render_data(template, &mb.build())
 }
 
+/// Render a complete, localized error page (heading + message) for the given
+/// Fluent title/body keys. Convenience for the many "just show the error"
+/// surfaces across the proxy, relay, and static server.
+pub fn error_page(lang: Lang, title_key: &str, body_key: &str) -> String {
+    let title = tr(lang, title_key);
+    let body = format!(
+        "<h1 class=\"h-page\">{title}</h1><p class=\"help\">{}</p>",
+        tr(lang, body_key)
+    );
+    Page::new(&title, body).lang(lang).render()
+}
+
 /// HTML-escape a string for safe interpolation into trusted HTML you build by
 /// hand. (Mustache `{{var}}` already does this; use this only outside a template.)
 pub fn escape(s: &str) -> String {

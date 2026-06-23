@@ -629,21 +629,46 @@ pub struct ProxyGateParams {
 pub async fn proxy_gate(
     axum::extract::Query(params): axum::extract::Query<ProxyGateParams>,
     axum::extract::Extension(user): axum::extract::Extension<plan_ai_auth::WebUser>,
-) -> Result<axum::response::Redirect, (StatusCode, String)> {
-    let pool =
-        crate::server_pool().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let lang = plan_ai_html::Lang::from_accept_language(
+        headers
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    );
+    // Browser-facing failures: render a localized HTML error page.
+    let err = |code: StatusCode, tk: &str, bk: &str| -> axum::response::Response {
+        (
+            code,
+            [("content-type", "text/html; charset=utf-8")],
+            plan_ai_html::error_page(lang, tk, bk),
+        )
+            .into_response()
+    };
+
+    let Ok(pool) = crate::server_pool() else {
+        return err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "error-title",
+            "error-body",
+        );
+    };
 
     // Parse hostname from return_url
     let return_url = &params.return_url;
-    let hostname = return_url
+    let Some(hostname) = return_url
         .strip_prefix("https://")
         .or_else(|| return_url.strip_prefix("http://"))
         .and_then(|s| s.split('/').next())
         .and_then(|s| s.split(':').next())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "bad return_url".into()))?;
+    else {
+        return err(StatusCode::BAD_REQUEST, "error-title", "error-body");
+    };
 
     // Find which org owns the host bound to this hostname that has an OIDC-protected folder.
-    let org_id = sqlx::query_scalar::<_, uuid::Uuid>(
+    let org_id = match sqlx::query_scalar::<_, uuid::Uuid>(
         "SELECT h.organization_id FROM webspace_host_domains whd \
          JOIN webspace_hosts h ON h.id = whd.webspace_host_id \
          JOIN webspaces w ON w.webspace_host_id = h.id \
@@ -657,36 +682,39 @@ pub async fn proxy_gate(
     .bind(hostname)
     .fetch_optional(&pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            "no OIDC-protected webspace for this host".into(),
-        )
-    })?;
+    {
+        Ok(Some(id)) => id,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "unknown-host-title", "unknown-host-body"),
+        Err(_) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error-title",
+                "error-body",
+            );
+        }
+    };
 
     // Check user has org membership (any role) or is admin
     if !user.is_admin && !user.org_ids().contains(&org_id) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "not a member of this organization".into(),
-        ));
+        return err(StatusCode::FORBIDDEN, "forbidden-title", "forbidden-body");
     }
 
     // Sign a gate token (valid for 5 minutes — the proxy will exchange it for a 24h cookie)
     let cfg = config::config();
-    let proxy_cfg = cfg.proxy.as_ref().ok_or_else(|| {
-        (
+    let Some(proxy_cfg) = cfg.proxy.as_ref() else {
+        return err(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "proxy not configured".into(),
-        )
-    })?;
-    let internal_token = std::fs::read_to_string(&proxy_cfg.internal_token_path).map_err(|_| {
-        (
+            "error-title",
+            "error-body",
+        );
+    };
+    let Ok(internal_token) = std::fs::read_to_string(&proxy_cfg.internal_token_path) else {
+        return err(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "internal token not available".into(),
-        )
-    })?;
+            "error-title",
+            "error-body",
+        );
+    };
     let internal_token = internal_token.trim();
 
     let expiry_ts = chrono::Utc::now().timestamp() + 300; // 5 minutes
@@ -697,7 +725,7 @@ pub async fn proxy_gate(
     let redirect =
         format!("{return_url}{separator}__pg_token={sig}&__pg_oid={org_id}&__pg_exp={expiry_ts}");
 
-    Ok(axum::response::Redirect::temporary(&redirect))
+    axum::response::Redirect::temporary(&redirect).into_response()
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────

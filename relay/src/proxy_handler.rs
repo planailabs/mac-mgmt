@@ -468,6 +468,28 @@ pub(crate) async fn fetch_server_web_url(server_api_url: &str) -> Result<String,
     Ok(resp.web_url.trim_end_matches('/').to_string())
 }
 
+/// Render a localized HTML error page for browser-facing failures.
+fn error_page(
+    headers: &axum::http::HeaderMap,
+    code: StatusCode,
+    title_key: &str,
+    body_key: &str,
+) -> axum::response::Response {
+    let lang = plan_ai_html::Lang::from_accept_language(
+        headers
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    );
+    let html = plan_ai_html::error_page(lang, title_key, body_key);
+    (
+        code,
+        [("content-type", "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response()
+}
+
 // ── Catch-all: reverse proxy ───────────────────────────────────────────
 
 /// Handles all non-special requests by proxying them to the daemon's tunnel
@@ -486,7 +508,12 @@ async fn proxy_catchall(
         .unwrap_or_else(|| "/".to_string());
 
     let Some((instance_id, tunnel_name)) = parse_subdomain(&headers, &state.proxy_hostname) else {
-        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+        return error_page(
+            &headers,
+            StatusCode::NOT_FOUND,
+            "unknown-host-title",
+            "unknown-host-body",
+        );
     };
 
     // If no token at all, show a styled "sign in" page instead of a plain 401.
@@ -514,7 +541,7 @@ async fn proxy_catchall(
     };
     let required_scope = format!("tcp:{tunnel_name}");
     if !has_scope(&self_info.scopes, &required_scope) {
-        return (StatusCode::FORBIDDEN, "insufficient scope").into_response();
+        return error_page(&headers, StatusCode::FORBIDDEN, "forbidden-title", "forbidden-body");
     }
 
     let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
@@ -523,7 +550,7 @@ async fn proxy_catchall(
     };
 
     if !state.registry.has_tunnel(&instance_id, &tunnel_name) {
-        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
+        return error_page(&headers, StatusCode::NOT_FOUND, "not-found-title", "not-found-body");
     }
 
     // Collect request headers to forward.
@@ -598,9 +625,21 @@ async fn proxy_catchall(
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
             tracing::warn!(%peer_id, "failed to open tunnel stream: {e}");
-            return StatusCode::BAD_GATEWAY.into_response();
+            return error_page(
+                &headers,
+                StatusCode::BAD_GATEWAY,
+                "unreachable-title",
+                "unreachable-body",
+            );
         }
-        Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+        Err(_) => {
+            return error_page(
+                &headers,
+                StatusCode::GATEWAY_TIMEOUT,
+                "unreachable-title",
+                "unreachable-body",
+            );
+        }
     };
 
     // Send handshake frame.
@@ -609,7 +648,12 @@ async fn proxy_catchall(
         let data = serde_json::to_vec(&handshake).unwrap_or_default();
         let len = (data.len() as u32).to_be_bytes();
         if tunnel.write_all(&len).await.is_err() || tunnel.write_all(&data).await.is_err() {
-            return StatusCode::BAD_GATEWAY.into_response();
+            return error_page(
+                &headers,
+                StatusCode::BAD_GATEWAY,
+                "unreachable-title",
+                "unreachable-body",
+            );
         }
         let _ = tunnel.flush().await;
     }
@@ -617,7 +661,14 @@ async fn proxy_catchall(
     // Read streamed response: JSON header + binary body chunks.
     let hdr = match crate::tunnel_io::read_json_frame(&mut tunnel).await {
         Ok(h) => h,
-        Err(s) => return s.into_response(),
+        Err(_) => {
+            return error_page(
+                &headers,
+                StatusCode::BAD_GATEWAY,
+                "unreachable-title",
+                "unreachable-body",
+            );
+        }
     };
 
     let status = hdr["status"].as_u64().unwrap_or(502) as u16;

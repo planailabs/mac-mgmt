@@ -28,3 +28,17 @@ sign-out-everything = Sign out of everything
 auth-required-title = Authentication required
 auth-required-body = You need to sign in to access this tunnel.
 log-in-to-planai = Log in to plan.ai
+
+# Error pages
+not-found-title = Page not found
+not-found-body = The page you're looking for doesn't exist.
+unknown-host-title = Unknown domain
+unknown-host-body = This domain isn't set up here yet. If you think this is a mistake, please contact the administrator.
+unreachable-title = Service unavailable
+unreachable-body = This service can't be reached right now. Please try again in a few moments.
+starting-title = Starting up
+starting-body = The service is still starting. Please refresh in a few moments.
+error-title = Something went wrong
+error-body = An unexpected error occurred. Please try again.
+forbidden-title = Access denied
+forbidden-body = You don't have permission to access this resource.

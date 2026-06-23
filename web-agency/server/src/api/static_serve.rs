@@ -31,6 +31,13 @@ pub fn router() -> Router {
 }
 
 async fn serve(req: Request) -> Response {
+    let accept_language = req
+        .headers()
+        .get("accept-language")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
     let Some(webspace_id) = req
         .headers()
         .get(WEBSPACE_HEADER)
@@ -53,7 +60,8 @@ async fn serve(req: Request) -> Response {
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
 
-    // On a miss, serve the webspace's own 404.html (with a 404 status) if it has one.
+    // On a miss, serve the webspace's own 404.html if it has one; otherwise a
+    // localized fallback 404 page.
     if resp.status() == StatusCode::NOT_FOUND {
         if let Ok(body) = tokio::fs::read(dir.join("404.html")).await {
             return (
@@ -63,6 +71,14 @@ async fn serve(req: Request) -> Response {
             )
                 .into_response();
         }
+        let lang = plan_ai_html::Lang::from_accept_language(&accept_language);
+        let html = plan_ai_html::error_page(lang, "not-found-title", "not-found-body");
+        return (
+            StatusCode::NOT_FOUND,
+            [("content-type", "text/html; charset=utf-8")],
+            html,
+        )
+            .into_response();
     }
 
     resp.map(Body::new)

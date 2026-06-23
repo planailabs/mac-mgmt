@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 pingora = { version = "0.8", features = ["proxy", "boringssl"] }
+plan-ai-html = { path = "../../plan-ai-html" }
 rcgen = "0.13"
 arc-swap = "1"
 reqwest = { workspace = true, features = ["stream"] }

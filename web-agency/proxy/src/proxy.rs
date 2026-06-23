@@ -62,6 +62,13 @@ struct RelayCtx {
 /// One mounted folder under a host: its path prefix, route target, and auth.
 pub type Folder = (String, Route, AuthMode);
 
+/// Whether a request's host is routable, unknown, or the table is still empty.
+enum HostState {
+    Known,
+    Unknown,
+    Starting,
+}
+
 /// The Pingora HTTP proxy that routes requests by Host header, then by the
 /// longest matching folder path prefix. Each host maps to a list of folders
 /// sorted by descending prefix length (longest match wins).
@@ -583,13 +590,41 @@ impl ProxyHttp for WebAgencyProxy {
             session.set_read_timeout(Some(std::time::Duration::from_secs(3600)));
         }
 
+        // No route for this host at all → friendly "unknown domain" page (or a
+        // "starting up" page if the route table hasn't populated yet).
+        let host_state = {
+            let routes = self.routes.load();
+            if routes.is_empty() {
+                HostState::Starting
+            } else if routes.contains_key(&host) {
+                HostState::Known
+            } else {
+                HostState::Unknown
+            }
+        };
+        match host_state {
+            HostState::Starting => {
+                let lang = accept_lang(session);
+                let html = plan_ai_html::error_page(lang, "starting-title", "starting-body");
+                write_html(session, 503, html).await?;
+                return Ok(true);
+            }
+            HostState::Unknown => {
+                let lang = accept_lang(session);
+                let html = plan_ai_html::error_page(lang, "unknown-host-title", "unknown-host-body");
+                write_html(session, 404, html).await?;
+                return Ok(true);
+            }
+            HostState::Known => {}
+        }
+
         // Clone the matched folder's mount + auth so we don't hold the routes
         // guard across awaits. Upstream selection happens in upstream_peer.
         let (mount, auth) = {
             let routes = self.routes.load();
             match routes.get(&host).and_then(|f| match_folder(f, &req_path)) {
                 Some((mount, _, auth)) => (mount.clone(), auth.clone()),
-                None => return Ok(false), // will 404 in upstream_peer
+                None => return Ok(false), // unmatched path → 404 via fail_to_proxy
             }
         };
 
@@ -781,6 +816,52 @@ impl ProxyHttp for WebAgencyProxy {
         }
         Ok(())
     }
+
+    /// Render a localized HTML page for fatal errors (e.g. a 502 when the relay
+    /// or upstream can't be reached, or a 404 for an unmatched path) instead of
+    /// Pingora's plain default error body.
+    async fn fail_to_proxy(
+        &self,
+        session: &mut Session,
+        e: &pingora::Error,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::proxy::FailToProxy
+    where
+        Self::CTX: Send + Sync,
+    {
+        use pingora::{ErrorSource, ErrorType};
+        let code: u16 = match e.etype() {
+            ErrorType::HTTPStatus(c) => *c,
+            _ => match e.esource() {
+                ErrorSource::Upstream => 502,
+                ErrorSource::Downstream => match e.etype() {
+                    ErrorType::WriteError
+                    | ErrorType::ReadError
+                    | ErrorType::ConnectionClosed => 0, // downstream already gone
+                    _ => 400,
+                },
+                ErrorSource::Internal | ErrorSource::Unset => 500,
+            },
+        };
+
+        if code > 0 {
+            let lang = accept_lang(session);
+            let (title_key, body_key) = match code {
+                404 => ("not-found-title", "not-found-body"),
+                502 | 503 | 504 => ("unreachable-title", "unreachable-body"),
+                _ => ("error-title", "error-body"),
+            };
+            let html = plan_ai_html::error_page(lang, title_key, body_key);
+            if write_html(session, code, html).await.is_err() {
+                let _ = session.respond_error(code).await;
+            }
+        }
+
+        pingora::proxy::FailToProxy {
+            error_code: code,
+            can_reuse_downstream: false,
+        }
+    }
 }
 
 /// Extract path+query from a URI, handling both origin-form (`/path?q=1`)
@@ -795,6 +876,31 @@ fn safe_path_and_query(uri: &http::Uri) -> String {
         Some(q) => format!("{path}?{q}"),
         None => path.to_string(),
     }
+}
+
+/// Pick the UI language from the request's Accept-Language header.
+fn accept_lang(session: &Session) -> plan_ai_html::Lang {
+    plan_ai_html::Lang::from_accept_language(
+        session
+            .req_header()
+            .headers
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    )
+}
+
+/// Write a self-contained HTML response and finish the request.
+async fn write_html(session: &mut Session, code: u16, html: String) -> Result<()> {
+    let bytes = bytes::Bytes::from(html);
+    let mut resp = pingora::http::ResponseHeader::build(code, None).map_err(|e| {
+        pingora::Error::because(pingora::ErrorType::InternalError, "build html response", e)
+    })?;
+    let _ = resp.insert_header("Content-Type", "text/html; charset=utf-8");
+    let _ = resp.insert_header("Content-Length", &bytes.len().to_string());
+    session.write_response_header(Box::new(resp), false).await?;
+    session.write_response_body(Some(bytes), true).await?;
+    Ok(())
 }
 
 /// Extract the hostname from a request, handling both HTTP/1.1 Host header
