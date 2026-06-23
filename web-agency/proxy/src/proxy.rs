@@ -176,7 +176,7 @@ impl WebAgencyProxy {
             .get("cookie")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        if let Some(tok) = extract_cookie(cookies, "__basic_session") {
+        for tok in cookie_values(cookies, "__basic_session").collect::<Vec<_>>() {
             if self.basic_verify_info(tok, list_id).await.is_some() {
                 return Ok(false); // authorized — pass through
             }
@@ -360,10 +360,13 @@ impl WebAgencyProxy {
             .get("cookie")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        let info = match extract_cookie(cookies, "__basic_session") {
-            Some(tok) => self.basic_verify_info(tok, list_id).await,
-            None => None,
-        };
+        let mut info = None;
+        for tok in cookie_values(cookies, "__basic_session").collect::<Vec<_>>() {
+            info = self.basic_verify_info(tok, list_id).await;
+            if info.is_some() {
+                break;
+            }
+        }
         let (status, body) = match info {
             Some((username, list_name)) => (
                 200u16,
@@ -819,16 +822,18 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
         == 0
 }
 
-fn extract_cookie<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
-    for part in cookies.split(';') {
-        let part = part.trim();
-        if let Some(val) = part.strip_prefix(name) {
-            if let Some(val) = val.strip_prefix('=') {
-                return Some(val);
-            }
-        }
-    }
-    None
+fn extract_cookie<'a>(cookies: &'a str, name: &'a str) -> Option<&'a str> {
+    cookie_values(cookies, name).next()
+}
+
+/// All values for a cookie name. A browser can send several same-named cookies
+/// (e.g. one left over at a different Path); the gate must try each.
+fn cookie_values<'a>(cookies: &'a str, name: &'a str) -> impl Iterator<Item = &'a str> {
+    cookies.split(';').filter_map(move |part| {
+        part.trim()
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix('='))
+    })
 }
 
 /// Parse gate params from a URI query string.

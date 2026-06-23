@@ -14,10 +14,11 @@
 //! the identity, so logging into one site silently covers every site sharing
 //! the list.
 
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use dioxus::fullstack::axum::{
     Router,
     extract::{Json, Path, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
@@ -46,24 +47,6 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
         == 0
 }
 
-fn extract_cookie<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
-    for part in cookies.split(';') {
-        let part = part.trim();
-        if let Some(rest) = part.strip_prefix(name) {
-            if let Some(val) = rest.strip_prefix('=') {
-                return Some(val);
-            }
-        }
-    }
-    None
-}
-
-fn cookie_header<'a>(headers: &'a HeaderMap) -> &'a str {
-    headers
-        .get("cookie")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-}
 
 /// Percent-encode a value for use in a query string.
 fn enc(s: &str) -> String {
@@ -360,14 +343,17 @@ async fn cb_host_ok(pool: &PgPool, list_id: Uuid, cb: &str) -> bool {
 
 // -- sso/identity DB helpers --
 
-async fn sso_from_cookie(pool: &PgPool, headers: &HeaderMap) -> Option<Uuid> {
-    let tok = extract_cookie(cookie_header(headers), "__agency_basic_sso")?;
+const AGENCY_COOKIE: &str = "__agency_basic_sso";
+const SSO_TRY_COOKIE: &str = "__basic_sso_try";
+
+async fn sso_from_cookie(pool: &PgPool, jar: &CookieJar) -> Option<Uuid> {
+    let tok = jar.get(AGENCY_COOKIE)?.value().to_string();
     sqlx::query_scalar::<_, Uuid>(
         "SELECT s.sso_id FROM basic_auth_sessions s \
          JOIN basic_auth_sso o ON o.id = s.sso_id \
          WHERE s.token_hash = $1 AND s.expires_at > now() AND o.expires_at > now()",
     )
-    .bind(sha256_hex(tok))
+    .bind(sha256_hex(&tok))
     .fetch_optional(pool)
     .await
     .ok()
@@ -402,14 +388,16 @@ async fn creds_ok(pool: &PgPool, list_id: Uuid, username: &str, password: &str) 
     }
 }
 
+/// Resolve (or create) the browser identity. Returns the identity id and, when
+/// a new one was created, the agency SSO cookie to add to the response jar.
 async fn ensure_sso(
     pool: &PgPool,
-    headers: &HeaderMap,
+    jar: &CookieJar,
     keep: bool,
-) -> Result<(Uuid, Option<String>), String> {
+) -> Result<(Uuid, Option<Cookie<'static>>), String> {
     let ttl = if keep { KEEP_SECS } else { SESSION_SECS };
     let new_exp = chrono::Utc::now() + chrono::Duration::seconds(ttl);
-    if let Some(sso_id) = sso_from_cookie(pool, headers).await {
+    if let Some(sso_id) = sso_from_cookie(pool, jar).await {
         // Extend the identity's life; reuse the existing agency cookie.
         let _ = sqlx::query("UPDATE basic_auth_sso SET expires_at = GREATEST(expires_at, $2) WHERE id = $1")
             .bind(sso_id)
@@ -429,17 +417,27 @@ async fn ensure_sso(
     Ok((sso_id, Some(agency_cookie(&cookie_token, keep))))
 }
 
-fn agency_cookie(token: &str, keep: bool) -> String {
-    let base = format!("__agency_basic_sso={token}; Path=/; HttpOnly; Secure; SameSite=Lax");
-    if keep {
-        format!("{base}; Max-Age={KEEP_SECS}")
-    } else {
-        base
-    }
+fn base_cookie(name: &'static str, value: String) -> Cookie<'static> {
+    Cookie::build((name, value))
+        .path("/")
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
+        .build()
 }
 
-fn clear_agency_cookie() -> String {
-    "__agency_basic_sso=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string()
+fn agency_cookie(token: &str, keep: bool) -> Cookie<'static> {
+    let mut c = base_cookie(AGENCY_COOKIE, token.to_string());
+    if keep {
+        c.set_max_age(Some(time::Duration::seconds(KEEP_SECS)));
+    }
+    c
+}
+
+fn sso_try_cookie() -> Cookie<'static> {
+    let mut c = base_cookie(SSO_TRY_COOKIE, "1".to_string());
+    c.set_max_age(Some(time::Duration::seconds(15)));
+    c
 }
 
 /// Mint a handoff token and redirect the browser back to the webspace callback.
@@ -504,28 +502,36 @@ async fn login_page(
     State(pool): State<PgPool>,
     Path(list_id): Path<Uuid>,
     Query(q): Query<HashMap<String, String>>,
-    headers: HeaderMap,
-) -> Response {
+    jar: CookieJar,
+) -> (CookieJar, Response) {
     let back = q.get("back").cloned().unwrap_or_default();
     let cb = q.get("cb").cloned().unwrap_or_default();
     if !cb_host_ok(&pool, list_id, &cb).await {
-        return (StatusCode::BAD_REQUEST, "invalid callback").into_response();
+        return (jar, (StatusCode::BAD_REQUEST, "invalid callback").into_response());
     }
     // Silent SSO: already proved this list on this browser → hand off, no form.
-    if let Some(sso_id) = sso_from_cookie(&pool, &headers).await {
-        if let Some(username) = sso_list_username(&pool, sso_id, list_id).await {
-            return handoff_redirect(sso_id, list_id, &username, true, &cb, &back);
+    // One-shot: guarded by a short-lived marker so that if the handed-off
+    // session still can't satisfy the gate (e.g. stale cookies), we fall back to
+    // the form instead of looping the redirect dance forever.
+    if jar.get(SSO_TRY_COOKIE).is_none() {
+        if let Some(sso_id) = sso_from_cookie(&pool, &jar).await {
+            if let Some(username) = sso_list_username(&pool, sso_id, list_id).await {
+                let resp = handoff_redirect(sso_id, list_id, &username, true, &cb, &back);
+                return (jar.add(sso_try_cookie()), resp);
+            }
         }
     }
-    login_form_html(list_id, &cb, &back, None).into_response()
+    // Show the form and clear the one-shot marker.
+    let resp = login_form_html(list_id, &cb, &back, None).into_response();
+    (jar.remove(Cookie::build(SSO_TRY_COOKIE).path("/")), resp)
 }
 
 async fn login_submit(
     State(pool): State<PgPool>,
     Path(list_id): Path<Uuid>,
-    headers: HeaderMap,
+    jar: CookieJar,
     body: String,
-) -> Response {
+) -> (CookieJar, Response) {
     let form = parse_form(&body);
     let username = form.get("username").cloned().unwrap_or_default();
     let password = form.get("password").cloned().unwrap_or_default();
@@ -534,16 +540,17 @@ async fn login_submit(
     let cb = form.get("cb").cloned().unwrap_or_default();
 
     if !cb_host_ok(&pool, list_id, &cb).await {
-        return (StatusCode::BAD_REQUEST, "invalid callback").into_response();
+        return (jar, (StatusCode::BAD_REQUEST, "invalid callback").into_response());
     }
     if !creds_ok(&pool, list_id, &username, &password).await {
-        return login_form_html(list_id, &cb, &back, Some("Invalid username or password"))
+        let resp = login_form_html(list_id, &cb, &back, Some("Invalid username or password"))
             .into_response();
+        return (jar, resp);
     }
 
-    let (sso_id, set_cookie) = match ensure_sso(&pool, &headers, keep).await {
+    let (sso_id, set_cookie) = match ensure_sso(&pool, &jar, keep).await {
         Ok(v) => v,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        Err(e) => return (jar, (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()),
     };
     let _ = sqlx::query(
         "INSERT INTO basic_auth_sso_lists (sso_id, list_id, username) VALUES ($1, $2, $3) \
@@ -555,13 +562,12 @@ async fn login_submit(
     .execute(&pool)
     .await;
 
-    let mut resp = handoff_redirect(sso_id, list_id, &username, keep, &cb, &back);
-    if let Some(c) = set_cookie {
-        if let Ok(v) = c.parse() {
-            resp.headers_mut().append(header::SET_COOKIE, v);
-        }
-    }
-    resp
+    let resp = handoff_redirect(sso_id, list_id, &username, keep, &cb, &back);
+    let jar = match set_cookie {
+        Some(c) => jar.add(c),
+        None => jar,
+    };
+    (jar, resp)
 }
 
 async fn logout_page(
@@ -596,14 +602,14 @@ async fn profile_page(
     State(pool): State<PgPool>,
     Path(list_id): Path<Uuid>,
     Query(q): Query<HashMap<String, String>>,
-    headers: HeaderMap,
+    jar: CookieJar,
 ) -> Response {
     let back = q.get("back").cloned().unwrap_or_default();
     let cb = q.get("cb").cloned().unwrap_or_default();
     if !cb_host_ok(&pool, list_id, &cb).await {
         return (StatusCode::BAD_REQUEST, "invalid callback").into_response();
     }
-    let sso_id = sso_from_cookie(&pool, &headers).await;
+    let sso_id = sso_from_cookie(&pool, &jar).await;
     let this_user = match sso_id {
         Some(id) => sso_list_username(&pool, id, list_id).await,
         None => None,
@@ -659,8 +665,8 @@ async fn profile_page(
     page("Profile", &body).into_response()
 }
 
-async fn global_profile(State(pool): State<PgPool>, headers: HeaderMap) -> Response {
-    let Some(sso_id) = sso_from_cookie(&pool, &headers).await else {
+async fn global_profile(State(pool): State<PgPool>, jar: CookieJar) -> Response {
+    let Some(sso_id) = sso_from_cookie(&pool, &jar).await else {
         return page(
             "Sessions",
             "<h1 class=\"h-page\">Sessions</h1><p class=\"help\">You're not signed in to anything.</p>",
@@ -713,12 +719,12 @@ async fn global_profile(State(pool): State<PgPool>, headers: HeaderMap) -> Respo
 
 async fn global_logout(
     State(pool): State<PgPool>,
-    headers: HeaderMap,
+    jar: CookieJar,
     body: String,
-) -> Response {
+) -> (CookieJar, Response) {
     let form = parse_form(&body);
-    let Some(sso_id) = sso_from_cookie(&pool, &headers).await else {
-        return Redirect::to("/agency/basic/profile").into_response();
+    let Some(sso_id) = sso_from_cookie(&pool, &jar).await else {
+        return (jar, Redirect::to("/agency/basic/profile").into_response());
     };
 
     if form.get("all").map(|v| v == "1").unwrap_or(false) {
@@ -727,11 +733,8 @@ async fn global_logout(
             .bind(sso_id)
             .execute(&pool)
             .await;
-        let mut resp = Redirect::to("/agency/basic/profile").into_response();
-        if let Ok(v) = clear_agency_cookie().parse() {
-            resp.headers_mut().append(header::SET_COOKIE, v);
-        }
-        return resp;
+        let jar = jar.remove(Cookie::build(AGENCY_COOKIE).path("/"));
+        return (jar, Redirect::to("/agency/basic/profile").into_response());
     }
 
     if let Some(list_id) = form.get("list_id").and_then(|s| Uuid::parse_str(s).ok()) {
@@ -743,7 +746,7 @@ async fn global_logout(
         .execute(&pool)
         .await;
     }
-    Redirect::to("/agency/basic/profile").into_response()
+    (jar, Redirect::to("/agency/basic/profile").into_response())
 }
 
 #[cfg(test)]
