@@ -1,4 +1,5 @@
 pub mod acme;
+pub mod basic_auth;
 pub mod changedetection;
 pub mod counters;
 pub mod deploy;

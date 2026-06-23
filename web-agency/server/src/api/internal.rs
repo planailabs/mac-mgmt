@@ -52,12 +52,13 @@ pub fn router(state: InternalState) -> Router<()> {
         .route("/api/internal/certs", get(get_certs))
         .route("/api/internal/certs/{domain}", post(issue_cert))
         .route("/api/internal/events", get(sse_events))
-        .with_state(state)
+        .with_state(state.clone())
+        .merge(crate::api::basic_auth::internal_router(state.pool))
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────
 
-fn authenticate(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
+pub(crate) fn authenticate(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
     let cfg = config::config();
     let proxy_cfg = cfg.proxy.as_ref().ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
@@ -128,14 +129,11 @@ struct AuthInfo {
     mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     org_id: Option<uuid::Uuid>,
+    /// For basic auth: the credential list the proxy gate verifies against. The
+    /// proxy no longer receives the credentials themselves — validation happens
+    /// on the agency login form (see `api::basic_auth`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    basic_credentials: Option<Vec<BasicCredential>>,
-}
-
-#[derive(Serialize, serde::Deserialize, Clone)]
-struct BasicCredential {
-    username: String,
-    password_hash: String,
+    basic_list_id: Option<uuid::Uuid>,
 }
 
 /// In-memory cache for minted proxy tokens, keyed by credential ID.
@@ -208,8 +206,7 @@ async fn get_or_mint_proxy_token(
 }
 
 /// Build an AuthInfo from webspace fields. Returns None for auth_mode = "none".
-async fn build_auth_info(
-    pool: &PgPool,
+fn build_auth_info(
     auth_mode: &str,
     org_id: uuid::Uuid,
     basic_list_id: Option<uuid::Uuid>,
@@ -218,29 +215,14 @@ async fn build_auth_info(
         "oidc" => Some(AuthInfo {
             mode: "oidc".into(),
             org_id: Some(org_id),
-            basic_credentials: None,
+            basic_list_id: None,
         }),
         "basic" => {
             let list_id = basic_list_id?;
-            let creds = sqlx::query_as::<_, (String, String)>(
-                "SELECT username, password_hash FROM basic_auth_credentials WHERE list_id = $1",
-            )
-            .bind(list_id)
-            .fetch_all(pool)
-            .await
-            .ok()?;
             Some(AuthInfo {
                 mode: "basic".into(),
                 org_id: None,
-                basic_credentials: Some(
-                    creds
-                        .into_iter()
-                        .map(|(username, password_hash)| BasicCredential {
-                            username,
-                            password_hash,
-                        })
-                        .collect(),
-                ),
+                basic_list_id: Some(list_id),
             })
         }
         _ => None,
@@ -302,7 +284,7 @@ async fn get_routes(
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
         };
-        let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
+        let auth = build_auth_info(&auth_mode, org_id, basic_list_id);
         if runtime.as_deref() == Some("static") {
             // Served by the agency origin (the server), not the proxy's disk.
             routes.push(RouteEntry {
@@ -393,7 +375,7 @@ async fn get_routes(
             }
         };
 
-        let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
+        let auth = build_auth_info(&auth_mode, org_id, basic_list_id);
         routes.push(RouteEntry {
             host,
             path_prefix,
@@ -445,7 +427,7 @@ async fn get_routes(
             )
         })?;
 
-        let auth = build_auth_info(&state.pool, &auth_mode, org_id, basic_list_id).await;
+        let auth = build_auth_info(&auth_mode, org_id, basic_list_id);
         routes.push(RouteEntry {
             host,
             path_prefix,
