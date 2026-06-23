@@ -514,6 +514,15 @@ async fn bind_domain(
         .await?;
     } else if let Some(ad) = agency_domain() {
         create_host_cname(&pool, domain_id, subdomain_id, &hostname, &ad, "Proxy host").await?;
+        // Provision certs for all of the host's bound domains in the background
+        // (each FQDN needs its own cert; ACME takes ~a minute per domain).
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::api::acme::issue_host_certs(&pool, host_id).await {
+                tracing::error!("host cert issuance failed: {e}");
+            }
+            crate::api::internal::notify_proxy_reload();
+        });
     }
 
     crate::api::internal::notify_proxy_reload();

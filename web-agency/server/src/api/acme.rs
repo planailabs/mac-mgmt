@@ -142,6 +142,37 @@ async fn acme_account(pool: &PgPool, contact_email: &str) -> anyhow::Result<inst
     Ok(account)
 }
 
+/// Issue certs for every proxy-bound FQDN on a host that has no cert row yet.
+///
+/// Each domain/subdomain binding needs its own cert (the proxy resolves certs
+/// by exact SNI), so this checks all bindings — not just the first.
+pub async fn issue_host_certs(pool: &PgPool, host_id: Uuid) -> anyhow::Result<()> {
+    let domains: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT CASE \
+             WHEN s.name IS NOT NULL AND s.name != '@' THEN s.name || '.' || d.name \
+             ELSE d.name \
+         END AS hostname \
+         FROM webspace_host_domains whd \
+         JOIN webspace_hosts h ON h.id = whd.webspace_host_id AND h.kind = 'proxy' \
+         JOIN domains d ON d.id = whd.domain_id \
+         LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
+         WHERE whd.webspace_host_id = $1 \
+           AND NOT EXISTS (SELECT 1 FROM certificates c WHERE c.domain = \
+               CASE WHEN s.name IS NOT NULL AND s.name != '@' THEN s.name || '.' || d.name ELSE d.name END)",
+    )
+    .bind(host_id)
+    .fetch_all(pool)
+    .await?;
+
+    for domain in &domains {
+        tracing::info!(domain, "issuing cert for host binding");
+        if let Err(e) = issue_cert(pool, domain).await {
+            tracing::error!(domain, "host cert issuance failed: {e}");
+        }
+    }
+    Ok(())
+}
+
 async fn run_acme_flow(
     pool: &PgPool,
     domain: &str,
