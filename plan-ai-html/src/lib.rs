@@ -20,6 +20,107 @@
 
 pub use mustache;
 
+use std::sync::LazyLock;
+
+// ── localization (Project Fluent) ────────────────────────────────────────
+
+/// Supported UI languages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lang {
+    En,
+    De,
+}
+
+impl Lang {
+    /// BCP-47 code for the `<html lang>` attribute.
+    pub fn code(self) -> &'static str {
+        match self {
+            Lang::En => "en",
+            Lang::De => "de",
+        }
+    }
+
+    /// Pick the best supported language from an `Accept-Language` header value,
+    /// honouring quality (`q=`) weights. Falls back to English.
+    pub fn from_accept_language(header: &str) -> Lang {
+        let mut best: Option<(f32, Lang)> = None;
+        for part in header.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            let (tag, q) = match part.split_once(';') {
+                Some((t, rest)) => {
+                    let q = rest
+                        .trim()
+                        .strip_prefix("q=")
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(1.0);
+                    (t.trim(), q)
+                }
+                None => (part, 1.0),
+            };
+            let primary = tag.split('-').next().unwrap_or("").to_ascii_lowercase();
+            let lang = match primary.as_str() {
+                "de" => Some(Lang::De),
+                "en" => Some(Lang::En),
+                _ => None,
+            };
+            if let Some(l) = lang {
+                if best.is_none_or(|(bq, _)| q > bq) {
+                    best = Some((q, l));
+                }
+            }
+        }
+        best.map(|(_, l)| l).unwrap_or(Lang::En)
+    }
+}
+
+static EN_RES: LazyLock<fluent::FluentResource> = LazyLock::new(|| {
+    fluent::FluentResource::try_new(include_str!("../assets/en.ftl").to_string())
+        .unwrap_or_else(|(r, _)| r)
+});
+static DE_RES: LazyLock<fluent::FluentResource> = LazyLock::new(|| {
+    fluent::FluentResource::try_new(include_str!("../assets/de.ftl").to_string())
+        .unwrap_or_else(|(r, _)| r)
+});
+
+fn bundle(lang: Lang) -> fluent::FluentBundle<&'static fluent::FluentResource> {
+    let (res, id) = match lang {
+        Lang::De => (&*DE_RES, unic_langid::langid!("de")),
+        Lang::En => (&*EN_RES, unic_langid::langid!("en")),
+    };
+    let mut b = fluent::FluentBundle::new(vec![id]);
+    // Don't wrap interpolated args in Unicode bidi isolation marks.
+    b.set_use_isolating(false);
+    let _ = b.add_resource(res);
+    b
+}
+
+/// Translate a message key. Unknown keys fall back to English, then to the key.
+pub fn tr(lang: Lang, key: &str) -> String {
+    tr_args(lang, key, &[])
+}
+
+/// Translate a message key with `{ $name }` placeholders filled from `args`.
+pub fn tr_args(lang: Lang, key: &str, args: &[(&str, &str)]) -> String {
+    let b = bundle(lang);
+    let Some(pattern) = b.get_message(key).and_then(|m| m.value()) else {
+        return if lang == Lang::En {
+            key.to_string()
+        } else {
+            tr_args(Lang::En, key, args)
+        };
+    };
+    let mut fargs = fluent::FluentArgs::new();
+    for (k, v) in args {
+        fargs.set(*k, *v);
+    }
+    let mut errors = Vec::new();
+    b.format_pattern(pattern, Some(&fargs), &mut errors)
+        .into_owned()
+}
+
 /// Core plan-ai-design tokens + the component classes these pages use. Values
 /// mirror `plan-ai-design/assets/input.css` so standalone pages match the SPA.
 const STYLE: &str = r#":root{--c-bg:240 237 228;--c-surface:255 255 255;--c-surface-3:230 226 215;--c-surface-strong:215 209 195;--c-fg:22 26 34;--c-fg-strong:11 15 21;--c-fg-muted:104 106 110;--c-fg-faint:150 150 148;--c-fg-invert:255 255 255;--c-line:224 220 209;--c-brand:234 88 12;--c-brand-strong:194 65 12;--c-danger:220 38 38;--c-danger-strong:185 28 28;--font-sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Inter Tight",Inter,system-ui,sans-serif}
@@ -48,7 +149,7 @@ body{background:rgb(var(--c-bg));color:rgb(var(--c-fg));min-height:100vh;margin:
 .link:hover{text-decoration:underline}"#;
 
 const LAYOUT: &str = r#"<!doctype html>
-<html lang="en">
+<html lang="{{lang}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -67,6 +168,7 @@ pub struct Page<'a> {
     title: &'a str,
     body: String,
     max_width: &'a str,
+    lang: Lang,
 }
 
 impl<'a> Page<'a> {
@@ -77,6 +179,7 @@ impl<'a> Page<'a> {
             title,
             body: body.into(),
             max_width: "24rem",
+            lang: Lang::En,
         }
     }
 
@@ -86,10 +189,17 @@ impl<'a> Page<'a> {
         self
     }
 
+    /// Set the document language (`<html lang>`); default English.
+    pub fn lang(mut self, lang: Lang) -> Self {
+        self.lang = lang;
+        self
+    }
+
     /// Render the full HTML document.
     pub fn render(&self) -> String {
         let data = mustache::MapBuilder::new()
             .insert_str("title", self.title)
+            .insert_str("lang", self.lang.code())
             .insert_str("max_width", self.max_width)
             .insert_str("style", STYLE)
             .insert_str("body", &self.body)
@@ -199,5 +309,22 @@ mod tests {
             components::heading("a<b"),
             "<h1 class=\"h-page\">a&lt;b</h1>"
         );
+    }
+
+    #[test]
+    fn accept_language_detection() {
+        assert_eq!(Lang::from_accept_language("de-DE,de;q=0.9,en;q=0.8"), Lang::De);
+        assert_eq!(Lang::from_accept_language("en-US,en;q=0.9"), Lang::En);
+        assert_eq!(Lang::from_accept_language("en;q=0.7, de;q=0.9"), Lang::De);
+        assert_eq!(Lang::from_accept_language("fr-FR"), Lang::En); // unsupported → fallback
+        assert_eq!(Lang::from_accept_language(""), Lang::En);
+    }
+
+    #[test]
+    fn translation_and_fallback() {
+        assert_eq!(tr(Lang::En, "sign-in"), "Sign in");
+        assert_eq!(tr(Lang::De, "sign-in"), "Anmelden");
+        assert_eq!(tr_args(Lang::De, "signed-in-as", &[("user", "alice")]), "Angemeldet als alice");
+        assert_eq!(tr(Lang::De, "no-such-key"), "no-such-key"); // falls back to key
     }
 }

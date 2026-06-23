@@ -428,7 +428,14 @@ pub struct LoginQuery {
 /// Login page shown when multiple OIDC providers are configured.
 pub async fn login_page(
     axum::extract::Query(query): axum::extract::Query<LoginQuery>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
+    let lang = plan_ai_html::Lang::from_accept_language(
+        headers
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    );
     let providers = AUTH_PROVIDERS.get().map(|p| p.as_slice()).unwrap_or(&[]);
 
     let redirect_suffix = query
@@ -459,8 +466,9 @@ pub async fn login_page(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let body = format!(r#"<h1 class="h-page">Sign in</h1>{buttons}"#);
-    Html(plan_ai_html::Page::new("Sign in", body).render()).into_response()
+    let title = plan_ai_html::tr(lang, "sign-in");
+    let body = format!(r#"<h1 class="h-page">{title}</h1>{buttons}"#);
+    Html(plan_ai_html::Page::new(&title, body).lang(lang).render()).into_response()
 }
 
 // ── Logout handler ───────────────────────────────────────────────────────

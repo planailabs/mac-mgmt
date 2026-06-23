@@ -425,19 +425,23 @@ fn bootstrap_html() -> String {
 }
 
 /// Build the "authentication required" HTML page, optionally with a sign-in button.
-fn unauthorized_html(login_url: Option<&str>) -> axum::response::Response {
+fn unauthorized_html(login_url: Option<&str>, accept_language: &str) -> axum::response::Response {
+    let lang = plan_ai_html::Lang::from_accept_language(accept_language);
     let button = login_url
         .map(|url| {
             format!(
-                r#"<a href="{}" class="btn btn-primary btn-lg" style="display:flex;margin-top:1rem">Log in to plan.ai</a>"#,
+                r#"<a href="{}" class="btn btn-primary btn-lg" style="display:flex;margin-top:1rem">{}</a>"#,
                 plan_ai_html::escape(url),
+                plan_ai_html::tr(lang, "log-in-to-planai"),
             )
         })
         .unwrap_or_default();
+    let title = plan_ai_html::tr(lang, "auth-required-title");
     let body = format!(
-        r#"<h1 class="h-page">Authentication required</h1><p class="help">You need to sign in to access this tunnel.</p>{button}"#
+        r#"<h1 class="h-page">{title}</h1><p class="help">{}</p>{button}"#,
+        plan_ai_html::tr(lang, "auth-required-body"),
     );
-    let html = plan_ai_html::Page::new("Authentication required", body).render();
+    let html = plan_ai_html::Page::new(&title, body).lang(lang).render();
     axum::response::Response::builder()
         .status(StatusCode::UNAUTHORIZED)
         .header("content-type", "text/html; charset=utf-8")
@@ -497,7 +501,11 @@ async fn proxy_catchall(
             let prefix = &instance_id[..std::cmp::min(12, instance_id.len())];
             format!("{url}/easy-access/direct/{prefix}/{tunnel_name}")
         });
-        return unauthorized_html(login_url.as_deref());
+        let accept_language = headers
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        return unauthorized_html(login_url.as_deref(), accept_language);
     }
 
     let self_info = match authenticate_proxy(&headers, &state, &instance_id).await {

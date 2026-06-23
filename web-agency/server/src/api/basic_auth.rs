@@ -467,33 +467,49 @@ fn handoff_redirect(
 
 // -- HTML rendering (plan-ai-design via plan_ai_html) --
 
-/// Wrap a pre-rendered body in the plan-ai-design page chrome.
-fn page(title: &str, body: &str) -> Html<String> {
-    Html(plan_ai_html::Page::new(title, body).render())
+use plan_ai_html::{Lang, tr, tr_args};
+
+/// Detect the UI language from the request's Accept-Language header.
+fn lang(headers: &HeaderMap) -> Lang {
+    Lang::from_accept_language(
+        headers
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    )
 }
 
-const LOGIN_TPL: &str = r#"<h1 class="h-page">Sign in</h1>
+/// Wrap a pre-rendered body in the plan-ai-design page chrome (localized lang).
+fn page(lang: Lang, title: &str, body: &str) -> Html<String> {
+    Html(plan_ai_html::Page::new(title, body).lang(lang).render())
+}
+
+const LOGIN_TPL: &str = r#"<h1 class="h-page">{{l_title}}</h1>
 <form method="post" action="/agency/basic/{{list_id}}/login">
 <input type="hidden" name="cb" value="{{cb}}">
 <input type="hidden" name="back" value="{{back}}">
-<label class="label" for="u">Username</label>
+<label class="label" for="u">{{l_user}}</label>
 <input class="input" id="u" type="text" name="username" autofocus autocomplete="username">
-<label class="label" for="p" style="margin-top:.75rem">Password</label>
+<label class="label" for="p" style="margin-top:.75rem">{{l_pass}}</label>
 <input class="input" id="p" type="password" name="password" autocomplete="current-password">
-<label class="help" style="display:flex;align-items:center;gap:.45rem;margin-top:.8rem"><input type="checkbox" name="keep" value="on"> Keep me signed in</label>
+<label class="help" style="display:flex;align-items:center;gap:.45rem;margin-top:.8rem"><input type="checkbox" name="keep" value="on"> {{l_keep}}</label>
 {{#has_error}}<div class="err" style="margin-top:.6rem">{{error}}</div>{{/has_error}}
-<button class="btn btn-primary btn-lg" type="submit" style="width:100%;margin-top:1rem">Sign in</button>
+<button class="btn btn-primary btn-lg" type="submit" style="width:100%;margin-top:1rem">{{l_title}}</button>
 </form>"#;
 
-fn login_form_html(list_id: Uuid, cb: &str, back: &str, error: Option<&str>) -> Html<String> {
+fn login_form_html(lang: Lang, list_id: Uuid, cb: &str, back: &str, error: Option<&str>) -> Html<String> {
     let data = plan_ai_html::mustache::MapBuilder::new()
         .insert_str("list_id", list_id.to_string())
         .insert_str("cb", cb)
         .insert_str("back", back)
+        .insert_str("l_title", tr(lang, "sign-in"))
+        .insert_str("l_user", tr(lang, "username"))
+        .insert_str("l_pass", tr(lang, "password"))
+        .insert_str("l_keep", tr(lang, "keep-signed-in"))
         .insert_bool("has_error", error.is_some())
         .insert_str("error", error.unwrap_or(""))
         .build();
-    page("Sign in", &plan_ai_html::render_data(LOGIN_TPL, &data))
+    page(lang, &tr(lang, "sign-in"), &plan_ai_html::render_data(LOGIN_TPL, &data))
 }
 
 // -- handlers --
@@ -502,8 +518,10 @@ async fn login_page(
     State(pool): State<PgPool>,
     Path(list_id): Path<Uuid>,
     Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     jar: CookieJar,
 ) -> (CookieJar, Response) {
+    let lang = lang(&headers);
     let back = q.get("back").cloned().unwrap_or_default();
     let cb = q.get("cb").cloned().unwrap_or_default();
     if !cb_host_ok(&pool, list_id, &cb).await {
@@ -522,16 +540,18 @@ async fn login_page(
         }
     }
     // Show the form and clear the one-shot marker.
-    let resp = login_form_html(list_id, &cb, &back, None).into_response();
+    let resp = login_form_html(lang, list_id, &cb, &back, None).into_response();
     (jar.remove(Cookie::build(SSO_TRY_COOKIE).path("/")), resp)
 }
 
 async fn login_submit(
     State(pool): State<PgPool>,
     Path(list_id): Path<Uuid>,
+    headers: HeaderMap,
     jar: CookieJar,
     body: String,
 ) -> (CookieJar, Response) {
+    let lang = lang(&headers);
     let form = parse_form(&body);
     let username = form.get("username").cloned().unwrap_or_default();
     let password = form.get("password").cloned().unwrap_or_default();
@@ -543,7 +563,7 @@ async fn login_submit(
         return (jar, (StatusCode::BAD_REQUEST, "invalid callback").into_response());
     }
     if !creds_ok(&pool, list_id, &username, &password).await {
-        let resp = login_form_html(list_id, &cb, &back, Some("Invalid username or password"))
+        let resp = login_form_html(lang, list_id, &cb, &back, Some(&tr(lang, "invalid-credentials")))
             .into_response();
         return (jar, resp);
     }
@@ -574,9 +594,11 @@ async fn logout_page(
     State(pool): State<PgPool>,
     Path(list_id): Path<Uuid>,
     Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
     // The proxy already dropped this list from the identity before redirecting
     // here; this page is purely informational.
+    let lang = lang(&headers);
     let back = q.get("back").cloned().unwrap_or_default();
     let cb = q.get("cb").cloned().unwrap_or_default();
     if !cb.is_empty() && !cb_host_ok(&pool, list_id, &cb).await {
@@ -584,26 +606,36 @@ async fn logout_page(
     }
     let login = format!("{cb}/login?back={}", enc(&back));
     let body = format!(
-        "<h1 class=\"h-page\">Signed out</h1>\
-         <p class=\"help\">You've been signed out of this area.</p>\
-         <p style=\"margin-top:1rem\"><a class=\"btn btn-primary btn-lg\" href=\"{}\">Sign in again</a></p>\
-         <p class=\"help\" style=\"margin-top:1rem\"><a class=\"link\" href=\"/agency/basic/profile\">Manage all sessions</a>{}</p>",
-        esc(&login),
-        if back.is_empty() {
+        "<h1 class=\"h-page\">{title}</h1>\
+         <p class=\"help\">{body_text}</p>\
+         <p style=\"margin-top:1rem\"><a class=\"btn btn-primary btn-lg\" href=\"{login}\">{again}</a></p>\
+         <p class=\"help\" style=\"margin-top:1rem\"><a class=\"link\" href=\"/agency/basic/profile\">{manage}</a>{back_link}</p>",
+        title = tr(lang, "signed-out-title"),
+        body_text = tr(lang, "signed-out-body"),
+        login = esc(&login),
+        again = tr(lang, "sign-in-again"),
+        manage = tr(lang, "manage-sessions"),
+        back_link = if back.is_empty() {
             String::new()
         } else {
-            format!(" · <a class=\"link\" href=\"{}\">Back to site</a>", esc(&back))
+            format!(
+                " · <a class=\"link\" href=\"{}\">{}</a>",
+                esc(&back),
+                tr(lang, "back-to-site")
+            )
         },
     );
-    page("Signed out", &body).into_response()
+    page(lang, &tr(lang, "signed-out-title"), &body).into_response()
 }
 
 async fn profile_page(
     State(pool): State<PgPool>,
     Path(list_id): Path<Uuid>,
     Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     jar: CookieJar,
 ) -> Response {
+    let lang = lang(&headers);
     let back = q.get("back").cloned().unwrap_or_default();
     let cb = q.get("cb").cloned().unwrap_or_default();
     if !cb_host_ok(&pool, list_id, &cb).await {
@@ -617,17 +649,20 @@ async fn profile_page(
 
     let status = match &this_user {
         Some(u) => format!(
-            "<p>Signed in as <strong>{}</strong>.</p>\
-             <p style=\"margin-top:1rem\"><a class=\"btn btn-secondary btn-lg\" href=\"{}/logout?back={}\">Sign out of this area</a></p>",
-            esc(u),
-            esc(&cb),
-            enc(&back),
+            "<p>{signed_in}</p>\
+             <p style=\"margin-top:1rem\"><a class=\"btn btn-secondary btn-lg\" href=\"{cb}/logout?back={back}\">{sign_out}</a></p>",
+            signed_in = tr_args(lang, "signed-in-as", &[("user", &esc(u))]),
+            cb = esc(&cb),
+            back = enc(&back),
+            sign_out = tr(lang, "sign-out-area"),
         ),
         None => format!(
-            "<p class=\"help\">Not signed in to this area.</p>\
-             <p style=\"margin-top:1rem\"><a class=\"btn btn-primary btn-lg\" href=\"{}/login?back={}\">Sign in</a></p>",
-            esc(&cb),
-            enc(&back),
+            "<p class=\"help\">{not_signed_in}</p>\
+             <p style=\"margin-top:1rem\"><a class=\"btn btn-primary btn-lg\" href=\"{cb}/login?back={back}\">{sign_in}</a></p>",
+            not_signed_in = tr(lang, "not-signed-in-area"),
+            cb = esc(&cb),
+            back = enc(&back),
+            sign_in = tr(lang, "sign-in"),
         ),
     };
 
@@ -645,33 +680,59 @@ async fn profile_page(
         .await
         .unwrap_or_default();
         if !rows.is_empty() {
-            others.push_str("<p class=\"help\" style=\"margin-top:1rem\">Also signed in:</p><ul class=\"help\">");
+            others.push_str(&format!(
+                "<p class=\"help\" style=\"margin-top:1rem\">{}</p><ul class=\"help\">",
+                tr(lang, "also-signed-in")
+            ));
             for (name, user) in rows {
-                others.push_str(&format!("<li>{} as {}</li>", esc(&name), esc(&user)));
+                others.push_str(&format!(
+                    "<li>{}</li>",
+                    tr_args(lang, "item-as", &[("name", &esc(&name)), ("user", &esc(&user))])
+                ));
             }
             others.push_str("</ul>");
         }
     }
 
     let body = format!(
-        "<h1 class=\"h-page\">Profile</h1>{status}{others}\
-         <p class=\"help\" style=\"margin-top:1rem\"><a class=\"link\" href=\"/agency/basic/profile\">Manage all sessions</a>{}</p>",
-        if back.is_empty() {
+        "<h1 class=\"h-page\">{title}</h1>{status}{others}\
+         <p class=\"help\" style=\"margin-top:1rem\"><a class=\"link\" href=\"/agency/basic/profile\">{manage}</a>{back_link}</p>",
+        title = tr(lang, "profile-title"),
+        manage = tr(lang, "manage-sessions"),
+        back_link = if back.is_empty() {
             String::new()
         } else {
-            format!(" · <a class=\"link\" href=\"{}\">Back to site</a>", esc(&back))
+            format!(
+                " · <a class=\"link\" href=\"{}\">{}</a>",
+                esc(&back),
+                tr(lang, "back-to-site")
+            )
         },
     );
-    page("Profile", &body).into_response()
+    page(lang, &tr(lang, "profile-title"), &body).into_response()
 }
 
-async fn global_profile(State(pool): State<PgPool>, jar: CookieJar) -> Response {
-    let Some(sso_id) = sso_from_cookie(&pool, &jar).await else {
-        return page(
-            "Sessions",
-            "<h1 class=\"h-page\">Sessions</h1><p class=\"help\">You're not signed in to anything.</p>",
+async fn global_profile(
+    State(pool): State<PgPool>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    let lang = lang(&headers);
+    let empty = || {
+        page(
+            lang,
+            &tr(lang, "sessions-title"),
+            &format!(
+                "<h1 class=\"h-page\">{}</h1><p class=\"help\">{}</p>",
+                tr(lang, "sessions-title"),
+                tr(lang, "not-signed-in-anything"),
+            ),
         )
-        .into_response();
+        .into_response()
+    };
+
+    let Some(sso_id) = sso_from_cookie(&pool, &jar).await else {
+        return empty();
     };
     let rows = sqlx::query_as::<_, (Uuid, String, String)>(
         "SELECT l.id, l.name, sl.username FROM basic_auth_sso_lists sl \
@@ -684,37 +745,35 @@ async fn global_profile(State(pool): State<PgPool>, jar: CookieJar) -> Response 
     .unwrap_or_default();
 
     if rows.is_empty() {
-        return page(
-            "Sessions",
-            "<h1 class=\"h-page\">Sessions</h1><p class=\"help\">You're not signed in to anything.</p>",
-        )
-        .into_response();
+        return empty();
     }
 
+    let sign_out = tr(lang, "sign-out");
     let mut items = String::from("<ul style=\"list-style:none;padding:0;margin:.5rem 0 0\">");
     for (id, name, user) in rows {
         items.push_str(&format!(
             "<li style=\"display:flex;justify-content:space-between;align-items:center;\
              gap:1rem;padding:.6rem 0;border-bottom:1px solid rgb(var(--c-line))\">\
-             <span>{} <span class=\"help\">as {}</span></span>\
+             <span>{label}</span>\
              <form method=post action=\"/agency/basic/profile/logout\" style=\"margin:0\">\
-             <input type=hidden name=list_id value=\"{}\">\
-             <button class=\"btn btn-secondary btn-sm\" type=submit>Sign out</button></form></li>",
-            esc(&name),
-            esc(&user),
-            id,
+             <input type=hidden name=list_id value=\"{id}\">\
+             <button class=\"btn btn-secondary btn-sm\" type=submit>{sign_out}</button></form></li>",
+            label = tr_args(lang, "item-as", &[("name", &esc(&name)), ("user", &esc(&user))]),
         ));
     }
     items.push_str("</ul>");
 
     let body = format!(
-        "<h1 class=\"h-page\">Sessions</h1>\
-         <p class=\"help\">Areas you're currently signed in to:</p>{items}\
+        "<h1 class=\"h-page\">{title}</h1>\
+         <p class=\"help\">{areas}</p>{items}\
          <form method=post action=\"/agency/basic/profile/logout\" style=\"margin-top:1.25rem\">\
          <input type=hidden name=all value=1>\
-         <button class=\"btn btn-danger btn-lg\" type=submit style=\"width:100%\">Sign out of everything</button></form>"
+         <button class=\"btn btn-danger btn-lg\" type=submit style=\"width:100%\">{all_out}</button></form>",
+        title = tr(lang, "sessions-title"),
+        areas = tr(lang, "areas-signed-in"),
+        all_out = tr(lang, "sign-out-everything"),
     );
-    page("Sessions", &body).into_response()
+    page(lang, &tr(lang, "sessions-title"), &body).into_response()
 }
 
 async fn global_logout(
