@@ -580,14 +580,36 @@ async fn issue_cert(
         }
     }
 
-    // Trigger issuance in background
+    // Trigger issuance in background. If this domain belongs to a proxy host,
+    // provision certs for all of the host's bound domains (each FQDN needs its
+    // own cert), not just the requested one.
     let pool = state.pool.clone();
     let reload_tx = state.reload_tx.clone();
     let domain_clone = domain.clone();
     tokio::spawn(async move {
-        match crate::api::acme::issue_cert(&pool, &domain_clone).await {
+        let host_id: Option<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT whd.webspace_host_id \
+             FROM webspace_host_domains whd \
+             JOIN webspace_hosts h ON h.id = whd.webspace_host_id AND h.kind = 'proxy' \
+             JOIN domains d ON d.id = whd.domain_id \
+             LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
+             WHERE CASE WHEN s.name IS NOT NULL AND s.name != '@' \
+                        THEN s.name || '.' || d.name ELSE d.name END = $1 \
+             LIMIT 1",
+        )
+        .bind(&domain_clone)
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten();
+
+        let result = match host_id {
+            Some(hid) => crate::api::acme::issue_host_certs(&pool, hid).await,
+            None => crate::api::acme::issue_cert(&pool, &domain_clone).await,
+        };
+        match result {
             Ok(()) => {
-                tracing::info!(domain = %domain_clone, "cert issued successfully");
+                tracing::info!(domain = %domain_clone, "cert issuance complete");
                 let _ = reload_tx.send(());
             }
             Err(e) => {
