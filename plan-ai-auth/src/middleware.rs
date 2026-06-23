@@ -451,38 +451,16 @@ pub async fn login_page(
         .iter()
         .map(|p| {
             format!(
-                r#"<a href="/auth/{slug}{redirect_suffix}" class="login-btn">{name}</a>"#,
+                r#"<a href="/auth/{slug}{redirect_suffix}" class="btn btn-secondary btn-lg" style="display:flex;margin-top:.5rem">{name}</a>"#,
                 slug = p.slug,
-                name = p.name,
+                name = plan_ai_html::escape(&p.name),
             )
         })
         .collect::<Vec<_>>()
-        .join("\n            ");
+        .join("\n");
 
-    Html(format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sign in</title>
-    <style>
-        body {{ font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
-        .container {{ text-align: center; max-width: 400px; width: 100%; padding: 2rem; }}
-        h1 {{ font-size: 1.5rem; margin-bottom: 2rem; font-weight: 600; }}
-        .login-btn {{ display: block; padding: 0.75rem 1.5rem; margin: 0.75rem 0; background: #1e293b; color: #e2e8f0; text-decoration: none; border-radius: 0.5rem; border: 1px solid #334155; font-size: 1rem; transition: background 0.15s; }}
-        .login-btn:hover {{ background: #334155; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Sign in</h1>
-        {buttons}
-    </div>
-</body>
-</html>"#
-    ))
-    .into_response()
+    let body = format!(r#"<h1 class="h-page">Sign in</h1>{buttons}"#);
+    Html(plan_ai_html::Page::new("Sign in", body).render()).into_response()
 }
 
 // ── Logout handler ───────────────────────────────────────────────────────

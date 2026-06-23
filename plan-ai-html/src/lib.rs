@@ -2,14 +2,15 @@
 //! plan-ai-design system.
 //!
 //! For standalone server-rendered pages that live **outside** a Dioxus SPA
-//! (the basic-auth gate, OIDC login, the relay login page). It emits HTML that
-//! links the app's compiled `tailwind.css` and reuses the design system's
-//! semantic classes (`.card`, `.card-pad`, `.btn`, `.btn-primary`, `.input`,
-//! `.label`, `.h-page`, `.err`, `.link`) plus its CSS variables (`--c-bg`,
-//! `--c-fg`, `--font-sans`). The dark-mode preference script matches the SPA.
+//! (the basic-auth gate, OIDC login, the relay login page). Pages are
+//! **self-contained**: the core plan-ai-design tokens and a handful of semantic
+//! classes (`.card`, `.card-pad`, `.btn`/`.btn-primary`/`.btn-secondary`/
+//! `.btn-danger`, `.input`, `.label`, `.h-page`, `.err`, `.help`, `.link`) are
+//! inlined, so they render correctly on any service without needing a compiled
+//! `tailwind.css` to be served. Light/dark follows the OS via a tiny script.
 //!
-//! Callers compose a page body — typically with a mustache fragment (see
-//! [`render`]) or the small [`components`] helpers — and wrap it in [`Page`].
+//! Callers compose a page body — with a mustache fragment (see [`render`]) or
+//! the small [`components`] helpers — and wrap it in [`Page`].
 //!
 //! ```no_run
 //! let body = plan_ai_html::components::heading("Sign in")
@@ -19,26 +20,52 @@
 
 pub use mustache;
 
+/// Core plan-ai-design tokens + the component classes these pages use. Values
+/// mirror `plan-ai-design/assets/input.css` so standalone pages match the SPA.
+const STYLE: &str = r#":root{--c-bg:240 237 228;--c-surface:255 255 255;--c-surface-3:230 226 215;--c-surface-strong:215 209 195;--c-fg:22 26 34;--c-fg-strong:11 15 21;--c-fg-muted:104 106 110;--c-fg-faint:150 150 148;--c-fg-invert:255 255 255;--c-line:224 220 209;--c-brand:234 88 12;--c-brand-strong:194 65 12;--c-danger:220 38 38;--c-danger-strong:185 28 28;--font-sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Inter Tight",Inter,system-ui,sans-serif}
+.dark{--c-bg:11 15 21;--c-surface:28 39 53;--c-surface-3:36 49 66;--c-surface-strong:48 64 84;--c-fg:232 237 245;--c-fg-strong:255 255 255;--c-fg-muted:148 163 184;--c-fg-faint:100 116 139;--c-fg-invert:255 255 255;--c-line:42 52 66;--c-brand:249 115 22;--c-brand-strong:234 88 12;--c-danger:248 113 113;--c-danger-strong:239 68 68}
+*{box-sizing:border-box}
+body{background:rgb(var(--c-bg));color:rgb(var(--c-fg));min-height:100vh;margin:0;display:flex;align-items:center;justify-content:center;padding:1.5rem;font-family:var(--font-sans);line-height:1.5}
+.card{background:rgb(var(--c-surface));border:1px solid rgb(var(--c-line));border-radius:12px}
+.card-pad{padding:1.5rem}
+.h-page{font-size:1.5rem;font-weight:700;margin:0 0 1rem;color:rgb(var(--c-fg-strong))}
+.label{display:block;font-weight:500;font-size:.875rem;margin-bottom:.25rem;color:rgb(var(--c-fg-strong))}
+.input{width:100%;border:1px solid rgb(var(--c-line));border-radius:6px;background:rgb(var(--c-surface));color:rgb(var(--c-fg));padding:.5rem .75rem;font:inherit}
+.input::placeholder{color:rgb(var(--c-fg-faint))}
+.input:focus{outline:2px solid rgb(var(--c-brand));outline-offset:0;border-color:rgb(var(--c-brand))}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;border-radius:6px;font-weight:500;text-decoration:none;cursor:pointer;border:0;padding:.375rem .75rem;font:inherit;transition:background .15s}
+.btn-sm{padding:.25rem .75rem;font-size:.875rem}
+.btn-lg{padding:.5rem 1rem}
+.btn-primary{background:rgb(var(--c-brand));color:rgb(var(--c-fg-invert))}
+.btn-primary:hover{background:rgb(var(--c-brand-strong))}
+.btn-secondary{background:rgb(var(--c-surface-3));color:rgb(var(--c-fg))}
+.btn-secondary:hover{background:rgb(var(--c-surface-strong))}
+.btn-danger{background:rgb(var(--c-danger));color:rgb(var(--c-fg-invert))}
+.btn-danger:hover{background:rgb(var(--c-danger-strong))}
+.err{color:rgb(var(--c-danger));font-size:.875rem}
+.help{color:rgb(var(--c-fg-muted));font-size:.875rem}
+.link{color:rgb(var(--c-brand));text-decoration:none}
+.link:hover{text-decoration:underline}"#;
+
 const LAYOUT: &str = r#"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{title}}</title>
-<link rel="stylesheet" href="{{stylesheet}}">
 <script>(function(){try{var d=document.documentElement;var t=localStorage.getItem('theme');var dark=t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches);d.classList.toggle('dark',dark);d.style.colorScheme=dark?'dark':'light';}catch(e){}})();</script>
+<style>{{{style}}}</style>
 </head>
-<body style="background:rgb(var(--c-bg));color:rgb(var(--c-fg));min-height:100vh;margin:0;display:flex;align-items:center;justify-content:center;padding:1.5rem;font-family:var(--font-sans)">
+<body>
 <main class="card card-pad" style="width:100%;max-width:{{max_width}}">{{{body}}}</main>
 </body>
 </html>"#;
 
-/// A standalone page: the plan-ai-design chrome (stylesheet, theme script,
+/// A standalone page: the plan-ai-design chrome (inlined CSS, theme script,
 /// centered card) wrapped around a pre-rendered, trusted HTML `body`.
 pub struct Page<'a> {
     title: &'a str,
     body: String,
-    stylesheet: &'a str,
     max_width: &'a str,
 }
 
@@ -49,15 +76,8 @@ impl<'a> Page<'a> {
         Self {
             title,
             body: body.into(),
-            stylesheet: "/tailwind.css",
             max_width: "24rem",
         }
-    }
-
-    /// Override the compiled stylesheet href (default `/tailwind.css`).
-    pub fn stylesheet(mut self, href: &'a str) -> Self {
-        self.stylesheet = href;
-        self
     }
 
     /// Override the card max width as a CSS length (default `24rem`).
@@ -70,8 +90,8 @@ impl<'a> Page<'a> {
     pub fn render(&self) -> String {
         let data = mustache::MapBuilder::new()
             .insert_str("title", self.title)
-            .insert_str("stylesheet", self.stylesheet)
             .insert_str("max_width", self.max_width)
+            .insert_str("style", STYLE)
             .insert_str("body", &self.body)
             .build();
         render_data(LAYOUT, &data)
@@ -160,7 +180,8 @@ mod tests {
     #[test]
     fn page_wraps_body_and_escapes_title() {
         let html = Page::new("Hi <there>", "<p>ok</p>").render();
-        assert!(html.contains("<link rel=\"stylesheet\" href=\"/tailwind.css\">"));
+        assert!(html.contains("<style>")); // self-contained CSS
+        assert!(html.contains(".btn-primary")); // design classes inlined
         assert!(html.contains("<title>Hi &lt;there&gt;</title>")); // escaped
         assert!(html.contains("<p>ok</p>")); // body raw
         assert!(html.contains("class=\"card card-pad\""));

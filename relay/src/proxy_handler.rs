@@ -427,33 +427,17 @@ fn bootstrap_html() -> String {
 /// Build the "authentication required" HTML page, optionally with a sign-in button.
 fn unauthorized_html(login_url: Option<&str>) -> axum::response::Response {
     let button = login_url
-        .map(|url| format!(r#"<a href="{url}" class="login-btn">Log in to plan.ai</a>"#))
+        .map(|url| {
+            format!(
+                r#"<a href="{}" class="btn btn-primary btn-lg" style="display:flex;margin-top:1rem">Log in to plan.ai</a>"#,
+                plan_ai_html::escape(url),
+            )
+        })
         .unwrap_or_default();
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<style>{SHARED_STYLE}
-  .login-btn {{
-    display: inline-block;
-    padding: 0.75rem 1.5rem;
-    background: #1e293b;
-    color: #e2e8f0;
-    text-decoration: none;
-    border-radius: 0.5rem;
-    border: 1px solid #334155;
-    font-size: 1rem;
-    transition: background 0.15s;
-  }}
-  .login-btn:hover {{ background: #334155; }}
-</style>
-</head>
-<body>
-  <div class="text">Authentication required to access this tunnel</div>
-  {button}
-</body>
-</html>"#,
+    let body = format!(
+        r#"<h1 class="h-page">Authentication required</h1><p class="help">You need to sign in to access this tunnel.</p>{button}"#
     );
+    let html = plan_ai_html::Page::new("Authentication required", body).render();
     axum::response::Response::builder()
         .status(StatusCode::UNAUTHORIZED)
         .header("content-type", "text/html; charset=utf-8")
