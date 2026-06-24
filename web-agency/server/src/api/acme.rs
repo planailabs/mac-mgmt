@@ -9,36 +9,28 @@ use uuid::Uuid;
 /// DNS-01 TXT record via the CF API, completes the ACME challenge, and stores
 /// the resulting certificate (encrypted) in the `certificates` table.
 pub async fn issue_cert(pool: &PgPool, domain: &str) -> anyhow::Result<()> {
-    // 1. Look up CF credentials for this domain (try exact match first, then parent domain)
-    let row = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT cloudflare_credential_id, cloudflare_zone_id \
-         FROM domains \
-         WHERE name = $1 \
-           AND cloudflare_credential_id IS NOT NULL \
-           AND cloudflare_zone_id IS NOT NULL",
-    )
-    .bind(domain)
-    .fetch_optional(pool)
-    .await?;
-
-    // For subdomains like "sub.example.com", look up the parent domain "example.com"
-    let row = if let Some(r) = row {
-        r
-    } else if let Some(dot) = domain.find('.') {
-        let parent = &domain[dot + 1..];
-        sqlx::query_as::<_, (Uuid, String)>(
+    // 1. Look up CF credentials, walking up every parent suffix.
+    // For "a.b.plan.ai" the zone is registered as "plan.ai", so try
+    // "a.b.plan.ai", "b.plan.ai", "plan.ai", ... until one has credentials.
+    let mut candidate = domain;
+    let row = loop {
+        let found = sqlx::query_as::<_, (Uuid, String)>(
             "SELECT cloudflare_credential_id, cloudflare_zone_id \
              FROM domains \
              WHERE name = $1 \
                AND cloudflare_credential_id IS NOT NULL \
                AND cloudflare_zone_id IS NOT NULL",
         )
-        .bind(parent)
+        .bind(candidate)
         .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("domain {domain} has no Cloudflare credentials"))?
-    } else {
-        anyhow::bail!("domain {domain} has no Cloudflare credentials");
+        .await?;
+        if let Some(r) = found {
+            break r;
+        }
+        match candidate.find('.') {
+            Some(dot) => candidate = &candidate[dot + 1..],
+            None => anyhow::bail!("domain {domain} has no Cloudflare credentials"),
+        }
     };
 
     let (cred_id, zone_id) = row;
