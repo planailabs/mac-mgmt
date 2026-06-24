@@ -47,7 +47,11 @@ deploy:
     # test VM cannot starve another until the NixOS backdoor times out.
     - nix flake check -L --max-jobs 1
     - nix develop -c bash xzar.sh
-    - ./docker-push.sh
+    # Run through the flake dev shell instead of the script's legacy nix-shell
+    # shebang. The runner's impure NIX_PATH/channel can be stale or GC'd, while
+    # `nix develop` resolves tools from the locked flake inputs already used by
+    # the rest of the job.
+    - nix develop -c bash docker-push.sh
   timeout: 3h
   environment: production
   resource_group: production

@@ -300,6 +300,7 @@
             cargo-flamegraph
             zig
             rsync
+            skopeo
 
             # Dioxus CLI (patched with --skip-platform-features)
             dioxus-cli-patched
