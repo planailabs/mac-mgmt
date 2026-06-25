@@ -570,6 +570,8 @@ admin-token-revoke = Widerrufen
 
 federation-tokens-title = Federation Tokens
 federation-tokens-description = Federation Tokens ermöglichen entfernten Management-Servern den Zugriff auf den Skill-Center-Katalog dieser Instanz und das Auflösen von Skills. Teilen Sie diese mit Management-Servern, die von diesem Skill Center beziehen.
+all-tokens-title = Alle Tokens
+all-tokens-description = Alle Tokens im System mit ihrem Geltungsbereich. Schreibgeschützt — Tokens werden in den jeweiligen Bereichen erstellt. Jedes Token kann hier widerrufen werden.
 federation-token-new = Neuer Federation Token (jetzt kopieren, wird nur einmal angezeigt):
 federation-token-label = Federation-Token-Label
 federation-token-create = Federation Token erstellen

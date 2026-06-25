@@ -3,7 +3,7 @@ use dioxus_i18n::t;
 
 use crate::models::Token;
 use crate::web::components::ui::{
-    Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal, TokenRow, TokenTable,
+    ErrorText, HelpText, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -35,7 +35,11 @@ async fn list_setting_tokens(cluster_id: String) -> Result<Vec<Token>, ServerFnE
 }
 
 #[server]
-async fn create_setting_token(cluster_id: String, label: String) -> Result<String, ServerFnError> {
+async fn create_setting_token(
+    cluster_id: String,
+    label: String,
+    expires_in_secs: Option<i64>,
+) -> Result<String, ServerFnError> {
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
@@ -62,7 +66,8 @@ async fn create_setting_token(cluster_id: String, label: String) -> Result<Strin
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
+    let expires_at =
+        expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
 
     sqlx::query(
         "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) VALUES ($1, $2, $3, 'setting', $4)",
@@ -118,25 +123,8 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
         async move { list_setting_tokens(cid).await }
     })?;
 
-    let mut label = use_signal(String::new);
     let mut new_token = use_signal(|| None::<String>);
-
     let cid_create = cluster_id.clone();
-    let on_create = move |evt: FormEvent| {
-        evt.prevent_default();
-        let cid = cid_create.clone();
-        let label_val = label.read().clone();
-        spawn(async move {
-            match create_setting_token(cid, label_val).await {
-                Ok(raw) => {
-                    new_token.set(Some(raw));
-                    label.set(String::new());
-                    tokens.restart();
-                }
-                Err(e) => tracing::error!("failed to create setting token: {e}"),
-            }
-        });
-    };
 
     rsx! {
         if !read_only {
@@ -144,18 +132,20 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                 TokenReveal { value: raw.clone(), label: t!("setting-token-new") }
             }
 
-            form { onsubmit: on_create, class: "flex gap-2 mb-4",
-                input {
-                    class: "input flex-1 w-auto py-1 text-sm",
-                    r#type: "text",
-                    required: true,
-                    placeholder: t!("setting-token-label"),
-                    value: "{label}",
-                    oninput: move |evt| label.set(evt.value()),
-                }
-                Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
-                    {t!("setting-token-create")}
-                }
+            TokenCreateForm {
+                submit_label: t!("setting-token-create"),
+                on_submit: move |input: TokenCreateInput| {
+                    let cid = cid_create.clone();
+                    spawn(async move {
+                        match create_setting_token(cid, input.label, input.expires_in_secs).await {
+                            Ok(raw) => {
+                                new_token.set(Some(raw));
+                                tokens.restart();
+                            }
+                            Err(e) => tracing::error!("failed to create setting token: {e}"),
+                        }
+                    });
+                },
             }
         }
 
@@ -198,6 +188,7 @@ pub fn token_to_expiring_row(token: &Token) -> TokenRow {
             token.label.clone()
         },
         kind: None,
+        scope: None,
         revoked: token.revoked,
         expired: token.expires_at.is_some_and(|e| e < chrono::Utc::now()),
         created: token.created_at.format("%Y-%m-%d %H:%M").to_string(),

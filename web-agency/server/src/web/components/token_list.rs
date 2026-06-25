@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ui::{
-    Button, ButtonKind, ButtonSize, ButtonVariant, FormField, PageHeader, TokenReveal, TokenRow,
-    TokenTable,
+    Button, ButtonSize, ButtonVariant, PageHeader, TokenCreateForm, TokenCreateInput, TokenReveal,
+    TokenRow, TokenTable,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +99,7 @@ async fn create_token(
     label: String,
     kind: String,
     webspace_id: Option<Uuid>,
+    expires_in_secs: Option<i64>,
 ) -> Result<String, ServerFnError> {
     use crate::web::user::WebUserExt;
     let user = crate::web::user::current_user().await?;
@@ -117,11 +118,12 @@ async fn create_token(
     } else {
         None
     };
+    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
 
     sqlx::query(
-        "INSERT INTO tokens (organization_id, token_hash, label, kind, scopes) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO tokens (organization_id, token_hash, label, kind, scopes, expires_at) VALUES ($1, $2, $3, $4, $5, $6)",
     )
-    .bind(org_id).bind(&hash).bind(&label).bind(&kind).bind(&scopes)
+    .bind(org_id).bind(&hash).bind(&label).bind(&kind).bind(&scopes).bind(expires_at)
     .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(token)
@@ -159,7 +161,6 @@ pub fn TokenList() -> Element {
         _ => (vec![], vec![]),
     };
 
-    let mut label = use_signal(String::new);
     let mut kind = use_signal(|| "api".to_string());
     let mut org_id = use_signal(String::new);
     let mut ws_id = use_signal(String::new);
@@ -192,12 +193,12 @@ pub fn TokenList() -> Element {
             }
         }
 
-        // Create form.
-        form {
-            class: "card p-6 mt-4 mb-6 max-w-lg space-y-4",
-            onsubmit: move |evt| {
-                evt.prevent_default();
-                let l = label.read().clone();
+        // Create form (compact, shared). Kind + scope are inline children;
+        // expiry + label are owned by the shared form.
+        TokenCreateForm {
+            submit_label: "Create token".to_string(),
+            submitting: *saving.read(),
+            on_submit: move |input: TokenCreateInput| {
                 let k = kind.read().clone();
                 let oid_str = org_id.read().clone();
                 let wid_str = ws_id.read().clone();
@@ -206,10 +207,9 @@ pub fn TokenList() -> Element {
                 spawn(async move {
                     let oid = uuid::Uuid::parse_str(&oid_str).ok();
                     let wid = uuid::Uuid::parse_str(&wid_str).ok();
-                    match create_token(oid, l, k.clone(), wid).await {
+                    match create_token(oid, input.label, k.clone(), wid, input.expires_in_secs).await {
                         Ok(token) => {
                             created.set(Some(NewToken { token, kind: k }));
-                            label.set(String::new());
                             tokens.restart();
                         }
                         Err(e) => error.set(Some(format!("{e}"))),
@@ -218,60 +218,37 @@ pub fn TokenList() -> Element {
                 });
             },
 
-            div { class: "font-semibold", "Create token" }
-
-            FormField { label: "Label",
-                input { class: "input", r#type: "text", required: true, placeholder: "e.g. CI deploy token",
-                    value: "{label}", oninput: move |evt| label.set(evt.value()) }
+            select { class: "input w-auto py-1 text-sm", value: "{kind}", oninput: move |evt| kind.set(evt.value()),
+                option { value: "api", "API" }
+                option { value: "deploy", "Deploy" }
+                option { value: "metrics", "Metrics" }
             }
-
-            FormField { label: "Token Kind",
-                select { class: "input", value: "{kind}", oninput: move |evt| kind.set(evt.value()),
-                    option { value: "api", "API (general)" }
-                    option { value: "deploy", "Deploy (upload tarballs)" }
-                    option { value: "metrics", "Metrics (Prometheus scrape)" }
-                }
-            }
-
             if is_deploy {
-                FormField { label: "Webspace Scope",
-                    help: "Restrict this token to a specific webspace, or leave as 'All' for any.",
-                    select { class: "input", value: "{ws_id}", oninput: move |evt| ws_id.set(evt.value()),
-                        option { value: "", "All webspaces" }
-                        for ws in &ws_list {
-                            option { value: "{ws.id}", "{ws.name}" }
-                        }
+                select { class: "input w-auto py-1 text-sm", value: "{ws_id}", oninput: move |evt| ws_id.set(evt.value()),
+                    option { value: "", "All webspaces" }
+                    for ws in &ws_list {
+                        option { value: "{ws.id}", "{ws.name}" }
                     }
                 }
             } else if kind_val == "metrics" {
-                FormField { label: "Organization Scope",
-                    help: "Scope to an org to see only its metrics, or leave as 'All' for admin access (all orgs + global counters).",
-                    select { class: "input", value: "{org_id}", oninput: move |evt| org_id.set(evt.value()),
-                        option { value: "", "All (admin)" }
-                        for org in &org_list {
-                            option { value: "{org.id}", "{org.name}" }
-                        }
+                select { class: "input w-auto py-1 text-sm", value: "{org_id}", oninput: move |evt| org_id.set(evt.value()),
+                    option { value: "", "All orgs (admin)" }
+                    for org in &org_list {
+                        option { value: "{org.id}", "{org.name}" }
                     }
                 }
             } else {
-                FormField { label: "Organization (optional)",
-                    select { class: "input", value: "{org_id}", oninput: move |evt| org_id.set(evt.value()),
-                        option { value: "", "Global" }
-                        for org in &org_list {
-                            option { value: "{org.id}", "{org.name}" }
-                        }
+                select { class: "input w-auto py-1 text-sm", value: "{org_id}", oninput: move |evt| org_id.set(evt.value()),
+                    option { value: "", "Global" }
+                    for org in &org_list {
+                        option { value: "{org.id}", "{org.name}" }
                     }
                 }
             }
+        }
 
-            if let Some(err) = &*error.read() {
-                div { class: "text-danger text-sm", "{err}" }
-            }
-
-            div {
-                Button { variant: ButtonVariant::Primary, kind: ButtonKind::Submit, disabled: *saving.read(),
-                    if *saving.read() { "Creating..." } else { "Create Token" } }
-            }
+        if let Some(err) = &*error.read() {
+            div { class: "text-danger text-sm mb-4", "{err}" }
         }
 
         // Existing tokens.
@@ -280,6 +257,7 @@ pub fn TokenList() -> Element {
                 id: t.id.to_string(),
                 label: t.label.clone(),
                 kind: Some(t.kind.clone()),
+                scope: None,
                 revoked: t.revoked,
                 expired: false,
                 created: t.created_at.clone(),

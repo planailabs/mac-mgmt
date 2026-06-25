@@ -570,6 +570,8 @@ admin-token-revoke = Revoke
 
 federation-tokens-title = Federation Tokens
 federation-tokens-description = Federation tokens allow remote management servers to access this instance's skill center catalog and resolve skills. Share these with management servers that pull from this skill center.
+all-tokens-title = All Tokens
+all-tokens-description = Every token across the system, with its scope. Read-only — create tokens from their respective sections. Revoke any token here.
 federation-token-new = New federation token (copy now, shown once):
 federation-token-label = Federation token label
 federation-token-create = Create Federation Token

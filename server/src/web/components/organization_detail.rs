@@ -8,8 +8,8 @@ use crate::web::components::organization_client_cas::OrganizationClientCas;
 use crate::web::components::organization_client_certs::OrganizationClientCerts;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
-    SectionHeading, TokenReveal,
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
+    SectionHeading, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -54,6 +54,7 @@ struct OrgTokenRow {
     kind: String,
     revoked: bool,
     created_at: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
 }
 
 /// What the current user can do on this org.
@@ -401,10 +402,11 @@ async fn list_org_tokens(org_id: String) -> Result<Vec<OrgTokenRow>, ServerFnErr
         kind: String,
         revoked: bool,
         created_at: DateTime<Utc>,
+        expires_at: Option<DateTime<Utc>>,
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, label, kind, revoked, created_at FROM tokens \
+        "SELECT id, label, kind, revoked, created_at, expires_at FROM tokens \
          WHERE organization_id = $1 ORDER BY created_at DESC",
     )
     .bind(oid)
@@ -420,12 +422,17 @@ async fn list_org_tokens(org_id: String) -> Result<Vec<OrgTokenRow>, ServerFnErr
             kind: r.kind,
             revoked: r.revoked,
             created_at: r.created_at,
+            expires_at: r.expires_at,
         })
         .collect())
 }
 
 #[server]
-async fn create_org_token(org_id: String, label: String) -> Result<String, ServerFnError> {
+async fn create_org_token(
+    org_id: String,
+    label: String,
+    expires_in_secs: Option<i64>,
+) -> Result<String, ServerFnError> {
     use rand::Rng;
     use sha2::Digest;
 
@@ -438,13 +445,15 @@ async fn create_org_token(org_id: String, label: String) -> Result<String, Serve
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(sha2::Sha256::digest(raw_token.as_bytes()));
+    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
 
     sqlx::query(
-        "INSERT INTO tokens (organization_id, token_hash, label, kind) VALUES ($1, $2, $3, 'setting')",
+        "INSERT INTO tokens (organization_id, token_hash, label, kind, expires_at) VALUES ($1, $2, $3, 'setting', $4)",
     )
     .bind(oid)
     .bind(hash)
     .bind(label)
+    .bind(expires_at)
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -572,7 +581,6 @@ pub fn OrganizationDetail(id: String) -> Element {
     let mut selected_role = use_signal(|| "read".to_string());
     let mut selected_cluster = use_signal(|| Option::<String>::None);
     let mut confirm_delete = use_signal(|| false);
-    let mut token_label = use_signal(String::new);
     let mut created_token = use_signal(|| Option::<String>::None);
     let mut editing_name = use_signal(|| false);
     let mut draft_name = use_signal(String::new);
@@ -911,83 +919,53 @@ pub fn OrganizationDetail(id: String) -> Element {
                         Card { class: "lg:col-span-2 p-4",
                             SectionHeading { {t!("org-detail-tokens")} }
 
-                            div { class: "flex gap-2 mb-4",
-                                input { class: "input flex-1 w-auto py-1 text-sm",
-                                    r#type: "text",
-                                    placeholder: t!("org-detail-token-label-placeholder"),
-                                    value: "{token_label}",
-                                    oninput: move |e| token_label.set(e.value()),
-                                }
-                                Button { kind: ButtonKind::Button, size: ButtonSize::Sm,
-                                    disabled: token_label.read().trim().is_empty(),
-                                    onclick: {
-                                        let oid = id.clone();
-                                        move |_| {
-                                            let oid = oid.clone();
-                                            let label = token_label.read().clone();
-                                            async move {
-                                                if let Ok(raw) = create_org_token(oid, label).await {
-                                                    created_token.set(Some(raw));
-                                                    token_label.set(String::new());
-                                                    tokens_future.restart();
-                                                }
-                                            }
-                                        }
-                                    },
-                                    {t!("org-detail-create-token")}
-                                }
-                            }
-
                             if let Some(raw) = &*created_token.read() {
                                 TokenReveal { value: raw.clone(), label: t!("org-detail-token-created") }
+                            }
+
+                            TokenCreateForm {
+                                submit_label: t!("org-detail-create-token"),
+                                on_submit: {
+                                    let oid = id.clone();
+                                    move |input: TokenCreateInput| {
+                                        let oid = oid.clone();
+                                        spawn(async move {
+                                            if let Ok(raw) = create_org_token(oid, input.label, input.expires_in_secs).await {
+                                                created_token.set(Some(raw));
+                                                tokens_future.restart();
+                                            }
+                                        });
+                                    }
+                                },
                             }
 
                             if tokens.is_empty() {
                                 HelpText { {t!("org-detail-no-tokens")} }
                             } else {
-                                div { class: "divide-y divide-line-soft",
-                                    for t in &tokens {
-                                        {
-                                            let tid = t.id.clone();
-                                            let oid_for_revoke = id.clone();
-                                            let is_revoked = t.revoked;
-                                            let label = t.label.clone();
-                                            let created = t.created_at.format("%Y-%m-%d %H:%M").to_string();
-                                            rsx! {
-                                                div { class: "flex justify-between items-center py-2",
-                                                    div {
-                                                        span { class: "text-sm font-medium", "{label}" }
-                                                        span { class: "ml-2",
-                                                            if is_revoked {
-                                                                Badge { variant: BadgeVariant::Danger, {t!("revoked")} }
-                                                            } else {
-                                                                Badge { variant: BadgeVariant::Success, {t!("active")} }
-                                                            }
-                                                        }
-                                                        span { class: "text-sm text-fg-muted ml-2", "{created}" }
-                                                    }
-                                                    if !is_revoked {
-                                                        button { class: "link-danger text-sm",
-                                                            onclick: {
-                                                                let tid = tid.clone();
-                                                                let oid = oid_for_revoke.clone();
-                                                                move |_| {
-                                                                    let tid = tid.clone();
-                                                                    let oid = oid.clone();
-                                                                    async move {
-                                                                        let _ = revoke_org_token(oid, tid).await;
-                                                                        created_token.set(None);
-                                                                        tokens_future.restart();
-                                                                    }
-                                                                }
-                                                            },
-                                                            {t!("admin-token-revoke")}
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                TokenTable {
+                                    rows: tokens.iter().map(|t| TokenRow {
+                                        id: t.id.clone(),
+                                        label: t.label.clone(),
+                                        kind: Some(t.kind.clone()),
+                                        scope: None,
+                                        revoked: t.revoked,
+                                        expired: t.expires_at.is_some_and(|e| e < chrono::Utc::now()),
+                                        created: t.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                                        expires: t.expires_at.map(|e| e.format("%Y-%m-%d %H:%M").to_string()),
+                                    }).collect::<Vec<_>>(),
+                                    show_kind: true,
+                                    show_expires: true,
+                                    on_revoke: {
+                                        let oid = id.clone();
+                                        move |tid: String| {
+                                            let oid = oid.clone();
+                                            spawn(async move {
+                                                let _ = revoke_org_token(oid, tid).await;
+                                                created_token.set(None);
+                                                tokens_future.restart();
+                                            });
                                         }
-                                    }
+                                    },
                                 }
                             }
                         }

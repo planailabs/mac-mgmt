@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td,
-    TdMuted, Th, TokenReveal,
+    TdMuted, Th, TokenCreateForm, TokenCreateInput, TokenReveal,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -471,6 +471,7 @@ async fn create_deploy_token(
     webspace_id: Uuid,
     org_id: Uuid,
     label: String,
+    expires_in_secs: Option<i64>,
 ) -> Result<TokenCreateResult, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
@@ -502,14 +503,16 @@ async fn create_deploy_token(
     let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
     let scopes = serde_json::json!({ "webspace_id": webspace_id.to_string() });
+    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
 
     sqlx::query(
-        "INSERT INTO tokens (organization_id, token_hash, label, kind, scopes) VALUES ($1, $2, $3, 'deploy', $4)",
+        "INSERT INTO tokens (organization_id, token_hash, label, kind, scopes, expires_at) VALUES ($1, $2, $3, 'deploy', $4, $5)",
     )
     .bind(org_id)
     .bind(&hash)
     .bind(&label)
     .bind(&scopes)
+    .bind(expires_at)
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -1273,7 +1276,6 @@ fn DeploymentsSection(webspace_id: Uuid) -> Element {
 /// Inline deploy-token creation (org admin only).
 #[component]
 fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
-    let mut label = use_signal(String::new);
     let mut creating = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let mut result = use_signal(|| None::<TokenCreateResult>);
@@ -1286,38 +1288,22 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
 
     rsx! {
         Card { div { class: "p-4",
-            div { class: "flex items-end gap-3",
-                FormField { label: "Label",
-                    input {
-                        class: "input w-64",
-                        r#type: "text",
-                        placeholder: "e.g. CI deploy",
-                        required: true,
-                        value: "{label}",
-                        oninput: move |evt| label.set(evt.value()),
-                    }
-                }
-                Button {
-                    variant: ButtonVariant::Primary,
-                    disabled: label.read().is_empty() || *creating.read(),
-                    onclick: {
-                        let wid = webspace_id;
-                        let oid = organization_id;
-                        move |_| {
-                            let l = label.read().clone();
-                            creating.set(true);
-                            error.set(None);
-                            spawn(async move {
-                                match create_deploy_token(wid, oid, l).await {
-                                    Ok(r) => result.set(Some(r)),
-                                    Err(e) => error.set(Some(format!("{e}"))),
-                                }
-                                creating.set(false);
-                            });
+            TokenCreateForm {
+                submit_label: "Create Deploy Token".to_string(),
+                submitting: *creating.read(),
+                on_submit: move |input: TokenCreateInput| {
+                    let wid = webspace_id;
+                    let oid = organization_id;
+                    creating.set(true);
+                    error.set(None);
+                    spawn(async move {
+                        match create_deploy_token(wid, oid, input.label, input.expires_in_secs).await {
+                            Ok(r) => result.set(Some(r)),
+                            Err(e) => error.set(Some(format!("{e}"))),
                         }
-                    },
-                    if *creating.read() { "Creating..." } else { "Create Deploy Token" }
-                }
+                        creating.set(false);
+                    });
+                },
             }
             if let Some(err) = &*error.read() {
                 div { class: "mt-2 text-danger text-sm", "{err}" }

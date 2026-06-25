@@ -2,6 +2,7 @@ pub mod admin_client_cas_page;
 pub mod admin_client_certs_page;
 pub mod admin_token_list;
 pub mod admin_tokens_page;
+pub mod all_tokens_list;
 pub mod bundle_detail;
 pub mod bundle_form;
 pub mod bundle_list;

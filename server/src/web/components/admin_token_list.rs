@@ -3,7 +3,7 @@ use dioxus_i18n::t;
 
 use crate::models::Token;
 use crate::web::components::ui::{
-    Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal, TokenRow, TokenTable,
+    ErrorText, HelpText, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -23,7 +23,10 @@ async fn list_admin_tokens() -> Result<Vec<Token>, ServerFnError> {
 }
 
 #[server]
-async fn create_admin_token(label: String) -> Result<String, ServerFnError> {
+async fn create_admin_token(
+    label: String,
+    expires_in_secs: Option<i64>,
+) -> Result<String, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     use rand::Rng;
@@ -38,12 +41,15 @@ async fn create_admin_token(label: String) -> Result<String, ServerFnError> {
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let expires_at =
+        expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
 
     sqlx::query(
-        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES (NULL, $1, $2, 'admin')",
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) VALUES (NULL, $1, $2, 'admin', $3)",
     )
     .bind(&hash)
     .bind(&label)
+    .bind(expires_at)
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -70,42 +76,26 @@ async fn revoke_admin_token(token_id: String) -> Result<(), ServerFnError> {
 #[component]
 pub fn AdminTokenList() -> Element {
     let mut tokens = use_server_future(move || async move { list_admin_tokens().await })?;
-
-    let mut label = use_signal(String::new);
     let mut new_token = use_signal(|| None::<String>);
-
-    let on_create = move |evt: FormEvent| {
-        evt.prevent_default();
-        let label_val = label.read().clone();
-        spawn(async move {
-            match create_admin_token(label_val).await {
-                Ok(raw) => {
-                    new_token.set(Some(raw));
-                    label.set(String::new());
-                    tokens.restart();
-                }
-                Err(e) => tracing::error!("failed to create admin token: {e}"),
-            }
-        });
-    };
 
     rsx! {
         if let Some(raw) = &*new_token.read() {
             TokenReveal { value: raw.clone(), label: t!("admin-token-new") }
         }
 
-        form { onsubmit: on_create, class: "flex gap-2 mb-4",
-            input {
-                class: "input flex-1 w-auto py-1 text-sm",
-                r#type: "text",
-                required: true,
-                placeholder: t!("admin-token-label-placeholder"),
-                value: "{label}",
-                oninput: move |evt| label.set(evt.value()),
-            }
-            Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
-                {t!("admin-token-create")}
-            }
+        TokenCreateForm {
+            submit_label: t!("admin-token-create"),
+            on_submit: move |input: TokenCreateInput| {
+                spawn(async move {
+                    match create_admin_token(input.label, input.expires_in_secs).await {
+                        Ok(raw) => {
+                            new_token.set(Some(raw));
+                            tokens.restart();
+                        }
+                        Err(e) => tracing::error!("failed to create admin token: {e}"),
+                    }
+                });
+            },
         }
 
         {match &*tokens.read() {
@@ -114,6 +104,7 @@ pub fn AdminTokenList() -> Element {
                     id: t.id.to_string(),
                     label: if t.label.is_empty() { t!("no-label") } else { t.label.clone() },
                     kind: None,
+                    scope: None,
                     revoked: t.revoked,
                     expired: false,
                     created: t.created_at.format("%Y-%m-%d").to_string(),
