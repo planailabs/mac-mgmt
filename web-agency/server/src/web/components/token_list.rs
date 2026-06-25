@@ -15,6 +15,8 @@ struct TokenInfo {
     revoked: bool,
     created_at: String,
     expires_at: Option<String>,
+    /// Resolved scope: the webspace a deploy token is bound to, else the org.
+    scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,8 +46,13 @@ async fn list_tokens() -> Result<Vec<TokenInfo>, ServerFnError> {
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, String, bool, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
-        "SELECT id, label, kind, revoked, created_at, expires_at FROM tokens ORDER BY created_at DESC LIMIT 100",
+    let rows = sqlx::query_as::<_, (Uuid, String, String, bool, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<String>, Option<String>)>(
+        "SELECT t.id, t.label, t.kind, t.revoked, t.created_at, t.expires_at, \
+                w.name AS ws_name, o.name AS org_name \
+         FROM tokens t \
+         LEFT JOIN webspaces w ON w.id = (t.scopes->>'webspace_id')::uuid \
+         LEFT JOIN organizations o ON o.id = t.organization_id \
+         ORDER BY t.created_at DESC LIMIT 100",
     )
     .fetch_all(&pool)
     .await
@@ -54,13 +61,16 @@ async fn list_tokens() -> Result<Vec<TokenInfo>, ServerFnError> {
     Ok(rows
         .into_iter()
         .map(
-            |(id, label, kind, revoked, created_at, expires_at)| TokenInfo {
+            |(id, label, kind, revoked, created_at, expires_at, ws_name, org_name)| TokenInfo {
                 id,
                 label,
                 kind,
                 revoked,
                 created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
                 expires_at: expires_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+                scope: ws_name
+                    .map(|n| format!("webspace: {n}"))
+                    .or_else(|| org_name.map(|n| format!("org: {n}"))),
             },
         )
         .collect())
@@ -257,13 +267,14 @@ pub fn TokenList() -> Element {
                 id: t.id.to_string(),
                 label: t.label.clone(),
                 kind: Some(t.kind.clone()),
-                scope: None,
+                scope: t.scope.clone(),
                 revoked: t.revoked,
                 expired: false,
                 created: t.created_at.clone(),
                 expires: t.expires_at.clone(),
             }).collect::<Vec<_>>(),
             show_kind: true,
+            show_scope: true,
             show_expires: true,
             on_revoke: move |id: String| {
                 spawn(async move {
