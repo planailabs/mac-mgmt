@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td,
-    TdMuted, Th,
+    TdMuted, Th, TokenReveal,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -1280,10 +1280,7 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
 
     if let Some(res) = &*result.read() {
         return rsx! {
-            Card { div { class: "p-6",
-                div { class: "text-sm text-fg-muted mb-2", "Copy this token now — it won't be shown again." }
-                div { class: "font-mono text-sm bg-surface-2 p-3 rounded break-all select-all", "{res.token}" }
-            }}
+            TokenReveal { value: res.token.clone(), label: "Deploy token".to_string() }
         };
     }
 

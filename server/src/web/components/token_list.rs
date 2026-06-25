@@ -4,7 +4,7 @@ use dioxus_i18n::t;
 use crate::models::Token;
 use crate::web::components::setting_token_list::ExpiringTokenRow;
 use crate::web::components::ui::{
-    Alert, AlertVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText,
+    Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -140,10 +140,7 @@ pub fn SyncTokenList(cluster_id: String, read_only: bool) -> Element {
     rsx! {
         if !read_only {
             if let Some(raw) = &*new_token.read() {
-                Alert { variant: AlertVariant::Success, class: "mb-4",
-                    p { class: "text-sm font-medium", {t!("sync-token-new")} }
-                    code { class: "block mt-1 text-xs break-all bg-success-soft p-2 rounded", "{raw}" }
-                }
+                TokenReveal { value: raw.clone(), label: t!("sync-token-new") }
             }
 
             form { onsubmit: on_create, class: "flex gap-2 mb-4",

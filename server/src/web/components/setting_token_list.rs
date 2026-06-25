@@ -3,7 +3,7 @@ use dioxus_i18n::t;
 
 use crate::models::Token;
 use crate::web::components::ui::{
-    Alert, AlertVariant, Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText,
+    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -141,10 +141,7 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
     rsx! {
         if !read_only {
             if let Some(raw) = &*new_token.read() {
-                Alert { variant: AlertVariant::Success, class: "mb-4",
-                    p { class: "text-sm font-medium", {t!("setting-token-new")} }
-                    code { class: "block mt-1 text-xs break-all bg-success-soft p-2 rounded", "{raw}" }
-                }
+                TokenReveal { value: raw.clone(), label: t!("setting-token-new") }
             }
 
             form { onsubmit: on_create, class: "flex gap-2 mb-4",

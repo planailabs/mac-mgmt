@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ui::{
-    Badge, BadgeVariant, Button, ButtonKind, ButtonVariant, Card, FormField, PageHeader, Td,
-    TdMuted, Th,
+    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, Card, FormField,
+    PageHeader, Td, TdMuted, Th, TokenReveal,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,24 +158,21 @@ pub fn TokenList() -> Element {
 
         // Newly created secret — shown once, dismissable.
         if let Some(nt) = &*created.read() {
-            Card { div { class: "p-6 mb-4 border border-success",
-                div { class: "font-semibold mb-1", "Token created" }
-                div { class: "text-sm text-fg-muted mb-2", "Copy this token now — it won't be shown again." }
-                div { class: "font-mono text-sm bg-surface-2 p-3 rounded break-all select-all", "{nt.token}" }
+            TokenReveal { value: nt.token.clone(), label: "Token created".to_string(),
                 if nt.kind == "deploy" {
-                    div { class: "mt-4 text-sm text-fg-muted", "Use this token to deploy:" }
-                    div { class: "font-mono text-sm bg-surface-2 p-3 rounded mt-2 select-all",
+                    div { class: "mt-2 text-sm text-fg-muted", "Use this token to deploy:" }
+                    div { class: "font-mono text-xs bg-surface-2 p-2 rounded mt-1 select-all break-all",
                         "curl -X POST -H 'Authorization: Bearer {nt.token}' \\\n  --data-binary @site.tar.gz \\\n  https://your-server/api/v1/deploy/WEBSPACE_ID" }
                 }
                 if nt.kind == "metrics" {
-                    div { class: "mt-4 text-sm text-fg-muted", "Use this token to scrape Prometheus metrics:" }
-                    div { class: "font-mono text-sm bg-surface-2 p-3 rounded mt-2 select-all",
+                    div { class: "mt-2 text-sm text-fg-muted", "Use this token to scrape Prometheus metrics:" }
+                    div { class: "font-mono text-xs bg-surface-2 p-2 rounded mt-1 select-all break-all",
                         "curl -H 'Authorization: Bearer {nt.token}' \\\n  https://your-server/api/metrics" }
                 }
-                div { class: "mt-4",
-                    Button { variant: ButtonVariant::Secondary, onclick: move |_| created.set(None), "Dismiss" }
+                div { class: "mt-3",
+                    Button { variant: ButtonVariant::Secondary, size: ButtonSize::Sm, onclick: move |_| created.set(None), "Dismiss" }
                 }
-            }}
+            }
         }
 
         // Create form.

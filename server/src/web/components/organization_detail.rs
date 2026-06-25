@@ -8,8 +8,8 @@ use crate::web::components::organization_client_cas::OrganizationClientCas;
 use crate::web::components::organization_client_certs::OrganizationClientCerts;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    Alert, AlertVariant, Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, Card,
-    ErrorText, HelpText, SectionHeading,
+    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
+    SectionHeading, TokenReveal,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -939,10 +939,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                             }
 
                             if let Some(raw) = &*created_token.read() {
-                                Alert { variant: AlertVariant::Success, class: "mb-4",
-                                    p { class: "font-semibold mb-1 text-sm", {t!("org-detail-token-created")} }
-                                    code { class: "block break-all text-xs", "{raw}" }
-                                }
+                                TokenReveal { value: raw.clone(), label: t!("org-detail-token-created") }
                             }
 
                             if tokens.is_empty() {
