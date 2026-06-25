@@ -17,6 +17,8 @@ struct TokenInfo {
     expires_at: Option<String>,
     /// Resolved scope: the webspace a deploy token is bound to, else the org.
     scope: Option<String>,
+    /// Link to the scoped resource's page.
+    scope_href: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,9 +48,9 @@ async fn list_tokens() -> Result<Vec<TokenInfo>, ServerFnError> {
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, String, bool, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<String>, Option<String>)>(
+    let rows = sqlx::query_as::<_, (Uuid, String, String, bool, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<Uuid>, Option<String>, Option<Uuid>, Option<String>)>(
         "SELECT t.id, t.label, t.kind, t.revoked, t.created_at, t.expires_at, \
-                w.name AS ws_name, o.name AS org_name \
+                w.id AS ws_id, w.name AS ws_name, t.organization_id AS org_id, o.name AS org_name \
          FROM tokens t \
          LEFT JOIN webspaces w ON w.id = (t.scopes->>'webspace_id')::uuid \
          LEFT JOIN organizations o ON o.id = t.organization_id \
@@ -61,7 +63,7 @@ async fn list_tokens() -> Result<Vec<TokenInfo>, ServerFnError> {
     Ok(rows
         .into_iter()
         .map(
-            |(id, label, kind, revoked, created_at, expires_at, ws_name, org_name)| TokenInfo {
+            |(id, label, kind, revoked, created_at, expires_at, ws_id, ws_name, org_id, org_name)| TokenInfo {
                 id,
                 label,
                 kind,
@@ -71,6 +73,9 @@ async fn list_tokens() -> Result<Vec<TokenInfo>, ServerFnError> {
                 scope: ws_name
                     .map(|n| format!("webspace: {n}"))
                     .or_else(|| org_name.map(|n| format!("org: {n}"))),
+                scope_href: ws_id
+                    .map(|id| format!("/webspaces/{id}"))
+                    .or_else(|| org_id.map(|id| format!("/organizations/{id}"))),
             },
         )
         .collect())
@@ -268,6 +273,7 @@ pub fn TokenList() -> Element {
                 label: t.label.clone(),
                 kind: Some(t.kind.clone()),
                 scope: t.scope.clone(),
+                scope_href: t.scope_href.clone(),
                 revoked: t.revoked,
                 expired: false,
                 created: t.created_at.clone(),

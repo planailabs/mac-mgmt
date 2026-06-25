@@ -105,6 +105,7 @@ pub fn AdminTokenList() -> Element {
                     label: if t.label.is_empty() { t!("no-label") } else { t.label.clone() },
                     kind: None,
                     scope: None,
+                    scope_href: None,
                     revoked: t.revoked,
                     expired: false,
                     created: t.created_at.format("%Y-%m-%d").to_string(),

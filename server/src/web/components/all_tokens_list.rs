@@ -13,6 +13,7 @@ struct AllTokenRow {
     label: String,
     kind: String,
     scope: Option<String>,
+    scope_href: Option<String>,
     revoked: bool,
     created: String,
     expires: Option<String>,
@@ -33,13 +34,15 @@ async fn list_all_tokens() -> Result<Vec<AllTokenRow>, ServerFnError> {
         revoked: bool,
         created_at: chrono::DateTime<chrono::Utc>,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        organization_id: Option<uuid::Uuid>,
         org_name: Option<String>,
+        cluster_id: Option<uuid::Uuid>,
         cluster_name: Option<String>,
     }
 
     let rows = sqlx::query_as::<_, Row>(
         "SELECT t.id, t.label, t.kind, t.revoked, t.created_at, t.expires_at, \
-                o.name AS org_name, c.name AS cluster_name \
+                t.organization_id, o.name AS org_name, t.cluster_id, c.name AS cluster_name \
          FROM tokens t \
          LEFT JOIN organizations o ON o.id = t.organization_id \
          LEFT JOIN clusters c ON c.id = t.cluster_id \
@@ -63,6 +66,14 @@ async fn list_all_tokens() -> Result<Vec<AllTokenRow>, ServerFnError> {
                     .map(|n| format!("org: {n}"))
                     .or_else(|| r.cluster_name.map(|n| format!("cluster: {n}"))),
             };
+            // Link admin/federation scopes nowhere; org/cluster link to their page.
+            let scope_href = match r.kind.as_str() {
+                "admin" | "federation" => None,
+                _ => r
+                    .organization_id
+                    .map(|id| format!("/organizations/{id}"))
+                    .or_else(|| r.cluster_id.map(|id| format!("/clusters/{id}"))),
+            };
             AllTokenRow {
                 id: r.id.to_string(),
                 label: if r.label.is_empty() {
@@ -72,6 +83,7 @@ async fn list_all_tokens() -> Result<Vec<AllTokenRow>, ServerFnError> {
                 },
                 kind: r.kind,
                 scope,
+                scope_href,
                 revoked: r.revoked,
                 created: r.created_at.format("%Y-%m-%d %H:%M").to_string(),
                 expires: r.expires_at.map(|e| e.format("%Y-%m-%d %H:%M").to_string()),
@@ -111,6 +123,7 @@ pub fn AllTokensList() -> Element {
                     label: t.label.clone(),
                     kind: Some(t.kind.clone()),
                     scope: t.scope.clone(),
+                    scope_href: t.scope_href.clone(),
                     revoked: t.revoked,
                     expired: t.expired,
                     created: t.created.clone(),

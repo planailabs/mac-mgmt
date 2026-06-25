@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td,
-    TdMuted, Th, TokenCreateForm, TokenCreateInput, TokenReveal,
+    TdMuted, Th, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -518,6 +518,70 @@ async fn create_deploy_token(
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(TokenCreateResult { token })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WebspaceTokenInfo {
+    id: Uuid,
+    label: String,
+    revoked: bool,
+    created_at: String,
+    expires_at: Option<String>,
+    expired: bool,
+}
+
+/// Deploy tokens scoped to this webspace (org admin only).
+#[server]
+async fn list_webspace_tokens(
+    webspace_id: Uuid,
+    org_id: Uuid,
+) -> Result<Vec<WebspaceTokenInfo>, ServerFnError> {
+    use crate::web::user::WebUserExt;
+    let user = crate::web::user::current_user().await?;
+    user.require_org_admin(&org_id)?;
+    let pool = crate::server_pool()?;
+
+    let rows = sqlx::query_as::<_, (Uuid, String, bool, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+        "SELECT id, label, revoked, created_at, expires_at FROM tokens \
+         WHERE kind = 'deploy' AND organization_id = $1 \
+           AND (scopes->>'webspace_id')::uuid = $2 \
+         ORDER BY created_at DESC",
+    )
+    .bind(org_id)
+    .bind(webspace_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let now = chrono::Utc::now();
+    Ok(rows
+        .into_iter()
+        .map(|(id, label, revoked, created_at, expires_at)| WebspaceTokenInfo {
+            id,
+            label,
+            revoked,
+            created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
+            expires_at: expires_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+            expired: expires_at.is_some_and(|e| e < now),
+        })
+        .collect())
+}
+
+#[server]
+async fn revoke_webspace_token(token_id: Uuid, org_id: Uuid) -> Result<(), ServerFnError> {
+    use crate::web::user::WebUserExt;
+    let user = crate::web::user::current_user().await?;
+    user.require_org_admin(&org_id)?;
+    let pool = crate::server_pool()?;
+    // Scope the update to the org so an admin can't revoke another org's token
+    // by guessing an id.
+    sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1 AND organization_id = $2")
+        .bind(token_id)
+        .bind(org_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -1276,18 +1340,23 @@ fn DeploymentsSection(webspace_id: Uuid) -> Element {
 /// Inline deploy-token creation (org admin only).
 #[component]
 fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
+    let mut tokens = use_server_future(move || async move {
+        list_webspace_tokens(webspace_id, organization_id).await
+    })?;
     let mut creating = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
-    let mut result = use_signal(|| None::<TokenCreateResult>);
+    let mut created = use_signal(|| None::<String>);
 
-    if let Some(res) = &*result.read() {
-        return rsx! {
-            TokenReveal { value: res.token.clone(), label: "Deploy token".to_string() }
-        };
-    }
+    let rows = match &*tokens.read() {
+        Some(Ok(r)) => r.clone(),
+        _ => vec![],
+    };
 
     rsx! {
-        Card { div { class: "p-4",
+        Card { div { class: "p-4 space-y-3",
+            if let Some(tok) = &*created.read() {
+                TokenReveal { value: tok.clone(), label: "Deploy token".to_string() }
+            }
             TokenCreateForm {
                 submit_label: "Create Deploy Token".to_string(),
                 submitting: *creating.read(),
@@ -1298,7 +1367,7 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
                     error.set(None);
                     spawn(async move {
                         match create_deploy_token(wid, oid, input.label, input.expires_in_secs).await {
-                            Ok(r) => result.set(Some(r)),
+                            Ok(r) => { created.set(Some(r.token)); tokens.restart(); }
                             Err(e) => error.set(Some(format!("{e}"))),
                         }
                         creating.set(false);
@@ -1306,7 +1375,33 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
                 },
             }
             if let Some(err) = &*error.read() {
-                div { class: "mt-2 text-danger text-sm", "{err}" }
+                div { class: "text-danger text-sm", "{err}" }
+            }
+            if !rows.is_empty() {
+                TokenTable {
+                    rows: rows.iter().map(|t| TokenRow {
+                        id: t.id.to_string(),
+                        label: t.label.clone(),
+                        kind: None,
+                        scope: None,
+                        scope_href: None,
+                        revoked: t.revoked,
+                        expired: t.expired,
+                        created: t.created_at.clone(),
+                        expires: t.expires_at.clone(),
+                    }).collect::<Vec<_>>(),
+                    show_expires: true,
+                    on_revoke: move |id: String| {
+                        let oid = organization_id;
+                        spawn(async move {
+                            if let Ok(tid) = id.parse::<Uuid>() {
+                                if revoke_webspace_token(tid, oid).await.is_ok() {
+                                    tokens.restart();
+                                }
+                            }
+                        });
+                    },
+                }
             }
         }}
     }

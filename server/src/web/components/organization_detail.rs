@@ -948,6 +948,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                         label: t.label.clone(),
                                         kind: Some(t.kind.clone()),
                                         scope: None,
+                                        scope_href: None,
                                         revoked: t.revoked,
                                         expired: t.expires_at.is_some_and(|e| e < chrono::Utc::now()),
                                         created: t.created_at.format("%Y-%m-%d %H:%M").to_string(),

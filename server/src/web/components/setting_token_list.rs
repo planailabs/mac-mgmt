@@ -189,6 +189,7 @@ pub fn token_to_expiring_row(token: &Token) -> TokenRow {
         },
         kind: None,
         scope: None,
+        scope_href: None,
         revoked: token.revoked,
         expired: token.expires_at.is_some_and(|e| e < chrono::Utc::now()),
         created: token.created_at.format("%Y-%m-%d %H:%M").to_string(),
