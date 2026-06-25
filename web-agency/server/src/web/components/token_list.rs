@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ui::{
-    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, Card, FormField,
-    PageHeader, Td, TdMuted, Th, TokenReveal,
+    Button, ButtonKind, ButtonSize, ButtonVariant, FormField, PageHeader, TokenReveal, TokenRow,
+    TokenTable,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct TokenRow {
+struct TokenInfo {
     id: Uuid,
     label: String,
     kind: String,
@@ -38,7 +38,7 @@ struct NewToken {
 }
 
 #[server]
-async fn list_tokens() -> Result<Vec<TokenRow>, ServerFnError> {
+async fn list_tokens() -> Result<Vec<TokenInfo>, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     use crate::web::user::WebUserExt;
     user.require_admin()?;
@@ -54,7 +54,7 @@ async fn list_tokens() -> Result<Vec<TokenRow>, ServerFnError> {
     Ok(rows
         .into_iter()
         .map(
-            |(id, label, kind, revoked, created_at, expires_at)| TokenRow {
+            |(id, label, kind, revoked, created_at, expires_at)| TokenInfo {
                 id,
                 label,
                 kind,
@@ -125,6 +125,23 @@ async fn create_token(
     .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(token)
+}
+
+#[server]
+async fn revoke_token(id: String) -> Result<(), ServerFnError> {
+    use crate::web::user::WebUserExt;
+    let user = crate::web::user::current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let uuid: Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1")
+        .bind(uuid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
 }
 
 /// Unified token view: create a token and see the existing tokens on one page.
@@ -258,32 +275,25 @@ pub fn TokenList() -> Element {
         }
 
         // Existing tokens.
-        Card {
-            div { class: "overflow-x-auto",
-                table { class: "table w-full",
-                    thead { tr { Th { "Label" } Th { "Kind" } Th { "Status" } Th { "Created" } Th { "Expires" } } }
-                    tbody {
-                        if rows.is_empty() {
-                            tr { td { class: "td text-fg-muted text-center", colspan: "5", "No tokens" } }
-                        }
-                        for row in &rows {
-                            tr {
-                                Td { "{row.label}" }
-                                Td { Badge { variant: BadgeVariant::Info, "{row.kind}" } }
-                                Td {
-                                    if row.revoked {
-                                        Badge { variant: BadgeVariant::Danger, "Revoked" }
-                                    } else {
-                                        Badge { variant: BadgeVariant::Success, "Active" }
-                                    }
-                                }
-                                TdMuted { "{row.created_at}" }
-                                TdMuted { {row.expires_at.as_deref().unwrap_or("Never")} }
-                            }
-                        }
+        TokenTable {
+            rows: rows.iter().map(|t| TokenRow {
+                id: t.id.to_string(),
+                label: t.label.clone(),
+                kind: Some(t.kind.clone()),
+                revoked: t.revoked,
+                expired: false,
+                created: t.created_at.clone(),
+                expires: t.expires_at.clone(),
+            }).collect::<Vec<_>>(),
+            show_kind: true,
+            show_expires: true,
+            on_revoke: move |id: String| {
+                spawn(async move {
+                    if revoke_token(id).await.is_ok() {
+                        tokens.restart();
                     }
-                }
-            }
+                });
+            },
         }
     }
 }

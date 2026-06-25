@@ -2,9 +2,9 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::models::Token;
-use crate::web::components::setting_token_list::ExpiringTokenRow;
+use crate::web::components::setting_token_list::token_to_expiring_row;
 use crate::web::components::ui::{
-    Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal,
+    Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal, TokenTable,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -159,29 +159,26 @@ pub fn SyncTokenList(cluster_id: String, read_only: bool) -> Element {
         }
 
         {match &*tokens.read() {
-            Some(Ok(list)) => rsx! {
-                ul { class: "divide-y divide-line-soft",
-                    for token in list {
-                        ExpiringTokenRow {
-                            key: "{token.id}",
-                            token: token.clone(),
-                            read_only,
-                            expires_kind: "sync",
-                            on_revoke: {
-                                let tid = token.id.to_string();
-                                move |_| {
-                                    let tid = tid.clone();
-                                    spawn(async move {
-                                        if revoke_token(tid).await.is_ok() {
-                                            tokens.restart();
-                                        }
-                                    });
-                                }
+            Some(Ok(list)) => {
+                let rows = list.iter().map(token_to_expiring_row).collect::<Vec<_>>();
+                if read_only {
+                    rsx! { TokenTable { rows, show_expires: true } }
+                } else {
+                    rsx! {
+                        TokenTable {
+                            rows,
+                            show_expires: true,
+                            on_revoke: move |id: String| {
+                                spawn(async move {
+                                    if revoke_token(id).await.is_ok() {
+                                        tokens.restart();
+                                    }
+                                });
                             },
                         }
                     }
                 }
-            },
+            }
             Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
             None => rsx! { HelpText { {t!("loading")} } },
         }}

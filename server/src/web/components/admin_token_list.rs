@@ -3,7 +3,7 @@ use dioxus_i18n::t;
 
 use crate::models::Token;
 use crate::web::components::ui::{
-    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal,
+    Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal, TokenRow, TokenTable,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -109,59 +109,31 @@ pub fn AdminTokenList() -> Element {
         }
 
         {match &*tokens.read() {
-            Some(Ok(list)) => rsx! {
-                ul { class: "divide-y divide-line-soft",
-                    for token in list {
-                        TokenRow {
-                            key: "{token.id}",
-                            token: token.clone(),
-                            on_revoke: {
-                                let tid = token.id.to_string();
-                                move |_| {
-                                    let tid = tid.clone();
-                                    spawn(async move {
-                                        if revoke_admin_token(tid).await.is_ok() {
-                                            tokens.restart();
-                                        }
-                                    });
+            Some(Ok(list)) => {
+                let rows = list.iter().map(|t| TokenRow {
+                    id: t.id.to_string(),
+                    label: if t.label.is_empty() { t!("no-label") } else { t.label.clone() },
+                    kind: None,
+                    revoked: t.revoked,
+                    expired: false,
+                    created: t.created_at.format("%Y-%m-%d").to_string(),
+                    expires: None,
+                }).collect::<Vec<_>>();
+                rsx! {
+                    TokenTable {
+                        rows,
+                        on_revoke: move |id: String| {
+                            spawn(async move {
+                                if revoke_admin_token(id).await.is_ok() {
+                                    tokens.restart();
                                 }
-                            },
-                        }
+                            });
+                        },
                     }
                 }
-            },
+            }
             Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
             None => rsx! { HelpText { {t!("loading")} } },
         }}
-    }
-}
-
-#[component]
-fn TokenRow(token: Token, on_revoke: EventHandler<()>) -> Element {
-    let display_label = if token.label.is_empty() {
-        t!("no-label")
-    } else {
-        token.label.clone()
-    };
-    let created = token.created_at.format("%Y-%m-%d").to_string();
-    let revoked = token.revoked;
-    rsx! {
-        li { class: "py-2 flex justify-between items-center",
-            div {
-                span { class: "text-sm font-medium", "{display_label}" }
-                span { class: "text-xs text-fg-muted ml-2", "{created}" }
-                if revoked {
-                    span { class: "ml-2",
-                        Badge { variant: BadgeVariant::Danger, {t!("revoked")} }
-                    }
-                }
-            }
-            if !revoked {
-                button { class: "link-danger text-sm",
-                    onclick: move |_| on_revoke.call(()),
-                    {t!("admin-token-revoke")}
-                }
-            }
-        }
     }
 }

@@ -3,7 +3,7 @@ use dioxus_i18n::t;
 
 use crate::models::Token;
 use crate::web::components::ui::{
-    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal,
+    Button, ButtonKind, ButtonSize, ErrorText, HelpText, TokenReveal, TokenRow, TokenTable,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -160,95 +160,49 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
         }
 
         {match &*tokens.read() {
-            Some(Ok(list)) => rsx! {
-                ul { class: "divide-y divide-line-soft",
-                    for token in list {
-                        ExpiringTokenRow {
-                            key: "{token.id}",
-                            token: token.clone(),
-                            read_only,
-                            expires_kind: "setting",
-                            on_revoke: {
-                                let tid = token.id.to_string();
-                                move |_| {
-                                    let tid = tid.clone();
-                                    spawn(async move {
-                                        if revoke_setting_token(tid).await.is_ok() {
-                                            tokens.restart();
-                                        }
-                                    });
-                                }
+            Some(Ok(list)) => {
+                let rows = list.iter().map(token_to_expiring_row).collect::<Vec<_>>();
+                if read_only {
+                    rsx! { TokenTable { rows, show_expires: true } }
+                } else {
+                    rsx! {
+                        TokenTable {
+                            rows,
+                            show_expires: true,
+                            on_revoke: move |id: String| {
+                                spawn(async move {
+                                    if revoke_setting_token(id).await.is_ok() {
+                                        tokens.restart();
+                                    }
+                                });
                             },
                         }
                     }
                 }
-            },
+            }
             Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
             None => rsx! { HelpText { {t!("loading")} } },
         }}
     }
 }
 
-/// Shared between setting + sync token lists. `expires_kind` selects the
-/// `t!` keys for the two slightly different label sets — passing the
-/// scoped identifier keeps i18n strings exact-match-grep-able.
-#[component]
-pub fn ExpiringTokenRow(
-    token: Token,
-    read_only: bool,
-    expires_kind: &'static str,
-    on_revoke: EventHandler<()>,
-) -> Element {
-    let display_label = if token.label.is_empty() {
-        t!("no-label")
-    } else {
-        token.label.clone()
-    };
-    let created = token.created_at.format("%Y-%m-%d %H:%M").to_string();
-    let revoked = token.revoked;
-    let expired = token.expires_at.is_some_and(|e| e < chrono::Utc::now());
-    let expires_label = token.expires_at.map(|e| {
-        let date = e.format("%Y-%m-%d %H:%M").to_string();
-        match (expires_kind, expired) {
-            ("setting", true) => t!("setting-token-expired", date: date),
-            ("setting", false) => t!("setting-token-expires", date: date),
-            ("sync", true) => t!("sync-token-expired", date: date),
-            ("sync", false) => t!("sync-token-expires", date: date),
-            _ => date,
-        }
-    });
-    let revoke_label = if expires_kind == "setting" {
-        t!("setting-token-revoke")
-    } else {
-        t!("sync-token-revoke")
-    };
-
-    rsx! {
-        li { class: "py-2 flex justify-between items-center",
-            div {
-                span { class: "text-sm font-medium", "{display_label}" }
-                span { class: "text-xs text-fg-muted ml-2", "{created}" }
-                if let Some(exp) = &expires_label {
-                    if expired {
-                        span { class: "ml-2",
-                            Badge { variant: BadgeVariant::Danger, "{exp}" }
-                        }
-                    } else {
-                        span { class: "text-xs text-fg-muted ml-2", "{exp}" }
-                    }
-                }
-                if revoked {
-                    span { class: "ml-2",
-                        Badge { variant: BadgeVariant::Danger, {t!("revoked")} }
-                    }
-                }
-            }
-            if !revoked && !expired && !read_only {
-                button { class: "link-danger text-sm",
-                    onclick: move |_| on_revoke.call(()),
-                    {revoke_label}
-                }
-            }
-        }
+/// Map an expiring (setting/sync) token into a shared [`TokenRow`]. Computes
+/// the expired flag; the table renders the Expired status and suppresses
+/// revoke. Shared by the setting and sync token lists.
+pub fn token_to_expiring_row(token: &Token) -> TokenRow {
+    TokenRow {
+        id: token.id.to_string(),
+        label: if token.label.is_empty() {
+            t!("no-label")
+        } else {
+            token.label.clone()
+        },
+        kind: None,
+        revoked: token.revoked,
+        expired: token.expires_at.is_some_and(|e| e < chrono::Utc::now()),
+        created: token.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        expires: token
+            .expires_at
+            .map(|e| e.format("%Y-%m-%d %H:%M").to_string()),
     }
 }
