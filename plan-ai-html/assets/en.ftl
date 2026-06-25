@@ -5,6 +5,8 @@ username = Username
 password = Password
 keep-signed-in = Keep me signed in
 invalid-credentials = Invalid username or password
+too-many-attempts = Too many failed attempts. Try again in { $secs } seconds.
+locked-retry = This page will refresh automatically when you can try again.
 
 signed-out-title = Signed out
 signed-out-body = You've been signed out of this area.

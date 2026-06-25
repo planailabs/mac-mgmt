@@ -719,10 +719,17 @@ impl ProxyHttp for WebAgencyProxy {
 
     async fn upstream_request_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_request: &mut pingora::http::RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
+        // Stamp the real client IP. We're the edge, so overwrite (don't append)
+        // any client-supplied X-Forwarded-For to stop spoofing — the agency
+        // server trusts this header to key brute-force protection per subnet.
+        if let Some(addr) = session.client_addr().and_then(|a| a.as_inet()) {
+            let _ = upstream_request.insert_header("x-forwarded-for", addr.ip().to_string());
+        }
+
         // Strip the folder mount prefix so a folder mounted at /api sees "/".
         if !ctx.mount_prefix.is_empty() && ctx.mount_prefix != "/" {
             let stripped = strip_mount_prefix(upstream_request.uri.path(), &ctx.mount_prefix);

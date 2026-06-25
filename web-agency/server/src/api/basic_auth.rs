@@ -25,6 +25,9 @@ use dioxus::fullstack::axum::{
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::net::IpAddr;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::config;
@@ -55,6 +58,107 @@ fn enc(s: &str) -> String {
 }
 
 use plan_ai_html::escape as esc;
+
+// ── brute-force protection ───────────────────────────────────────────────
+//
+// Failed logins are tracked per client subnet: a /32 for IPv4 (the exact host)
+// and a /48 for IPv6 (the typical end-site allocation, so one customer can't
+// dodge the limit by hopping addresses inside their prefix). The first two
+// fails are free; the 3rd locks the subnet for 30s, and each further fail
+// doubles the wait (30s, 60s, 120s, …). A success clears the counter.
+//
+// State is in-process only. ponytail: a single proxy/server instance shares one
+// map; move to Redis if the agency server is ever horizontally scaled.
+
+const FREE_ATTEMPTS: u32 = 2;
+const BASE_LOCK_SECS: u64 = 30;
+/// Forget a subnet once it's been idle this long — bounds the map and resets
+/// honest users who simply walked away.
+const RESET_AFTER: Duration = Duration::from_secs(3600);
+
+struct Attempt {
+    fails: u32,
+    locked_until: Option<Instant>,
+    last_seen: Instant,
+}
+
+static ATTEMPTS: LazyLock<Mutex<HashMap<String, Attempt>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Lockout duration for the n-th consecutive failure (0 = no lock yet).
+fn lock_secs(fails: u32) -> u64 {
+    if fails <= FREE_ATTEMPTS {
+        return 0;
+    }
+    // 3rd fail → shift 0 (30s), 4th → 1 (60s)… capped so the shift never overflows.
+    let shift = (fails - FREE_ATTEMPTS - 1).min(20);
+    BASE_LOCK_SECS.saturating_mul(1u64 << shift)
+}
+
+/// Collapse a client IP to its rate-limit key: /32 for v4, /48 for v6.
+fn subnet_key(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => {
+            let o = v6.octets();
+            format!(
+                "{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}::/48",
+                o[0], o[1], o[2], o[3], o[4], o[5]
+            )
+        }
+    }
+}
+
+/// ponytail: O(n) sweep on every mutation — fine at login-form request volume.
+fn prune(map: &mut HashMap<String, Attempt>, now: Instant) {
+    map.retain(|_, e| now.duration_since(e.last_seen) < RESET_AFTER);
+}
+
+/// Seconds remaining if this subnet is currently locked out, else None.
+fn locked_for(ip: IpAddr) -> Option<u64> {
+    let now = Instant::now();
+    let mut map = ATTEMPTS.lock().unwrap();
+    prune(&mut map, now);
+    let e = map.get(&subnet_key(ip))?;
+    match e.locked_until {
+        Some(until) if until > now => Some((until - now).as_secs() + 1),
+        _ => None,
+    }
+}
+
+/// Record a failed login; returns the resulting lockout in seconds (0 if free).
+fn record_failure(ip: IpAddr) -> u64 {
+    let now = Instant::now();
+    let mut map = ATTEMPTS.lock().unwrap();
+    prune(&mut map, now);
+    let e = map.entry(subnet_key(ip)).or_insert(Attempt {
+        fails: 0,
+        locked_until: None,
+        last_seen: now,
+    });
+    e.fails += 1;
+    e.last_seen = now;
+    let secs = lock_secs(e.fails);
+    e.locked_until = (secs > 0).then(|| now + Duration::from_secs(secs));
+    secs
+}
+
+/// Clear a subnet's failure history after a successful login.
+fn record_success(ip: IpAddr) {
+    ATTEMPTS.lock().unwrap().remove(&subnet_key(ip));
+}
+
+/// Real client IP from the proxy-stamped `X-Forwarded-For` (first hop).
+/// Returns None when absent — protection then fails open rather than locking
+/// every user behind a shared proxy address.
+fn client_ip(headers: &HeaderMap) -> Option<IpAddr> {
+    let raw = headers
+        .get("x-forwarded-for")
+        .or_else(|| headers.get("x-real-ip"))?
+        .to_str()
+        .ok()?;
+    raw.split(',').next()?.trim().parse().ok()
+}
 
 /// The shared HMAC key (same internal token the proxy holds).
 fn internal_token() -> Result<String, (StatusCode, String)> {
@@ -512,6 +616,27 @@ fn login_form_html(lang: Lang, list_id: Uuid, cb: &str, back: &str, error: Optio
     page(lang, &tr(lang, "sign-in"), &plan_ai_html::render_data(LOGIN_TPL, &data))
 }
 
+// The `<meta http-equiv="refresh">` reloads the GET login page (carrying cb/back)
+// once the countdown elapses — browsers honour it inside <body>. cb/back are
+// percent-encoded before templating, so the auto-escape leaves them intact.
+const LOCKED_TPL: &str = r#"<meta http-equiv="refresh" content="{{secs}};url=/agency/basic/{{list_id}}/login?cb={{cb}}&back={{back}}">
+<h1 class="h-page">{{l_title}}</h1>
+<div class="err">{{l_msg}}</div>
+<p class="help" style="margin-top:.6rem">{{l_retry}}</p>"#;
+
+fn locked_form_html(lang: Lang, list_id: Uuid, cb: &str, back: &str, secs: u64) -> Html<String> {
+    let data = plan_ai_html::mustache::MapBuilder::new()
+        .insert_str("list_id", list_id.to_string())
+        .insert_str("cb", enc(cb))
+        .insert_str("back", enc(back))
+        .insert_str("secs", secs.to_string())
+        .insert_str("l_title", tr(lang, "sign-in"))
+        .insert_str("l_msg", tr_args(lang, "too-many-attempts", &[("secs", &secs.to_string())]))
+        .insert_str("l_retry", tr(lang, "locked-retry"))
+        .build();
+    page(lang, &tr(lang, "sign-in"), &plan_ai_html::render_data(LOCKED_TPL, &data))
+}
+
 // -- handlers --
 
 async fn login_page(
@@ -526,6 +651,11 @@ async fn login_page(
     let cb = q.get("cb").cloned().unwrap_or_default();
     if !cb_host_ok(&pool, list_id, &cb).await {
         return (jar, (StatusCode::BAD_REQUEST, "invalid callback").into_response());
+    }
+    // Brute-force gate: a locked-out subnet only sees the countdown (which the
+    // meta refresh reloads here when it expires).
+    if let Some(secs) = client_ip(&headers).and_then(locked_for) {
+        return (jar, locked_form_html(lang, list_id, &cb, &back, secs).into_response());
     }
     // Silent SSO: already proved this list on this browser → hand off, no form.
     // One-shot: guarded by a short-lived marker so that if the handed-off
@@ -562,10 +692,22 @@ async fn login_submit(
     if !cb_host_ok(&pool, list_id, &cb).await {
         return (jar, (StatusCode::BAD_REQUEST, "invalid callback").into_response());
     }
+    let ip = client_ip(&headers);
+    // Refuse before touching credentials while the subnet is locked.
+    if let Some(secs) = ip.and_then(locked_for) {
+        return (jar, locked_form_html(lang, list_id, &cb, &back, secs).into_response());
+    }
     if !creds_ok(&pool, list_id, &username, &password).await {
-        let resp = login_form_html(lang, list_id, &cb, &back, Some(&tr(lang, "invalid-credentials")))
-            .into_response();
-        return (jar, resp);
+        let secs = ip.map(record_failure).unwrap_or(0);
+        let resp = if secs > 0 {
+            locked_form_html(lang, list_id, &cb, &back, secs)
+        } else {
+            login_form_html(lang, list_id, &cb, &back, Some(&tr(lang, "invalid-credentials")))
+        };
+        return (jar, resp.into_response());
+    }
+    if let Some(ip) = ip {
+        record_success(ip);
     }
 
     let (sso_id, set_cookie) = match ensure_sso(&pool, &jar, keep).await {
@@ -832,6 +974,31 @@ mod tests {
         let mut bad = tok.clone();
         bad.insert(0, 'x');
         assert!(verify_handoff(key, &bad).is_none());
+    }
+
+    #[test]
+    fn lock_secs_doubles_after_free_attempts() {
+        assert_eq!(lock_secs(1), 0);
+        assert_eq!(lock_secs(2), 0);
+        assert_eq!(lock_secs(3), 30);
+        assert_eq!(lock_secs(4), 60);
+        assert_eq!(lock_secs(5), 120);
+        // never overflows
+        assert!(lock_secs(u32::MAX) >= 30);
+    }
+
+    #[test]
+    fn subnet_key_masks_v6_to_48_keeps_v4_host() {
+        let a: IpAddr = "2001:db8:abcd:1234::1".parse().unwrap();
+        let b: IpAddr = "2001:db8:abcd:ffff::9".parse().unwrap();
+        // same /48 → same key
+        assert_eq!(subnet_key(a), subnet_key(b));
+        let c: IpAddr = "2001:db8:abce:0::1".parse().unwrap();
+        assert_ne!(subnet_key(a), subnet_key(c));
+        // v4 keyed to the exact host
+        let v4a: IpAddr = "203.0.113.7".parse().unwrap();
+        let v4b: IpAddr = "203.0.113.8".parse().unwrap();
+        assert_ne!(subnet_key(v4a), subnet_key(v4b));
     }
 
     #[test]
