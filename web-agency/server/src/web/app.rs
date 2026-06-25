@@ -22,7 +22,6 @@ use super::components::layout::Layout;
 use super::components::organization_detail::OrganizationDetail;
 use super::components::organization_form::OrganizationForm;
 use super::components::organization_list::OrganizationList;
-use super::components::token_form::TokenForm;
 use super::components::token_list::TokenList;
 use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
@@ -99,8 +98,6 @@ pub enum Route {
     UserDetail { id: String },
     #[route("/tokens")]
     TokenList {},
-    #[route("/tokens/new")]
-    TokenForm {},
     #[route("/basic-auth")]
     BasicAuthList {},
     #[route("/basic-auth/new")]
