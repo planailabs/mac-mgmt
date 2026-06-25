@@ -688,8 +688,11 @@ impl AgentProvider {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
+/// A cloud LLM provider. Well-known providers are dedicated variants;
+/// `Custom(name)` carries any other provider-registry / `custom_providers`
+/// name (e.g. `"beans"`). Serializes as a bare lowercase string so config
+/// reads `provider: "anthropic"` or `provider: "beans"`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloudProvider {
     Anthropic,
     Openai,
@@ -701,6 +704,7 @@ pub enum CloudProvider {
     Openrouter,
     Together,
     Bedrock,
+    Custom(String),
 }
 
 impl Default for CloudProvider {
@@ -710,6 +714,38 @@ impl Default for CloudProvider {
 }
 
 impl CloudProvider {
+    /// Slugs of the well-known (non-custom) providers, for schema hints.
+    pub const KNOWN: &'static [&'static str] = &[
+        "anthropic",
+        "openai",
+        "google",
+        "mistral",
+        "groq",
+        "xai",
+        "deepseek",
+        "openrouter",
+        "together",
+        "bedrock",
+    ];
+
+    /// Parse a provider slug, falling back to `Custom(name)` for any name that
+    /// isn't a well-known provider (i.e. a `custom_providers` entry).
+    pub fn from_name(s: &str) -> Self {
+        match s {
+            "anthropic" => Self::Anthropic,
+            "openai" => Self::Openai,
+            "google" => Self::Google,
+            "mistral" => Self::Mistral,
+            "groq" => Self::Groq,
+            "xai" => Self::Xai,
+            "deepseek" => Self::Deepseek,
+            "openrouter" => Self::Openrouter,
+            "together" => Self::Together,
+            "bedrock" => Self::Bedrock,
+            other => Self::Custom(other.to_string()),
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         match self {
             Self::Anthropic => "anthropic",
@@ -722,6 +758,7 @@ impl CloudProvider {
             Self::Openrouter => "openrouter",
             Self::Together => "together",
             Self::Bedrock => "bedrock",
+            Self::Custom(name) => name,
         }
     }
 
@@ -737,6 +774,8 @@ impl CloudProvider {
             Self::Openrouter => "OPENROUTER_API_KEY",
             Self::Together => "TOGETHER_API_KEY",
             Self::Bedrock => "AWS_ACCESS_KEY_ID",
+            // OpenAI-compatible custom endpoint.
+            Self::Custom(_) => "OPENAI_API_KEY",
         }
     }
 }
@@ -755,6 +794,8 @@ impl CloudProvider {
             Self::Openrouter => "https://openrouter.ai/api/v1",
             Self::Together => "https://api.together.xyz/v1",
             Self::Bedrock => "https://bedrock-runtime.us-east-1.amazonaws.com",
+            // No canonical endpoint; supplied via the config base_url override.
+            Self::Custom(_) => "",
         }
     }
 
@@ -770,6 +811,8 @@ impl CloudProvider {
             Self::Openrouter => "openrouter/auto",
             Self::Together => "together/meta-llama/Llama-4-Maverick-17B-128E-Instruct-Turbo",
             Self::Bedrock => "amazon-bedrock/us.anthropic.claude-sonnet-4-6-v1:0",
+            // No canonical default; supplied via the config default_model.
+            Self::Custom(_) => "",
         }
     }
 }
@@ -777,6 +820,37 @@ impl CloudProvider {
 impl std::fmt::Display for CloudProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for CloudProvider {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CloudProvider {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(Self::from_name(&String::deserialize(d)?))
+    }
+}
+
+impl schemars::JsonSchema for CloudProvider {
+    fn schema_name() -> Cow<'static, str> {
+        "CloudProvider".into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        Cow::Borrowed(concat!(module_path!(), "::CloudProvider"))
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // Open string: any well-known slug or a custom_providers name.
+        // `examples` surface the known providers without rejecting custom ones.
+        schemars::json_schema!({
+            "type": "string",
+            "examples": Self::KNOWN,
+        })
     }
 }
 
@@ -2561,6 +2635,26 @@ api_key = "sk-ant-test"
         let config = ClusterConfig::from_toml(toml).unwrap();
         assert_eq!(config.cloud.len(), 1);
         assert_eq!(config.cloud[0].provider, CloudProvider::Anthropic);
+    }
+
+    #[test]
+    fn cloud_custom_provider_roundtrips_as_bare_string() {
+        // An unknown provider name parses into Custom(name)…
+        let toml = r#"
+[[cloud]]
+provider = "beans"
+api_key = "sk-test"
+"#;
+        let config = ClusterConfig::from_toml(toml).unwrap();
+        assert_eq!(
+            config.cloud[0].provider,
+            CloudProvider::Custom("beans".into())
+        );
+        // …and serializes back to the bare string, not a tagged object.
+        let json = serde_json::to_value(&config.cloud[0].provider).unwrap();
+        assert_eq!(json, serde_json::json!("beans"));
+        // Well-known names still map to their dedicated variant.
+        assert_eq!(CloudProvider::from_name("xai"), CloudProvider::Xai);
     }
 
     // ── Notifications config tests ─────────────────────────────────────

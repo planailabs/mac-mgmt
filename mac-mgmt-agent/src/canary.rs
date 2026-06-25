@@ -22,7 +22,7 @@ pub fn cloud_canary(provider: &CloudProvider) -> Option<&'static str> {
         Deepseek => Some("deepseek/deepseek-chat"),
         Mistral => Some("mistral/mistral-small-latest"),
         // No obvious cheapest tier — fall back to openclaw/default.
-        Openrouter | Together | Bedrock => None,
+        Openrouter | Together | Bedrock | Custom(_) => None,
     }
 }
 
