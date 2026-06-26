@@ -1,8 +1,10 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::Command;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Parser)]
 #[command(
@@ -203,9 +205,6 @@ async fn connect_via_websocket_with_token(
     token: &str,
     instance_id: &str,
 ) -> Result<()> {
-    use futures_util::{SinkExt, StreamExt};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
     let ws_url = relay_url
         .replace("https://", "wss://")
         .replace("http://", "ws://");
@@ -244,76 +243,63 @@ async fn connect_via_websocket_with_token(
             .await
             .context("WebSocket connection failed")?;
 
-    // Bind a local TCP socket for ssh to connect to.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let local_port = listener.local_addr()?.port();
+    bridge_terminal_websocket(ws_stream).await
+}
 
-    let (ws_tx, ws_rx) = ws_stream.split();
-    let ws_tx = std::sync::Arc::new(tokio::sync::Mutex::new(ws_tx));
-
-    // Spawn bridge: local TCP <-> WebSocket.
-    let ws_tx_bridge = std::sync::Arc::clone(&ws_tx);
-    tokio::spawn(async move {
-        if let Ok((tcp_stream, _)) = listener.accept().await {
-            let (mut tcp_read, mut tcp_write) = tokio::io::split(tcp_stream);
-
-            let ws_tx_for_tcp = std::sync::Arc::clone(&ws_tx_bridge);
-            let tcp_to_ws = tokio::spawn(async move {
-                let mut buf = [0u8; 8192];
-                loop {
-                    match tcp_read.read(&mut buf).await {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            let mut tx = ws_tx_for_tcp.lock().await;
-                            if tx
-                                .send(tokio_tungstenite::tungstenite::Message::Binary(
-                                    buf[..n].to_vec().into(),
-                                ))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            });
-
-            let mut ws_rx = ws_rx;
-            let ws_to_tcp = tokio::spawn(async move {
-                while let Some(Ok(msg)) = ws_rx.next().await {
-                    match msg {
-                        tokio_tungstenite::tungstenite::Message::Binary(data) => {
-                            if tcp_write.write_all(&data).await.is_err() {
-                                break;
-                            }
-                        }
-                        tokio_tungstenite::tungstenite::Message::Close(_) => break,
-                        _ => {}
-                    }
-                }
-            });
-
-            tokio::select! {
-                _ = tcp_to_ws => {}
-                _ = ws_to_tcp => {}
+async fn bridge_terminal_websocket<S>(
+    ws_stream: tokio_tungstenite::WebSocketStream<S>,
+) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut ws_tx, mut ws_rx) = ws_stream.split();
+    let stdin_to_ws = tokio::spawn(async move {
+        let mut stdin = tokio::io::stdin();
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = stdin.read(&mut buf).await?;
+            if n == 0 {
+                return Ok::<(), anyhow::Error>(());
             }
+            ws_tx
+                .send(tokio_tungstenite::tungstenite::Message::Binary(
+                    buf[..n].to_vec().into(),
+                ))
+                .await?;
         }
     });
 
-    let status = Command::new("ssh")
-        .arg("-p")
-        .arg(local_port.to_string())
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg("-o")
-        .arg("UserKnownHostsFile=/dev/null")
-        .arg("127.0.0.1")
-        .status()
-        .context("failed to exec ssh")?;
+    let ws_to_stdout = tokio::spawn(async move {
+        let mut stdout = tokio::io::stdout();
+        let mut stderr = tokio::io::stderr();
+        while let Some(msg) = ws_rx.next().await {
+            let msg = match msg {
+                Ok(msg) => msg,
+                Err(err) => {
+                    eprintln!("WebSocket closed: {err}");
+                    break;
+                }
+            };
+            match msg {
+                tokio_tungstenite::tungstenite::Message::Binary(data) => {
+                    stdout.write_all(&data).await?;
+                    stdout.flush().await?;
+                }
+                tokio_tungstenite::tungstenite::Message::Text(text) => {
+                    stderr.write_all(text.as_bytes()).await?;
+                    stderr.write_all(b"\n").await?;
+                    stderr.flush().await?;
+                }
+                tokio_tungstenite::tungstenite::Message::Close(_) => break,
+                _ => {}
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    });
 
-    std::process::exit(status.code().unwrap_or(1));
+    let output_result = ws_to_stdout.await?;
+    stdin_to_ws.abort();
+    output_result
 }
 
 async fn fetch_ssh_targets(relay_url: &str, token: &str) -> Result<Vec<SshTarget>> {
@@ -333,18 +319,14 @@ async fn fetch_ssh_targets(relay_url: &str, token: &str) -> Result<Vec<SshTarget
 }
 
 /// Connect via WebSocket with TLS client certificate.
-/// Binds a local TCP socket and bridges it to the WS, then spawns `ssh`
-/// pointing at localhost.
+/// The relay endpoint already terminates SSH and exposes a shell stream over WS,
+/// so the CLI bridges terminal stdin/stdout directly instead of spawning ssh.
 async fn connect_via_websocket(
     relay_url: &str,
     cert_path: &str,
     key_path: &str,
     instance_id: &str,
 ) -> Result<()> {
-    use futures_util::{SinkExt, StreamExt};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    // Load client cert + key.
     let cert_pem = std::fs::read(cert_path)
         .with_context(|| format!("failed to read cert from {cert_path}"))?;
     let key_pem =
@@ -357,7 +339,6 @@ async fn connect_via_websocket(
         .context("failed to parse client key")?
         .context("no private key found")?;
 
-    // Build TLS config with client cert.
     let mut tls_config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyCert))
@@ -366,96 +347,19 @@ async fn connect_via_websocket(
     tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
     let connector = tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(tls_config));
-
-    // Build WS URL.
     let ws_url = relay_url
         .replace("https://", "wss://")
         .replace("http://", "ws://");
     let ws_url = format!("{ws_url}/ssh/{instance_id}/ws");
 
     eprintln!("Connecting to {ws_url} with client certificate...");
-
     let (ws_stream, _resp) =
         tokio_tungstenite::connect_async_tls_with_config(&ws_url, None, false, Some(connector))
             .await
             .context("WebSocket connection failed")?;
+    eprintln!("Connected. Bridging terminal stream...");
 
-    eprintln!("Connected. Bridging to local SSH...");
-
-    // Bind a local TCP socket for `ssh` to connect to.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let local_addr = listener.local_addr()?;
-    let local_port = local_addr.port();
-
-    let (ws_tx, ws_rx) = ws_stream.split();
-    let ws_tx = std::sync::Arc::new(tokio::sync::Mutex::new(ws_tx));
-
-    // Spawn bridge: local TCP <-> WebSocket.
-    let ws_tx_bridge = std::sync::Arc::clone(&ws_tx);
-    tokio::spawn(async move {
-        if let Ok((tcp_stream, _)) = listener.accept().await {
-            let (mut tcp_read, mut tcp_write) = tokio::io::split(tcp_stream);
-
-            // TCP -> WS
-            let ws_tx_for_tcp = std::sync::Arc::clone(&ws_tx_bridge);
-            let tcp_to_ws = tokio::spawn(async move {
-                let mut buf = [0u8; 8192];
-                loop {
-                    match tcp_read.read(&mut buf).await {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            let mut tx = ws_tx_for_tcp.lock().await;
-                            if tx
-                                .send(tokio_tungstenite::tungstenite::Message::Binary(
-                                    buf[..n].to_vec().into(),
-                                ))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            });
-
-            // WS -> TCP
-            let mut ws_rx = ws_rx;
-            let ws_to_tcp = tokio::spawn(async move {
-                while let Some(Ok(msg)) = ws_rx.next().await {
-                    match msg {
-                        tokio_tungstenite::tungstenite::Message::Binary(data) => {
-                            if tcp_write.write_all(&data).await.is_err() {
-                                break;
-                            }
-                        }
-                        tokio_tungstenite::tungstenite::Message::Close(_) => break,
-                        _ => {}
-                    }
-                }
-            });
-
-            tokio::select! {
-                _ = tcp_to_ws => {}
-                _ = ws_to_tcp => {}
-            }
-        }
-    });
-
-    // Spawn ssh connecting to local port.
-    let status = Command::new("ssh")
-        .arg("-p")
-        .arg(local_port.to_string())
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg("-o")
-        .arg("UserKnownHostsFile=/dev/null")
-        .arg("127.0.0.1")
-        .status()
-        .context("failed to exec ssh")?;
-
-    std::process::exit(status.code().unwrap_or(1));
+    bridge_terminal_websocket(ws_stream).await
 }
 
 /// Accept any server certificate (the relay's cert may be self-signed in dev).
