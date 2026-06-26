@@ -41,8 +41,7 @@ async fn create_federation_token(
 
     let raw_token = format!("fed_{}", hex::encode(rand::rng().random::<[u8; 32]>()));
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at =
-        expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
+    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
 
     sqlx::query(
         "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) VALUES (NULL, $1, $2, 'federation', $3)",

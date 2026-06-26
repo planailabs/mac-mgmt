@@ -66,8 +66,7 @@ async fn create_setting_token(
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at =
-        expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
+    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
 
     sqlx::query(
         "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) VALUES ($1, $2, $3, 'setting', $4)",

@@ -15,10 +15,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Serialised as the `health_gate` column on `rollout_stages`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct HealthGate {
     /// Minimum percentage of stage-cohort instances that must have heartbeat
     /// within `heartbeat_freshness_secs`. 0 disables.

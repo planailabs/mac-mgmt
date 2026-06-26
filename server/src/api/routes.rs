@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 
 use super::auth::{AdminAuth, AuthenticatedToken, SettingAuth, SyncAuth};
 use super::push::{self, PushChannels, PushMessage};
+use crate::rollout_health::HealthGate;
 
 // ── Common routes (any valid token) ────────────────────────────────────
 
@@ -5361,6 +5362,10 @@ pub(crate) struct CreateRolloutBody {
     /// each cluster's existing nixpkgs pin untouched.
     #[serde(default)]
     nixpkgs_commit: Option<String>,
+    /// Optional health gate applied to every rollout stage. Null preserves
+    /// legacy ungated rollout behavior.
+    #[serde(default)]
+    health_gate: Option<HealthGate>,
 }
 
 #[utoipa::path(
@@ -5477,13 +5482,22 @@ pub async fn admin_create_rollout(
         return Err(Status::UnprocessableEntity);
     }
 
+    let health_gate = body
+        .health_gate
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|_| Status::BadRequest)?;
+
     for (i, group_id) in body.group_ids.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)",
+            "INSERT INTO rollout_stages (rollout_id, group_id, stage_order, health_gate) \
+             VALUES ($1, $2, $3, $4)",
         )
         .bind(rollout_id)
         .bind(group_id)
         .bind(i as i32)
+        .bind(&health_gate)
         .execute(&mut *tx)
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -5577,6 +5591,8 @@ pub(crate) struct StageDetail {
     group_name: String,
     stage_order: i32,
     status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    health_gate: Option<HealthGate>,
     started_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
 }
@@ -5624,12 +5640,13 @@ pub async fn admin_get_rollout(
         group_name: String,
         stage_order: i32,
         status: String,
+        health_gate: Option<serde_json::Value>,
         started_at: Option<DateTime<Utc>>,
         completed_at: Option<DateTime<Utc>>,
     }
 
     let stages = sqlx::query_as::<_, StageRow>(
-        "SELECT rs.id, rg.name AS group_name, rs.stage_order, rs.status, rs.started_at, rs.completed_at \
+        "SELECT rs.id, rg.name AS group_name, rs.stage_order, rs.status, rs.health_gate, rs.started_at, rs.completed_at \
          FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
          WHERE rs.rollout_id = $1 ORDER BY rs.stage_order"
     )
@@ -5653,6 +5670,9 @@ pub async fn admin_get_rollout(
                 group_name: s.group_name,
                 stage_order: s.stage_order,
                 status: s.status,
+                health_gate: s
+                    .health_gate
+                    .and_then(|gate| serde_json::from_value(gate).ok()),
                 started_at: s.started_at,
                 completed_at: s.completed_at,
             })
