@@ -9355,6 +9355,7 @@ dependencies = [
  "libp2p",
  "libp2p-stream",
  "mac-mgmt-common",
+ "plan-ai-html",
  "prometheus 0.14.0",
  "prometheus-parse",
  "protobuf 3.7.2",
@@ -12188,6 +12189,7 @@ dependencies = [
  "axum-oidc-client",
  "base64 0.22.1",
  "percent-encoding",
+ "plan-ai-html",
  "serde",
  "serde_json",
  "tracing",
@@ -12251,6 +12253,15 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dioxus-i18n",
+]
+
+[[package]]
+name = "plan-ai-html"
+version = "0.1.0"
+dependencies = [
+ "fluent",
+ "mustache",
+ "unic-langid",
 ]
 
 [[package]]
@@ -18593,12 +18604,14 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
+ "cookie",
  "eventsource-stream",
  "futures",
  "hex",
  "hmac 0.12.1",
  "http 1.4.0",
  "pingora",
+ "plan-ai-html",
  "rcgen",
  "reqwest 0.13.2",
  "rustls 0.23.38",
@@ -18639,6 +18652,7 @@ dependencies = [
  "percent-encoding",
  "plan-ai-auth",
  "plan-ai-design",
+ "plan-ai-html",
  "prometheus 0.13.4",
  "pulldown-cmark 0.12.2",
  "rand 0.9.4",
@@ -18654,6 +18668,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "toml 0.8.23",
  "tower",
