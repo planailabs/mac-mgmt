@@ -899,6 +899,12 @@ impl ServiceManager {
             self.drain_notifications();
         }
 
+        let supervisor_live = if has_managed {
+            self.supervisor_live_map().await
+        } else {
+            std::collections::HashMap::new()
+        };
+
         // Phase 0: handle crash backoff expiry.
         // The supervisor auto-restarts crashed processes, so we don't
         // reregister here — that would kill the already-restarted process.
@@ -985,7 +991,9 @@ impl ServiceManager {
                 }
             }
 
-            if state.phase == ServicePhase::Starting {
+            if state.phase == ServicePhase::Starting
+                && Self::supervisor_allows_healthy(state, &supervisor_live)
+            {
                 state.phase = ServicePhase::Healthy;
             }
         }
@@ -1037,18 +1045,27 @@ impl ServiceManager {
             let name = state.name.clone();
             match result {
                 Ok(true) => {
-                    state.consecutive_crashes = 0;
-                    state.phase = ServicePhase::Healthy;
-                    if prev_phase == ServicePhase::Unhealthy {
-                        self.dispatcher.dispatch(&DaemonEvent::ServiceRecovered {
-                            service: name.clone(),
-                        });
-                    }
-                    if !state.post_start_done {
-                        if let Err(e) = state.service.post_start() {
-                            tracing::error!("{name} post_start failed: {e}");
+                    if Self::supervisor_allows_healthy(state, &supervisor_live) {
+                        state.consecutive_crashes = 0;
+                        state.phase = ServicePhase::Healthy;
+                        if prev_phase == ServicePhase::Unhealthy {
+                            self.dispatcher.dispatch(&DaemonEvent::ServiceRecovered {
+                                service: name.clone(),
+                            });
                         }
-                        state.post_start_done = true;
+                        if !state.post_start_done {
+                            if let Err(e) = state.service.post_start() {
+                                tracing::error!("{name} post_start failed: {e}");
+                            }
+                            state.post_start_done = true;
+                        }
+                    } else {
+                        state.phase = ServicePhase::Unhealthy;
+                        if prev_phase != ServicePhase::Unhealthy {
+                            self.dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy {
+                                service: name.clone(),
+                            });
+                        }
                     }
                 }
                 Ok(false) => {
@@ -1097,6 +1114,42 @@ impl ServiceManager {
         self.collect_connector_env_for_new();
         self.run_connectors();
         Self::update_backup_paths(&mut self.config_store, &self.services, &self.install_only);
+    }
+
+    async fn supervisor_live_map(&mut self) -> std::collections::HashMap<String, bool> {
+        let Some(client) = self.client.as_mut() else {
+            return std::collections::HashMap::new();
+        };
+        client
+            .list()
+            .await
+            .map(|statuses| {
+                statuses
+                    .into_iter()
+                    .map(|status| {
+                        let live = Self::supervisor_status_live(&status);
+                        (status.name, live)
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|e| {
+                tracing::debug!("supervisor list failed: {e}");
+                std::collections::HashMap::new()
+            })
+    }
+
+    fn supervisor_status_live(status: &mac_mgmt_services::ServiceStatus) -> bool {
+        !status.stopped && (status.pid.is_some() || status.spec.is_none())
+    }
+
+    fn supervisor_allows_healthy(
+        state: &ServiceState,
+        supervisor_live: &std::collections::HashMap<String, bool>,
+    ) -> bool {
+        match state.service.service_mode() {
+            ServiceMode::Managed => supervisor_live.get(&state.name).copied().unwrap_or(false),
+            ServiceMode::Integrated | ServiceMode::InstallOnly => true,
+        }
     }
 
     /// Run pre-start connectors (config-patching). Skips connectors whose
@@ -1962,4 +2015,129 @@ fn spawn_inprocess_supervisor() {
             }
         }
     });
+}
+
+#[cfg(all(test, feature = "services"))]
+mod tests {
+    use super::*;
+
+    struct TestService {
+        name: &'static str,
+        mode: ServiceMode,
+    }
+
+    impl ManagedService for TestService {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn service_mode(&self) -> ServiceMode {
+            self.mode
+        }
+
+        fn ensure_installed(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn ensure_setup(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn spawn_spec(&self) -> mac_mgmt_services::SpawnSpec {
+            mac_mgmt_services::SpawnSpec {
+                program: "sh".into(),
+                args: vec!["-c".into(), "sleep 3600".into()],
+                env: std::collections::HashMap::new(),
+            }
+        }
+
+        fn check_health(&self) -> Result<bool> {
+            Ok(true)
+        }
+
+        fn repair(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn check_and_upgrade(&self) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    fn test_state(name: &'static str, mode: ServiceMode) -> ServiceState {
+        ServiceState {
+            name: name.into(),
+            service: Arc::new(TestService { name, mode }),
+            phase: ServicePhase::Healthy,
+            upgrade_pending: false,
+            restart_pending: false,
+            post_start_done: false,
+            consecutive_crashes: 0,
+            running_store_path: None,
+            registered: true,
+            restart_at: None,
+            connector_env: std::collections::HashMap::new(),
+            connector_env_collected: true,
+        }
+    }
+
+    #[test]
+    fn managed_service_needs_live_supervisor_pid_to_be_healthy() {
+        let managed = test_state("gui-server", ServiceMode::Managed);
+        let integrated = test_state("relay", ServiceMode::Integrated);
+        let mut supervisor_live = std::collections::HashMap::new();
+
+        assert!(!ServiceManager::supervisor_allows_healthy(
+            &managed,
+            &supervisor_live
+        ));
+        assert!(ServiceManager::supervisor_allows_healthy(
+            &integrated,
+            &supervisor_live
+        ));
+
+        supervisor_live.insert("gui-server".to_string(), false);
+        assert!(!ServiceManager::supervisor_allows_healthy(
+            &managed,
+            &supervisor_live
+        ));
+
+        supervisor_live.insert("gui-server".to_string(), true);
+        assert!(ServiceManager::supervisor_allows_healthy(
+            &managed,
+            &supervisor_live
+        ));
+    }
+
+    #[test]
+    fn supervisor_status_liveness_distinguishes_missing_pid_from_legacy_name() {
+        let modern_missing_pid = mac_mgmt_services::ServiceStatus {
+            name: "gui-server".into(),
+            pid: None,
+            exe: None,
+            resolved_program: None,
+            spec: Some(mac_mgmt_services::SpawnSpec {
+                program: "sh".into(),
+                args: vec!["-c".into(), "sleep 3600".into()],
+                env: std::collections::HashMap::new(),
+            }),
+            stopped: false,
+        };
+        let legacy_name_only = mac_mgmt_services::ServiceStatus {
+            name: "legacy".into(),
+            pid: None,
+            exe: None,
+            resolved_program: None,
+            spec: None,
+            stopped: false,
+        };
+        let stopped = mac_mgmt_services::ServiceStatus {
+            stopped: true,
+            ..legacy_name_only.clone()
+        };
+
+        assert!(!ServiceManager::supervisor_status_live(&modern_missing_pid));
+        assert!(ServiceManager::supervisor_status_live(&legacy_name_only));
+        assert!(!ServiceManager::supervisor_status_live(&stopped));
+    }
 }
