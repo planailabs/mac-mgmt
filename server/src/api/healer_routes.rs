@@ -644,18 +644,24 @@ pub struct StaffPingRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// List all staff pings, optionally filtered by cluster, instance, resolved status, or category.
-#[get("/admin/staff-pings?<cluster_id>&<instance_id>&<resolved>&<category>&<limit>")]
+/// List staff pings, optionally filtered by cluster, instance, resolved status, or category.
+/// Defaults to unresolved pings only; pass include_resolved=true to include history.
+#[get(
+    "/admin/staff-pings?<cluster_id>&<instance_id>&<resolved>&<include_resolved>&<category>&<limit>&<offset>"
+)]
 pub async fn admin_list_staff_pings(
     _auth: AdminAuth,
     pool: &State<PgPool>,
     cluster_id: Option<&str>,
     instance_id: Option<&str>,
     resolved: Option<bool>,
+    include_resolved: Option<bool>,
     category: Option<&str>,
     limit: Option<i64>,
+    offset: Option<i64>,
 ) -> Result<Json<Vec<StaffPingRow>>, Status> {
-    let limit = limit.unwrap_or(200).min(1000);
+    let limit = limit.unwrap_or(50).clamp(1, 200);
+    let offset = offset.unwrap_or(0).max(0);
 
     // Build query dynamically based on filters
     let mut conditions: Vec<String> = Vec::new();
@@ -669,7 +675,12 @@ pub async fn admin_list_staff_pings(
         param_idx += 1;
         conditions.push(format!("instance_id = ${param_idx}"));
     }
-    if resolved.is_some() {
+    let effective_resolved = if include_resolved.unwrap_or(false) {
+        resolved
+    } else {
+        Some(resolved.unwrap_or(false))
+    };
+    if effective_resolved.is_some() {
         param_idx += 1;
         conditions.push(format!("resolved = ${param_idx}"));
     }
@@ -685,12 +696,15 @@ pub async fn admin_list_staff_pings(
     };
 
     param_idx += 1;
+    let limit_param = param_idx;
+    param_idx += 1;
+    let offset_param = param_idx;
     let sql = format!(
         "SELECT id, session_id, cluster_id, instance_id, category, message, \
                 resolved, resolved_by, resolved_at, created_at \
          FROM healer_staff_pings {where_clause} \
          ORDER BY resolved ASC, created_at DESC \
-         LIMIT ${param_idx}"
+         LIMIT ${limit_param} OFFSET ${offset_param}"
     );
 
     let mut query = sqlx::query_as::<_, StaffPingSqlRow>(&sql);
@@ -702,13 +716,13 @@ pub async fn admin_list_staff_pings(
     if let Some(iid) = instance_id {
         query = query.bind(iid.to_string());
     }
-    if let Some(r) = resolved {
+    if let Some(r) = effective_resolved {
         query = query.bind(r);
     }
     if let Some(cat) = category {
         query = query.bind(cat.to_string());
     }
-    query = query.bind(limit);
+    query = query.bind(limit).bind(offset);
 
     let rows = query
         .fetch_all(pool.inner())

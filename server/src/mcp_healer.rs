@@ -294,15 +294,24 @@ struct ListStaffPingsParams {
     /// Filter by instance ID.
     #[serde(default)]
     instance_id: Option<String>,
-    /// Filter by resolved status (true/false).
+    /// Filter by resolved status (true/false). Defaults to false unless include_resolved is true.
     #[serde(default)]
     resolved: Option<bool>,
+    /// Include both resolved and unresolved pings when resolved is omitted.
+    #[serde(default)]
+    include_resolved: Option<bool>,
     /// Filter by category (e.g. "hardware", "network", "disk_space").
     #[serde(default)]
     category: Option<String>,
-    /// Max results (default 200, max 1000).
+    /// Max results (default 50, max 200).
     #[serde(default)]
     limit: Option<i64>,
+    /// Results to skip for pagination.
+    #[serde(default)]
+    offset: Option<i64>,
+    /// Output format: "summary" (default, compact) or "json" (full message payloads).
+    #[serde(default)]
+    format: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -365,6 +374,134 @@ struct StaffPingOutput {
     created_at: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StaffPingListFormat {
+    Summary,
+    Json,
+}
+
+#[derive(Debug)]
+struct StaffPingListOptions<'a> {
+    cluster_id: Option<&'a str>,
+    instance_id: Option<&'a str>,
+    resolved: Option<bool>,
+    include_resolved: bool,
+    category: Option<&'a str>,
+}
+
+struct StaffPingListSql {
+    sql: String,
+    effective_resolved: Option<bool>,
+}
+
+fn normalized_staff_ping_limit(limit: Option<i64>) -> i64 {
+    limit.unwrap_or(50).clamp(1, 200)
+}
+
+fn normalized_staff_ping_offset(offset: Option<i64>) -> i64 {
+    offset.unwrap_or(0).max(0)
+}
+
+fn parse_staff_ping_format(format: Option<&str>) -> Result<StaffPingListFormat, String> {
+    match format.unwrap_or("summary") {
+        "" | "summary" => Ok(StaffPingListFormat::Summary),
+        "json" => Ok(StaffPingListFormat::Json),
+        other => Err(format!(
+            "Error: invalid format {other:?}; use \"summary\" or \"json\""
+        )),
+    }
+}
+
+fn build_staff_ping_list_sql(opts: &StaffPingListOptions<'_>) -> StaffPingListSql {
+    let mut conditions: Vec<String> = Vec::new();
+    let mut param_idx = 0u32;
+
+    if opts.cluster_id.is_some() {
+        param_idx += 1;
+        conditions.push(format!("cluster_id = ${param_idx}"));
+    }
+    if opts.instance_id.is_some() {
+        param_idx += 1;
+        conditions.push(format!("instance_id = ${param_idx}"));
+    }
+
+    let effective_resolved = if opts.include_resolved {
+        opts.resolved
+    } else {
+        Some(opts.resolved.unwrap_or(false))
+    };
+    if effective_resolved.is_some() {
+        param_idx += 1;
+        conditions.push(format!("resolved = ${param_idx}"));
+    }
+
+    if opts.category.is_some() {
+        param_idx += 1;
+        conditions.push(format!("category = ${param_idx}"));
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    param_idx += 1;
+    let limit_param = param_idx;
+    param_idx += 1;
+    let offset_param = param_idx;
+    let sql = format!(
+        "SELECT id, session_id, cluster_id, instance_id, category, message, \
+                resolved, resolved_by, resolved_at, created_at \
+         FROM healer_staff_pings {where_clause} \
+         ORDER BY resolved ASC, created_at DESC \
+         LIMIT ${limit_param} OFFSET ${offset_param}"
+    );
+
+    StaffPingListSql {
+        sql,
+        effective_resolved,
+    }
+}
+
+fn truncate_staff_ping_message(message: &str) -> String {
+    const MAX_CHARS: usize = 160;
+    let compact = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out = String::new();
+    for (idx, ch) in compact.chars().enumerate() {
+        if idx >= MAX_CHARS {
+            out.push_str("...");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn format_staff_ping_summary(rows: &[StaffPingOutput], limit: i64, offset: i64) -> String {
+    if rows.is_empty() {
+        return "No staff pings matched. By default list_staff_pings shows unresolved pings only; set include_resolved=true to include resolved history.".to_string();
+    }
+
+    let mut out = format!(
+        "{} staff ping(s) shown (limit={limit}, offset={offset}). By default this list contains unresolved pings only. Use get_staff_ping for full details or list_staff_pings format=\"json\" for full payloads.\n",
+        rows.len()
+    );
+    for row in rows {
+        let status = if row.resolved { "resolved" } else { "open" };
+        out.push_str(&format!(
+            "\n- {status} {id} [{category}] {instance_id} cluster={cluster_id} created={created_at}\n  {message}",
+            id = row.id,
+            category = row.category,
+            instance_id = row.instance_id,
+            cluster_id = row.cluster_id,
+            created_at = row.created_at,
+            message = truncate_staff_ping_message(&row.message),
+        ));
+    }
+    out
+}
+
 impl From<StaffPingSqlRow> for StaffPingOutput {
     fn from(r: StaffPingSqlRow) -> Self {
         Self {
@@ -379,6 +516,83 @@ impl From<StaffPingSqlRow> for StaffPingOutput {
             resolved_at: r.resolved_at.map(|t| t.to_rfc3339()),
             created_at: r.created_at.to_rfc3339(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn list_options<'a>(
+        resolved: Option<bool>,
+        include_resolved: bool,
+    ) -> StaffPingListOptions<'a> {
+        StaffPingListOptions {
+            cluster_id: None,
+            instance_id: None,
+            resolved,
+            include_resolved,
+            category: None,
+        }
+    }
+
+    #[test]
+    fn staff_ping_list_defaults_to_unresolved() {
+        let built = build_staff_ping_list_sql(&list_options(None, false));
+
+        assert_eq!(built.effective_resolved, Some(false));
+        assert!(built.sql.contains("WHERE resolved = $1"));
+        assert!(built.sql.contains("LIMIT $2 OFFSET $3"));
+    }
+
+    #[test]
+    fn staff_ping_list_can_include_all_resolved_states() {
+        let built = build_staff_ping_list_sql(&list_options(None, true));
+
+        assert_eq!(built.effective_resolved, None);
+        assert!(!built.sql.contains("resolved ="));
+        assert!(built.sql.contains("LIMIT $1 OFFSET $2"));
+    }
+
+    #[test]
+    fn staff_ping_list_keeps_explicit_resolved_filter_with_history_enabled() {
+        let built = build_staff_ping_list_sql(&list_options(Some(true), true));
+
+        assert_eq!(built.effective_resolved, Some(true));
+        assert!(built.sql.contains("WHERE resolved = $1"));
+    }
+
+    #[test]
+    fn staff_ping_limit_and_offset_are_bounded() {
+        assert_eq!(normalized_staff_ping_limit(None), 50);
+        assert_eq!(normalized_staff_ping_limit(Some(0)), 1);
+        assert_eq!(normalized_staff_ping_limit(Some(5000)), 200);
+        assert_eq!(normalized_staff_ping_offset(Some(-10)), 0);
+        assert_eq!(normalized_staff_ping_offset(Some(25)), 25);
+    }
+
+    #[test]
+    fn staff_ping_summary_truncates_multiline_messages() {
+        let row = StaffPingOutput {
+            id: "ping-1".into(),
+            session_id: "session-1".into(),
+            cluster_id: "cluster-1".into(),
+            instance_id: "instance-1".into(),
+            category: "network".into(),
+            message: format!("first line\n{}", "x".repeat(220)),
+            resolved: false,
+            resolved_by: None,
+            resolved_at: None,
+            created_at: "2026-06-27T15:00:00Z".into(),
+        };
+
+        let summary = format_staff_ping_summary(&[row], 50, 0);
+
+        assert!(summary.contains("1 staff ping(s) shown"));
+        assert!(summary.contains("open ping-1 [network] instance-1"));
+        assert!(summary.contains("first line"));
+        assert!(summary.contains("..."));
+        assert!(!summary.contains("first line\n"));
     }
 }
 
@@ -796,48 +1010,29 @@ impl HealerMcpServer {
 
     #[tool(
         name = "list_staff_pings",
-        description = "List staff pings across all clusters and instances. Filter by cluster_id, instance_id, resolved status, or category. Defaults to showing unresolved pings."
+        description = "List staff pings across all clusters and instances. Defaults to unresolved pings in compact summary format. Use cluster_id, instance_id, category, resolved, include_resolved, limit, and offset to narrow results; use format=\"json\" only when full messages are needed."
     )]
     async fn list_staff_pings(
         &self,
         Parameters(params): Parameters<ListStaffPingsParams>,
     ) -> String {
-        let limit = params.limit.unwrap_or(200).min(1000);
-
-        // Build dynamic query
-        let mut conditions: Vec<String> = Vec::new();
-        let mut param_idx = 0u32;
-
-        if params.cluster_id.is_some() {
-            param_idx += 1;
-            conditions.push(format!("cluster_id = ${param_idx}"));
-        }
-        if params.instance_id.is_some() {
-            param_idx += 1;
-            conditions.push(format!("instance_id = ${param_idx}"));
-        }
-        if params.resolved.is_some() {
-            param_idx += 1;
-            conditions.push(format!("resolved = ${param_idx}"));
-        }
-        if params.category.is_some() {
-            param_idx += 1;
-            conditions.push(format!("category = ${param_idx}"));
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
+        let limit = normalized_staff_ping_limit(params.limit);
+        let offset = normalized_staff_ping_offset(params.offset);
+        let format = match parse_staff_ping_format(params.format.as_deref()) {
+            Ok(format) => format,
+            Err(e) => return e,
         };
-        param_idx += 1;
-        let sql = format!(
-            "SELECT id, session_id, cluster_id, instance_id, category, message, \
-                    resolved, resolved_by, resolved_at, created_at \
-             FROM healer_staff_pings {where_clause} \
-             ORDER BY resolved ASC, created_at DESC \
-             LIMIT ${param_idx}"
-        );
+        let opts = StaffPingListOptions {
+            cluster_id: params.cluster_id.as_deref(),
+            instance_id: params.instance_id.as_deref(),
+            resolved: params.resolved,
+            include_resolved: params.include_resolved.unwrap_or(false),
+            category: params.category.as_deref(),
+        };
+        let StaffPingListSql {
+            sql,
+            effective_resolved,
+        } = build_staff_ping_list_sql(&opts);
 
         let mut query = sqlx::query_as::<_, StaffPingSqlRow>(&sql);
 
@@ -850,19 +1045,24 @@ impl HealerMcpServer {
         if let Some(iid) = &params.instance_id {
             query = query.bind(iid.clone());
         }
-        if let Some(r) = params.resolved {
+        if let Some(r) = effective_resolved {
             query = query.bind(r);
         }
         if let Some(cat) = &params.category {
             query = query.bind(cat.clone());
         }
-        query = query.bind(limit);
+        query = query.bind(limit).bind(offset);
 
         match query.fetch_all(&self.pool).await {
             Ok(rows) => {
                 let pings: Vec<StaffPingOutput> = rows.into_iter().map(Into::into).collect();
-                serde_json::to_string_pretty(&pings)
-                    .unwrap_or_else(|e| format!("Error serializing: {e}"))
+                match format {
+                    StaffPingListFormat::Summary => {
+                        format_staff_ping_summary(&pings, limit, offset)
+                    }
+                    StaffPingListFormat::Json => serde_json::to_string_pretty(&pings)
+                        .unwrap_or_else(|e| format!("Error serializing: {e}")),
+                }
             }
             Err(e) => format!("Error listing staff pings: {e}"),
         }
@@ -972,9 +1172,16 @@ impl ServerHandler for HealerMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "MCP server for mac-mgmt fleet healing. Use list_instances and create_session \
-                 to target an instance, then get_system_prompt for behavioral instructions. \
-                 Staff ping tools are always available for triage."
+                "MCP server for mac-mgmt fleet healing. Start staff-ping triage with \
+                 list_staff_pings; it defaults to compact unresolved-only output and supports \
+                 cluster_id, instance_id, category, resolved, include_resolved, limit, offset, \
+                 and format=\"json\" for full payloads. Use get_staff_ping for one ping's \
+                 full message before resolving. Verify live instance state with list_instances \
+                 and create_session before resolve_staff_ping; stale historical pings should \
+                 not be resolved while the target or shared control plane is currently unhealthy. \
+                 If create_session cannot load tools because the relay/proxy is unavailable, use \
+                 external control-plane evidence such as runner, virtualization, or host checks, \
+                 then return here to resolve or leave the ping open with a clear blocker."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder()
