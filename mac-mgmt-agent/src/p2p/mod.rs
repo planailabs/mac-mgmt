@@ -193,11 +193,11 @@ fn dispatch_memvault_event(
         }) => driver.on_block_response(peer, response, &mut host),
         MvEv::BlockExchange(RrEvent::OutboundFailure { peer, error, .. }) => {
             tracing::warn!(%peer, %error, "memvault block exchange outbound failure");
-            driver.on_block_failure(peer);
+            driver.on_block_outbound_failure(peer, &mut host);
         }
         MvEv::BlockExchange(RrEvent::InboundFailure { peer, error, .. }) => {
             tracing::warn!(%peer, %error, "memvault block exchange inbound failure");
-            driver.on_block_failure(peer);
+            driver.on_block_inbound_failure(peer);
         }
         MvEv::Join(RrEvent::Message {
             peer,
