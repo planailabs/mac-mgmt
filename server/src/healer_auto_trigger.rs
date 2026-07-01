@@ -54,6 +54,31 @@ pub async fn run_auto_trigger_loop(
     }
 }
 
+/// An instance warrants a healer session when a probe reports unhealthy OR a
+/// `critical` failure signal is present. Warning-severity signals are surfaced
+/// for observability (see the signals API / overview) but do not trigger on
+/// their own — mirroring how a single flaky probe doesn't.
+fn instance_is_unhealthy(
+    services_extended: Option<&serde_json::Value>,
+    failure_signals: Option<&serde_json::Value>,
+) -> bool {
+    let unhealthy_probe = services_extended
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .any(|svc| svc.get("healthy").and_then(|h| h.as_bool()) == Some(false))
+        })
+        .unwrap_or(false);
+    let critical_signal = failure_signals
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .any(|s| s.get("severity").and_then(|x| x.as_str()) == Some("critical"))
+        })
+        .unwrap_or(false);
+    unhealthy_probe || critical_signal
+}
+
 async fn tick(
     pool: &PgPool,
     healer: &HealerState,
@@ -66,9 +91,10 @@ async fn tick(
         instance_id: String,
         cluster_id: Uuid,
         services_extended: Option<serde_json::Value>,
+        failure_signals: Option<serde_json::Value>,
     }
     let heartbeats = sqlx::query_as::<_, HbRow>(
-        "SELECT instance_id, cluster_id, services_extended \
+        "SELECT instance_id, cluster_id, services_extended, failure_signals \
          FROM daemon_heartbeats \
          WHERE reported_at > now() - interval '10 minutes'",
     )
@@ -83,17 +109,7 @@ async fn tick(
     for hb in &heartbeats {
         instance_cluster.insert(hb.instance_id.clone(), hb.cluster_id);
 
-        let has_unhealthy = hb
-            .services_extended
-            .as_ref()
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .any(|svc| svc.get("healthy").and_then(|h| h.as_bool()) == Some(false))
-            })
-            .unwrap_or(false);
-
-        if has_unhealthy {
+        if instance_is_unhealthy(hb.services_extended.as_ref(), hb.failure_signals.as_ref()) {
             currently_unhealthy.insert(hb.instance_id.clone());
         }
     }
@@ -210,13 +226,14 @@ async fn build_spawn_request(
     struct HbInfo {
         relay_proxy_url: Option<String>,
         services_extended: Option<serde_json::Value>,
+        failure_signals: Option<serde_json::Value>,
         file_tunnels: Option<serde_json::Value>,
         shell_tunnels: Option<serde_json::Value>,
         sample: Option<serde_json::Value>,
         hostname: Option<String>,
     }
     let hb: HbInfo = sqlx::query_as(
-        "SELECT relay_proxy_url, services_extended, \
+        "SELECT relay_proxy_url, services_extended, failure_signals, \
                 file_tunnels, shell_tunnels, sample, hostname \
          FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
     )
@@ -287,6 +304,11 @@ async fn build_spawn_request(
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
+    let failure_signals: Vec<mac_mgmt_common::FailureSignal> = hb
+        .failure_signals
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+
     Ok(SpawnRequest {
         cluster_id,
         instance_id: instance_id.to_string(),
@@ -296,6 +318,7 @@ async fn build_spawn_request(
         cluster_access,
         metrics_url,
         services_extended,
+        failure_signals,
         sample: hb.sample,
         file_tunnels: hb.file_tunnels.unwrap_or_default(),
         shell_tunnels: hb.shell_tunnels.unwrap_or_default(),
@@ -330,4 +353,36 @@ async fn build_spawn_request(
         validator_model: None,
         ml_hints: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::instance_is_unhealthy;
+    use serde_json::json;
+
+    #[test]
+    fn healthy_when_nothing_wrong() {
+        let svc = json!([{ "name": "ollama", "healthy": true }]);
+        assert!(!instance_is_unhealthy(Some(&svc), None));
+        assert!(!instance_is_unhealthy(None, None));
+    }
+
+    #[test]
+    fn unhealthy_probe_triggers() {
+        let svc = json!([{ "name": "ollama", "healthy": false }]);
+        assert!(instance_is_unhealthy(Some(&svc), None));
+    }
+
+    #[test]
+    fn critical_signal_triggers_even_with_healthy_probes() {
+        let svc = json!([{ "name": "ollama", "healthy": true }]);
+        let sig = json!([{ "kind": "drift", "severity": "critical", "subject": "hermes", "message": "loop" }]);
+        assert!(instance_is_unhealthy(Some(&svc), Some(&sig)));
+    }
+
+    #[test]
+    fn warning_signal_does_not_trigger() {
+        let sig = json!([{ "kind": "disk_low", "severity": "warning", "subject": "/", "message": "low" }]);
+        assert!(!instance_is_unhealthy(None, Some(&sig)));
+    }
 }
