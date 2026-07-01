@@ -114,6 +114,7 @@ async fn create_token(
     label: String,
     kind: String,
     webspace_id: Option<Uuid>,
+    role: Option<String>,
     expires_in_secs: Option<i64>,
 ) -> Result<String, ServerFnError> {
     use crate::web::user::WebUserExt;
@@ -128,10 +129,14 @@ async fn create_token(
     use sha2::{Digest, Sha256};
     let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
-    let scopes = if kind == "deploy" {
-        webspace_id.map(|wid| serde_json::json!({ "webspace_id": wid.to_string() }))
-    } else {
-        None
+    // deploy → webspace scope; org-scoped api → role scope (read/write).
+    let scopes = match kind.as_str() {
+        "deploy" => webspace_id.map(|wid| serde_json::json!({ "webspace_id": wid.to_string() })),
+        "api" => role
+            .as_deref()
+            .filter(|r| !r.is_empty())
+            .map(|r| serde_json::json!({ "role": r })),
+        _ => None,
     };
     let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
 
@@ -179,6 +184,7 @@ pub fn TokenList() -> Element {
     let mut kind = use_signal(|| "api".to_string());
     let mut org_id = use_signal(String::new);
     let mut ws_id = use_signal(String::new);
+    let mut role = use_signal(|| "write".to_string());
     let mut saving = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let mut created = use_signal(|| None::<NewToken>);
@@ -202,6 +208,11 @@ pub fn TokenList() -> Element {
                     div { class: "font-mono text-xs bg-surface-2 p-2 rounded mt-1 select-all break-all",
                         "curl -H 'Authorization: Bearer {nt.token}' \\\n  https://your-server/api/metrics" }
                 }
+                if nt.kind == "admin" || nt.kind == "api" {
+                    div { class: "mt-2 text-sm text-fg-muted", "Use with the HTTP API (/api/v1, docs at /api/v1/docs) or MCP (/mcp):" }
+                    div { class: "font-mono text-xs bg-surface-2 p-2 rounded mt-1 select-all break-all",
+                        "curl -H 'Authorization: Bearer {nt.token}' https://your-server/api/v1/domains\n# MCP endpoint: https://your-server/mcp" }
+                }
                 div { class: "mt-3",
                     Button { variant: ButtonVariant::Secondary, size: ButtonSize::Sm, onclick: move |_| created.set(None), "Dismiss" }
                 }
@@ -217,12 +228,13 @@ pub fn TokenList() -> Element {
                 let k = kind.read().clone();
                 let oid_str = org_id.read().clone();
                 let wid_str = ws_id.read().clone();
+                let role_val = role.read().clone();
                 saving.set(true);
                 error.set(None);
                 spawn(async move {
                     let oid = uuid::Uuid::parse_str(&oid_str).ok();
                     let wid = uuid::Uuid::parse_str(&wid_str).ok();
-                    match create_token(oid, input.label, k.clone(), wid, input.expires_in_secs).await {
+                    match create_token(oid, input.label, k.clone(), wid, Some(role_val), input.expires_in_secs).await {
                         Ok(token) => {
                             created.set(Some(NewToken { token, kind: k }));
                             tokens.restart();
@@ -234,7 +246,8 @@ pub fn TokenList() -> Element {
             },
 
             select { class: "input w-auto py-1 text-sm", value: "{kind}", oninput: move |evt| kind.set(evt.value()),
-                option { value: "api", "API" }
+                option { value: "api", "API (HTTP + MCP)" }
+                option { value: "admin", "Admin (global, MCP)" }
                 option { value: "deploy", "Deploy" }
                 option { value: "metrics", "Metrics" }
             }
@@ -252,12 +265,19 @@ pub fn TokenList() -> Element {
                         option { value: "{org.id}", "{org.name}" }
                     }
                 }
+            } else if kind_val == "admin" {
+                span { class: "text-sm text-fg-muted self-center px-2", "Global — full read/write on all orgs" }
             } else {
+                // api: org scope + role
                 select { class: "input w-auto py-1 text-sm", value: "{org_id}", oninput: move |evt| org_id.set(evt.value()),
-                    option { value: "", "Global" }
+                    option { value: "", "Global (read-only)" }
                     for org in &org_list {
                         option { value: "{org.id}", "{org.name}" }
                     }
+                }
+                select { class: "input w-auto py-1 text-sm", value: "{role}", oninput: move |evt| role.set(evt.value()),
+                    option { value: "write", "Read/Write" }
+                    option { value: "read", "Read only" }
                 }
             }
         }
