@@ -151,3 +151,57 @@ impl ConfigStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn set_reports_change_and_bumps_version() {
+        let mut store = ConfigStore::new(None);
+        assert!(store.set("a", json!(1)), "new key → changed");
+        assert!(!store.set("a", json!(1)), "same value → unchanged");
+        assert!(store.set("a", json!(2)), "different value → changed");
+        assert_eq!(store.get("a"), Some(&json!(2)));
+        assert_eq!(store.get("missing"), None);
+    }
+
+    #[test]
+    fn snapshot_and_any_changed_track_versions() {
+        let mut store = ConfigStore::new(None);
+        store.set("cloud", json!({"x": 1}));
+        let snap = store.snapshot(&["cloud"]);
+        assert!(
+            !store.any_changed(&["cloud"], &snap),
+            "no change since snapshot"
+        );
+        store.set("cloud", json!({"x": 2}));
+        assert!(
+            store.any_changed(&["cloud"], &snap),
+            "changed after snapshot"
+        );
+    }
+
+    #[test]
+    fn any_changed_is_true_when_provider_first_appears() {
+        let empty = ConnectorSnapshot::default();
+        let mut store = ConfigStore::new(None);
+        store.set("ollama", json!({"enabled": true}));
+        // version 1 vs snapshot's implicit 0 → treated as changed (first run).
+        assert!(store.any_changed(&["ollama"], &empty));
+    }
+
+    #[test]
+    fn values_for_and_all_available() {
+        let mut store = ConfigStore::new(None);
+        store.set("a", json!(1));
+        store.set("b", json!("two"));
+        assert!(store.all_available(&["a", "b"]));
+        assert!(!store.all_available(&["a", "c"]));
+        let vals = store.values_for(&["a", "b", "missing"]);
+        assert_eq!(vals.len(), 2);
+        assert_eq!(vals["a"], json!(1));
+        assert_eq!(vals["b"], json!("two"));
+    }
+}

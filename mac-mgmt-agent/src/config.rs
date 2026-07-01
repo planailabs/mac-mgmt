@@ -317,3 +317,45 @@ fn resolve_config_secrets(
         }
     }
 }
+
+#[cfg(test)]
+mod merge_tests {
+    use super::merge_json;
+    use serde_json::json;
+
+    #[test]
+    fn deep_merges_objects_overlay_wins() {
+        let mut base = json!({"a": 1, "nested": {"x": 1, "y": 2}, "keep": true});
+        let overlay = json!({"a": 2, "nested": {"y": 20, "z": 30}});
+        merge_json(&mut base, &overlay);
+        assert_eq!(
+            base,
+            json!({"a": 2, "nested": {"x": 1, "y": 20, "z": 30}, "keep": true})
+        );
+    }
+
+    #[test]
+    fn overlay_replaces_arrays_and_mismatched_types() {
+        let mut base = json!({"list": [1, 2, 3], "obj": {"k": 1}});
+        let overlay = json!({"list": [9], "obj": "now-a-string"});
+        merge_json(&mut base, &overlay);
+        assert_eq!(base, json!({"list": [9], "obj": "now-a-string"}));
+    }
+
+    #[test]
+    fn local_overrides_remote_like_config_pipeline() {
+        // remote config fetched from the server; local config.toml overlaid on top.
+        let mut remote = json!({
+            "daemon": {"upgrade_window": "02:00-05:00", "log_level": "info"},
+            "hermes": {"enabled": false},
+        });
+        let local = json!({
+            "daemon": {"upgrade_window": "00:00-23:59"},
+            "hermes": {"enabled": true},
+        });
+        merge_json(&mut remote, &local);
+        assert_eq!(remote["daemon"]["upgrade_window"], "00:00-23:59"); // local wins
+        assert_eq!(remote["daemon"]["log_level"], "info"); // remote kept
+        assert_eq!(remote["hermes"]["enabled"], true); // local wins
+    }
+}
