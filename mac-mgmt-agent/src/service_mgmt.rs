@@ -64,6 +64,48 @@ impl ServicePhase {
     }
 }
 
+/// What a binary store-path drift check implies for a managed service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DriftDecision {
+    /// No drift, or not enough information — do nothing.
+    None,
+    /// Drift toward a new target — schedule a reregister and record the target.
+    Schedule,
+    /// Drift still points at a target we already reregistered toward. The
+    /// `which`-based resolver and the supervisor's spawned-program resolver
+    /// disagree permanently (e.g. a wrapper script), so reregistering again
+    /// would loop every upgrade-window tick — suppress it.
+    SuppressedLoop,
+}
+
+/// Decide what to do about store-path drift for a managed service, given the
+/// currently-running store path, the store path a fresh spawn would resolve to,
+/// and the last target we reregistered toward. Pure so it can be unit-tested.
+fn drift_decision(
+    running: Option<&str>,
+    current: Option<&str>,
+    last_target: Option<&str>,
+) -> DriftDecision {
+    match (running, current) {
+        (Some(old), Some(new)) if old != new => {
+            if last_target == Some(new) {
+                DriftDecision::SuppressedLoop
+            } else {
+                DriftDecision::Schedule
+            }
+        }
+        _ => DriftDecision::None,
+    }
+}
+
+/// Exponential crash backoff before a repair+restart is attempted: 5s, 10s,
+/// 20s, 40s, then held at 40s (capped at 60s). `consecutive_crashes` is the
+/// post-increment count, so the first crash passes `1`.
+fn crash_backoff_delay(consecutive_crashes: u32) -> Duration {
+    Duration::from_secs(5u64.saturating_mul(1 << consecutive_crashes.min(4).saturating_sub(1)))
+        .min(Duration::from_secs(60))
+}
+
 struct ServiceState {
     name: String,
     service: Arc<dyn ManagedService>,
@@ -802,12 +844,7 @@ impl ServiceManager {
                     if let Some(s) = self.services.iter_mut().find(|s| s.name == name) {
                         s.consecutive_crashes += 1;
                         s.post_start_done = false;
-                        // Exponential backoff: 5s, 10s, 20s, … capped at 60s.
-                        let delay =
-                            Duration::from_secs(5u64.saturating_mul(
-                                1 << s.consecutive_crashes.min(4).saturating_sub(1),
-                            ))
-                            .min(Duration::from_secs(60));
+                        let delay = crash_backoff_delay(s.consecutive_crashes);
                         s.restart_at = Some(Instant::now() + delay);
                         s.phase = ServicePhase::CrashBackoff;
                         tracing::info!(
@@ -985,29 +1022,28 @@ impl ServiceManager {
                 // the restart waits for the upgrade window.
                 if !state.upgrade_pending {
                     let current_store = crate::nix::binary_store_path(state.service.binary_name());
-                    if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
-                        if old != new {
-                            // Guard against a drift loop: if we already
-                            // reregistered toward this exact target and the
-                            // running path still reads the old store path, the
-                            // `which`-based drift resolver and the supervisor's
-                            // spawned-program resolver disagree permanently
-                            // (e.g. a wrapper script vs its underlying binary).
-                            // Reregistering again would restart the service on
-                            // every upgrade-window tick, so suppress it.
-                            if state.last_drift_target.as_deref() == Some(new.as_str()) {
-                                tracing::warn!(
-                                    "{name} store-path drift persists after reregister \
-                                     ({old} → {new}); resolver mismatch, not restarting again"
-                                );
-                            } else {
-                                tracing::info!(
-                                    "{name} binary changed ({old} → {new}), scheduling upgrade"
-                                );
-                                state.last_drift_target = Some(new.clone());
-                                state.upgrade_pending = true;
-                            }
+                    match drift_decision(
+                        state.running_store_path.as_deref(),
+                        current_store.as_deref(),
+                        state.last_drift_target.as_deref(),
+                    ) {
+                        DriftDecision::Schedule => {
+                            let new = current_store.unwrap_or_default();
+                            tracing::info!(
+                                "{name} binary changed ({} → {new}), scheduling upgrade",
+                                state.running_store_path.as_deref().unwrap_or("?"),
+                            );
+                            state.last_drift_target = Some(new);
+                            state.upgrade_pending = true;
                         }
+                        DriftDecision::SuppressedLoop => {
+                            tracing::warn!(
+                                "{name} store-path drift persists after reregister (target {}); \
+                                 resolver mismatch, not restarting again",
+                                current_store.as_deref().unwrap_or("?"),
+                            );
+                        }
+                        DriftDecision::None => {}
                     }
                 }
 
@@ -2103,6 +2139,7 @@ mod tests {
             post_start_done: false,
             consecutive_crashes: 0,
             running_store_path: None,
+            last_drift_target: None,
             registered: true,
             restart_at: None,
             connector_env: std::collections::HashMap::new(),
@@ -2168,5 +2205,311 @@ mod tests {
         assert!(!ServiceManager::supervisor_status_live(&modern_missing_pid));
         assert!(ServiceManager::supervisor_status_live(&legacy_name_only));
         assert!(!ServiceManager::supervisor_status_live(&stopped));
+    }
+
+    // ── Configurable stubs for driving the manager ───────────────────
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone, Copy)]
+    enum Upgrade {
+        None,
+        Available,
+        Fail,
+    }
+
+    /// A ManagedService stub whose install/health/upgrade behaviour is
+    /// configurable, and which counts repair calls.
+    struct StubService {
+        name: &'static str,
+        mode: ServiceMode,
+        binary: &'static str,
+        upgrade: Upgrade,
+        repair_calls: AtomicUsize,
+    }
+
+    impl StubService {
+        fn new(name: &'static str) -> Self {
+            Self {
+                name,
+                mode: ServiceMode::Managed,
+                binary: name,
+                upgrade: Upgrade::None,
+                repair_calls: AtomicUsize::new(0),
+            }
+        }
+        fn with_upgrade(mut self, u: Upgrade) -> Self {
+            self.upgrade = u;
+            self
+        }
+        fn integrated(mut self) -> Self {
+            self.mode = ServiceMode::Integrated;
+            self
+        }
+    }
+
+    impl ManagedService for StubService {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn service_mode(&self) -> ServiceMode {
+            self.mode
+        }
+        fn binary_name(&self) -> &str {
+            self.binary
+        }
+        fn ensure_installed(&self) -> Result<()> {
+            Ok(())
+        }
+        fn ensure_setup(&self) -> Result<()> {
+            Ok(())
+        }
+        fn spawn_spec(&self) -> mac_mgmt_services::SpawnSpec {
+            mac_mgmt_services::SpawnSpec {
+                program: "sh".into(),
+                args: vec!["-c".into(), "sleep 3600".into()],
+                env: std::collections::HashMap::new(),
+            }
+        }
+        fn check_health(&self) -> Result<bool> {
+            Ok(true)
+        }
+        fn repair(&self) -> Result<()> {
+            self.repair_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn check_and_upgrade(&self) -> Result<bool> {
+            match self.upgrade {
+                Upgrade::None => Ok(false),
+                Upgrade::Available => Ok(true),
+                Upgrade::Fail => anyhow::bail!("stub upgrade failure"),
+            }
+        }
+    }
+
+    /// A connector that records how many times it ran, for gating tests.
+    struct StubConnector {
+        ran: Arc<AtomicUsize>,
+        deps: Vec<&'static str>,
+    }
+
+    impl Connector for StubConnector {
+        fn name(&self) -> &str {
+            "stub"
+        }
+        fn phase(&self) -> ConnectorPhase {
+            ConnectorPhase::PreStart
+        }
+        fn depends_on(&self) -> &[&str] {
+            &self.deps
+        }
+        fn connect(
+            &self,
+            _configs: &std::collections::HashMap<String, serde_json::Value>,
+        ) -> Result<()> {
+            self.ran.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn state_from(svc: Arc<dyn ManagedService>, phase: ServicePhase) -> ServiceState {
+        let name = svc.name().to_string();
+        ServiceState {
+            name,
+            service: svc,
+            phase,
+            upgrade_pending: false,
+            restart_pending: false,
+            post_start_done: false,
+            consecutive_crashes: 0,
+            running_store_path: None,
+            last_drift_target: None,
+            registered: true,
+            restart_at: None,
+            connector_env: std::collections::HashMap::new(),
+            connector_env_collected: true,
+        }
+    }
+
+    fn test_manager(services: Vec<ServiceState>) -> ServiceManager {
+        ServiceManager {
+            services,
+            install_only: Vec::new(),
+            connectors: Vec::new(),
+            client: None,
+            dispatcher: Arc::new(Dispatcher::new(Vec::new(), None)),
+            log_buf: LogBuffer::new(),
+            config_store: ConfigStore::new(None),
+            inprocess: false,
+            install_rx: None,
+            last_config: serde_json::Value::Null,
+        }
+    }
+
+    // ── drift_decision (the binary-drift loop guard) ─────────────────
+
+    #[test]
+    fn drift_decision_schedules_new_target_and_suppresses_loop() {
+        let a = "/nix/store/aaa-x";
+        let b = "/nix/store/bbb-x";
+        let c = "/nix/store/ccc-x";
+        // Not enough info → no action.
+        assert_eq!(drift_decision(None, Some(b), None), DriftDecision::None);
+        assert_eq!(drift_decision(Some(a), None, None), DriftDecision::None);
+        // Unchanged path → no action.
+        assert_eq!(drift_decision(Some(a), Some(a), None), DriftDecision::None);
+        // New, unseen target → schedule a reregister.
+        assert_eq!(drift_decision(Some(a), Some(b), None), DriftDecision::Schedule);
+        assert_eq!(drift_decision(Some(a), Some(b), Some(c)), DriftDecision::Schedule);
+        // Already reregistered toward this target but still stale → suppress
+        // (the loop guard: `which` vs supervisor resolver disagree permanently).
+        assert_eq!(
+            drift_decision(Some(a), Some(b), Some(b)),
+            DriftDecision::SuppressedLoop
+        );
+    }
+
+    #[test]
+    fn crash_backoff_grows_then_caps() {
+        assert_eq!(crash_backoff_delay(1), Duration::from_secs(5));
+        assert_eq!(crash_backoff_delay(2), Duration::from_secs(10));
+        assert_eq!(crash_backoff_delay(3), Duration::from_secs(20));
+        assert_eq!(crash_backoff_delay(4), Duration::from_secs(40));
+        assert_eq!(crash_backoff_delay(5), Duration::from_secs(40));
+        assert_eq!(crash_backoff_delay(100), Duration::from_secs(40));
+        assert!(crash_backoff_delay(100) <= Duration::from_secs(60));
+    }
+
+    // ── check_upgrades ───────────────────────────────────────────────
+
+    #[test]
+    fn check_upgrades_sets_pending_only_when_available() {
+        let avail = state_from(
+            Arc::new(StubService::new("a").with_upgrade(Upgrade::Available)),
+            ServicePhase::Healthy,
+        );
+        let none = state_from(
+            Arc::new(StubService::new("b").with_upgrade(Upgrade::None)),
+            ServicePhase::Healthy,
+        );
+        let fail = state_from(
+            Arc::new(StubService::new("c").with_upgrade(Upgrade::Fail)),
+            ServicePhase::Healthy,
+        );
+        let mut mgr = test_manager(vec![avail, none, fail]);
+        mgr.check_upgrades();
+        assert!(mgr.services[0].upgrade_pending, "available → pending");
+        assert!(!mgr.services[1].upgrade_pending, "none → not pending");
+        assert!(!mgr.services[2].upgrade_pending, "failure → not pending");
+    }
+
+    // ── install state machine ────────────────────────────────────────
+
+    #[test]
+    fn install_update_transitions_phase() {
+        let managed = state_from(Arc::new(StubService::new("m")), ServicePhase::Installing);
+        let integrated = state_from(
+            Arc::new(StubService::new("i").integrated()),
+            ServicePhase::Installing,
+        );
+        let failing = state_from(Arc::new(StubService::new("f")), ServicePhase::Installing);
+        let mut mgr = test_manager(vec![managed, integrated, failing]);
+
+        mgr.handle_install_update(InstallUpdate {
+            name: "m".into(),
+            result: Ok(()),
+        });
+        mgr.handle_install_update(InstallUpdate {
+            name: "i".into(),
+            result: Ok(()),
+        });
+        mgr.handle_install_update(InstallUpdate {
+            name: "f".into(),
+            result: Err(anyhow::anyhow!("boom")),
+        });
+
+        assert_eq!(mgr.services[0].phase, ServicePhase::Stopped);
+        assert!(!mgr.services[0].registered);
+        assert_eq!(mgr.services[1].phase, ServicePhase::Starting);
+        assert!(mgr.services[1].registered, "integrated is self-registered");
+        assert_eq!(mgr.services[2].phase, ServicePhase::InstallFailed);
+    }
+
+    #[tokio::test]
+    async fn retry_failed_installs_requeues_only_failed() {
+        let failed = state_from(Arc::new(StubService::new("f")), ServicePhase::InstallFailed);
+        let ok = state_from(Arc::new(StubService::new("o")), ServicePhase::Healthy);
+        let mut mgr = test_manager(vec![failed, ok]);
+        mgr.retry_failed_installs();
+        assert_eq!(mgr.services[0].phase, ServicePhase::Installing);
+        assert_eq!(mgr.services[1].phase, ServicePhase::Healthy);
+        assert!(mgr.install_rx.is_some(), "an install task was spawned");
+    }
+
+    // ── status aggregation + phase helpers ───────────────────────────
+
+    #[test]
+    fn collect_statuses_reports_phase_and_pending() {
+        let mut s = state_from(Arc::new(StubService::new("svc")), ServicePhase::Healthy);
+        s.upgrade_pending = true;
+        let mgr = test_manager(vec![s]);
+        let statuses = mgr.collect_statuses();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0]["name"], "svc");
+        assert_eq!(statuses[0]["healthy"], true);
+        assert_eq!(statuses[0]["upgrade_pending"], true);
+        assert_eq!(statuses[0]["phase"], "healthy");
+    }
+
+    #[test]
+    fn service_phase_strings_and_health() {
+        assert!(ServicePhase::Healthy.is_healthy());
+        assert!(!ServicePhase::Unhealthy.is_healthy());
+        assert_eq!(ServicePhase::CrashBackoff.as_str(), "crash_backoff");
+        assert_eq!(ServicePhase::InstallFailed.as_str(), "install_failed");
+        assert_eq!(ServicePhase::Starting.as_str(), "starting");
+    }
+
+    // ── connector gating: a stub connector reacts to a stub service's
+    //    install state (the prestart-skip that gates hermes on ollama) ──
+
+    #[test]
+    fn prestart_connector_gated_by_dep_install_state() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let conn = StubConnector {
+            ran: counter.clone(),
+            deps: vec!["ollama"],
+        };
+        // Dep is both a config provider ("ollama" is set) and a service that
+        // is still installing → connector must be skipped.
+        let ollama = state_from(Arc::new(StubService::new("ollama")), ServicePhase::Installing);
+        let mut mgr = test_manager(vec![ollama]);
+        mgr.config_store
+            .set("ollama", serde_json::json!({ "enabled": true }));
+        mgr.connectors.push(ConnectorState {
+            connector: Box::new(conn),
+            last_snapshot: ConnectorSnapshot::default(),
+            ran: false,
+        });
+
+        mgr.run_prestart_connectors();
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "skipped while dep still installing"
+        );
+
+        // Dependency finishes installing → connector runs.
+        mgr.services[0].phase = ServicePhase::Healthy;
+        mgr.run_prestart_connectors();
+        assert_eq!(counter.load(Ordering::SeqCst), 1, "runs once dep is ready");
+
+        // No dependency change → connector does not re-run.
+        mgr.run_prestart_connectors();
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "idempotent without a dep change"
+        );
     }
 }
