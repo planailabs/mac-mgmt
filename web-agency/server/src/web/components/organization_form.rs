@@ -2,23 +2,8 @@ use dioxus::prelude::*;
 
 use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 
-#[server]
-async fn create_organization(name: String) -> Result<uuid::Uuid, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    use crate::web::user::WebUserExt;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let id = sqlx::query_scalar::<_, uuid::Uuid>(
-        "INSERT INTO organizations (name) VALUES ($1) RETURNING id",
-    )
-    .bind(&name)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("failed to create organization: {e}")))?;
-
-    Ok(id)
-}
+// create_organization now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::organizations::{OrgCreateInput, create_organization};
 
 #[component]
 pub fn OrganizationForm() -> Element {
@@ -39,7 +24,7 @@ pub fn OrganizationForm() -> Element {
                 saving.set(true);
                 error.set(None);
                 spawn(async move {
-                    match create_organization(n).await {
+                    match create_organization(OrgCreateInput { name: n }).await {
                         Ok(_) => { nav.push(crate::web::app::Route::OrganizationList {}); }
                         Err(e) => error.set(Some(format!("{e}"))),
                     }

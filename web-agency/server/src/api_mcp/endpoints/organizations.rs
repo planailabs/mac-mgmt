@@ -24,6 +24,11 @@ pub struct OrgRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OrgListInput {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OrgCreateInput {
+    pub name: String,
+}
+
 /// List all organizations (admin only).
 #[api_mcp_dioxus_server(server = "list_organizations")]
 pub async fn organization_list(
@@ -50,4 +55,19 @@ pub async fn organization_list(
             created_at: created_at.format("%Y-%m-%d").to_string(),
         })
         .collect())
+}
+
+/// Create an organization (admin only). Returns the new id.
+#[api_mcp_dioxus_server(server = "create_organization")]
+pub async fn organization_create(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: OrgCreateInput,
+) -> Result<Uuid, ApiError> {
+    principal.require_admin()?;
+    sqlx::query_scalar::<_, Uuid>("INSERT INTO organizations (name) VALUES ($1) RETURNING id")
+        .bind(&input.name)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| ApiError::internal(format!("failed to create organization: {e}")))
 }

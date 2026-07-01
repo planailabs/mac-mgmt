@@ -41,6 +41,12 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
                 endpoints::organizations::organization_list(&pool, &p, input).await
             },
         );
+        o.create(
+            "Create an organization (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgCreateInput| async move {
+                endpoints::organizations::organization_create(&pool, &p, input).await
+            },
+        );
     }
     {
         let mut w = reg.resource("webspaces", "webspace", "Webspaces");
@@ -102,6 +108,12 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             "List basic-auth lists visible to the caller.",
             |pool: sqlx::PgPool, p, input: endpoints::basic_auth::BasicAuthListInput| async move {
                 endpoints::basic_auth::basic_auth_list(&pool, &p, input).await
+            },
+        );
+        b.create(
+            "Create a basic-auth list in an organization (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::basic_auth::BasicAuthCreateInput| async move {
+                endpoints::basic_auth::basic_auth_create(&pool, &p, input).await
             },
         );
     }

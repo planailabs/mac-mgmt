@@ -4,24 +4,8 @@ use uuid::Uuid;
 use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 use crate::web::user::OrgOption;
 
-#[server]
-async fn create_basic_auth_list(org_id: Uuid, name: String) -> Result<Uuid, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO basic_auth_lists (organization_id, name) VALUES ($1, $2) RETURNING id",
-    )
-    .bind(org_id)
-    .bind(&name)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(id)
-}
+// create_basic_auth_list now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::basic_auth::{BasicAuthCreateInput, create_basic_auth_list};
 
 #[server]
 async fn load_orgs() -> Result<Vec<OrgOption>, ServerFnError> {
@@ -63,7 +47,7 @@ pub fn BasicAuthForm() -> Element {
                 error.set(None);
                 spawn(async move {
                     if let Some(oid) = Uuid::parse_str(&oid_str).ok() {
-                        match create_basic_auth_list(oid, n).await {
+                        match create_basic_auth_list(BasicAuthCreateInput { organization_id: oid, name: n }).await {
                             Ok(id) => { nav.push(crate::web::app::Route::BasicAuthDetail { id: id.to_string() }); }
                             Err(e) => error.set(Some(format!("{e}"))),
                         }

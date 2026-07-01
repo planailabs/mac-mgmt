@@ -24,6 +24,12 @@ pub struct BasicAuthListRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BasicAuthListInput {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BasicAuthCreateInput {
+    pub organization_id: Uuid,
+    pub name: String,
+}
+
 /// List basic-auth lists the caller may see (admins: all; else their orgs').
 #[api_mcp_dioxus_server(server = "list_basic_auth_lists")]
 pub async fn basic_auth_list(
@@ -61,4 +67,22 @@ pub async fn basic_auth_list(
             credential_count,
         })
         .collect())
+}
+
+/// Create a basic-auth list in an organization (requires org write). Returns the new id.
+#[api_mcp_dioxus_server(server = "create_basic_auth_list")]
+pub async fn basic_auth_create(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: BasicAuthCreateInput,
+) -> Result<Uuid, ApiError> {
+    principal.require_write(&input.organization_id)?;
+    sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO basic_auth_lists (organization_id, name) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(input.organization_id)
+    .bind(&input.name)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))
 }
