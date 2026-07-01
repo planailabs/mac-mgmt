@@ -57,59 +57,8 @@ async fn load_host_form_data() -> Result<HostFormData, ServerFnError> {
     })
 }
 
-#[server]
-async fn create_host(
-    org_id: Uuid,
-    name: String,
-    kind: String,
-    cloudflare_credential_id: Option<Uuid>,
-) -> Result<Uuid, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    if kind != "proxy" && kind != "cloudflare" {
-        return Err(ServerFnError::new("invalid kind"));
-    }
-
-    let host_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO webspace_hosts (organization_id, name, kind) VALUES ($1, $2, $3) RETURNING id",
-    )
-    .bind(org_id)
-    .bind(&name)
-    .bind(&kind)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("failed to create host: {e}")))?;
-
-    if kind == "cloudflare" {
-        let cred_id = cloudflare_credential_id
-            .ok_or_else(|| ServerFnError::new("Cloudflare credential required"))?;
-        let (client, account_id) = crate::credentials::cf_client_with_account(&pool, cred_id)
-            .await
-            .map_err(|e| ServerFnError::new(format!("{e}")))?;
-        let project = match client.get_pages_project(&account_id, &name).await {
-            Ok(p) => p,
-            Err(_) => client
-                .create_pages_project(&account_id, &name, "main")
-                .await
-                .map_err(|e| ServerFnError::new(format!("failed to create Pages project: {e}")))?,
-        };
-        sqlx::query(
-            "INSERT INTO webspaces (organization_id, webspace_host_id, name, path_prefix, hosting_type, cloudflare_pages_project, cloudflare_pages_project_id, cloudflare_credential_id) \
-             VALUES ($1, $2, $3, '/', 'cloudflare_pages', $4, $5, $6)",
-        )
-        .bind(org_id).bind(host_id).bind(&name).bind(&name).bind(&project.id).bind(cred_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    }
-    // Proxy hosts start with no folders — add them (including one at "/") afterwards.
-
-    crate::api::internal::notify_proxy_reload();
-    Ok(host_id)
-}
+// create_host now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::webspace_hosts::{HostCreateInput, create_host};
 
 #[component]
 pub fn WebspaceHostForm() -> Element {
@@ -146,7 +95,7 @@ pub fn WebspaceHostForm() -> Element {
                     let oid = uuid::Uuid::parse_str(&oid_str).ok();
                     if let Some(oid) = oid {
                         let cf_cred_opt = if k == "cloudflare" { uuid::Uuid::parse_str(&cf_cred).ok() } else { None };
-                        match create_host(oid, n, k, cf_cred_opt).await {
+                        match create_host(HostCreateInput { organization_id: oid, name: n, kind: k, cloudflare_credential_id: cf_cred_opt }).await {
                             Ok(id) => { nav.push(crate::web::app::Route::WebspaceHostDetail { id: id.to_string() }); }
                             Err(e) => error.set(Some(format!("{e}"))),
                         }

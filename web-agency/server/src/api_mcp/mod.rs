@@ -74,6 +74,12 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
                 endpoints::webspace_hosts::host_list(&pool, &p, input).await
             },
         );
+        h.create(
+            "Create a webspace host (requires org write; cloudflare kind provisions a Pages project).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspace_hosts::HostCreateInput| async move {
+                endpoints::webspace_hosts::host_create(&pool, &p, input).await
+            },
+        );
     }
     {
         let mut c = reg.resource("contacts", "contact", "Contacts");
