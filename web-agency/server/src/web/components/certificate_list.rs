@@ -1,67 +1,9 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, PageHeader, Td, TdMuted, Th};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CertRow {
-    id: Uuid,
-    domain: String,
-    issuer: String,
-    acme_status: String,
-    not_before: String,
-    not_after: String,
-    expires_soon: bool,
-    last_error: Option<String>,
-}
-
-#[server]
-async fn list_certificates() -> Result<Vec<CertRow>, ServerFnError> {
-    use crate::web::user::WebUserExt;
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            String,
-            String,
-            chrono::DateTime<chrono::Utc>,
-            chrono::DateTime<chrono::Utc>,
-            bool,
-            Option<String>,
-        ),
-    >(
-        "SELECT id, domain, issuer, acme_status, not_before, not_after, \
-         not_after < now() + interval '30 days', last_error \
-         FROM certificates ORDER BY domain",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, domain, issuer, acme_status, not_before, not_after, expires_soon, last_error)| {
-                CertRow {
-                    id,
-                    domain,
-                    issuer,
-                    acme_status,
-                    not_before: not_before.format("%Y-%m-%d").to_string(),
-                    not_after: not_after.format("%Y-%m-%d").to_string(),
-                    expires_soon,
-                    last_error,
-                }
-            },
-        )
-        .collect())
-}
+// CertRow + the list endpoint now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::certificates::{CertListInput, list_certificates};
 
 #[server]
 async fn reissue_cert(domain: String) -> Result<String, ServerFnError> {
@@ -78,7 +20,7 @@ async fn reissue_cert(domain: String) -> Result<String, ServerFnError> {
 
 #[component]
 pub fn CertificateList() -> Element {
-    let mut certs = use_server_future(list_certificates)?;
+    let mut certs = use_server_future(move || list_certificates(CertListInput::default()))?;
     let rows = match &*certs.read() {
         Some(Ok(r)) => r.clone(),
         _ => vec![],

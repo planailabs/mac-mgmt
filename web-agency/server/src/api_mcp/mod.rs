@@ -60,6 +60,33 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             },
         );
     }
+    {
+        let mut h = reg.resource("webspace-hosts", "webspace_host", "Webspace Hosts");
+        h.list(
+            "List webspace hosts visible to the caller.",
+            |pool: sqlx::PgPool, p, input: endpoints::webspace_hosts::HostListInput| async move {
+                endpoints::webspace_hosts::host_list(&pool, &p, input).await
+            },
+        );
+    }
+    {
+        let mut c = reg.resource("contacts", "contact", "Contacts");
+        c.list(
+            "List domain contacts visible to the caller.",
+            |pool: sqlx::PgPool, p, input: endpoints::contacts::ContactListInput| async move {
+                endpoints::contacts::contact_list(&pool, &p, input).await
+            },
+        );
+    }
+    {
+        let mut c = reg.resource("certificates", "certificate", "Certificates");
+        c.list(
+            "List TLS certificates (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::CertListInput| async move {
+                endpoints::certificates::certificate_list(&pool, &p, input).await
+            },
+        );
+    }
 
     reg
 }

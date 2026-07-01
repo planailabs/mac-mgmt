@@ -1,78 +1,13 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::ui::{Badge, BadgeVariant, Card, PageHeader, Td, TdMuted, Th};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ContactRow {
-    id: Uuid,
-    label: String,
-    first_name: String,
-    last_name: String,
-    email: String,
-    country: String,
-    spaceship_synced: bool,
-    organization_name: String,
-}
-
-#[server]
-async fn list_contacts() -> Result<Vec<ContactRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_ids = user.org_ids();
-    if org_ids.is_empty() && !user.is_admin {
-        return Ok(vec![]);
-    }
-
-    let rows = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String, String, String, String, String, Option<String>, String)>(
-            "SELECT c.id, c.label, c.first_name, c.last_name, c.email, c.country, c.spaceship_contact_id, o.name \
-             FROM domain_contacts c JOIN organizations o ON o.id = c.organization_id \
-             ORDER BY c.label",
-        )
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, (Uuid, String, String, String, String, String, Option<String>, String)>(
-            "SELECT c.id, c.label, c.first_name, c.last_name, c.email, c.country, c.spaceship_contact_id, o.name \
-             FROM domain_contacts c JOIN organizations o ON o.id = c.organization_id \
-             WHERE c.organization_id = ANY($1) \
-             ORDER BY c.label",
-        )
-        .bind(&org_ids)
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                id,
-                label,
-                first_name,
-                last_name,
-                email,
-                country,
-                spaceship_id,
-                organization_name,
-            )| ContactRow {
-                id,
-                label,
-                first_name,
-                last_name,
-                email,
-                country,
-                spaceship_synced: spaceship_id.is_some(),
-                organization_name,
-            },
-        )
-        .collect())
-}
+// ContactRow + the list endpoint now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::contacts::{ContactListInput, list_contacts};
 
 #[component]
 pub fn ContactList() -> Element {
-    let contacts = use_server_future(list_contacts)?;
+    let contacts = use_server_future(move || list_contacts(ContactListInput::default()))?;
     let rows = contacts.read();
     let rows = match &*rows {
         Some(Ok(r)) => r.as_slice(),

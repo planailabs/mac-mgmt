@@ -14,17 +14,8 @@ use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct HostRow {
-    id: Uuid,
-    name: String,
-    kind: String,
-    organization_name: String,
-    folder_count: i64,
-    hostname: Option<String>,
-    has_changedetection: bool,
-    has_missing_cname: bool,
-}
+// HostRow + the list endpoint now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::webspace_hosts::{HostListInput, HostRow, list_hosts};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CdCredOption {
@@ -36,102 +27,6 @@ struct CdCredOption {
 struct BulkOpResult {
     succeeded: usize,
     failed: usize,
-}
-
-#[server]
-async fn list_hosts() -> Result<Vec<HostRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_ids = user.org_ids();
-    if org_ids.is_empty() && !user.is_admin {
-        return Ok(vec![]);
-    }
-
-    // hostname: all bound (domain, subdomain) FQDNs for the host, comma-joined.
-    let hostname_subquery = "(SELECT string_agg(CASE WHEN s.name IS NOT NULL AND s.name != '@' \
-            THEN s.name || '.' || d.name ELSE d.name END, ', ' ORDER BY d.name) \
-         FROM webspace_host_domains whd \
-         JOIN domains d ON d.id = whd.domain_id \
-         LEFT JOIN subdomains s ON s.id = whd.subdomain_id \
-         WHERE whd.webspace_host_id = h.id)";
-
-    // has_missing_cname: the host has at least one domain binding where no CNAME
-    // dns_record exists for that subdomain on that domain.
-    let missing_cname_subquery = "\
-        EXISTS( \
-            SELECT 1 FROM webspace_host_domains whd2 \
-            JOIN domains d2 ON d2.id = whd2.domain_id \
-            LEFT JOIN subdomains s2 ON s2.id = whd2.subdomain_id \
-            WHERE whd2.webspace_host_id = h.id \
-              AND NOT EXISTS( \
-                  SELECT 1 FROM dns_records dr \
-                  WHERE dr.domain_id = d2.id \
-                    AND dr.record_type = 'CNAME' \
-                    AND dr.name = COALESCE(s2.name, '@') \
-              ) \
-        )";
-
-    type Row = (
-        Uuid,
-        String,
-        String,
-        String,
-        i64,
-        Option<String>,
-        bool,
-        bool,
-    );
-    let query = format!(
-        "SELECT h.id, h.name, h.kind, o.name, \
-         (SELECT count(*) FROM webspaces w WHERE w.webspace_host_id = h.id), \
-         {hostname_subquery}, \
-         h.changedetection_credential_id IS NOT NULL, \
-         {missing_cname_subquery} \
-         FROM webspace_hosts h JOIN organizations o ON o.id = h.organization_id"
-    );
-
-    let rows = if user.is_admin {
-        sqlx::query_as::<_, Row>(&format!("{query} ORDER BY h.name"))
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, Row>(&format!(
-            "{query} WHERE h.organization_id = ANY($1) ORDER BY h.name"
-        ))
-        .bind(&org_ids)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                id,
-                name,
-                kind,
-                organization_name,
-                folder_count,
-                hostname,
-                has_changedetection,
-                has_missing_cname,
-            )| {
-                HostRow {
-                    id,
-                    name,
-                    kind,
-                    organization_name,
-                    folder_count,
-                    hostname,
-                    has_changedetection,
-                    has_missing_cname,
-                }
-            },
-        )
-        .collect())
 }
 
 #[server]
@@ -211,7 +106,7 @@ async fn bulk_remove_changedetection(host_ids: Vec<Uuid>) -> Result<BulkOpResult
 
 #[component]
 pub fn WebspaceHostList() -> Element {
-    let hosts = use_server_future(list_hosts)?;
+    let hosts = use_server_future(move || list_hosts(HostListInput::default()))?;
     let cd_creds = use_server_future(list_cd_creds_for_bulk)?;
 
     let all_rows: Vec<HostRow> = match &*hosts.read() {
