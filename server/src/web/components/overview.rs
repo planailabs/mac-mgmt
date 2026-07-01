@@ -32,6 +32,7 @@ struct OverviewData {
     active_rollouts: i64,
     rollouts_completed_24h: i64,
     open_staff_pings: i64,
+    open_failure_signals: i64,
     // Recent activity, newest first.
     activity: Vec<OverviewActivity>,
 }
@@ -157,6 +158,18 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Active critical failure signals across recently-reporting instances.
+    let open_failure_signals: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM daemon_heartbeats h, \
+                LATERAL jsonb_array_elements(h.failure_signals) sig \
+         WHERE h.reported_at > now() - interval '10 minutes' \
+           AND h.failure_signals IS NOT NULL \
+           AND sig->>'severity' = 'critical'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(0);
+
     // Activity feed: union of the most recent rollout state changes
     // and the latest cluster-online heartbeats. The rollouts table
     // doesn't carry separate started_at/completed_at — we use
@@ -257,6 +270,7 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
         active_rollouts,
         rollouts_completed_24h,
         open_staff_pings,
+        open_failure_signals,
         activity,
     })
 }
@@ -311,6 +325,7 @@ fn render_overview(d: &OverviewData) -> Element {
     let rollouts_value = d.active_rollouts.to_string();
     let rollouts_sub = format!("{} completed 24h", d.rollouts_completed_24h);
     let pings_value = d.open_staff_pings.to_string();
+    let signals_value = d.open_failure_signals.to_string();
 
     let activity_items: Vec<ActivityItem> = d
         .activity
@@ -339,7 +354,7 @@ fn render_overview(d: &OverviewData) -> Element {
         // Each card drills down to the page that owns the metric:
         // online → Fleet, healthy services → Fleet, active rollouts →
         // Rollouts, open pings → Staff Pings.
-        div { class: "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5",
+        div { class: "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-5",
             KpiCard {
                 label: t!("overview-kpi-online"),
                 value: online_value,
@@ -367,6 +382,12 @@ fn render_overview(d: &OverviewData) -> Element {
                 value: pings_value,
                 color: ChartColor::Warn,
                 to: Route::StaffPings {},
+            }
+            KpiCard {
+                label: t!("overview-kpi-signals"),
+                value: signals_value,
+                color: ChartColor::Bad,
+                to: Route::FleetDashboard { stage_id: None },
             }
         }
 

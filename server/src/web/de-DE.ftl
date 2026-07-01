@@ -1049,6 +1049,7 @@ overview-kpi-online = Online-Instanzen
 overview-kpi-services = Funktionierende Dienste
 overview-kpi-rollouts = Aktive Rollouts
 overview-kpi-pings = Offene Staff-Pings
+overview-kpi-signals = Kritische Signale
 overview-activity-title = Live-Aktivität
 
 # Model select modal

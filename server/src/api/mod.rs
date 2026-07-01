@@ -408,6 +408,7 @@ pub fn build_rocket(
             // Healer sessions
             healer_routes::create_session,
             healer_routes::list_sessions,
+            healer_routes::list_failure_signals,
             healer_routes::get_session,
             healer_routes::cancel_session,
             healer_routes::pause_session,

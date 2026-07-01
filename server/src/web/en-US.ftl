@@ -1049,6 +1049,7 @@ overview-kpi-online = Instances online
 overview-kpi-services = Healthy services
 overview-kpi-rollouts = Active rollouts
 overview-kpi-pings = Open staff pings
+overview-kpi-signals = Critical signals
 overview-activity-title = Live activity
 
 # Model select modal
