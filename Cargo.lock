@@ -12201,6 +12201,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plan-ai-api-mcp-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "plan-ai-auth"
 version = "0.1.0"
 dependencies = [
@@ -18674,6 +18683,8 @@ dependencies = [
  "hmac 0.12.1",
  "instant-acme",
  "percent-encoding",
+ "plan-ai-api-mcp",
+ "plan-ai-api-mcp-macros",
  "plan-ai-auth",
  "plan-ai-design",
  "plan-ai-html",
@@ -18684,6 +18695,7 @@ dependencies = [
  "reqwest 0.13.2",
  "rust-embed",
  "rustls 0.23.38",
+ "schemars",
  "serde",
  "serde_json",
  "sha2 0.10.9",

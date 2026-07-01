@@ -1,5 +1,9 @@
 #[cfg(feature = "server")]
 mod api;
+// Compiled for client + server: holds shared DTOs and the macro-generated
+// `#[server]` wrappers the UI calls; the registry/auth inside are server-gated.
+#[cfg(feature = "webui")]
+mod api_mcp;
 #[cfg(feature = "server")]
 mod config;
 #[cfg(feature = "server")]
@@ -343,6 +347,17 @@ fn main() {
                 crate::server_pool().expect("pool for basic-auth pages"),
             );
 
+            // Hybrid HTTP-API + MCP surface (plan-ai-api-mcp): REST at /api/v1/*,
+            // OpenAPI+Swagger at /api/v1/docs, MCP at /mcp. Bearer-token auth is
+            // handled in-handler, so — like deploy/internal — these must NOT sit
+            // behind the OIDC require_auth layer.
+            let api_mcp_registry =
+                crate::api_mcp::build_registry(crate::server_pool().expect("pool for api-mcp"));
+            let api_mcp_http =
+                api_mcp_registry.http_router(crate::server_pool().expect("pool for api-mcp http"));
+            let mcp_service =
+                api_mcp_registry.mcp_service(crate::server_pool().expect("pool for mcp"));
+
             // The agency app router (Dioxus + APIs, with their own auth).
             let agency_router = axum::Router::new()
                 .merge(deploy_router)
@@ -350,6 +365,9 @@ fn main() {
                 .merge(metrics_router)
                 .merge(cd_router)
                 .merge(basic_auth_router)
+                .merge(api_mcp_http)
+                .route_service("/mcp", mcp_service.clone())
+                .route_service("/mcp/", mcp_service)
                 .merge(web_router);
 
             // A fully separate router for proxy-forwarded static webspace

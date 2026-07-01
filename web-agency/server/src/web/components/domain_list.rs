@@ -6,24 +6,9 @@ use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DomainRow {
-    id: Uuid,
-    name: String,
-    registrar_type: Option<String>,
-    ssl_mode: String,
-    dnssec_enabled: bool,
-    cloudflare_zone_id: Option<String>,
-    expires_at: Option<String>,
-    organization_name: String,
-    /// Whether the domain can have nameservers set at registrar (spaceship with credential).
-    can_set_nameservers: bool,
-    /// Cached NS match status: None = unknown, Some(true) = NS match, Some(false) = mismatch.
-    ns_ok: Option<bool>,
-    has_webspace: bool,
-    ai_bots_protection: Option<String>,
-    expires_soon: bool,
-}
+// DomainRow + the list endpoint now live in the shared api_mcp layer; the UI
+// calls the macro-generated `list_domains` #[server] wrapper.
+use crate::api_mcp::endpoints::domains::{DomainListInput, DomainRow, list_domains};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CfCredOption {
@@ -35,92 +20,6 @@ struct CfCredOption {
 struct BulkOpResult {
     succeeded: Vec<String>,
     failed: Vec<(String, String)>,
-}
-
-#[server]
-async fn list_domains() -> Result<Vec<DomainRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_ids = user.org_ids();
-    if org_ids.is_empty() && !user.is_admin {
-        return Ok(vec![]);
-    }
-
-    type Row = (
-        Uuid,
-        String,
-        Option<String>,
-        String,
-        bool,
-        Option<String>,
-        Option<chrono::DateTime<chrono::Utc>>,
-        String,
-        Option<String>,
-        Option<Uuid>,
-        Option<bool>,
-        bool,
-        Option<String>,
-        bool,
-    );
-    let query = "SELECT d.id, d.name, d.registrar_type, d.ssl_mode, d.dnssec_enabled, d.cloudflare_zone_id, d.expires_at, o.name, \
-         d.registrar_type, d.registrar_credential_id, d.ns_ok, \
-         EXISTS(SELECT 1 FROM webspace_host_domains whd WHERE whd.domain_id = d.id) AS has_webspace, \
-         d.ai_bots_protection, \
-         (d.expires_at IS NOT NULL AND d.expires_at < now() + interval '30 days') AS expires_soon \
-         FROM domains d JOIN organizations o ON o.id = d.organization_id";
-
-    let rows = if user.is_admin {
-        sqlx::query_as::<_, Row>(&format!("{query} ORDER BY d.name"))
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, Row>(&format!(
-            "{query} WHERE d.organization_id = ANY($1) ORDER BY d.name"
-        ))
-        .bind(&org_ids)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                id,
-                name,
-                registrar_type,
-                ssl_mode,
-                dnssec_enabled,
-                cloudflare_zone_id,
-                expires_at,
-                organization_name,
-                reg_type,
-                reg_cred_id,
-                ns_ok,
-                has_webspace,
-                ai_bots_protection,
-                expires_soon,
-            )| DomainRow {
-                id,
-                name,
-                registrar_type,
-                ssl_mode,
-                dnssec_enabled,
-                cloudflare_zone_id,
-                expires_at: expires_at.map(|d| d.format("%Y-%m-%d").to_string()),
-                organization_name,
-                can_set_nameservers: reg_type.as_deref() == Some("spaceship")
-                    && reg_cred_id.is_some(),
-                ns_ok,
-                has_webspace,
-                ai_bots_protection,
-                expires_soon,
-            },
-        )
-        .collect())
 }
 
 #[server]
@@ -462,7 +361,7 @@ async fn bulk_create_pages_project(
 
 #[component]
 pub fn DomainList() -> Element {
-    let domains = use_server_future(list_domains)?;
+    let domains = use_server_future(move || list_domains(DomainListInput::default()))?;
     let creds = use_server_future(list_cf_credentials_for_bulk)?;
     let all_rows: Vec<DomainRow> = match &*domains.read() {
         Some(Ok(r)) => r.clone(),
