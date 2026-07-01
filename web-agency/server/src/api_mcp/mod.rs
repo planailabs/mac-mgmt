@@ -87,6 +87,33 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             },
         );
     }
+    {
+        let mut u = reg.resource("users", "user", "Users");
+        u.list(
+            "List all users (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserListInput| async move {
+                endpoints::users::user_list(&pool, &p, input).await
+            },
+        );
+    }
+    {
+        let mut b = reg.resource("basic-auth-lists", "basic_auth_list", "Basic Auth");
+        b.list(
+            "List basic-auth lists visible to the caller.",
+            |pool: sqlx::PgPool, p, input: endpoints::basic_auth::BasicAuthListInput| async move {
+                endpoints::basic_auth::basic_auth_list(&pool, &p, input).await
+            },
+        );
+    }
+    {
+        let mut b = reg.resource("billing", "billing", "Billing");
+        b.list(
+            "List billing entries visible to the caller.",
+            |pool: sqlx::PgPool, p, input: endpoints::billing::BillingListInput| async move {
+                endpoints::billing::billing_list(&pool, &p, input).await
+            },
+        );
+    }
 
     reg
 }

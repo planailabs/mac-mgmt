@@ -1,77 +1,9 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::ui::{Badge, BadgeVariant, Card, PageHeader, Td, TdMuted, Th};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BillingRow {
-    id: Uuid,
-    entry_type: String,
-    description: String,
-    amount_cents: i32,
-    currency: String,
-    provider: Option<String>,
-    period_start: Option<String>,
-    period_end: Option<String>,
-    created_at: String,
-}
-
-#[server]
-async fn list_billing() -> Result<Vec<BillingRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_ids = user.org_ids();
-    if org_ids.is_empty() && !user.is_admin {
-        return Ok(vec![]);
-    }
-
-    let rows = if user.is_admin {
-        sqlx::query_as::<_, (Uuid, String, String, i32, String, Option<String>, Option<chrono::NaiveDate>, Option<chrono::NaiveDate>, chrono::DateTime<chrono::Utc>)>(
-            "SELECT id, entry_type, description, amount_cents, currency, provider, period_start, period_end, created_at \
-             FROM billing_entries ORDER BY created_at DESC LIMIT 100",
-        )
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, (Uuid, String, String, i32, String, Option<String>, Option<chrono::NaiveDate>, Option<chrono::NaiveDate>, chrono::DateTime<chrono::Utc>)>(
-            "SELECT b.id, b.entry_type, b.description, b.amount_cents, b.currency, b.provider, b.period_start, b.period_end, b.created_at \
-             FROM billing_entries b \
-             JOIN organizations o ON o.id = b.organization_id \
-             WHERE b.organization_id = ANY($1) AND o.show_billing = true \
-             ORDER BY b.created_at DESC LIMIT 100",
-        )
-        .bind(&org_ids)
-        .fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                id,
-                entry_type,
-                description,
-                amount_cents,
-                currency,
-                provider,
-                period_start,
-                period_end,
-                created_at,
-            )| BillingRow {
-                id,
-                entry_type,
-                description,
-                amount_cents,
-                currency,
-                provider,
-                period_start: period_start.map(|d| d.to_string()),
-                period_end: period_end.map(|d| d.to_string()),
-                created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-            },
-        )
-        .collect())
-}
+// BillingRow + the list endpoint now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::billing::{BillingListInput, list_billing};
 
 fn format_amount(cents: i32, currency: &str) -> String {
     let euros = cents as f64 / 100.0;
@@ -80,7 +12,7 @@ fn format_amount(cents: i32, currency: &str) -> String {
 
 #[component]
 pub fn BillingLog() -> Element {
-    let billing = use_server_future(list_billing)?;
+    let billing = use_server_future(move || list_billing(BillingListInput::default()))?;
     let rows = billing.read();
     let rows = match &*rows {
         Some(Ok(r)) => r.as_slice(),

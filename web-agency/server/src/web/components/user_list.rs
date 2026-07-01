@@ -1,50 +1,16 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::ui::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, PageHeader, Td, TdMuted, Th,
 };
 use crate::web::app::Route;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UserRow {
-    id: Uuid,
-    email: String,
-    name: String,
-    is_admin: bool,
-    created_at: String,
-}
-
-#[server]
-async fn list_users() -> Result<Vec<UserRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    use crate::web::user::WebUserExt;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let rows = sqlx::query_as::<_, (Uuid, String, String, bool, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, email, name, is_admin, created_at FROM users ORDER BY email",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|(id, email, name, is_admin, created_at)| UserRow {
-            id,
-            email,
-            name,
-            is_admin,
-            created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-        })
-        .collect())
-}
+// UserRow + the list endpoint now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::users::{UserListInput, list_users};
 
 #[component]
 pub fn UserList() -> Element {
-    let users = use_server_future(list_users)?;
+    let users = use_server_future(move || list_users(UserListInput::default()))?;
     let rows = match &*users.read() {
         Some(Ok(r)) => r.clone(),
         _ => vec![],
