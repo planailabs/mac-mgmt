@@ -35,6 +35,7 @@ pub async fn do_send_heartbeat(
     sample: Option<mac_mgmt_common::DynamicSample>,
     services_extended: Vec<mac_mgmt_common::ServiceExtState>,
     service_samples: Vec<mac_mgmt_common::ServiceSample>,
+    failure_signals: Vec<mac_mgmt_common::FailureSignal>,
 ) -> bool {
     use russh::keys::PublicKeyBase64;
     use russh::keys::signature::Signer;
@@ -82,6 +83,7 @@ pub async fn do_send_heartbeat(
         sample,
         services_extended,
         service_samples,
+        failure_signals,
     };
 
     let url = format!("{server_url}/api/heartbeat");

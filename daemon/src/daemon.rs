@@ -474,6 +474,19 @@ impl Daemon {
                 .assessment
                 .update_service_samples(&service_samples);
 
+            // Host-level failure signals: resource pressure from the sample plus
+            // drift signals from the supervisor. Critical ones drive the healer.
+            let mut failure_signals = match &sample {
+                Some(s) => mac_mgmt_agent::signals::evaluate_sample_signals(
+                    s,
+                    &mac_mgmt_agent::signals::SignalThresholds::default(),
+                    chrono::Utc::now().timestamp(),
+                ),
+                None => Vec::new(),
+            };
+            #[cfg(feature = "services")]
+            failure_signals.extend(self.svc_mgr.drift_signals());
+
             let url = url.clone();
             let token = token.clone();
             let iid = self.instance_id.clone();
@@ -501,6 +514,7 @@ impl Daemon {
                     sample,
                     services_extended,
                     service_samples,
+                    failure_signals,
                 )
                 .await;
 
@@ -1821,6 +1835,7 @@ pub(crate) async fn do_send_heartbeat(
     sample: Option<mac_mgmt_common::DynamicSample>,
     services_extended: Vec<mac_mgmt_common::ServiceExtState>,
     service_samples: Vec<mac_mgmt_common::ServiceSample>,
+    failure_signals: Vec<mac_mgmt_common::FailureSignal>,
 ) -> bool {
     let identity = mac_mgmt_agent::heartbeat::HeartbeatIdentity {
         version: CURRENT_VERSION.to_string(),
@@ -1842,6 +1857,7 @@ pub(crate) async fn do_send_heartbeat(
         sample,
         services_extended,
         service_samples,
+        failure_signals,
     )
     .await
 }

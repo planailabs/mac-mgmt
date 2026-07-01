@@ -192,6 +192,11 @@ pub struct HeartbeatBody {
     /// Per-service dynamic samples (loaded models, active sessions, etc.).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub service_samples: Vec<ServiceSample>,
+    /// Host-level critical/warning conditions detected this tick (drift loops,
+    /// disk exhaustion, high load, thermal pressure). Critical ones drive the
+    /// healer auto-trigger. Optional for back-compat with older daemons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failure_signals: Vec<FailureSignal>,
 }
 
 /// Small dynamic sample sent with each heartbeat. GDPR allowlist: no user data,
@@ -281,6 +286,43 @@ pub struct ServiceExtState {
     pub last_probe_duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_probe_kind: Option<String>,
+}
+
+/// Severity of a [`FailureSignal`]. `Critical` signals drive the same
+/// auto-trigger counter as a failed probe; `Warning` signals are surfaced for
+/// observability but do not on their own trigger a healer session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SignalSeverity {
+    Warning,
+    Critical,
+}
+
+impl SignalSeverity {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SignalSeverity::Warning => "warning",
+            SignalSeverity::Critical => "critical",
+        }
+    }
+}
+
+/// A critical/warning condition detected on the node and piggybacked on the
+/// heartbeat. Unlike a probe (which is per-service reachability), a failure
+/// signal captures host-level trouble — drift loops, disk exhaustion, load, or
+/// thermal pressure — that should draw the healer's attention.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailureSignal {
+    /// Stable machine kind: "drift" | "disk_low" | "load_high" | "thermal_critical".
+    pub kind: String,
+    pub severity: SignalSeverity,
+    /// What the signal is about: a service name, a mount point, or "system".
+    pub subject: String,
+    /// Human-readable one-liner; rendered into the healer prompt.
+    pub message: String,
+    /// Unix seconds when this condition was first observed (0 if unknown).
+    #[serde(default)]
+    pub since: i64,
 }
 
 /// Full assessment body sent to `POST /api/assessment`. Signed like heartbeat.

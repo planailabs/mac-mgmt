@@ -45,6 +45,7 @@ pub mod service_mgmt;
 pub mod services;
 #[cfg(feature = "relay")]
 pub mod shell_tunnels;
+pub mod signals;
 #[cfg(feature = "services")]
 pub mod unmanaged;
 pub mod validator;

@@ -124,6 +124,12 @@ struct ServiceState {
     /// its underlying binary) — reregistering again would restart the service
     /// on every upgrade-window tick, so we suppress it.
     last_drift_target: Option<String>,
+    /// Live drift failure signal for this service, refreshed each supervisor
+    /// tick: `Some` while store-path drift is active (scheduled reregister =
+    /// warning, persistent post-reregister loop = critical), cleared when the
+    /// binary matches again. Collected into the heartbeat via
+    /// [`ServiceManager::drift_signals`].
+    drift_signal: Option<mac_mgmt_common::FailureSignal>,
     /// Whether we've already sent an initial Register for this service on the
     /// current client connection.
     registered: bool,
@@ -212,6 +218,7 @@ impl ServiceManager {
                     consecutive_crashes: 0,
                     running_store_path: None,
                     last_drift_target: None,
+                    drift_signal: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
@@ -308,6 +315,7 @@ impl ServiceManager {
                     consecutive_crashes: 0,
                     running_store_path: None,
                     last_drift_target: None,
+                    drift_signal: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
@@ -399,6 +407,7 @@ impl ServiceManager {
                     consecutive_crashes: 0,
                     running_store_path: None,
                     last_drift_target: None,
+                    drift_signal: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
@@ -444,6 +453,7 @@ impl ServiceManager {
             consecutive_crashes: 0,
             running_store_path: None,
             last_drift_target: None,
+            drift_signal: None,
             registered: false,
             restart_at: None,
             connector_env: std::collections::HashMap::new(),
@@ -1033,6 +1043,16 @@ impl ServiceManager {
                                 "{name} binary changed ({} → {new}), scheduling upgrade",
                                 state.running_store_path.as_deref().unwrap_or("?"),
                             );
+                            // Warning: drift detected, reregister scheduled — expected to self-heal.
+                            state.drift_signal = Some(mac_mgmt_common::FailureSignal {
+                                kind: "drift".to_string(),
+                                severity: mac_mgmt_common::SignalSeverity::Warning,
+                                subject: name.clone(),
+                                message: format!(
+                                    "{name} binary drifted to {new}; reregister scheduled"
+                                ),
+                                since: chrono::Utc::now().timestamp(),
+                            });
                             state.last_drift_target = Some(new);
                             state.upgrade_pending = true;
                         }
@@ -1042,8 +1062,24 @@ impl ServiceManager {
                                  resolver mismatch, not restarting again",
                                 current_store.as_deref().unwrap_or("?"),
                             );
+                            // Critical: drift persists after a reregister — the resolver
+                            // mismatch is a restart loop the daemon can't fix itself.
+                            state.drift_signal = Some(mac_mgmt_common::FailureSignal {
+                                kind: "drift".to_string(),
+                                severity: mac_mgmt_common::SignalSeverity::Critical,
+                                subject: name.clone(),
+                                message: format!(
+                                    "{name} store-path drift persists after reregister \
+                                     (target {}); resolver mismatch / restart loop",
+                                    current_store.as_deref().unwrap_or("?"),
+                                ),
+                                since: chrono::Utc::now().timestamp(),
+                            });
                         }
-                        DriftDecision::None => {}
+                        DriftDecision::None => {
+                            // Binary matches again — clear any prior drift signal.
+                            state.drift_signal = None;
+                        }
                     }
                 }
 
@@ -1463,8 +1499,7 @@ impl ServiceManager {
 
         // Desired vs current service sets (by name).
         let desired = connectors::build_services(cfg);
-        let desired_names: HashSet<String> =
-            desired.iter().map(|s| s.name().to_string()).collect();
+        let desired_names: HashSet<String> = desired.iter().map(|s| s.name().to_string()).collect();
         let current_names: HashSet<String> = self
             .services
             .iter()
@@ -1473,8 +1508,7 @@ impl ServiceManager {
             .collect();
 
         // ── Stop + unregister services that are no longer enabled.
-        let to_remove: Vec<String> =
-            current_names.difference(&desired_names).cloned().collect();
+        let to_remove: Vec<String> = current_names.difference(&desired_names).cloned().collect();
         if !to_remove.is_empty() && self.ensure_client().await {
             if let Some(client) = self.client.as_mut() {
                 for name in &to_remove {
@@ -1509,6 +1543,7 @@ impl ServiceManager {
                     consecutive_crashes: 0,
                     running_store_path: None,
                     last_drift_target: None,
+                    drift_signal: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
@@ -1554,7 +1589,10 @@ impl ServiceManager {
                     }
                 }
             } else {
-                tracing::info!("apply_config: {} config changed, restart pending", state.name);
+                tracing::info!(
+                    "apply_config: {} config changed, restart pending",
+                    state.name
+                );
                 state.restart_pending = true;
             }
         }
@@ -1573,8 +1611,7 @@ impl ServiceManager {
     ) {
         use std::collections::HashSet;
 
-        let desired_names: HashSet<String> =
-            desired.iter().map(|s| s.name().to_string()).collect();
+        let desired_names: HashSet<String> = desired.iter().map(|s| s.name().to_string()).collect();
         // Only config-derived (Managed/InstallOnly) services participate in
         // reconciliation. Integrated services (memvault, swarm, relay) are
         // managed out-of-band and must never be removed by a config apply.
@@ -1587,8 +1624,7 @@ impl ServiceManager {
             .collect();
 
         // Stop + unregister services that are no longer desired.
-        let to_remove: Vec<String> =
-            current_names.difference(&desired_names).cloned().collect();
+        let to_remove: Vec<String> = current_names.difference(&desired_names).cloned().collect();
         if !to_remove.is_empty() && self.ensure_client().await {
             if let Some(client) = self.client.as_mut() {
                 for name in &to_remove {
@@ -1623,6 +1659,7 @@ impl ServiceManager {
                     consecutive_crashes: 0,
                     running_store_path: None,
                     last_drift_target: None,
+                    drift_signal: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
@@ -1638,7 +1675,10 @@ impl ServiceManager {
         // Restart services the caller flagged as config-changed.
         for state in &mut self.services {
             if restart_names.contains(&state.name) {
-                tracing::info!("apply_services: {} config changed, restart pending", state.name);
+                tracing::info!(
+                    "apply_services: {} config changed, restart pending",
+                    state.name
+                );
                 state.restart_pending = true;
             }
         }
@@ -1736,6 +1776,15 @@ impl ServiceManager {
     // ── Per-service assessments ─────────────────────────────────────
 
     /// Collect dynamic samples from all healthy managed services. Called per heartbeat.
+    /// Snapshot of active drift failure signals, one per drifting service.
+    /// Merged into the heartbeat's `failure_signals` by the daemon.
+    pub fn drift_signals(&self) -> Vec<mac_mgmt_common::FailureSignal> {
+        self.services
+            .iter()
+            .filter_map(|s| s.drift_signal.clone())
+            .collect()
+    }
+
     pub async fn collect_service_samples(&self) -> Vec<mac_mgmt_common::ServiceSample> {
         use mac_mgmt_common::ServiceSample;
 
@@ -2140,6 +2189,7 @@ mod tests {
             consecutive_crashes: 0,
             running_store_path: None,
             last_drift_target: None,
+            drift_signal: None,
             registered: true,
             restart_at: None,
             connector_env: std::collections::HashMap::new(),
@@ -2324,6 +2374,7 @@ mod tests {
             consecutive_crashes: 0,
             running_store_path: None,
             last_drift_target: None,
+            drift_signal: None,
             registered: true,
             restart_at: None,
             connector_env: std::collections::HashMap::new(),
@@ -2359,8 +2410,14 @@ mod tests {
         // Unchanged path → no action.
         assert_eq!(drift_decision(Some(a), Some(a), None), DriftDecision::None);
         // New, unseen target → schedule a reregister.
-        assert_eq!(drift_decision(Some(a), Some(b), None), DriftDecision::Schedule);
-        assert_eq!(drift_decision(Some(a), Some(b), Some(c)), DriftDecision::Schedule);
+        assert_eq!(
+            drift_decision(Some(a), Some(b), None),
+            DriftDecision::Schedule
+        );
+        assert_eq!(
+            drift_decision(Some(a), Some(b), Some(c)),
+            DriftDecision::Schedule
+        );
         // Already reregistered toward this target but still stale → suppress
         // (the loop guard: `which` vs supervisor resolver disagree permanently).
         assert_eq!(
@@ -2482,7 +2539,10 @@ mod tests {
         };
         // Dep is both a config provider ("ollama" is set) and a service that
         // is still installing → connector must be skipped.
-        let ollama = state_from(Arc::new(StubService::new("ollama")), ServicePhase::Installing);
+        let ollama = state_from(
+            Arc::new(StubService::new("ollama")),
+            ServicePhase::Installing,
+        );
         let mut mgr = test_manager(vec![ollama]);
         mgr.config_store
             .set("ollama", serde_json::json!({ "enabled": true }));
