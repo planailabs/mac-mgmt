@@ -523,5 +523,41 @@ pub(crate) fn resolve_model(config: &CloudConfig) -> String {
     }
 }
 
+/// Bare model id from a possibly `provider/`-prefixed model string
+/// (e.g. `"moonshot/kimi-k2.6"` → `"kimi-k2.6"`, `"kimi-k2.6"` → `"kimi-k2.6"`).
+pub(crate) fn model_id(model: &str) -> &str {
+    model.splitn(2, '/').nth(1).unwrap_or(model)
+}
+
+/// Generated env-var name holding a custom provider's API key, e.g.
+/// `moonshot` → `MOONSHOT_API_KEY`, `my-prov` → `MY_PROV_API_KEY`.
+pub(crate) fn custom_key_env(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .collect();
+    format!("{sanitized}_API_KEY")
+}
+
 // Re-export for backwards compatibility with connectors that import from here.
 pub use crate::validator::merge_json;
+
+#[cfg(test)]
+mod helper_tests {
+    use super::{custom_key_env, model_id};
+
+    #[test]
+    fn model_id_strips_provider_prefix() {
+        assert_eq!(model_id("moonshot/kimi-k2.6"), "kimi-k2.6");
+        assert_eq!(model_id("kimi-k2.6"), "kimi-k2.6");
+        // Only the first slash is the provider separator.
+        assert_eq!(model_id("together/meta-llama/Llama-4"), "meta-llama/Llama-4");
+    }
+
+    #[test]
+    fn custom_key_env_sanitizes_and_uppercases() {
+        assert_eq!(custom_key_env("moonshot"), "MOONSHOT_API_KEY");
+        assert_eq!(custom_key_env("my-prov"), "MY_PROV_API_KEY");
+        assert_eq!(custom_key_env("k2.6"), "K2_6_API_KEY");
+    }
+}

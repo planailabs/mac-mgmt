@@ -1,6 +1,8 @@
 use anyhow::Result;
 
-use super::{Connector, ConnectorPhase, enabled_cloud_configs, non_empty, non_empty_secret};
+use super::{
+    Connector, ConnectorPhase, custom_key_env, enabled_cloud_configs, non_empty, non_empty_secret,
+};
 use crate::sentry_ext;
 use crate::services::hermes::{config_path, merge_and_validate};
 use mac_mgmt_common::{CloudConfig, CloudProvider};
@@ -43,16 +45,6 @@ impl CloudHermes {
             Some(id) => id.to_string(),
             None => format!("custom:{}", cfg.provider.as_str()),
         }
-    }
-
-    /// Generated env-var name holding a custom provider's API key, e.g.
-    /// `together` → `TOGETHER_API_KEY`, `my-prov` → `MY_PROV_API_KEY`.
-    fn custom_key_env(name: &str) -> String {
-        let sanitized: String = name
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
-            .collect();
-        format!("{sanitized}_API_KEY")
     }
 
     /// Env-var name hermes reads this provider's API key from.
@@ -140,7 +132,7 @@ impl Connector for CloudHermes {
                 serde_json::json!({
                     "name": name,
                     "base_url": base_url,
-                    "key_env": Self::custom_key_env(name),
+                    "key_env": custom_key_env(name),
                 })
             })
             .collect();
@@ -176,7 +168,7 @@ impl Connector for CloudHermes {
             // generated name written into their custom_providers `key_env`.
             let env_var = match Self::builtin_id(&cfg.provider) {
                 Some(_) => Self::key_env(cfg).to_string(),
-                None => Self::custom_key_env(cfg.provider.as_str()),
+                None => custom_key_env(cfg.provider.as_str()),
             };
             env.insert(env_var, key.to_string());
         }
