@@ -8,6 +8,12 @@ use super::ui::{
 
 // ── Types ─────────────────────────────────────────────────────────────
 
+// Discovery and import live in the shared api_mcp layer; the UI calls the
+// macro-generated `#[server]` wrappers.
+use crate::api_mcp::endpoints::domains::{
+    DiscoveredDomain, DomainDiscoverInput, DomainImportInput, ImportResult, discover_domains,
+    import_domains,
+};
 use crate::web::user::OrgOption;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,23 +21,6 @@ struct CredOption {
     id: Uuid,
     name: String,
     credential_type: String,
-}
-
-/// A domain discovered from a credential, ready for import.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DiscoveredDomain {
-    name: String,
-    zone_id: Option<String>, // Cloudflare zone ID
-    status: Option<String>,  // zone status or lifecycle status
-    expires_at: Option<String>,
-    already_imported: bool, // true if domain already exists in this org
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ImportResult {
-    imported: u32,
-    skipped: u32,
-    errors: Vec<String>,
 }
 
 // ── Server functions ──────────────────────────────────────────────────
@@ -61,185 +50,6 @@ async fn list_orgs_and_creds() -> Result<(Vec<OrgOption>, Vec<CredOption>), Serv
             })
             .collect(),
     ))
-}
-
-/// Discover domains from a credential (Cloudflare zones or Spaceship domains).
-#[server]
-async fn discover_domains(
-    credential_id: Uuid,
-    org_id: Uuid,
-) -> Result<Vec<DiscoveredDomain>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-
-    let cred = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT credential_type, encrypted_data FROM credentials WHERE id = $1",
-    )
-    .bind(credential_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("credential not found"))?;
-
-    let (cred_type, _encrypted_data) = cred;
-
-    // Load existing domains in this org for deduplication
-    let existing: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM domains WHERE organization_id = $1")
-            .bind(org_id)
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let mut discovered = Vec::new();
-
-    match cred_type.as_str() {
-        "cloudflare" => {
-            let client = crate::credentials::cf_client(&pool, credential_id)
-                .await
-                .map_err(|e| ServerFnError::new(format!("{e}")))?;
-
-            let zones = client
-                .list_zones(None)
-                .await
-                .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
-
-            for zone in zones {
-                discovered.push(DiscoveredDomain {
-                    already_imported: existing.contains(&zone.name),
-                    name: zone.name,
-                    zone_id: Some(zone.id),
-                    status: Some(zone.status),
-                    expires_at: None,
-                });
-            }
-        }
-        "spaceship" => {
-            let client = crate::credentials::spaceship_client(&pool, credential_id)
-                .await
-                .map_err(|e| ServerFnError::new(format!("{e}")))?;
-
-            let domains = client
-                .list_all_domains()
-                .await
-                .map_err(|e| ServerFnError::new(format!("Spaceship API error: {e}")))?;
-
-            for domain in domains {
-                discovered.push(DiscoveredDomain {
-                    already_imported: existing.contains(&domain.name),
-                    name: domain.name,
-                    zone_id: None,
-                    status: domain.lifecycle_status,
-                    expires_at: domain.expiration_date,
-                });
-            }
-        }
-        _ => return Err(ServerFnError::new("unsupported credential type")),
-    }
-
-    Ok(discovered)
-}
-
-/// Import selected domains into the organization.
-#[server]
-async fn import_domains(
-    credential_id: Uuid,
-    org_id: Uuid,
-    domain_names: Vec<String>,
-) -> Result<ImportResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    use crate::web::user::WebUserExt;
-    let pool = crate::server_pool()?;
-
-    user.require_org_write(&org_id)?;
-
-    let cred = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT credential_type, encrypted_data FROM credentials WHERE id = $1",
-    )
-    .bind(credential_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("credential not found"))?;
-
-    let (cred_type, _encrypted_data) = cred;
-
-    // Build a map of name -> zone_id for Cloudflare
-    let mut zone_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let registrar_type = cred_type.as_str();
-
-    if registrar_type == "cloudflare" {
-        let client = crate::credentials::cf_client(&pool, credential_id)
-            .await
-            .map_err(|e| ServerFnError::new(format!("{e}")))?;
-        let zones = client
-            .list_zones(None)
-            .await
-            .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
-        for zone in zones {
-            zone_map.insert(zone.name.clone(), zone.id);
-        }
-    }
-
-    let mut imported = 0u32;
-    let mut skipped = 0u32;
-    let mut errors = Vec::new();
-
-    for domain_name in &domain_names {
-        // Skip if already exists
-        let exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM domains WHERE organization_id = $1 AND name = $2)",
-        )
-        .bind(org_id)
-        .bind(domain_name)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        if exists {
-            skipped += 1;
-            continue;
-        }
-
-        let zone_id = zone_map.get(domain_name).cloned();
-        let cf_cred = if registrar_type == "cloudflare" {
-            Some(credential_id)
-        } else {
-            None
-        };
-        let reg_cred = match registrar_type {
-            "spaceship" => Some(credential_id),
-            _ => None,
-        };
-
-        let result = sqlx::query(
-            "INSERT INTO domains (organization_id, name, registrar_type, registrar_credential_id, \
-             cloudflare_credential_id, cloudflare_zone_id) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
-        )
-        .bind(org_id)
-        .bind(domain_name)
-        .bind(registrar_type)
-        .bind(reg_cred)
-        .bind(cf_cred)
-        .bind(&zone_id)
-        .execute(&pool)
-        .await;
-
-        match result {
-            Ok(_) => imported += 1,
-            Err(e) => errors.push(format!("{domain_name}: {e}")),
-        }
-    }
-
-    Ok(ImportResult {
-        imported,
-        skipped,
-        errors,
-    })
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -323,7 +133,12 @@ pub fn DomainImport() -> Element {
                                     let cid = uuid::Uuid::parse_str(&cred_str).ok();
                                     let oid = uuid::Uuid::parse_str(&org_str).ok();
                                     if let (Some(cid), Some(oid)) = (cid, oid) {
-                                        match discover_domains(cid, oid).await {
+                                        match discover_domains(DomainDiscoverInput {
+                                            credential_id: cid,
+                                            organization_id: oid,
+                                        })
+                                        .await
+                                        {
                                             Ok(domains) => {
                                                 let new_names: Vec<String> = domains.iter()
                                                     .filter(|d| !d.already_imported)
@@ -462,7 +277,13 @@ pub fn DomainImport() -> Element {
                                 let cid = uuid::Uuid::parse_str(&cred_str).ok();
                                 let oid = uuid::Uuid::parse_str(&org_str).ok();
                                 if let (Some(cid), Some(oid)) = (cid, oid) {
-                                    match import_domains(cid, oid, names).await {
+                                    match import_domains(DomainImportInput {
+                                        credential_id: cid,
+                                        organization_id: oid,
+                                        domain_names: names,
+                                    })
+                                    .await
+                                    {
                                         Ok(r) => result.set(Some(r)),
                                         Err(e) => error.set(Some(format!("{e}"))),
                                     }

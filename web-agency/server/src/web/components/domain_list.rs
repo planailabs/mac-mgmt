@@ -6,20 +6,19 @@ use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th,
 };
 
-// DomainRow + the list endpoint now live in the shared api_mcp layer; the UI
-// calls the macro-generated `list_domains` #[server] wrapper.
-use crate::api_mcp::endpoints::domains::{DomainListInput, DomainRow, list_domains};
+// DomainRow, the list endpoint and the bulk operations now live in the shared
+// api_mcp layer; the UI calls the macro-generated `#[server]` wrappers.
+use crate::api_mcp::endpoints::domains::{
+    BulkFailure, BulkOpResult, DomainBulkCreatePagesInput, DomainBulkDeployCloudflareInput,
+    DomainBulkSetAiBotsInput, DomainBulkSetNameserversInput, DomainBulkSetSslModeInput,
+    DomainListInput, DomainRow, bulk_create_pages_project, bulk_deploy_to_cloudflare,
+    bulk_set_ai_bots_protection, bulk_set_nameservers, bulk_set_ssl_mode, list_domains,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CfCredOption {
     id: Uuid,
     name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BulkOpResult {
-    succeeded: Vec<String>,
-    failed: Vec<(String, String)>,
 }
 
 #[server]
@@ -46,317 +45,6 @@ async fn list_cf_credentials_for_bulk() -> Result<Vec<CfCredOption>, ServerFnErr
         .into_iter()
         .map(|(id, name)| CfCredOption { id, name })
         .collect())
-}
-
-/// Deploy multiple domains to Cloudflare under one credential.
-#[server]
-async fn bulk_deploy_to_cloudflare(
-    domain_ids: Vec<Uuid>,
-    credential_id: Uuid,
-) -> Result<BulkOpResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    if !user.is_admin {
-        return Err(ServerFnError::new("admin required"));
-    }
-    let pool = crate::server_pool()?;
-
-    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("{e}")))?;
-
-    let mut succeeded = Vec::new();
-    let mut failed = Vec::new();
-
-    for domain_id in &domain_ids {
-        let row = sqlx::query_as::<_, (String,)>("SELECT name FROM domains WHERE id = $1")
-            .bind(domain_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-        let Some((domain_name,)) = row else { continue };
-
-        match deploy_single(
-            &client,
-            &account_id,
-            &pool,
-            *domain_id,
-            &domain_name,
-            credential_id,
-        )
-        .await
-        {
-            Ok(()) => succeeded.push(domain_name),
-            Err(e) => failed.push((domain_name, format!("{e}"))),
-        }
-    }
-
-    Ok(BulkOpResult { succeeded, failed })
-}
-
-#[cfg(feature = "server")]
-async fn deploy_single(
-    client: &cloudflare_api::compat::SimpleClient,
-    account_id: &str,
-    pool: &sqlx::PgPool,
-    domain_id: Uuid,
-    domain_name: &str,
-    credential_id: Uuid,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let existing = client.list_zones(Some(domain_name)).await?;
-    let zone = if let Some(z) = existing.into_iter().find(|z| z.name == domain_name) {
-        z
-    } else {
-        client.create_zone(domain_name, account_id).await?
-    };
-
-    sqlx::query("UPDATE domains SET cloudflare_zone_id = $1, cloudflare_credential_id = $2, updated_at = now() WHERE id = $3")
-        .bind(&zone.id).bind(credential_id).bind(domain_id)
-        .execute(pool).await?;
-
-    Ok(())
-}
-
-/// Set Cloudflare nameservers at registrar for domains that have a CF zone
-/// but haven't had their nameservers updated yet.
-#[server]
-async fn bulk_set_nameservers(domain_ids: Vec<Uuid>) -> Result<BulkOpResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    if !user.is_admin {
-        return Err(ServerFnError::new("admin required"));
-    }
-    let pool = crate::server_pool()?;
-
-    let mut succeeded = Vec::new();
-    let mut failed = Vec::new();
-
-    for domain_id in &domain_ids {
-        let row = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
-            "SELECT name, cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-        )
-        .bind(domain_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        let Some((domain_name, Some(zone_id), Some(cred_id))) = row else {
-            continue; // skip domains without CF zone
-        };
-
-        match set_ns_single(&pool, *domain_id, &domain_name, &zone_id, cred_id).await {
-            Ok(()) => succeeded.push(domain_name),
-            Err(e) => failed.push((domain_name, format!("{e}"))),
-        }
-    }
-
-    Ok(BulkOpResult { succeeded, failed })
-}
-
-#[cfg(feature = "server")]
-async fn set_ns_single(
-    pool: &sqlx::PgPool,
-    domain_id: Uuid,
-    domain_name: &str,
-    zone_id: &str,
-    cred_id: Uuid,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let cf_client = crate::credentials::cf_client(pool, cred_id).await?;
-    let zone = cf_client.get_zone(zone_id).await?;
-    let nameservers = zone.name_servers.unwrap_or_default();
-    if nameservers.is_empty() {
-        return Err("zone has no nameservers".into());
-    }
-
-    let reg = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
-        "SELECT registrar_type, registrar_credential_id FROM domains WHERE id = $1",
-    )
-    .bind(domain_id)
-    .fetch_one(pool)
-    .await?;
-
-    match reg {
-        (Some(ref rt), Some(reg_cred_id)) if rt == "spaceship" => {
-            let ss_client = crate::credentials::spaceship_client(pool, reg_cred_id).await?;
-            ss_client
-                .set_nameservers(
-                    domain_name,
-                    &spaceship_api::compat::NameserverConfig {
-                        provider: "custom".into(),
-                        hosts: Some(nameservers),
-                    },
-                )
-                .await?;
-            Ok(())
-        }
-        _ => Err("no supported registrar".into()),
-    }
-}
-
-/// Bulk set SSL mode for domains with CF zones.
-#[server]
-async fn bulk_set_ssl_mode(
-    domain_ids: Vec<Uuid>,
-    ssl_mode: String,
-) -> Result<BulkOpResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    if !user.is_admin {
-        return Err(ServerFnError::new("admin required"));
-    }
-    let pool = crate::server_pool()?;
-
-    let mut succeeded = Vec::new();
-    let mut failed = Vec::new();
-
-    for domain_id in &domain_ids {
-        let row = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
-            "SELECT name, cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-        )
-        .bind(domain_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        let Some((domain_name, Some(zone_id), Some(cred_id))) = row else {
-            continue;
-        };
-
-        match async {
-            let client = crate::credentials::cf_client(&pool, cred_id).await?;
-            client.set_ssl_mode(&zone_id, &ssl_mode).await?;
-            sqlx::query("UPDATE domains SET ssl_mode = $1, updated_at = now() WHERE id = $2")
-                .bind(&ssl_mode)
-                .bind(domain_id)
-                .execute(&pool)
-                .await?;
-            Ok::<_, anyhow::Error>(())
-        }
-        .await
-        {
-            Ok(()) => succeeded.push(domain_name),
-            Err(e) => failed.push((domain_name, format!("{e}"))),
-        }
-    }
-    Ok(BulkOpResult { succeeded, failed })
-}
-
-/// Bulk set AI bot protection for domains with CF zones.
-#[server]
-async fn bulk_set_ai_bots_protection(
-    domain_ids: Vec<Uuid>,
-    value: String,
-) -> Result<BulkOpResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    if !user.is_admin {
-        return Err(ServerFnError::new("admin required"));
-    }
-    let pool = crate::server_pool()?;
-
-    let mut succeeded = Vec::new();
-    let mut failed = Vec::new();
-
-    for domain_id in &domain_ids {
-        let row = sqlx::query_as::<_, (String, Option<String>, Option<Uuid>)>(
-            "SELECT name, cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
-        )
-        .bind(domain_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        let Some((domain_name, Some(zone_id), Some(cred_id))) = row else {
-            continue;
-        };
-
-        match async {
-            let client = crate::credentials::cf_client(&pool, cred_id).await?;
-            client
-                .set_bot_management(&zone_id, &serde_json::json!({"ai_bots_protection": value}))
-                .await?;
-            sqlx::query(
-                "UPDATE domains SET ai_bots_protection = $1, updated_at = now() WHERE id = $2",
-            )
-            .bind(&value)
-            .bind(domain_id)
-            .execute(&pool)
-            .await?;
-            Ok::<_, anyhow::Error>(())
-        }
-        .await
-        {
-            Ok(()) => succeeded.push(domain_name),
-            Err(e) => failed.push((domain_name, format!("{e}"))),
-        }
-    }
-    Ok(BulkOpResult { succeeded, failed })
-}
-
-/// Bulk create CF Pages direct-upload projects for domains without webspaces.
-#[server]
-async fn bulk_create_pages_project(
-    domain_ids: Vec<Uuid>,
-    credential_id: Uuid,
-) -> Result<BulkOpResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    if !user.is_admin {
-        return Err(ServerFnError::new("admin required"));
-    }
-    let pool = crate::server_pool()?;
-
-    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("{e}")))?;
-
-    let mut succeeded = Vec::new();
-    let mut failed = Vec::new();
-
-    for domain_id in &domain_ids {
-        let row = sqlx::query_as::<_, (String, Uuid)>(
-            "SELECT name, organization_id FROM domains WHERE id = $1",
-        )
-        .bind(domain_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        let Some((domain_name, org_id)) = row else {
-            continue;
-        };
-
-        // Project name: replace dots with hyphens (CF Pages doesn't allow dots)
-        let project_name = domain_name.replace('.', "-");
-
-        match async {
-            let project = client.create_pages_project(&account_id, &project_name, "main").await?;
-            let project_id = project.id.clone();
-
-            // Create a cloudflare host with its single main-folder (the Pages project).
-            let host_id = sqlx::query_scalar::<_, Uuid>(
-                "INSERT INTO webspace_hosts (organization_id, name, kind) VALUES ($1, $2, 'cloudflare') RETURNING id",
-            )
-            .bind(org_id).bind(&project_name)
-            .fetch_one(&pool).await?;
-
-            sqlx::query(
-                "INSERT INTO webspaces (organization_id, webspace_host_id, name, path_prefix, hosting_type, cloudflare_pages_project, cloudflare_pages_project_id, cloudflare_credential_id) \
-                 VALUES ($1, $2, $3, '/', 'cloudflare_pages', $4, $5, $6)",
-            )
-            .bind(org_id).bind(host_id).bind(&project_name).bind(&project_name).bind(&project_id).bind(credential_id)
-            .execute(&pool).await?;
-
-            // Link domain to the host.
-            sqlx::query(
-                "INSERT INTO webspace_host_domains (webspace_host_id, domain_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            ).bind(host_id).bind(domain_id).execute(&pool).await?;
-
-            Ok::<_, anyhow::Error>(())
-        }.await {
-            Ok(()) => succeeded.push(domain_name),
-            Err(e) => failed.push((domain_name, format!("{e}"))),
-        }
-    }
-    if !succeeded.is_empty() {
-        crate::api::internal::notify_proxy_reload();
-    }
-    Ok(BulkOpResult { succeeded, failed })
 }
 
 #[component]
@@ -532,9 +220,9 @@ pub fn DomainList() -> Element {
                                     bulk_result.set(None);
                                     spawn(async move {
                                         if let Ok(cid) = Uuid::parse_str(&cid_str) {
-                                            match bulk_deploy_to_cloudflare(ids, cid).await {
+                                            match bulk_deploy_to_cloudflare(DomainBulkDeployCloudflareInput { domain_ids: ids, credential_id: cid }).await {
                                                 Ok(r) => bulk_result.set(Some(r)),
-                                                Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![("error".into(), format!("{e}"))] })),
+                                                Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![BulkFailure { name: "error".into(), error: format!("{e}") }] })),
                                             }
                                         }
                                         running.set(false);
@@ -556,9 +244,9 @@ pub fn DomainList() -> Element {
                                     running.set(true);
                                     bulk_result.set(None);
                                     spawn(async move {
-                                        match bulk_set_nameservers(ids).await {
+                                        match bulk_set_nameservers(DomainBulkSetNameserversInput { domain_ids: ids }).await {
                                             Ok(r) => bulk_result.set(Some(r)),
-                                            Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![("error".into(), format!("{e}"))] })),
+                                            Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![BulkFailure { name: "error".into(), error: format!("{e}") }] })),
                                         }
                                         running.set(false);
                                     });
@@ -585,9 +273,9 @@ pub fn DomainList() -> Element {
                                     let mode = bulk_ssl_mode.read().clone();
                                     running.set(true); bulk_result.set(None);
                                     spawn(async move {
-                                        match bulk_set_ssl_mode(ids, mode).await {
+                                        match bulk_set_ssl_mode(DomainBulkSetSslModeInput { domain_ids: ids, ssl_mode: mode }).await {
                                             Ok(r) => bulk_result.set(Some(r)),
-                                            Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![("error".into(), format!("{e}"))] })),
+                                            Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![BulkFailure { name: "error".into(), error: format!("{e}") }] })),
                                         }
                                         running.set(false);
                                     });
@@ -614,9 +302,9 @@ pub fn DomainList() -> Element {
                                     let val = bulk_ai_bots.read().clone();
                                     running.set(true); bulk_result.set(None);
                                     spawn(async move {
-                                        match bulk_set_ai_bots_protection(ids, val).await {
+                                        match bulk_set_ai_bots_protection(DomainBulkSetAiBotsInput { domain_ids: ids, value: val }).await {
                                             Ok(r) => bulk_result.set(Some(r)),
-                                            Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![("error".into(), format!("{e}"))] })),
+                                            Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![BulkFailure { name: "error".into(), error: format!("{e}") }] })),
                                         }
                                         running.set(false);
                                     });
@@ -639,9 +327,9 @@ pub fn DomainList() -> Element {
                                     running.set(true); bulk_result.set(None);
                                     spawn(async move {
                                         if let Ok(cid) = Uuid::parse_str(&cid_str) {
-                                            match bulk_create_pages_project(ids, cid).await {
+                                            match bulk_create_pages_project(DomainBulkCreatePagesInput { domain_ids: ids, credential_id: cid }).await {
                                                 Ok(r) => bulk_result.set(Some(r)),
-                                                Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![("error".into(), format!("{e}"))] })),
+                                                Err(e) => bulk_result.set(Some(BulkOpResult { succeeded: vec![], failed: vec![BulkFailure { name: "error".into(), error: format!("{e}") }] })),
                                             }
                                         }
                                         running.set(false);
@@ -667,8 +355,8 @@ pub fn DomainList() -> Element {
                     if !result.failed.is_empty() {
                         div { class: "text-sm",
                             Badge { variant: BadgeVariant::Warn, "{result.failed.len()} failed" }
-                            for (name, err) in &result.failed {
-                                div { class: "text-sm text-fg-muted mt-1", "{name}: {err}" }
+                            for f in &result.failed {
+                                div { class: "text-sm text-fg-muted mt-1", "{f.name}: {f.error}" }
                             }
                         }
                     }

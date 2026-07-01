@@ -2,6 +2,12 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// The availability check lives in the shared api_mcp layer; the UI calls the
+// macro-generated `#[server]` wrapper.
+use crate::api_mcp::endpoints::domains::{
+    AvailabilityResult, DomainCheckAvailabilityInput, check_domain_availability,
+};
+
 use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td, Th,
 };
@@ -11,15 +17,6 @@ struct CredOption {
     id: Uuid,
     name: String,
     credential_type: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AvailabilityResult {
-    domain: String,
-    available: bool,
-    price: Option<String>,
-    currency: Option<String>,
-    provider: String,
 }
 
 #[server]
@@ -54,68 +51,6 @@ async fn list_registrar_creds() -> Result<Vec<CredOption>, ServerFnError> {
             credential_type,
         })
         .collect())
-}
-
-#[server]
-async fn check_domain_availability(
-    credential_id: Uuid,
-    domain: String,
-) -> Result<AvailabilityResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    crate::web::user::require_credential_read(&user, &pool, credential_id).await?;
-
-    let cred_type =
-        sqlx::query_scalar::<_, String>("SELECT credential_type FROM credentials WHERE id = $1")
-            .bind(credential_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("credential not found"))?;
-
-    match cred_type.as_str() {
-        "cloudflare" => {
-            let (client, account_id) =
-                crate::credentials::cf_client_with_account(&pool, credential_id)
-                    .await
-                    .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let results = client
-                .check_domains(&account_id, &[domain.clone()])
-                .await
-                .map_err(|e| ServerFnError::new(format!("CF API: {e}")))?;
-            let r = results
-                .into_iter()
-                .next()
-                .ok_or_else(|| ServerFnError::new("no result"))?;
-            Ok(AvailabilityResult {
-                domain: r.name,
-                available: r.registrable,
-                price: r.pricing.as_ref().and_then(|p| p.registration_cost.clone()),
-                currency: r.pricing.map(|p| p.currency),
-                provider: "cloudflare".into(),
-            })
-        }
-        "spaceship" => {
-            let client = crate::credentials::spaceship_client(&pool, credential_id)
-                .await
-                .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let r = client
-                .check_availability(&domain)
-                .await
-                .map_err(|e| ServerFnError::new(format!("Spaceship API: {e}")))?;
-            let available = r.status.as_deref() == Some("available");
-            let reg_price = r.premium_pricing.iter().find(|p| p.operation == "register");
-            Ok(AvailabilityResult {
-                domain: r.domain.unwrap_or(domain),
-                available,
-                price: reg_price.map(|p| format!("{:.2}", p.price)),
-                currency: reg_price.map(|p| p.currency.clone()),
-                provider: "spaceship".into(),
-            })
-        }
-        _ => Err(ServerFnError::new("unsupported registrar")),
-    }
 }
 
 #[component]
@@ -173,7 +108,12 @@ pub fn DomainRegister() -> Element {
                                 result.set(None);
                                 spawn(async move {
                                     if let Ok(cid) = uuid::Uuid::parse_str(&cid_str) {
-                                        match check_domain_availability(cid, d).await {
+                                        match check_domain_availability(DomainCheckAvailabilityInput {
+                                            credential_id: cid,
+                                            domain: d,
+                                        })
+                                        .await
+                                        {
                                             Ok(r) => result.set(Some(r)),
                                             Err(e) => error.set(Some(format!("{e}"))),
                                         }

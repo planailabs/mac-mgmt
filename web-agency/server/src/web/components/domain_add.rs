@@ -4,6 +4,9 @@ use uuid::Uuid;
 
 use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 
+// The add-domain endpoint lives in the shared api_mcp layer; the UI calls the
+// macro-generated `add_domain` #[server] wrapper.
+use crate::api_mcp::endpoints::domains::{DomainCreateInput, add_domain};
 use crate::web::user::OrgOption;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,69 +43,6 @@ async fn list_orgs_and_cf_creds() -> Result<(Vec<OrgOption>, Vec<CredentialOptio
             })
             .collect(),
     ))
-}
-
-/// Add a domain: creates a Cloudflare zone (or finds existing one).
-#[server]
-async fn add_domain(
-    org_id: Uuid,
-    domain_name: String,
-    cf_credential_id: Option<Uuid>,
-    registrar_type: String,
-) -> Result<Uuid, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    let mut zone_id: Option<String> = None;
-
-    // If a Cloudflare credential is provided, try to add/find the zone
-    if let Some(cred_id) = cf_credential_id {
-        let (client, account_id) = crate::credentials::cf_client_with_account(&pool, cred_id)
-            .await
-            .map_err(|e| ServerFnError::new(format!("{e}")))?;
-
-        // Check if zone already exists
-        let existing = client
-            .list_zones(Some(&domain_name))
-            .await
-            .map_err(|e| ServerFnError::new(format!("CF API error: {e}")))?;
-
-        if let Some(zone) = existing.first() {
-            zone_id = Some(zone.id.clone());
-            tracing::info!("domain {domain_name} already exists as zone {}", zone.id);
-        } else {
-            let zone = client
-                .create_zone(&domain_name, &account_id)
-                .await
-                .map_err(|e| ServerFnError::new(format!("CF zone creation failed: {e}")))?;
-            zone_id = Some(zone.id);
-            tracing::info!("created CF zone for {domain_name}");
-        }
-    }
-
-    let registrar = if registrar_type.is_empty() {
-        None
-    } else {
-        Some(registrar_type.as_str())
-    };
-
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO domains (organization_id, name, registrar_type, cloudflare_credential_id, cloudflare_zone_id) \
-         VALUES ($1, $2, $3, $4, $5) RETURNING id",
-    )
-    .bind(org_id)
-    .bind(&domain_name)
-    .bind(registrar)
-    .bind(cf_credential_id)
-    .bind(&zone_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("failed to add domain: {e}")))?;
-
-    Ok(id)
 }
 
 #[component]
@@ -144,7 +84,14 @@ pub fn DomainAdd() -> Element {
                     let oid = uuid::Uuid::parse_str(&oid_str).ok();
                     let cred = uuid::Uuid::parse_str(&cred_str).ok();
                     if let Some(oid) = oid {
-                        match add_domain(oid, dn, cred, reg).await {
+                        match add_domain(DomainCreateInput {
+                            org_id: oid,
+                            domain_name: dn,
+                            cf_credential_id: cred,
+                            registrar_type: reg,
+                        })
+                        .await
+                        {
                             Ok(_) => { nav.push(crate::web::app::Route::DomainList {}); }
                             Err(e) => error.set(Some(format!("{e}"))),
                         }

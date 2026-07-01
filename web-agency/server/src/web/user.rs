@@ -1,4 +1,4 @@
-pub use plan_ai_auth::{OrgMembership, WebUser};
+pub use plan_ai_auth::WebUser;
 
 /// Dioxus-specific extensions for WebUser (wraps plan-ai-auth's string errors
 /// into ServerFnError).
@@ -93,32 +93,6 @@ use uuid::Uuid;
 pub struct OrgOption {
     pub id: uuid::Uuid,
     pub name: String,
-}
-
-/// Require that a non-admin user has read access to the credential's
-/// organization. Global (NULL org) credentials are denied for non-admins.
-#[cfg(feature = "server")]
-pub async fn require_credential_read(
-    user: &WebUser,
-    pool: &PgPool,
-    credential_id: Uuid,
-) -> Result<(), ServerFnError> {
-    if user.is_admin {
-        return Ok(());
-    }
-    let cred_org = sqlx::query_scalar::<_, Option<Uuid>>(
-        "SELECT organization_id FROM credentials WHERE id = $1",
-    )
-    .bind(credential_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("credential not found"))?;
-
-    match cred_org {
-        Some(oid) if user.org_ids().contains(&oid) => Ok(()),
-        _ => Err(ServerFnError::new("access denied")),
-    }
 }
 
 /// List organizations visible to the user (any role). Admins see all.

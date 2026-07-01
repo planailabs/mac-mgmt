@@ -32,6 +32,168 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
                 endpoints::domains::domain_list(&pool, &p, input).await
             },
         );
+        d.get(
+            "Get a domain with subdomains, DNS records and live Cloudflare zone info (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainGetInput| async move {
+                endpoints::domains::domain_get(&pool, &p, input).await
+            },
+        );
+        d.create(
+            "Add a domain (requires org write); creates/finds a Cloudflare zone when a credential is given.",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainCreateInput| async move {
+                endpoints::domains::domain_create(&pool, &p, input).await
+            },
+        );
+        d.update(
+            "Update a domain's ssl_mode, dnssec_enabled and/or ai_bots_protection (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainUpdateInput| async move {
+                endpoints::domains::domain_update(&pool, &p, input).await
+            },
+        );
+        d.delete(
+            "Delete a domain and all its records (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainDeleteInput| async move {
+                endpoints::domains::domain_delete(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "move",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Move a domain to another organization (requires write on both orgs).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainMoveInput| async move {
+                endpoints::domains::domain_move(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "deploy_cloudflare",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Deploy a domain to Cloudflare and best-effort set registrar nameservers (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainDeployCloudflareInput| async move {
+                endpoints::domains::domain_deploy_cloudflare(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "set_nameservers",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Set the given nameservers at the domain's registrar (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainSetNameserversInput| async move {
+                endpoints::domains::domain_set_nameservers(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "sync_records",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Replace local DNS records with the domain's Cloudflare zone records (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainSyncRecordsInput| async move {
+                endpoints::domains::domain_sync_records(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "check_availability",
+            Risk::ReadOnly,
+            OnItem::No,
+            "Check a domain's availability and registration pricing via a registrar credential (credential org read; global credentials admin-only).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainCheckAvailabilityInput| async move {
+                endpoints::domains::domain_check_availability(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "discover",
+            Risk::ReadOnly,
+            OnItem::No,
+            "Discover importable domains on a credential (Cloudflare zones or Spaceship domains), flagging ones already in the organization (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainDiscoverInput| async move {
+                endpoints::domains::domain_discover(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "import",
+            Risk::Mutating,
+            OnItem::No,
+            "Import domains from a credential into an organization; existing names are skipped, per-domain failures collected (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainImportInput| async move {
+                endpoints::domains::domain_import(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "bulk_deploy_cloudflare",
+            Risk::Mutating,
+            OnItem::No,
+            "Deploy multiple domains to Cloudflare under one credential (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainBulkDeployCloudflareInput| async move {
+                endpoints::domains::domain_bulk_deploy_cloudflare(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "bulk_set_nameservers",
+            Risk::Mutating,
+            OnItem::No,
+            "Set Cloudflare nameservers at the registrar for multiple domains (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainBulkSetNameserversInput| async move {
+                endpoints::domains::domain_bulk_set_nameservers(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "bulk_set_ssl_mode",
+            Risk::Mutating,
+            OnItem::No,
+            "Set the SSL mode for multiple Cloudflare-deployed domains (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainBulkSetSslModeInput| async move {
+                endpoints::domains::domain_bulk_set_ssl_mode(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "bulk_set_ai_bots",
+            Risk::Mutating,
+            OnItem::No,
+            "Set AI bot protection for multiple Cloudflare-deployed domains (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainBulkSetAiBotsInput| async move {
+                endpoints::domains::domain_bulk_set_ai_bots(&pool, &p, input).await
+            },
+        );
+        d.custom(
+            "bulk_create_pages",
+            Risk::Mutating,
+            OnItem::No,
+            "Create Cloudflare Pages projects + hosts for multiple domains (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DomainBulkCreatePagesInput| async move {
+                endpoints::domains::domain_bulk_create_pages(&pool, &p, input).await
+            },
+        );
+    }
+    {
+        let mut s = reg.resource("subdomains", "subdomain", "Domains");
+        s.create(
+            "Create a subdomain on a domain (requires org write); upserts on (domain, name).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::SubdomainCreateInput| async move {
+                endpoints::domains::subdomain_create(&pool, &p, input).await
+            },
+        );
+        s.delete(
+            "Delete a subdomain and its DNS records, incl. Cloudflare cleanup (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::SubdomainDeleteInput| async move {
+                endpoints::domains::subdomain_delete(&pool, &p, input).await
+            },
+        );
+    }
+    {
+        let mut r = reg.resource("dns-records", "dns_record", "Domains");
+        r.create(
+            "Add a DNS record to a subdomain, also in Cloudflare when deployed (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DnsRecordCreateInput| async move {
+                endpoints::domains::dns_record_create(&pool, &p, input).await
+            },
+        );
+        r.delete(
+            "Delete a DNS record, incl. best-effort Cloudflare delete (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::domains::DnsRecordDeleteInput| async move {
+                endpoints::domains::dns_record_delete(&pool, &p, input).await
+            },
+        );
     }
     {
         let mut o = reg.resource("organizations", "organization", "Organizations");
