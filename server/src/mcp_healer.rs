@@ -59,6 +59,7 @@ struct SessionContext {
     cluster_name: String,
     hostname: String,
     services_extended: Vec<mac_mgmt_common::ServiceExtState>,
+    failure_signals: Vec<mac_mgmt_common::FailureSignal>,
     sample_summary: String,
     file_tunnels: Vec<String>,
     shell_commands: Vec<String>,
@@ -601,6 +602,7 @@ mod tests {
 struct HeartbeatContextRow {
     relay_proxy_url: Option<String>,
     services_extended: Option<serde_json::Value>,
+    failure_signals: Option<serde_json::Value>,
     file_tunnels: Option<serde_json::Value>,
     shell_tunnels: Option<serde_json::Value>,
     sample: Option<serde_json::Value>,
@@ -634,7 +636,7 @@ impl HealerMcpServer {
     ) -> Result<usize, String> {
         // Look up heartbeat data
         let hb = sqlx::query_as::<_, HeartbeatContextRow>(
-            "SELECT relay_proxy_url, services_extended, file_tunnels, shell_tunnels, sample, hostname \
+            "SELECT relay_proxy_url, services_extended, failure_signals, file_tunnels, shell_tunnels, sample, hostname \
              FROM daemon_heartbeats WHERE cluster_id = $1 AND instance_id = $2",
         )
         .bind(cluster_id)
@@ -680,6 +682,12 @@ impl HealerMcpServer {
         // Parse services, tunnels, sample from heartbeat
         let services_extended: Vec<mac_mgmt_common::ServiceExtState> = hb
             .services_extended
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let failure_signals: Vec<mac_mgmt_common::FailureSignal> = hb
+            .failure_signals
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
@@ -785,6 +793,7 @@ impl HealerMcpServer {
             cluster_name,
             hostname: hb.hostname.unwrap_or_else(|| "unknown".to_string()),
             services_extended,
+            failure_signals,
             sample_summary,
             file_tunnels: file_tunnel_names,
             shell_commands: shell_command_names,
@@ -996,6 +1005,7 @@ impl HealerMcpServer {
                 &ctx.hostname,
                 &ctx.other_instances,
                 &ctx.services_extended,
+                &ctx.failure_signals,
                 &ctx.sample_summary,
                 &ctx.file_tunnels,
                 &ctx.shell_commands,

@@ -31,6 +31,7 @@ pub fn build_system_prompt(
     hostname: &str,
     other_instances: &[InstanceInfo],
     services_extended: &[ServiceExtState],
+    failure_signals: &[mac_mgmt_common::FailureSignal],
     sample_summary: &str,
     file_tunnels: &[String],
     shell_commands: &[String],
@@ -95,6 +96,24 @@ pub fn build_system_prompt(
                 _ => "no recent probe data".to_string(),
             };
             prompt.push_str(&format!("- **{}**: UNHEALTHY — {}\n", svc.name, probe_info));
+        }
+        prompt.push('\n');
+    }
+
+    // Failure signals — host-level alerts that triggered / accompany this session.
+    if !failure_signals.is_empty() {
+        prompt.push_str("## Failure Signals\n");
+        prompt.push_str(
+            "Host-level alerts reported by the node. `critical` signals are what triggered this session.\n",
+        );
+        for sig in failure_signals {
+            prompt.push_str(&format!(
+                "- **{}** [{}] ({}): {}\n",
+                sig.kind,
+                sig.severity.as_str(),
+                sig.subject,
+                sig.message
+            ));
         }
         prompt.push('\n');
     }
@@ -344,6 +363,7 @@ pub fn build_system_prompt_external(
     hostname: &str,
     other_instances: &[InstanceInfo],
     services_extended: &[ServiceExtState],
+    failure_signals: &[mac_mgmt_common::FailureSignal],
     sample_summary: &str,
     file_tunnels: &[String],
     shell_commands: &[String],
@@ -357,6 +377,7 @@ pub fn build_system_prompt_external(
         hostname,
         other_instances,
         services_extended,
+        failure_signals,
         sample_summary,
         file_tunnels,
         shell_commands,
@@ -415,6 +436,7 @@ pub fn build_system_prompt_finetuned(
     hostname: &str,
     other_instances: &[InstanceInfo],
     services_extended: &[mac_mgmt_common::ServiceExtState],
+    failure_signals: &[mac_mgmt_common::FailureSignal],
     sample_summary: &str,
     resume_context: Option<&str>,
     auto_approve: bool,
@@ -449,6 +471,21 @@ pub fn build_system_prompt_finetuned(
         prompt.push_str("## Detected Issues\n");
         for svc in &unhealthy {
             prompt.push_str(&format!("- {}: unhealthy\n", svc.name));
+        }
+        prompt.push('\n');
+    }
+
+    // Failure signals
+    if !failure_signals.is_empty() {
+        prompt.push_str("## Failure Signals\n");
+        for sig in failure_signals {
+            prompt.push_str(&format!(
+                "- {} [{}] ({}): {}\n",
+                sig.kind,
+                sig.severity.as_str(),
+                sig.subject,
+                sig.message
+            ));
         }
         prompt.push('\n');
     }

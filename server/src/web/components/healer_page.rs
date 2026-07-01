@@ -317,13 +317,14 @@ pub async fn start_healer_session(
         cluster_id: uuid::Uuid,
         relay_proxy_url: Option<String>,
         services_extended: Option<serde_json::Value>,
+        failure_signals: Option<serde_json::Value>,
         file_tunnels: Option<serde_json::Value>,
         shell_tunnels: Option<serde_json::Value>,
         sample: Option<serde_json::Value>,
         hostname: Option<String>,
     }
     let hb: HbInfo = sqlx::query_as(
-        "SELECT cluster_id, relay_proxy_url, services_extended, \
+        "SELECT cluster_id, relay_proxy_url, services_extended, failure_signals, \
                 file_tunnels, shell_tunnels, sample, hostname \
          FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
     )
@@ -395,6 +396,10 @@ pub async fn start_healer_session(
         .services_extended
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
+    let failure_signals: Vec<mac_mgmt_common::FailureSignal> = hb
+        .failure_signals
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
 
     // Per-cluster healer settings from dedicated table.
     let cluster_healer = {
@@ -439,6 +444,7 @@ pub async fn start_healer_session(
         cluster_access,
         metrics_url,
         services_extended,
+        failure_signals,
         sample: hb.sample,
         file_tunnels: hb.file_tunnels.unwrap_or_default(),
         shell_tunnels: hb.shell_tunnels.unwrap_or_default(),

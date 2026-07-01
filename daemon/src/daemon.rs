@@ -658,6 +658,16 @@ impl Daemon {
         let sample = self.assessor.latest_sample_snapshot();
         let sample_json = sample.as_ref().and_then(|s| serde_json::to_value(s).ok());
 
+        let mut failure_signals = match &sample {
+            Some(s) => mac_mgmt_agent::signals::evaluate_sample_signals(
+                s,
+                &mac_mgmt_agent::signals::SignalThresholds::default(),
+                chrono::Utc::now().timestamp(),
+            ),
+            None => Vec::new(),
+        };
+        failure_signals.extend(self.svc_mgr.drift_signals());
+
         let file_tunnels =
             serde_json::to_value(self.svc_mgr.collect_file_tunnels()).unwrap_or_default();
         let shell_tunnels =
@@ -707,6 +717,7 @@ impl Daemon {
             cluster_access: access.cluster,
             metrics_url: access.metrics_url,
             services_extended: probes,
+            failure_signals,
             sample: sample_json,
             file_tunnels,
             shell_tunnels,
@@ -1265,71 +1276,69 @@ pub async fn run(
     #[cfg(all(feature = "relay", not(feature = "memvault")))]
     let memvault_wants_swarm = false;
     #[cfg(feature = "relay")]
-    let mut _p2p_mgr = if cfg.relay.relay_multiaddr.is_some()
-        || cfg.relay.mdns_enabled
-        || memvault_wants_swarm
-    {
-        let relay_multiaddr = cfg
-            .relay
-            .relay_multiaddr
-            .as_deref()
-            .and_then(|s| s.parse::<libp2p::Multiaddr>().ok());
-        let handler_state = std::sync::Arc::new(crate::p2p::handler::HandlerState {
-            ssh_allowed: relay_mgr.ssh_allowed.clone(),
-            tunnel_defs: relay_mgr.tunnel_defs.clone(),
-            tunnel_overrides: relay_mgr.tunnel_overrides.clone(),
-            file_tunnel_registry: relay_mgr.file_tunnel_registry(),
-            shell_tunnel_registry: relay_mgr.shell_tunnel_registry(),
-            metrics_port,
-            fake_origin_local: cfg.relay.fake_origin_local,
-            client: reqwest::Client::new(),
-            server_ssh_keys: relay_mgr.server_ssh_keys.clone(),
-            relay_ssh_key: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
-        });
-        // Fetch cluster_id from server before p2p init so gossipsub subscribes immediately.
-        let cluster_id = match (&server_url, &server_token) {
-            (Some(url), Some(token)) => crate::p2p::fetch_cluster_id(url, token).await,
-            _ => None,
-        };
-        let p2p_config = crate::p2p::P2pConfig {
-            instance_id: instance_id.clone(),
-            cluster_psk: cfg
+    let mut _p2p_mgr =
+        if cfg.relay.relay_multiaddr.is_some() || cfg.relay.mdns_enabled || memvault_wants_swarm {
+            let relay_multiaddr = cfg
                 .relay
-                .cluster_psk
-                .as_ref()
-                .and_then(|s| hex::decode(s.expose()).ok()),
-            relay_multiaddr,
-            mdns_enabled: cfg.relay.mdns_enabled,
-            p2p_port: cfg.relay.p2p_port,
-            ai_proxy_distribution: cfg.relay.ai_proxy_distribution,
-            server_token: server_token.clone(),
-            cluster_id,
-            handler_state: Some(handler_state),
-            #[cfg(feature = "services")]
-            swarm_listening: Some(p2p_swarm_listening.clone()),
-            #[cfg(not(feature = "services"))]
-            swarm_listening: None,
-            #[cfg(feature = "services")]
-            relay_registered: Some(p2p_relay_registered.clone()),
-            #[cfg(not(feature = "services"))]
-            relay_registered: None,
-            // Compose memvault sync into this swarm when enabled.
-            #[cfg(feature = "memvault")]
-            memvault: memvault_handle.as_ref().and_then(|h| h.p2p_sync(&host_key)),
+                .relay_multiaddr
+                .as_deref()
+                .and_then(|s| s.parse::<libp2p::Multiaddr>().ok());
+            let handler_state = std::sync::Arc::new(crate::p2p::handler::HandlerState {
+                ssh_allowed: relay_mgr.ssh_allowed.clone(),
+                tunnel_defs: relay_mgr.tunnel_defs.clone(),
+                tunnel_overrides: relay_mgr.tunnel_overrides.clone(),
+                file_tunnel_registry: relay_mgr.file_tunnel_registry(),
+                shell_tunnel_registry: relay_mgr.shell_tunnel_registry(),
+                metrics_port,
+                fake_origin_local: cfg.relay.fake_origin_local,
+                client: reqwest::Client::new(),
+                server_ssh_keys: relay_mgr.server_ssh_keys.clone(),
+                relay_ssh_key: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            });
+            // Fetch cluster_id from server before p2p init so gossipsub subscribes immediately.
+            let cluster_id = match (&server_url, &server_token) {
+                (Some(url), Some(token)) => crate::p2p::fetch_cluster_id(url, token).await,
+                _ => None,
+            };
+            let p2p_config = crate::p2p::P2pConfig {
+                instance_id: instance_id.clone(),
+                cluster_psk: cfg
+                    .relay
+                    .cluster_psk
+                    .as_ref()
+                    .and_then(|s| hex::decode(s.expose()).ok()),
+                relay_multiaddr,
+                mdns_enabled: cfg.relay.mdns_enabled,
+                p2p_port: cfg.relay.p2p_port,
+                ai_proxy_distribution: cfg.relay.ai_proxy_distribution,
+                server_token: server_token.clone(),
+                cluster_id,
+                handler_state: Some(handler_state),
+                #[cfg(feature = "services")]
+                swarm_listening: Some(p2p_swarm_listening.clone()),
+                #[cfg(not(feature = "services"))]
+                swarm_listening: None,
+                #[cfg(feature = "services")]
+                relay_registered: Some(p2p_relay_registered.clone()),
+                #[cfg(not(feature = "services"))]
+                relay_registered: None,
+                // Compose memvault sync into this swarm when enabled.
+                #[cfg(feature = "memvault")]
+                memvault: memvault_handle.as_ref().and_then(|h| h.p2p_sync(&host_key)),
+            };
+            match crate::p2p::P2pManager::new(&host_key, p2p_config).await {
+                Ok(mgr) => {
+                    tracing::info!(peer_id = %mgr.local_peer_id, "p2p swarm started");
+                    Some(mgr)
+                }
+                Err(e) => {
+                    tracing::error!("failed to start p2p swarm: {e:#}");
+                    None
+                }
+            }
+        } else {
+            None
         };
-        match crate::p2p::P2pManager::new(&host_key, p2p_config).await {
-            Ok(mgr) => {
-                tracing::info!(peer_id = %mgr.local_peer_id, "p2p swarm started");
-                Some(mgr)
-            }
-            Err(e) => {
-                tracing::error!("failed to start p2p swarm: {e:#}");
-                None
-            }
-        }
-    } else {
-        None
-    };
 
     // Start server push WebSocket if server is configured.
     let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {

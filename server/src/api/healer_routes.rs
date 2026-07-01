@@ -132,7 +132,7 @@ pub async fn create_session(
 
     // Look up instance from heartbeats
     let hb = sqlx::query_as::<_, HeartbeatRow>(
-        "SELECT relay_proxy_url, services_extended, \
+        "SELECT relay_proxy_url, services_extended, failure_signals, \
                 file_tunnels, shell_tunnels, sample, hostname \
          FROM daemon_heartbeats WHERE cluster_id = $1 AND instance_id = $2",
     )
@@ -196,6 +196,8 @@ pub async fn create_session(
     // Parse services_extended
     let services_extended: Vec<mac_mgmt_common::ServiceExtState> =
         serde_json::from_value(hb.services_extended.unwrap_or_default()).unwrap_or_default();
+    let failure_signals: Vec<mac_mgmt_common::FailureSignal> =
+        serde_json::from_value(hb.failure_signals.unwrap_or_default()).unwrap_or_default();
 
     // Per-cluster healer overrides (auto_approve, fix_provider, fix_model).
     let cluster_healer = cluster_healer_config(pool.inner(), cluster_id).await;
@@ -225,6 +227,7 @@ pub async fn create_session(
         cluster_access,
         metrics_url,
         services_extended,
+        failure_signals,
         sample: hb.sample,
         file_tunnels: hb.file_tunnels.unwrap_or_default(),
         shell_tunnels: hb.shell_tunnels.unwrap_or_default(),
@@ -314,6 +317,77 @@ pub async fn list_sessions(
             })
             .collect(),
     ))
+}
+
+/// One active failure signal, flattened with its source instance, for the API.
+#[derive(Serialize)]
+pub struct FailureSignalEntry {
+    pub instance_id: String,
+    pub hostname: Option<String>,
+    pub kind: String,
+    pub severity: String,
+    pub subject: String,
+    pub message: String,
+    pub since: i64,
+    /// Heartbeat time this signal was last reported.
+    pub reported_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Browse the currently-active failure signals across the cluster's recently
+/// reporting instances (last 10 minutes). Newest-critical first. Reads the
+/// live snapshot carried on each heartbeat — there is no separate history
+/// table; a signal disappears here once the node stops reporting it.
+#[get("/healer/failure-signals")]
+pub async fn list_failure_signals(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<FailureSignalEntry>>, Status> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        instance_id: String,
+        hostname: Option<String>,
+        failure_signals: Option<serde_json::Value>,
+        reported_at: chrono::DateTime<chrono::Utc>,
+    }
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT instance_id, hostname, failure_signals, reported_at \
+         FROM daemon_heartbeats \
+         WHERE cluster_id = $1 AND reported_at > now() - interval '10 minutes' \
+           AND failure_signals IS NOT NULL",
+    )
+    .bind(auth.cluster_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let mut entries: Vec<FailureSignalEntry> = Vec::new();
+    for row in rows {
+        let signals: Vec<mac_mgmt_common::FailureSignal> = row
+            .failure_signals
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+        for s in signals {
+            entries.push(FailureSignalEntry {
+                instance_id: row.instance_id.clone(),
+                hostname: row.hostname.clone(),
+                kind: s.kind,
+                severity: s.severity.as_str().to_string(),
+                subject: s.subject,
+                message: s.message,
+                since: s.since,
+                reported_at: row.reported_at,
+            });
+        }
+    }
+    // Critical first, then most-recently-observed first.
+    entries.sort_by(|a, b| {
+        let rank = |sev: &str| if sev == "critical" { 0 } else { 1 };
+        rank(&a.severity)
+            .cmp(&rank(&b.severity))
+            .then(b.since.cmp(&a.since))
+    });
+
+    Ok(Json(entries))
 }
 
 /// Get a single session with its messages.
@@ -876,6 +950,7 @@ impl From<StaffPingSqlRow> for StaffPingRow {
 struct HeartbeatRow {
     relay_proxy_url: Option<String>,
     services_extended: Option<serde_json::Value>,
+    failure_signals: Option<serde_json::Value>,
     file_tunnels: Option<serde_json::Value>,
     shell_tunnels: Option<serde_json::Value>,
     sample: Option<serde_json::Value>,

@@ -92,6 +92,8 @@ pub struct SpawnRequest {
     /// Optional metrics URL for the `get_metrics` tool (server mode only).
     pub metrics_url: Option<String>,
     pub services_extended: Vec<ServiceExtState>,
+    /// Host-level failure signals that triggered / accompany this session.
+    pub failure_signals: Vec<mac_mgmt_common::FailureSignal>,
     pub sample: Option<serde_json::Value>,
     pub file_tunnels: serde_json::Value,
     pub shell_tunnels: serde_json::Value,
@@ -212,6 +214,7 @@ impl HealerState {
             "file_tunnels": req.file_tunnels,
             "shell_tunnels": req.shell_tunnels,
             "sample": req.sample,
+            "failure_signals": req.failure_signals,
             "auto_approve": req.auto_approve,
             "fix_provider": req.fix_provider,
             "fix_model": req.fix_model,
@@ -472,6 +475,11 @@ impl HealerState {
             cluster_access: access.cluster,
             metrics_url: access.metrics_url,
             services_extended: serde_json::from_value(sess.initial_issues.clone())
+                .unwrap_or_default(),
+            failure_signals: sess
+                .state_data
+                .get("failure_signals")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or_default(),
             sample,
             file_tunnels,
@@ -887,6 +895,7 @@ async fn run_agent_session(
         &req.hostname,
         &req.cluster_instances,
         &req.services_extended,
+        &req.failure_signals,
         &sample_summary,
         &file_tunnel_names,
         &shell_command_names,
