@@ -6,6 +6,15 @@ use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td,
     TdMuted, Th,
 };
+// The change-detection server functions and their DTOs live in the shared
+// api_mcp layer.
+use crate::api_mcp::endpoints::changedetection::{
+    CdConfig, CdGetInput, CdSetInput, NotificationGetInput, NotificationListInput,
+    SubUrlCreateInput, SubUrlDeleteInput, SubUrlGetInput, SubUrlListInput, SubUrlUpdateInput,
+    TagCondition, TagSettings, create_suburl, delete_suburl, get_cd_config, get_notification,
+    get_suburl, list_notifications, list_suburls, set_webspace_changedetection,
+    update_suburl_settings,
+};
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -15,139 +24,7 @@ struct CredOption {
     name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CdConfig {
-    webspace_name: String,
-    credential_id: Option<Uuid>,
-    credential_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct NotificationRow {
-    id: Uuid,
-    title: String,
-    body_preview: String,
-    path: String,
-    created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct NotificationDetail {
-    id: Uuid,
-    title: String,
-    body: String,
-    created_at: String,
-    webspace_name: String,
-    path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SubUrlRow {
-    id: Uuid,
-    path: String,
-    created_at: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct SubUrlDetail {
-    id: Uuid,
-    path: String,
-    tag_settings: TagSettings,
-}
-
-/// Tag settings stored in changedetection_suburls.tag_settings JSONB.
-/// Maps 1:1 to ChangeDetection.io tag update fields.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct TagSettings {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conditions: Vec<TagCondition>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conditions_match_logic: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub extract_text: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub extract_lines_containing: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub text_should_not_be_present: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub include_filters: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub subtractive_selectors: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ignore_text: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub trigger_text: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trim_text_whitespace: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sort_text_alphabetically: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remove_duplicate_lines: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub check_unique_lines: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notification_title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notification_body: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notification_format: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notification_muted: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notification_screenshot: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct TagCondition {
-    #[serde(default)]
-    pub field: String,
-    #[serde(default)]
-    pub operator: String,
-    #[serde(default)]
-    pub value: String,
-}
-
 // ── Server Functions ──────────────────────────────────────────────────
-
-#[server]
-async fn get_cd_config(webspace_id: Uuid) -> Result<CdConfig, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let (name, cred_id) = sqlx::query_as::<_, (String, Option<Uuid>)>(
-        "SELECT name, changedetection_credential_id FROM webspace_hosts WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-
-    let cred_name = if let Some(cid) = cred_id {
-        sqlx::query_scalar::<_, String>("SELECT name FROM credentials WHERE id = $1")
-            .bind(cid)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
-
-    Ok(CdConfig {
-        webspace_name: name,
-        credential_id: cred_id,
-        credential_name: cred_name,
-    })
-}
 
 #[server]
 async fn list_cd_creds() -> Result<Vec<CredOption>, ServerFnError> {
@@ -165,417 +42,6 @@ async fn list_cd_creds() -> Result<Vec<CredOption>, ServerFnError> {
         .collect())
 }
 
-#[server]
-async fn set_webspace_changedetection(
-    webspace_id: Uuid,
-    credential_id: Option<Uuid>,
-) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let (org_id, old_cred_id, ws_name) = sqlx::query_as::<_, (Uuid, Option<Uuid>, String)>(
-        "SELECT organization_id, changedetection_credential_id, name \
-             FROM webspace_hosts WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    // Undeploy old credential: clean up tags, watches, and notifications so
-    // nothing from the old credential instance is left behind.
-    if let Some(old_cred) = old_cred_id {
-        if credential_id != Some(old_cred) {
-            if let Ok((client, group_name)) =
-                crate::credentials::changedetection_client(&pool, old_cred).await
-            {
-                // Delete all sub-URL tags from the old CD instance.
-                let suburl_tags = sqlx::query_scalar::<_, Uuid>(
-                    "SELECT tag_id FROM changedetection_suburls \
-                     WHERE webspace_host_id = $1 AND tag_id IS NOT NULL",
-                )
-                .bind(webspace_id)
-                .fetch_all(&pool)
-                .await
-                .unwrap_or_default();
-                for tag_id in &suburl_tags {
-                    let _ = client.delete_tag(tag_id).await;
-                }
-
-                // Delete the webspace-level tag.
-                let ws_tag_title = format!("{group_name}:{ws_name}");
-                if let Ok(tags) = client.list_tags().await {
-                    for (uuid_str, tag) in tags.into_inner().iter() {
-                        if tag.title.as_deref().map(|t| t.as_str()) == Some(&ws_tag_title) {
-                            if let Ok(uuid) = uuid_str.parse::<Uuid>() {
-                                let _ = client.delete_tag(&uuid).await;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Clear cached tag_ids on sub-URLs and delete notifications (they belong
-            // to the old credential).
-            sqlx::query("UPDATE changedetection_suburls SET tag_id = NULL WHERE webspace_host_id = $1")
-                .bind(webspace_id)
-                .execute(&pool)
-                .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-            sqlx::query("DELETE FROM changedetection_notifications WHERE webspace_host_id = $1")
-                .bind(webspace_id)
-                .execute(&pool)
-                .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-        }
-    }
-
-    sqlx::query(
-        "UPDATE webspace_hosts SET changedetection_credential_id = $1, updated_at = now() WHERE id = $2",
-    )
-    .bind(credential_id)
-    .bind(webspace_id)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(())
-}
-
-// ── Sub-URL CRUD ─────────────────────────────────────────────────────
-
-#[server]
-async fn list_suburls(webspace_id: Uuid) -> Result<Vec<SubUrlRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-
-    let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, path, created_at FROM changedetection_suburls \
-         WHERE webspace_host_id = $1 ORDER BY path",
-    )
-    .bind(webspace_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|(id, path, created_at)| SubUrlRow {
-            id,
-            path,
-            created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-        })
-        .collect())
-}
-
-#[server]
-async fn create_suburl(webspace_id: Uuid, path: String) -> Result<Uuid, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    // Normalize path: must start with /, no trailing / (unless root), no double slashes.
-    let path = path.trim().to_string();
-    let path = if path.is_empty() || path == "/" {
-        "/".to_string()
-    } else {
-        let mut p = path;
-        if !p.starts_with('/') {
-            p = format!("/{p}");
-        }
-        while p.len() > 1 && p.ends_with('/') {
-            p.pop();
-        }
-        p = p.replace("//", "/");
-        p
-    };
-
-    let secret = {
-        use rand::Rng;
-        let bytes: [u8; 32] = rand::rng().random();
-        hex::encode(bytes)
-    };
-
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO changedetection_suburls (webspace_host_id, path, secret) \
-         VALUES ($1, $2, $3) RETURNING id",
-    )
-    .bind(webspace_id)
-    .bind(&path)
-    .bind(&secret)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(id)
-}
-
-#[server]
-async fn delete_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    // Delete the tag from changedetection.io if cached.
-    let tag_and_cred = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>)>(
-        "SELECT cs.tag_id, h.changedetection_credential_id \
-         FROM changedetection_suburls cs \
-         JOIN webspace_hosts h ON h.id = cs.webspace_host_id \
-         WHERE cs.id = $1 AND cs.webspace_host_id = $2",
-    )
-    .bind(suburl_id)
-    .bind(webspace_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if let Some((Some(tag_id), Some(cred_id))) = tag_and_cred {
-        if let Ok((client, _)) = crate::credentials::changedetection_client(&pool, cred_id).await {
-            let _ = client.delete_tag(&tag_id).await;
-        }
-    }
-
-    // CASCADE deletes associated notifications.
-    sqlx::query("DELETE FROM changedetection_suburls WHERE id = $1 AND webspace_host_id = $2")
-        .bind(suburl_id)
-        .bind(webspace_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(())
-}
-
-#[server]
-async fn get_suburl(webspace_id: Uuid, suburl_id: Uuid) -> Result<SubUrlDetail, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-
-    let (id, path, settings_json) = sqlx::query_as::<_, (Uuid, String, serde_json::Value)>(
-        "SELECT id, path, tag_settings FROM changedetection_suburls \
-         WHERE id = $1 AND webspace_host_id = $2",
-    )
-    .bind(suburl_id)
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let tag_settings: TagSettings = serde_json::from_value(settings_json).unwrap_or_default();
-
-    Ok(SubUrlDetail {
-        id,
-        path,
-        tag_settings,
-    })
-}
-
-#[server]
-async fn update_suburl_settings(
-    webspace_id: Uuid,
-    suburl_id: Uuid,
-    settings: TagSettings,
-) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    let settings_json =
-        serde_json::to_value(&settings).map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Update the JSONB column.
-    sqlx::query(
-        "UPDATE changedetection_suburls SET tag_settings = $1, updated_at = now() \
-         WHERE id = $2 AND webspace_host_id = $3",
-    )
-    .bind(&settings_json)
-    .bind(suburl_id)
-    .bind(webspace_id)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Push settings to changedetection.io immediately if the tag is cached.
-    let tag_and_cred = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>)>(
-        "SELECT cs.tag_id, h.changedetection_credential_id \
-         FROM changedetection_suburls cs \
-         JOIN webspace_hosts h ON h.id = cs.webspace_host_id \
-         WHERE cs.id = $1 AND cs.webspace_host_id = $2",
-    )
-    .bind(suburl_id)
-    .bind(webspace_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if let Some((Some(tag_id), Some(cred_id))) = tag_and_cred {
-        if let Ok((client, _)) = crate::credentials::changedetection_client(&pool, cred_id).await {
-            let update: changedetection_api::types::Tag =
-                serde_json::from_value(settings_json).unwrap_or_default();
-            if let Err(e) = client.update_tag(&tag_id, &update).await {
-                return Err(ServerFnError::new(format!(
-                    "Saved locally but failed to push to ChangeDetection.io: {e}"
-                )));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-// ── Notification Server Functions ────────────────────────────────────
-
-#[server]
-async fn list_notifications(webspace_id: Uuid) -> Result<Vec<NotificationRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            Option<String>,
-            Option<String>,
-            chrono::DateTime<chrono::Utc>,
-            String,
-        ),
-    >(
-        "SELECT n.id, n.title, n.body, n.created_at, cs.path \
-         FROM changedetection_notifications n \
-         JOIN changedetection_suburls cs ON cs.id = n.suburl_id \
-         WHERE n.webspace_host_id = $1 \
-         ORDER BY n.created_at DESC \
-         LIMIT 100",
-    )
-    .bind(webspace_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|(id, title, body, created_at, path)| {
-            let body_preview = body
-                .as_deref()
-                .unwrap_or("")
-                .chars()
-                .take(120)
-                .collect::<String>();
-            NotificationRow {
-                id,
-                title: title.unwrap_or_default(),
-                body_preview,
-                path,
-                created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-            }
-        })
-        .collect())
-}
-
-#[server]
-async fn get_notification(
-    webspace_id: Uuid,
-    notification_id: Uuid,
-) -> Result<NotificationDetail, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspace_hosts WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-
-    let (title, body, created_at, ws_name, path) = sqlx::query_as::<
-        _,
-        (
-            Option<String>,
-            Option<String>,
-            chrono::DateTime<chrono::Utc>,
-            String,
-            String,
-        ),
-    >(
-        "SELECT n.title, n.body, n.created_at, h.name, cs.path \
-             FROM changedetection_notifications n \
-             JOIN webspace_hosts h ON h.id = n.webspace_host_id \
-             JOIN changedetection_suburls cs ON cs.id = n.suburl_id \
-             WHERE n.id = $1 AND n.webspace_host_id = $2",
-    )
-    .bind(notification_id)
-    .bind(webspace_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(NotificationDetail {
-        id: notification_id,
-        title: title.unwrap_or_default(),
-        body: body.unwrap_or_default(),
-        created_at: created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-        webspace_name: ws_name,
-        path,
-    })
-}
-
 // ── Components ────────────────────────────────────────────────────────
 
 #[component]
@@ -585,7 +51,8 @@ pub fn WebspaceChangedetection(id: String) -> Element {
         Err(_) => return rsx! { div { class: "text-danger", "Invalid webspace ID" } },
     };
 
-    let config = use_server_future(move || async move { get_cd_config(wid).await })?;
+    let config =
+        use_server_future(move || async move { get_cd_config(CdGetInput { id: wid }).await })?;
     let cfg = match &*config.read() {
         Some(Ok(c)) => c.clone(),
         Some(Err(e)) => return rsx! { div { class: "text-danger", "Error: {e}" } },
@@ -679,7 +146,12 @@ fn CredentialSection(
                                     result_msg.set(None);
                                     spawn(async move {
                                         let cid = uuid::Uuid::parse_str(&cred_str).ok();
-                                        match set_webspace_changedetection(wid, cid).await {
+                                        match set_webspace_changedetection(CdSetInput {
+                                            id: wid,
+                                            credential_id: cid,
+                                        })
+                                        .await
+                                        {
                                             Ok(()) => {
                                                 result_msg.set(Some("Saved".into()));
                                                 config.restart();
@@ -707,7 +179,9 @@ fn CredentialSection(
 
 #[component]
 fn SubUrlsSection(webspace_id: Uuid, ws_id_str: String) -> Element {
-    let mut suburls = use_server_future(move || async move { list_suburls(webspace_id).await })?;
+    let mut suburls = use_server_future(move || async move {
+        list_suburls(SubUrlListInput { id: webspace_id }).await
+    })?;
     let rows = match &*suburls.read() {
         Some(Ok(r)) => r.clone(),
         Some(Err(e)) => return rsx! { div { class: "text-danger", "Error: {e}" } },
@@ -758,7 +232,12 @@ fn SubUrlsSection(webspace_id: Uuid, ws_id_str: String) -> Element {
                                                 move |_| {
                                                     deleting_id.set(Some(sid));
                                                     spawn(async move {
-                                                        match delete_suburl(wid, sid).await {
+                                                        match delete_suburl(SubUrlDeleteInput {
+                                                            id: wid,
+                                                            suburl_id: sid,
+                                                        })
+                                                        .await
+                                                        {
                                                             Ok(()) => suburls.restart(),
                                                             Err(e) => {
                                                                 create_error.set(Some(format!("{e}")));
@@ -802,7 +281,7 @@ fn SubUrlsSection(webspace_id: Uuid, ws_id_str: String) -> Element {
                                 creating.set(true);
                                 create_error.set(None);
                                 spawn(async move {
-                                    match create_suburl(wid, p).await {
+                                    match create_suburl(SubUrlCreateInput { id: wid, path: p }).await {
                                         Ok(_) => {
                                             new_path.set(String::new());
                                             suburls.restart();
@@ -828,8 +307,9 @@ fn SubUrlsSection(webspace_id: Uuid, ws_id_str: String) -> Element {
 
 #[component]
 fn NotificationsInbox(webspace_id: Uuid, ws_id_str: String) -> Element {
-    let notifications =
-        use_server_future(move || async move { list_notifications(webspace_id).await })?;
+    let notifications = use_server_future(move || async move {
+        list_notifications(NotificationListInput { id: webspace_id }).await
+    })?;
     let rows = match &*notifications.read() {
         Some(Ok(r)) => r.clone(),
         Some(Err(e)) => return rsx! { div { class: "text-danger", "Error: {e}" } },
@@ -892,7 +372,13 @@ pub fn WebspaceChangedetectionNotification(id: String, notification_id: String) 
         Err(_) => return rsx! { div { class: "text-danger", "Invalid notification ID" } },
     };
 
-    let detail = use_server_future(move || async move { get_notification(ws_id, notif_id).await })?;
+    let detail = use_server_future(move || async move {
+        get_notification(NotificationGetInput {
+            id: ws_id,
+            notification_id: notif_id,
+        })
+        .await
+    })?;
     let d = match &*detail.read() {
         Some(Ok(d)) => d.clone(),
         Some(Err(e)) => return rsx! { div { class: "text-danger", "Error: {e}" } },
@@ -937,14 +423,21 @@ pub fn WebspaceChangedetectionSuburl(id: String, suburl_id: String) -> Element {
         Err(_) => return rsx! { div { class: "text-danger", "Invalid sub-URL ID" } },
     };
 
-    let detail = use_server_future(move || async move { get_suburl(ws_id, sid).await })?;
+    let detail = use_server_future(move || async move {
+        get_suburl(SubUrlGetInput {
+            id: ws_id,
+            suburl_id: sid,
+        })
+        .await
+    })?;
     let d = match &*detail.read() {
         Some(Ok(d)) => d.clone(),
         Some(Err(e)) => return rsx! { div { class: "text-danger", "Error: {e}" } },
         None => return rsx! { div { class: "text-fg-muted", "Loading..." } },
     };
 
-    let ws_name_res = use_server_future(move || async move { get_cd_config(ws_id).await })?;
+    let ws_name_res =
+        use_server_future(move || async move { get_cd_config(CdGetInput { id: ws_id }).await })?;
     let ws_name = match &*ws_name_res.read() {
         Some(Ok(c)) => c.webspace_name.clone(),
         _ => "Webspace".to_string(),
@@ -1287,7 +780,13 @@ fn SubUrlSettingsForm(webspace_id: Uuid, suburl_id: Uuid, initial: TagSettings) 
                             saving.set(true);
                             result_msg.set(None);
                             spawn(async move {
-                                match update_suburl_settings(webspace_id, suburl_id, settings).await {
+                                match update_suburl_settings(SubUrlUpdateInput {
+                                    id: webspace_id,
+                                    suburl_id,
+                                    settings,
+                                })
+                                .await
+                                {
                                     Ok(()) => result_msg.set(Some("Saved".into())),
                                     Err(e) => result_msg.set(Some(format!("Error: {e}"))),
                                 }

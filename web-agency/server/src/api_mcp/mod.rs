@@ -526,6 +526,87 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
         );
     }
     {
+        let mut cd = reg.resource("changedetection", "changedetection", "Change Detection");
+        cd.get(
+            "Get a webspace's change-detection config: name and bound credential (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::changedetection::CdGetInput| async move {
+                endpoints::changedetection::changedetection_get(&pool, &p, input).await
+            },
+        );
+        cd.custom(
+            "set",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Bind or unbind a ChangeDetection.io credential on a webspace; switching undeploys old tags and clears old notifications (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::changedetection::CdSetInput| async move {
+                endpoints::changedetection::changedetection_set(&pool, &p, input).await
+            },
+        );
+        cd.custom(
+            "suburls",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List a webspace's monitored sub-URLs (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::changedetection::SubUrlListInput| async move {
+                endpoints::changedetection::changedetection_suburl_list(&pool, &p, input).await
+            },
+        );
+        cd.custom(
+            "suburl_create",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Add a monitored sub-URL to a webspace; the path is normalized (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::changedetection::SubUrlCreateInput| async move {
+                endpoints::changedetection::changedetection_suburl_create(&pool, &p, input).await
+            },
+        );
+        cd.custom(
+            "suburl_get",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "Get a sub-URL's path and tag settings (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::changedetection::SubUrlGetInput| async move {
+                endpoints::changedetection::changedetection_suburl_get(&pool, &p, input).await
+            },
+        );
+        cd.custom(
+            "suburl_update",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Update a sub-URL's tag settings; pushes to ChangeDetection.io when a tag is deployed (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::changedetection::SubUrlUpdateInput| async move {
+                endpoints::changedetection::changedetection_suburl_update(&pool, &p, input).await
+            },
+        );
+        cd.custom(
+            "suburl_delete",
+            Risk::Destructive,
+            OnItem::Yes,
+            "Delete a monitored sub-URL, its deployed tag, and its notifications (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::changedetection::SubUrlDeleteInput| async move {
+                endpoints::changedetection::changedetection_suburl_delete(&pool, &p, input).await
+            },
+        );
+        cd.custom(
+            "notifications",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List a webspace's latest change notifications, newest first, capped at 100 (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::changedetection::NotificationListInput| async move {
+                endpoints::changedetection::changedetection_notifications(&pool, &p, input).await
+            },
+        );
+        cd.custom(
+            "notification_get",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "Get a single change notification with full body (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::changedetection::NotificationGetInput| async move {
+                endpoints::changedetection::changedetection_notification_get(&pool, &p, input).await
+            },
+        );
+    }
+    {
         let mut s = reg.resource("sync", "sync", "Sync");
         s.custom(
             "trigger",

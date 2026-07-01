@@ -30,6 +30,7 @@ pub(crate) async fn owning_org(
 pub mod basic_auth;
 pub mod billing;
 pub mod certificates;
+pub mod changedetection;
 pub mod contacts;
 pub mod credentials;
 pub mod domains;
