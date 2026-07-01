@@ -60,6 +60,45 @@ impl CloudHermes {
             _ => "",
         }
     }
+
+    /// Build the hermes config patch for the enabled cloud providers. Pure (no
+    /// filesystem) so it can be unit-tested independently of the hermes binary
+    /// used by `merge_and_validate`. The first enabled provider sets
+    /// `model.provider` (+ `model.default`); every non-built-in provider is
+    /// registered under `custom_providers`.
+    fn build_patch(enabled: &[CloudConfig]) -> serde_json::Value {
+        let Some(primary) = enabled.first() else {
+            return serde_json::json!({});
+        };
+        let mut patch = serde_json::json!({
+            "model": { "provider": Self::provider_ref(primary) }
+        });
+        if !primary.default_model.is_empty() {
+            patch["model"]["default"] = serde_json::json!(&primary.default_model);
+        }
+
+        // Register every non-built-in provider (openai/mistral/groq/together +
+        // any Custom) as a custom_providers entry referenced via `custom:<name>`.
+        // ponytail: merge_json replaces arrays, so this connector is the
+        // authoritative owner of hermes custom_providers for cloud config.
+        let custom_providers: Vec<serde_json::Value> = enabled
+            .iter()
+            .filter(|cfg| Self::builtin_id(&cfg.provider).is_none())
+            .map(|cfg| {
+                let name = cfg.provider.as_str();
+                let base_url = non_empty(&cfg.base_url).unwrap_or_else(|| cfg.provider.base_url());
+                serde_json::json!({
+                    "name": name,
+                    "base_url": base_url,
+                    "key_env": custom_key_env(name),
+                })
+            })
+            .collect();
+        if !custom_providers.is_empty() {
+            patch["custom_providers"] = serde_json::json!(custom_providers);
+        }
+        patch
+    }
 }
 
 impl Connector for CloudHermes {
@@ -107,39 +146,7 @@ impl Connector for CloudHermes {
             return Ok(());
         }
 
-        let mut patch = serde_json::json!({
-            "model": {
-                "provider": provider_ref,
-            }
-        });
-
-        if !primary.default_model.is_empty() {
-            patch["model"]["default"] = serde_json::json!(&primary.default_model);
-        }
-
-        // Register every non-built-in provider (openai/mistral/groq/together +
-        // any Custom) as a custom_providers entry referenced via `custom:<name>`.
-        // ponytail: merge_json replaces arrays, so this connector is the
-        // authoritative owner of hermes custom_providers for cloud config —
-        // manual entries in the file are not preserved across a sync.
-        let custom_providers: Vec<serde_json::Value> = enabled
-            .iter()
-            .filter(|cfg| Self::builtin_id(&cfg.provider).is_none())
-            .map(|cfg| {
-                let name = cfg.provider.as_str();
-                let base_url =
-                    non_empty(&cfg.base_url).unwrap_or_else(|| cfg.provider.base_url());
-                serde_json::json!({
-                    "name": name,
-                    "base_url": base_url,
-                    "key_env": custom_key_env(name),
-                })
-            })
-            .collect();
-        if !custom_providers.is_empty() {
-            patch["custom_providers"] = serde_json::json!(custom_providers);
-        }
-
+        let patch = Self::build_patch(&enabled);
         merge_and_validate(&path, &patch)?;
         tracing::info!("cloud→hermes connected");
         Ok(())
@@ -174,5 +181,97 @@ impl Connector for CloudHermes {
         }
 
         env
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mac_mgmt_common::Secret;
+
+    fn cfg(provider: &str) -> CloudConfig {
+        CloudConfig {
+            provider: CloudProvider::from_name(provider),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn builtin_provider_ref_and_no_custom_entry() {
+        let c = CloudConfig {
+            default_model: "anthropic/claude-sonnet-4-6".into(),
+            ..cfg("anthropic")
+        };
+        let patch = CloudHermes::build_patch(&[c]);
+        assert_eq!(patch["model"]["provider"], "anthropic");
+        assert_eq!(patch["model"]["default"], "anthropic/claude-sonnet-4-6");
+        assert!(patch.get("custom_providers").is_none());
+    }
+
+    #[test]
+    fn custom_provider_registered_and_referenced() {
+        let c = CloudConfig {
+            provider: CloudProvider::from_name("moonshot"),
+            base_url: Some("https://api.moonshot.ai/v1".into()),
+            default_model: "moonshot/kimi-k2.6".into(),
+            ..Default::default()
+        };
+        let patch = CloudHermes::build_patch(&[c]);
+        assert_eq!(patch["model"]["provider"], "custom:moonshot");
+        assert_eq!(
+            patch["custom_providers"],
+            serde_json::json!([{
+                "name": "moonshot",
+                "base_url": "https://api.moonshot.ai/v1",
+                "key_env": "MOONSHOT_API_KEY",
+            }])
+        );
+    }
+
+    #[test]
+    fn openai_is_treated_as_custom_in_hermes() {
+        assert_eq!(
+            CloudHermes::builtin_id(&CloudProvider::from_name("openai")),
+            None
+        );
+        assert_eq!(CloudHermes::provider_ref(&cfg("openai")), "custom:openai");
+        assert_eq!(CloudHermes::provider_ref(&cfg("anthropic")), "anthropic");
+    }
+
+    #[test]
+    fn service_env_maps_keys_and_skips_bedrock() {
+        let cfgs = vec![
+            CloudConfig {
+                api_key: Some(Secret::new("sk-ant")),
+                enabled: true,
+                ..cfg("anthropic")
+            },
+            CloudConfig {
+                api_key: Some(Secret::new("sk-moon")),
+                enabled: true,
+                ..cfg("moonshot")
+            },
+            CloudConfig {
+                api_key: Some(Secret::new("aws")),
+                enabled: true,
+                ..cfg("bedrock")
+            },
+        ];
+        let mut configs = std::collections::HashMap::new();
+        configs.insert("cloud".into(), serde_json::to_value(&cfgs).unwrap());
+
+        let env = CloudHermes { set_default: true }.service_env("hermes", &configs);
+        assert_eq!(env.get("ANTHROPIC_API_KEY").map(String::as_str), Some("sk-ant"));
+        assert_eq!(env.get("MOONSHOT_API_KEY").map(String::as_str), Some("sk-moon"));
+        assert!(
+            !env.contains_key("AWS_ACCESS_KEY_ID"),
+            "bedrock authenticates via AWS creds, not a key env"
+        );
+        // Env is only injected into hermes.
+        assert!(
+            CloudHermes { set_default: true }
+                .service_env("openclaw", &configs)
+                .is_empty()
+        );
     }
 }

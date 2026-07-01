@@ -29,57 +29,18 @@ impl CloudOpenClaw {
             _ => config.provider.env_var().to_string(),
         }
     }
-}
 
-impl Connector for CloudOpenClaw {
-    fn name(&self) -> &str {
-        "cloud→openclaw"
-    }
-
-    fn phase(&self) -> ConnectorPhase {
-        ConnectorPhase::PreStart
-    }
-
-    fn depends_on(&self) -> &[&str] {
-        &["openclaw", "cloud"]
-    }
-
-    fn connect(
-        &self,
-        configs: &std::collections::HashMap<String, serde_json::Value>,
-    ) -> Result<()> {
-        let enabled = enabled_cloud_configs(configs);
-        if enabled.is_empty() {
-            anyhow::bail!("no enabled cloud provider found");
-        }
-
-        let path = config_path()?;
-        if !path.exists() {
-            tracing::warn!("openclaw config not found, skipping cloud connector");
-            return Ok(());
-        }
-
+    /// Build the openclaw config patch for the enabled cloud providers. Pure
+    /// (no filesystem), so it can be unit-tested independently of the openclaw
+    /// binary used by `merge_and_validate`.
+    fn build_patch(enabled: &[CloudConfig], set_default: bool) -> serde_json::Value {
         let mut patch = serde_json::json!({});
-        let mut custom_providers = serde_json::Map::new();
+        let mut providers = serde_json::Map::new();
 
         // The first enabled provider's model becomes the default.
-        let primary_model = resolve_model(&enabled[0]);
+        let primary_model = enabled.first().map(resolve_model).unwrap_or_default();
 
-        let provider_names: Vec<&str> = enabled.iter().map(|c| c.provider.as_str()).collect();
-        tracing::info!(
-            "connecting cloud providers [{}] to openclaw (primary model={primary_model})",
-            provider_names.join(", ")
-        );
-        sentry_ext::breadcrumb(
-            "connector",
-            &format!(
-                "cloud→openclaw providers=[{}] primary_model={primary_model}",
-                provider_names.join(", ")
-            ),
-            &[("connector", "cloud→openclaw")],
-        );
-
-        for config in &enabled {
+        for config in enabled {
             let provider = config.provider.as_str();
             let base_url =
                 non_empty(&config.base_url).unwrap_or_else(|| config.provider.base_url());
@@ -123,18 +84,60 @@ impl Connector for CloudOpenClaw {
                     .map(|id| serde_json::json!({ "id": id, "name": id }))
                     .collect(),
             );
-            custom_providers.insert(provider.to_string(), provider_cfg);
+            providers.insert(provider.to_string(), provider_cfg);
         }
 
-        if !custom_providers.is_empty() {
-            patch["models"] = serde_json::json!({ "providers": custom_providers });
+        if !providers.is_empty() {
+            patch["models"] = serde_json::json!({ "providers": providers });
         }
-
-        // Set default model from the first enabled provider.
-        if self.set_default && !primary_model.is_empty() {
+        if set_default && !primary_model.is_empty() {
             patch["agents"] =
                 serde_json::json!({ "defaults": { "model": { "primary": primary_model } } });
         }
+        patch
+    }
+}
+
+impl Connector for CloudOpenClaw {
+    fn name(&self) -> &str {
+        "cloud→openclaw"
+    }
+
+    fn phase(&self) -> ConnectorPhase {
+        ConnectorPhase::PreStart
+    }
+
+    fn depends_on(&self) -> &[&str] {
+        &["openclaw", "cloud"]
+    }
+
+    fn connect(
+        &self,
+        configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
+        let enabled = enabled_cloud_configs(configs);
+        if enabled.is_empty() {
+            anyhow::bail!("no enabled cloud provider found");
+        }
+
+        let path = config_path()?;
+        if !path.exists() {
+            tracing::warn!("openclaw config not found, skipping cloud connector");
+            return Ok(());
+        }
+
+        let provider_names: Vec<&str> = enabled.iter().map(|c| c.provider.as_str()).collect();
+        tracing::info!(
+            "connecting cloud providers [{}] to openclaw",
+            provider_names.join(", ")
+        );
+        sentry_ext::breadcrumb(
+            "connector",
+            &format!("cloud→openclaw providers=[{}]", provider_names.join(", ")),
+            &[("connector", "cloud→openclaw")],
+        );
+
+        let patch = Self::build_patch(&enabled, self.set_default);
 
         if patch.as_object().is_some_and(|o| !o.is_empty()) {
             merge_and_validate(&path, &patch)?;
@@ -165,5 +168,135 @@ impl Connector for CloudOpenClaw {
             }
         }
         env
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mac_mgmt_common::{CloudApiType, Secret};
+
+    fn custom(name: &str) -> CloudConfig {
+        CloudConfig {
+            provider: CloudProvider::from_name(name),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn custom_provider_empty_models_falls_back_to_default() {
+        let c = CloudConfig {
+            provider: CloudProvider::from_name("moonshot"),
+            base_url: Some("https://api.moonshot.ai/v1".into()),
+            api: Some(CloudApiType::OpenaiCompletions),
+            api_key: Some(Secret::new("sk-test")),
+            default_model: "moonshot/kimi-k2.6".into(),
+            models: vec![],
+            ..Default::default()
+        };
+        let patch = CloudOpenClaw::build_patch(&[c], true);
+        let prov = &patch["models"]["providers"]["moonshot"];
+        assert_eq!(prov["baseUrl"], "https://api.moonshot.ai/v1");
+        assert_eq!(prov["api"], "openai-completions");
+        assert_eq!(prov["apiKey"], "${MOONSHOT_API_KEY}");
+        assert_eq!(
+            prov["models"],
+            serde_json::json!([{ "id": "kimi-k2.6", "name": "kimi-k2.6" }])
+        );
+        assert_eq!(
+            patch["agents"]["defaults"]["model"]["primary"],
+            "moonshot/kimi-k2.6"
+        );
+    }
+
+    #[test]
+    fn builtin_provider_maps_models_and_appends_missing_default() {
+        let c = CloudConfig {
+            provider: CloudProvider::from_name("anthropic"),
+            api_key: Some(Secret::new("sk-ant")),
+            default_model: "anthropic/claude-sonnet-4-6".into(),
+            models: vec!["anthropic/claude-opus-4-8".into()],
+            ..Default::default()
+        };
+        let patch = CloudOpenClaw::build_patch(&[c], false);
+        let prov = &patch["models"]["providers"]["anthropic"];
+        // Built-in base URL fallback + canonical key env.
+        assert_eq!(prov["baseUrl"], "https://api.anthropic.com/v1");
+        assert_eq!(prov["apiKey"], "${ANTHROPIC_API_KEY}");
+        // Configured model kept, default appended (not duplicated).
+        assert_eq!(
+            prov["models"],
+            serde_json::json!([
+                { "id": "claude-opus-4-8", "name": "claude-opus-4-8" },
+                { "id": "claude-sonnet-4-6", "name": "claude-sonnet-4-6" },
+            ])
+        );
+        // set_default=false → no agents override.
+        assert!(patch.get("agents").is_none());
+    }
+
+    #[test]
+    fn default_model_in_list_is_not_duplicated() {
+        let c = CloudConfig {
+            provider: CloudProvider::from_name("moonshot"),
+            base_url: Some("https://x".into()),
+            default_model: "moonshot/kimi-k2.6".into(),
+            models: vec!["moonshot/kimi-k2.6".into()],
+            ..Default::default()
+        };
+        let patch = CloudOpenClaw::build_patch(&[c], true);
+        assert_eq!(
+            patch["models"]["providers"]["moonshot"]["models"],
+            serde_json::json!([{ "id": "kimi-k2.6", "name": "kimi-k2.6" }])
+        );
+    }
+
+    #[test]
+    fn provider_without_any_model_is_skipped() {
+        // Custom provider, no default_model and no models → nothing to write.
+        let patch = CloudOpenClaw::build_patch(&[custom("moonshot")], true);
+        assert!(patch.get("models").is_none());
+        assert!(patch.get("agents").is_none());
+    }
+
+    #[test]
+    fn no_api_key_means_no_apikey_field() {
+        let c = CloudConfig {
+            provider: CloudProvider::from_name("xai"),
+            default_model: "xai/grok-3-mini".into(),
+            ..Default::default()
+        };
+        let patch = CloudOpenClaw::build_patch(&[c], true);
+        assert!(patch["models"]["providers"]["xai"].get("apiKey").is_none());
+    }
+
+    #[test]
+    fn service_env_uses_per_provider_key_names() {
+        let cfgs = vec![
+            CloudConfig {
+                provider: CloudProvider::from_name("anthropic"),
+                api_key: Some(Secret::new("sk-ant")),
+                enabled: true,
+                ..Default::default()
+            },
+            CloudConfig {
+                provider: CloudProvider::from_name("moonshot"),
+                api_key: Some(Secret::new("sk-moon")),
+                enabled: true,
+                ..Default::default()
+            },
+        ];
+        let mut configs = std::collections::HashMap::new();
+        configs.insert("cloud".to_string(), serde_json::to_value(&cfgs).unwrap());
+
+        let env = CloudOpenClaw { set_default: true }.service_env("openclaw", &configs);
+        assert_eq!(env.get("ANTHROPIC_API_KEY").map(String::as_str), Some("sk-ant"));
+        assert_eq!(env.get("MOONSHOT_API_KEY").map(String::as_str), Some("sk-moon"));
+        // Env is only injected into openclaw.
+        assert!(
+            CloudOpenClaw { set_default: true }
+                .service_env("ollama", &configs)
+                .is_empty()
+        );
     }
 }
