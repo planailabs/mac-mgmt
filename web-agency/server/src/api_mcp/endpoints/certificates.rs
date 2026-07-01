@@ -28,6 +28,11 @@ pub struct CertRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CertListInput {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CertIssueInput {
+    pub domain: String,
+}
+
 /// List TLS certificates (admin only).
 #[api_mcp_dioxus_server(server = "list_certificates")]
 pub async fn certificate_list(
@@ -74,4 +79,20 @@ pub async fn certificate_list(
             },
         )
         .collect())
+}
+
+/// Issue (or reissue) the ACME certificate for a domain (admin only). Returns
+/// a human-readable status string ("issued" or "error: ...").
+#[api_mcp_dioxus_server(server = "reissue_cert")]
+pub async fn certificate_issue(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: CertIssueInput,
+) -> Result<String, ApiError> {
+    principal.require_admin()?;
+
+    match crate::api::acme::issue_cert(pool, &input.domain).await {
+        Ok(()) => Ok("issued".into()),
+        Err(e) => Ok(format!("error: {e}")),
+    }
 }

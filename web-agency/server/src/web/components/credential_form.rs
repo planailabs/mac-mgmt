@@ -1,6 +1,5 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 
@@ -21,98 +20,9 @@ async fn list_orgs_for_cred() -> Result<CredFormData, ServerFnError> {
     })
 }
 
-#[server]
-async fn create_credential(
-    org_id: Option<Uuid>,
-    name: String,
-    credential_type: String,
-    data_json: String,
-) -> Result<Uuid, ServerFnError> {
-    use crate::web::user::WebUserExt;
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    match org_id {
-        None => user.require_admin()?,
-        Some(oid) => user.require_org_write(&oid)?,
-    }
-
-    let _: serde_json::Value = serde_json::from_str(&data_json)
-        .map_err(|e| ServerFnError::new(format!("invalid JSON: {e}")))?;
-
-    let encrypted = crate::crypto::encrypt(data_json.as_bytes())
-        .map_err(|e| ServerFnError::new(format!("encryption failed: {e}")))?;
-
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO credentials (organization_id, name, credential_type, encrypted_data) \
-         VALUES ($1, $2, $3, $4) RETURNING id",
-    )
-    .bind(org_id)
-    .bind(&name)
-    .bind(&credential_type)
-    .bind(&encrypted)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("failed to create credential: {e}")))?;
-
-    Ok(id)
-}
-
-#[server]
-async fn test_credential(credential_id: Uuid) -> Result<String, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-    crate::web::user::require_credential_read(&user, &pool, credential_id).await?;
-
-    let cred_type =
-        sqlx::query_scalar::<_, String>("SELECT credential_type FROM credentials WHERE id = $1")
-            .bind(credential_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    match cred_type.as_str() {
-        "cloudflare" => {
-            let client = crate::credentials::cf_client(&pool, credential_id)
-                .await
-                .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let zones = client
-                .list_zones(None)
-                .await
-                .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
-            Ok(format!("OK - {} zone(s) accessible", zones.len()))
-        }
-        "spaceship" => {
-            let client = crate::credentials::spaceship_client(&pool, credential_id)
-                .await
-                .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let domains = client
-                .list_domains(0, 1)
-                .await
-                .map_err(|e| ServerFnError::new(format!("Spaceship API error: {e}")))?;
-            Ok(format!(
-                "OK - {} domain(s) in account",
-                domains.total_count.unwrap_or(0)
-            ))
-        }
-        "changedetection" => {
-            let (client, _group) = crate::credentials::changedetection_client(&pool, credential_id)
-                .await
-                .map_err(|e| ServerFnError::new(format!("{e}")))?;
-            let info = client
-                .get_system_info()
-                .await
-                .map_err(|e| ServerFnError::new(format!("ChangeDetection API error: {e}")))?;
-            let info = info.into_inner();
-            Ok(format!(
-                "OK - v{}, {} watch(es)",
-                info.version.as_deref().unwrap_or("?"),
-                info.watch_count.unwrap_or(0),
-            ))
-        }
-        _ => Err(ServerFnError::new("unknown credential type")),
-    }
-}
+// Credential creation (and connection testing) now live in the shared
+// api_mcp layer; the edit page hosts the "test connection" button.
+use crate::api_mcp::endpoints::credentials::{CredentialCreateInput, create_credential};
 
 #[component]
 pub fn CredentialForm() -> Element {
@@ -146,7 +56,12 @@ pub fn CredentialForm() -> Element {
                 error.set(None);
                 spawn(async move {
                     let oid = uuid::Uuid::parse_str(&org_val).ok(); // None if empty
-                    match create_credential(oid, name_val, cred_type, json_val).await {
+                    match create_credential(CredentialCreateInput {
+                        organization_id: oid,
+                        name: name_val,
+                        credential_type: cred_type,
+                        data_json: json_val,
+                    }).await {
                         Ok(_) => { nav.push(crate::web::app::Route::CredentialList {}); }
                         Err(e) => error.set(Some(format!("{e}"))),
                     }

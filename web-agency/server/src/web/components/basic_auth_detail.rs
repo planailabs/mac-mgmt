@@ -1,136 +1,14 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ui::{Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td, Th};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BasicAuthListData {
-    id: Uuid,
-    name: String,
-    organization_name: String,
-    credentials: Vec<CredentialRow>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CredentialRow {
-    id: Uuid,
-    username: String,
-    created_at: String,
-}
-
-#[server]
-async fn get_basic_auth_list(list_id: Uuid) -> Result<BasicAuthListData, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let row = sqlx::query_as::<_, (Uuid, String, Uuid)>(
-        "SELECT id, name, organization_id FROM basic_auth_lists WHERE id = $1",
-    )
-    .bind(list_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("list not found"))?;
-
-    let (id, name, org_id) = row;
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-
-    let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
-        .bind(org_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let creds = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, username, created_at FROM basic_auth_credentials WHERE list_id = $1 ORDER BY username",
-    )
-    .bind(list_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(BasicAuthListData {
-        id,
-        name,
-        organization_name: org_name,
-        credentials: creds
-            .into_iter()
-            .map(|(id, username, created_at)| CredentialRow {
-                id,
-                username,
-                created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-            })
-            .collect(),
-    })
-}
-
-#[server]
-async fn add_credential(
-    list_id: Uuid,
-    username: String,
-    password: String,
-) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM basic_auth_lists WHERE id = $1")
-            .bind(list_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    use sha2::{Digest, Sha256};
-    let hash = hex::encode(Sha256::digest(password.as_bytes()));
-
-    sqlx::query(
-        "INSERT INTO basic_auth_credentials (list_id, username, password_hash) VALUES ($1, $2, $3) \
-         ON CONFLICT (list_id, username) DO UPDATE SET password_hash = $3",
-    )
-    .bind(list_id)
-    .bind(&username)
-    .bind(&hash)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Credential set changed — tell the proxy to reload its basic-auth lists.
-    crate::api::internal::notify_proxy_reload();
-    Ok(())
-}
-
-#[server]
-async fn remove_credential(credential_id: Uuid) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT b.organization_id FROM basic_auth_credentials c \
-         JOIN basic_auth_lists b ON b.id = c.list_id WHERE c.id = $1",
-    )
-    .bind(credential_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    sqlx::query("DELETE FROM basic_auth_credentials WHERE id = $1")
-        .bind(credential_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Credential set changed — tell the proxy to reload its basic-auth lists.
-    crate::api::internal::notify_proxy_reload();
-    Ok(())
-}
-
-// delete_basic_auth_list now lives in the shared api_mcp layer.
-use crate::api_mcp::endpoints::basic_auth::{BasicAuthDeleteInput, delete_basic_auth_list};
+// The basic-auth list read/mutation endpoints now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::basic_auth::{
+    BasicAuthAddCredentialInput, BasicAuthDeleteInput, BasicAuthGetInput,
+    BasicAuthRemoveCredentialInput, add_basic_auth_credential, delete_basic_auth_list,
+    get_basic_auth_list, remove_basic_auth_credential,
+};
 
 #[component]
 pub fn BasicAuthDetail(id: String) -> Element {
@@ -139,7 +17,7 @@ pub fn BasicAuthDetail(id: String) -> Element {
         let lid = list_id;
         async move {
             match lid {
-                Some(id) => get_basic_auth_list(id).await,
+                Some(id) => get_basic_auth_list(BasicAuthGetInput { id }).await,
                 None => Err(ServerFnError::new("invalid ID")),
             }
         }
@@ -198,12 +76,16 @@ pub fn BasicAuthDetail(id: String) -> Element {
                                                 variant: ButtonVariant::Danger,
                                                 disabled: is_removing,
                                                 onclick: {
+                                                    let list_id = list.id;
                                                     let lid = list.id.to_string();
                                                     move |_| {
                                                         let lid = lid.clone();
                                                         removing.set(Some(cid));
                                                         spawn(async move {
-                                                            let _ = remove_credential(cid).await;
+                                                            let _ = remove_basic_auth_credential(BasicAuthRemoveCredentialInput {
+                                                                id: list_id,
+                                                                credential_id: cid,
+                                                            }).await;
                                                             removing.set(None);
                                                             navigator().replace(crate::web::app::Route::BasicAuthDetail { id: lid });
                                                         });
@@ -254,7 +136,11 @@ pub fn BasicAuthDetail(id: String) -> Element {
                                 adding.set(true);
                                 error.set(None);
                                 spawn(async move {
-                                    match add_credential(lid, u, p).await {
+                                    match add_basic_auth_credential(BasicAuthAddCredentialInput {
+                                        id: lid,
+                                        username: u,
+                                        password: p,
+                                    }).await {
                                         Ok(()) => {
                                             new_username.set(String::new());
                                             new_password.set(String::new());

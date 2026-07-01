@@ -121,32 +121,6 @@ pub async fn require_credential_read(
     }
 }
 
-/// Require that a non-admin user has write access to the credential's
-/// organization. Global (NULL org) credentials are denied for non-admins.
-#[cfg(feature = "server")]
-pub async fn require_credential_write(
-    user: &WebUser,
-    pool: &PgPool,
-    credential_id: Uuid,
-) -> Result<(), ServerFnError> {
-    if user.is_admin {
-        return Ok(());
-    }
-    let cred_org = sqlx::query_scalar::<_, Option<Uuid>>(
-        "SELECT organization_id FROM credentials WHERE id = $1",
-    )
-    .bind(credential_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("credential not found"))?;
-
-    match cred_org {
-        Some(oid) if user.write_org_ids().contains(&oid) => Ok(()),
-        _ => Err(ServerFnError::new("access denied")),
-    }
-}
-
 /// List organizations visible to the user (any role). Admins see all.
 #[cfg(feature = "server")]
 pub async fn list_user_orgs(

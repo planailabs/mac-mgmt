@@ -35,6 +35,42 @@ pub struct BasicAuthDeleteInput {
     pub id: Uuid,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BasicAuthGetInput {
+    pub id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BasicAuthCredentialRow {
+    pub id: Uuid,
+    pub username: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BasicAuthInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub organization_name: String,
+    pub credentials: Vec<BasicAuthCredentialRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BasicAuthAddCredentialInput {
+    /// The basic-auth list id.
+    pub id: Uuid,
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BasicAuthRemoveCredentialInput {
+    /// The basic-auth list id.
+    pub id: Uuid,
+    /// The credential row to remove from the list.
+    pub credential_id: Uuid,
+}
+
 /// List basic-auth lists the caller may see (admins: all; else their orgs').
 #[api_mcp_dioxus_server(server = "list_basic_auth_lists")]
 pub async fn basic_auth_list(
@@ -118,6 +154,120 @@ pub async fn basic_auth_delete(
         .await
         .map_err(super::internal)?;
 
+    crate::api::internal::notify_proxy_reload();
+    Ok(())
+}
+
+/// Get a basic-auth list with its credential rows (requires org read).
+#[api_mcp_dioxus_server(server = "get_basic_auth_list")]
+pub async fn basic_auth_get(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: BasicAuthGetInput,
+) -> Result<BasicAuthInfo, ApiError> {
+    let row = sqlx::query_as::<_, (Uuid, String, Uuid)>(
+        "SELECT id, name, organization_id FROM basic_auth_lists WHERE id = $1",
+    )
+    .bind(input.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(super::internal)?
+    .ok_or_else(|| ApiError::not_found("list not found"))?;
+
+    let (id, name, org_id) = row;
+    principal.require_read(&org_id)?;
+
+    let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
+        .bind(org_id)
+        .fetch_one(pool)
+        .await
+        .map_err(super::internal)?;
+
+    let creds = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, username, created_at FROM basic_auth_credentials WHERE list_id = $1 ORDER BY username",
+    )
+    .bind(input.id)
+    .fetch_all(pool)
+    .await
+    .map_err(super::internal)?;
+
+    Ok(BasicAuthInfo {
+        id,
+        name,
+        organization_name: org_name,
+        credentials: creds
+            .into_iter()
+            .map(|(id, username, created_at)| BasicAuthCredentialRow {
+                id,
+                username,
+                created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
+            })
+            .collect(),
+    })
+}
+
+/// Add (or replace) a username/password credential on a basic-auth list
+/// (requires org write). The password is stored as a SHA-256 hash and the
+/// proxy is told to reload.
+#[api_mcp_dioxus_server(server = "add_basic_auth_credential")]
+pub async fn basic_auth_add_credential(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: BasicAuthAddCredentialInput,
+) -> Result<(), ApiError> {
+    let org_id = super::owning_org(pool, "basic_auth_lists", input.id, "basic-auth list").await?;
+    principal.require_write(&org_id)?;
+
+    use sha2::{Digest, Sha256};
+    let hash = hex::encode(Sha256::digest(input.password.as_bytes()));
+
+    sqlx::query(
+        "INSERT INTO basic_auth_credentials (list_id, username, password_hash) VALUES ($1, $2, $3) \
+         ON CONFLICT (list_id, username) DO UPDATE SET password_hash = $3",
+    )
+    .bind(input.id)
+    .bind(&input.username)
+    .bind(&hash)
+    .execute(pool)
+    .await
+    .map_err(super::internal)?;
+
+    // Credential set changed — tell the proxy to reload its basic-auth lists.
+    crate::api::internal::notify_proxy_reload();
+    Ok(())
+}
+
+/// Remove a credential from a basic-auth list (requires org write). The
+/// credential must belong to the given list; the proxy is told to reload.
+#[api_mcp_dioxus_server(server = "remove_basic_auth_credential")]
+pub async fn basic_auth_remove_credential(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: BasicAuthRemoveCredentialInput,
+) -> Result<(), ApiError> {
+    let row = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT c.list_id, b.organization_id FROM basic_auth_credentials c \
+         JOIN basic_auth_lists b ON b.id = c.list_id WHERE c.id = $1",
+    )
+    .bind(input.credential_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(super::internal)?
+    .ok_or_else(|| ApiError::not_found("credential not found"))?;
+
+    let (list_id, org_id) = row;
+    if list_id != input.id {
+        return Err(ApiError::not_found("credential not found in this list"));
+    }
+    principal.require_write(&org_id)?;
+
+    sqlx::query("DELETE FROM basic_auth_credentials WHERE id = $1")
+        .bind(input.credential_id)
+        .execute(pool)
+        .await
+        .map_err(super::internal)?;
+
+    // Credential set changed — tell the proxy to reload its basic-auth lists.
     crate::api::internal::notify_proxy_reload();
     Ok(())
 }

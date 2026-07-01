@@ -14,19 +14,17 @@ use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, Td, TdMuted, Th,
 };
 
-// HostRow + the list endpoint now live in the shared api_mcp layer.
-use crate::api_mcp::endpoints::webspace_hosts::{HostListInput, HostRow, list_hosts};
+// HostRow + the list/bulk-ChangeDetection endpoints now live in the shared
+// api_mcp layer.
+use crate::api_mcp::endpoints::webspace_hosts::{
+    BulkOpResult, HostBulkClearChangedetectionInput, HostBulkSetChangedetectionInput,
+    HostListInput, HostRow, bulk_assign_changedetection, bulk_remove_changedetection, list_hosts,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CdCredOption {
     id: Uuid,
     name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BulkOpResult {
-    succeeded: usize,
-    failed: usize,
 }
 
 #[server]
@@ -52,56 +50,6 @@ async fn list_cd_creds_for_bulk() -> Result<Vec<CdCredOption>, ServerFnError> {
         .into_iter()
         .map(|(id, name)| CdCredOption { id, name })
         .collect())
-}
-
-#[server]
-async fn bulk_assign_changedetection(
-    host_ids: Vec<Uuid>,
-    credential_id: Uuid,
-) -> Result<BulkOpResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    if !user.is_admin {
-        return Err(ServerFnError::new("admin required"));
-    }
-    let pool = crate::server_pool()?;
-
-    let result = sqlx::query(
-        "UPDATE webspace_hosts SET changedetection_credential_id = $1, updated_at = now() \
-         WHERE id = ANY($2)",
-    )
-    .bind(credential_id)
-    .bind(&host_ids)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(BulkOpResult {
-        succeeded: result.rows_affected() as usize,
-        failed: 0,
-    })
-}
-
-#[server]
-async fn bulk_remove_changedetection(host_ids: Vec<Uuid>) -> Result<BulkOpResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    if !user.is_admin {
-        return Err(ServerFnError::new("admin required"));
-    }
-    let pool = crate::server_pool()?;
-
-    let result = sqlx::query(
-        "UPDATE webspace_hosts SET changedetection_credential_id = NULL, updated_at = now() \
-         WHERE id = ANY($1) AND changedetection_credential_id IS NOT NULL",
-    )
-    .bind(&host_ids)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(BulkOpResult {
-        succeeded: result.rows_affected() as usize,
-        failed: 0,
-    })
 }
 
 #[component]
@@ -220,7 +168,12 @@ pub fn WebspaceHostList() -> Element {
                                     running.set(true); bulk_result.set(None);
                                     spawn(async move {
                                         if let Ok(cid) = Uuid::parse_str(&cid_str) {
-                                            match bulk_assign_changedetection(ids, cid).await {
+                                            match bulk_assign_changedetection(HostBulkSetChangedetectionInput {
+                                                host_ids: ids,
+                                                credential_id: cid,
+                                            })
+                                            .await
+                                            {
                                                 Ok(r) => bulk_result.set(Some(r)),
                                                 Err(_) => bulk_result.set(Some(BulkOpResult { succeeded: 0, failed: 1 })),
                                             }
@@ -243,7 +196,7 @@ pub fn WebspaceHostList() -> Element {
                                     let ids = ids.clone();
                                     running.set(true); bulk_result.set(None);
                                     spawn(async move {
-                                        match bulk_remove_changedetection(ids).await {
+                                        match bulk_remove_changedetection(HostBulkClearChangedetectionInput { host_ids: ids }).await {
                                             Ok(r) => bulk_result.set(Some(r)),
                                             Err(_) => bulk_result.set(Some(BulkOpResult { succeeded: 0, failed: 1 })),
                                         }

@@ -2,21 +2,10 @@ use dioxus::prelude::*;
 
 use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, PageHeader, Td, TdMuted, Th};
 
-// CertRow + the list endpoint now live in the shared api_mcp layer.
-use crate::api_mcp::endpoints::certificates::{CertListInput, list_certificates};
-
-#[server]
-async fn reissue_cert(domain: String) -> Result<String, ServerFnError> {
-    use crate::web::user::WebUserExt;
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    match crate::api::acme::issue_cert(&pool, &domain).await {
-        Ok(()) => Ok("issued".into()),
-        Err(e) => Ok(format!("error: {e}")),
-    }
-}
+// CertRow + the list/issue endpoints now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::certificates::{
+    CertIssueInput, CertListInput, list_certificates, reissue_cert,
+};
 
 #[component]
 pub fn CertificateList() -> Element {
@@ -96,7 +85,7 @@ pub fn CertificateList() -> Element {
                                                         reissuing.set(Some(d.clone()));
                                                         reissue_result.set(None);
                                                         spawn(async move {
-                                                            match reissue_cert(d.clone()).await {
+                                                            match reissue_cert(CertIssueInput { domain: d.clone() }).await {
                                                                 Ok(msg) => reissue_result.set(Some(format!("{d}: {msg}"))),
                                                                 Err(e) => reissue_result.set(Some(format!("{d}: {e}"))),
                                                             }

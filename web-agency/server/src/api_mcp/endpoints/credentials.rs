@@ -25,6 +25,101 @@ pub struct CredentialRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CredentialListInput {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CredentialInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub credential_type: String,
+    pub organization_id: Option<Uuid>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CredentialGetInput {
+    pub id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CredentialCreateInput {
+    /// Owning organization; `None` makes a global credential (admin only).
+    pub organization_id: Option<Uuid>,
+    pub name: String,
+    pub credential_type: String,
+    /// Secret payload as a JSON document; encrypted at rest.
+    pub data_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CredentialUpdateInput {
+    pub id: Uuid,
+    pub name: String,
+    /// New owning organization; `None` makes it global (admin only).
+    pub organization_id: Option<Uuid>,
+    /// Replacement secret JSON; `None` or blank keeps the current data.
+    pub new_data_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CredentialDeleteInput {
+    pub id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CredentialTestInput {
+    pub id: Uuid,
+}
+
+/// Require read access to the credential's organization: admins always pass;
+/// global (NULL-org) credentials are admin-only; else org read membership.
+/// Shared with sibling endpoint modules (e.g. domain availability checks).
+#[cfg(feature = "server")]
+pub(super) async fn require_credential_read(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    credential_id: Uuid,
+) -> Result<(), ApiError> {
+    if principal.admin {
+        return Ok(());
+    }
+    match credential_org(pool, credential_id).await? {
+        Some(oid) => principal.require_read(&oid),
+        None => Err(ApiError::forbidden("access denied")),
+    }
+}
+
+/// Require write access to the credential's organization: admins always pass;
+/// global (NULL-org) credentials are admin-only; else org write membership.
+#[cfg(feature = "server")]
+async fn require_credential_write(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    credential_id: Uuid,
+) -> Result<(), ApiError> {
+    if principal.admin {
+        return Ok(());
+    }
+    match credential_org(pool, credential_id).await? {
+        Some(oid) => principal.require_write(&oid),
+        None => Err(ApiError::forbidden("access denied")),
+    }
+}
+
+/// Fetch a credential's (nullable) owning org, or 404.
+#[cfg(feature = "server")]
+async fn credential_org(
+    pool: &sqlx::PgPool,
+    credential_id: Uuid,
+) -> Result<Option<Uuid>, ApiError> {
+    sqlx::query_scalar::<_, Option<Uuid>>(
+        "SELECT organization_id FROM credentials WHERE id = $1",
+    )
+    .bind(credential_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(super::internal)?
+    .ok_or_else(|| ApiError::not_found("credential not found"))
+}
+
 /// List credentials the caller may see (admins: all; else their orgs' + global).
 #[api_mcp_dioxus_server(server = "list_credentials")]
 pub async fn credential_list(
@@ -73,4 +168,191 @@ pub async fn credential_list(
             },
         )
         .collect())
+}
+
+/// Get a credential's metadata (admins, or members of the credential's org;
+/// global credentials are admin-only). Never returns the secret data.
+#[api_mcp_dioxus_server(server = "get_credential")]
+pub async fn credential_get(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: CredentialGetInput,
+) -> Result<CredentialInfo, ApiError> {
+    let row = sqlx::query_as::<_, (Uuid, String, String, Option<Uuid>, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, name, credential_type, organization_id, created_at FROM credentials WHERE id = $1",
+    )
+    .bind(input.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(super::internal)?
+    .ok_or_else(|| ApiError::not_found("credential not found"))?;
+
+    require_credential_read(pool, principal, input.id).await?;
+
+    let (id, name, credential_type, organization_id, created_at) = row;
+    Ok(CredentialInfo {
+        id,
+        name,
+        credential_type,
+        organization_id,
+        created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
+    })
+}
+
+/// Create a credential. Global (no org) credentials require admin; org-owned
+/// credentials require org write. The JSON payload is encrypted at rest.
+/// Returns the new id.
+#[api_mcp_dioxus_server(server = "create_credential")]
+pub async fn credential_create(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: CredentialCreateInput,
+) -> Result<Uuid, ApiError> {
+    match input.organization_id {
+        None => principal.require_admin()?,
+        Some(oid) => principal.require_write(&oid)?,
+    }
+
+    let _: serde_json::Value = serde_json::from_str(&input.data_json)
+        .map_err(|e| ApiError::bad_request(format!("invalid JSON: {e}")))?;
+
+    let encrypted = crate::crypto::encrypt(input.data_json.as_bytes())
+        .map_err(|e| ApiError::internal(format!("encryption failed: {e}")))?;
+
+    sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO credentials (organization_id, name, credential_type, encrypted_data) \
+         VALUES ($1, $2, $3, $4) RETURNING id",
+    )
+    .bind(input.organization_id)
+    .bind(&input.name)
+    .bind(&input.credential_type)
+    .bind(&encrypted)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::internal(format!("failed to create credential: {e}")))
+}
+
+/// Update a credential's name/org and optionally replace its secret data
+/// (requires credential write plus write on the target org; moving to global
+/// requires admin).
+#[api_mcp_dioxus_server(server = "update_credential")]
+pub async fn credential_update(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: CredentialUpdateInput,
+) -> Result<(), ApiError> {
+    require_credential_write(pool, principal, input.id).await?;
+
+    // Validate target org assignment.
+    match input.organization_id {
+        None => principal.require_admin()?,
+        Some(oid) => principal.require_write(&oid)?,
+    }
+
+    sqlx::query(
+        "UPDATE credentials SET name = $1, organization_id = $2, updated_at = now() WHERE id = $3",
+    )
+    .bind(&input.name)
+    .bind(input.organization_id)
+    .bind(input.id)
+    .execute(pool)
+    .await
+    .map_err(super::internal)?;
+
+    if let Some(json) = input.new_data_json {
+        if !json.trim().is_empty() {
+            let _: serde_json::Value = serde_json::from_str(&json)
+                .map_err(|e| ApiError::bad_request(format!("invalid JSON: {e}")))?;
+            let encrypted = crate::crypto::encrypt(json.as_bytes())
+                .map_err(|e| ApiError::internal(format!("encryption failed: {e}")))?;
+            sqlx::query(
+                "UPDATE credentials SET encrypted_data = $1, updated_at = now() WHERE id = $2",
+            )
+            .bind(&encrypted)
+            .bind(input.id)
+            .execute(pool)
+            .await
+            .map_err(super::internal)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Delete a credential (requires credential write).
+#[api_mcp_dioxus_server(server = "delete_credential")]
+pub async fn credential_delete(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: CredentialDeleteInput,
+) -> Result<(), ApiError> {
+    require_credential_write(pool, principal, input.id).await?;
+
+    sqlx::query("DELETE FROM credentials WHERE id = $1")
+        .bind(input.id)
+        .execute(pool)
+        .await
+        .map_err(super::internal)?;
+    Ok(())
+}
+
+/// Test a credential against its upstream API (requires credential read).
+/// Returns a human-readable status string.
+#[api_mcp_dioxus_server(server = "test_credential_conn")]
+pub async fn credential_test(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: CredentialTestInput,
+) -> Result<String, ApiError> {
+    require_credential_read(pool, principal, input.id).await?;
+
+    let cred_type =
+        sqlx::query_scalar::<_, String>("SELECT credential_type FROM credentials WHERE id = $1")
+            .bind(input.id)
+            .fetch_optional(pool)
+            .await
+            .map_err(super::internal)?
+            .ok_or_else(|| ApiError::not_found("credential not found"))?;
+
+    match cred_type.as_str() {
+        "cloudflare" => {
+            let client = crate::credentials::cf_client(pool, input.id)
+                .await
+                .map_err(|e| ApiError::internal(format!("{e}")))?;
+            let zones = client
+                .list_zones(None)
+                .await
+                .map_err(|e| ApiError::internal(format!("Cloudflare API error: {e}")))?;
+            Ok(format!("OK — {} zone(s) accessible", zones.len()))
+        }
+        "spaceship" => {
+            let client = crate::credentials::spaceship_client(pool, input.id)
+                .await
+                .map_err(|e| ApiError::internal(format!("{e}")))?;
+            let resp = client
+                .list_domains(0, 1)
+                .await
+                .map_err(|e| ApiError::internal(format!("Spaceship API error: {e}")))?;
+            Ok(format!(
+                "OK — {} domain(s) in account",
+                resp.total_count.unwrap_or(0)
+            ))
+        }
+        "changedetection" => {
+            let (client, _group) = crate::credentials::changedetection_client(pool, input.id)
+                .await
+                .map_err(|e| ApiError::internal(format!("{e}")))?;
+            let info = client
+                .get_system_info()
+                .await
+                .map_err(|e| ApiError::internal(format!("ChangeDetection API error: {e}")))?;
+            let info = info.into_inner();
+            Ok(format!(
+                "OK — v{}, {} watch(es)",
+                info.version.as_deref().unwrap_or("?"),
+                info.watch_count.unwrap_or(0),
+            ))
+        }
+        _ => Err(ApiError::bad_request("unknown credential type")),
+    }
 }

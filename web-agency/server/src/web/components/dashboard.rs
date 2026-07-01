@@ -106,19 +106,8 @@ async fn get_dashboard_stats() -> Result<DashboardStats, ServerFnError> {
     }
 }
 
-#[server]
-async fn trigger_sync() -> Result<String, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    if !user.is_admin {
-        return Err(ServerFnError::new("admin required"));
-    }
-    let pool = crate::server_pool()?;
-    let pool2 = pool.clone();
-    tokio::spawn(async move {
-        crate::api::sync::trigger_sync(&pool2).await;
-    });
-    Ok("Sync triggered".to_string())
-}
+// The sync-trigger endpoint now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::sync::{SyncTriggerInput, trigger_sync};
 
 #[component]
 pub fn Dashboard() -> Element {
@@ -160,7 +149,7 @@ pub fn Dashboard() -> Element {
                         onclick: move |_| {
                             spawn(async move {
                                 sync_status.set(Some("Syncing...".to_string()));
-                                match trigger_sync().await {
+                                match trigger_sync(SyncTriggerInput::default()).await {
                                     Ok(msg) => sync_status.set(Some(msg)),
                                     Err(e) => sync_status.set(Some(format!("Error: {e}"))),
                                 }
