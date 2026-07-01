@@ -1,81 +1,13 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::ui::{Card, PageHeader, Td, TdMuted, Th};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CredentialRow {
-    id: Uuid,
-    name: String,
-    credential_type: String,
-    organization_name: Option<String>,
-    created_at: String,
-}
-
-#[server]
-async fn list_credentials() -> Result<Vec<CredentialRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let rows = if user.is_admin {
-        sqlx::query_as::<
-            _,
-            (
-                Uuid,
-                String,
-                String,
-                Option<String>,
-                chrono::DateTime<chrono::Utc>,
-            ),
-        >(
-            "SELECT c.id, c.name, c.credential_type, o.name, c.created_at \
-             FROM credentials c LEFT JOIN organizations o ON o.id = c.organization_id \
-             ORDER BY c.created_at DESC",
-        )
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        let org_ids = user.org_ids();
-        sqlx::query_as::<
-            _,
-            (
-                Uuid,
-                String,
-                String,
-                Option<String>,
-                chrono::DateTime<chrono::Utc>,
-            ),
-        >(
-            "SELECT c.id, c.name, c.credential_type, o.name, c.created_at \
-             FROM credentials c LEFT JOIN organizations o ON o.id = c.organization_id \
-             WHERE c.organization_id = ANY($1) OR c.organization_id IS NULL \
-             ORDER BY c.created_at DESC",
-        )
-        .bind(&org_ids)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, name, credential_type, organization_name, created_at)| CredentialRow {
-                id,
-                name,
-                credential_type,
-                organization_name,
-                created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-            },
-        )
-        .collect())
-}
+// CredentialRow + the list endpoint now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::credentials::{CredentialListInput, list_credentials};
 
 #[component]
 pub fn CredentialList() -> Element {
-    let credentials = use_server_future(list_credentials)?;
+    let credentials = use_server_future(move || list_credentials(CredentialListInput::default()))?;
     let rows = credentials.read();
     let rows = match &*rows {
         Some(Ok(r)) => r.as_slice(),

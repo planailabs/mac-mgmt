@@ -1,47 +1,13 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::ui::{Card, PageHeader, Td, TdMuted, Th};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgRow {
-    id: Uuid,
-    name: String,
-    member_count: i64,
-    created_at: String,
-}
-
-#[server]
-async fn list_organizations() -> Result<Vec<OrgRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    use crate::web::user::WebUserExt;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let rows = sqlx::query_as::<_, (Uuid, String, i64, chrono::DateTime<chrono::Utc>)>(
-        "SELECT o.id, o.name, \
-         (SELECT count(*) FROM organization_members om WHERE om.organization_id = o.id), \
-         o.created_at FROM organizations o ORDER BY o.name",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|(id, name, member_count, created_at)| OrgRow {
-            id,
-            name,
-            member_count,
-            created_at: created_at.format("%Y-%m-%d").to_string(),
-        })
-        .collect())
-}
+// OrgRow + the list endpoint now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::organizations::{OrgListInput, list_organizations};
 
 #[component]
 pub fn OrganizationList() -> Element {
-    let orgs = use_server_future(list_organizations)?;
+    let orgs = use_server_future(move || list_organizations(OrgListInput::default()))?;
     let rows = match &*orgs.read() {
         Some(Ok(r)) => r.clone(),
         _ => vec![],

@@ -33,6 +33,33 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             },
         );
     }
+    {
+        let mut o = reg.resource("organizations", "organization", "Organizations");
+        o.list(
+            "List all organizations (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgListInput| async move {
+                endpoints::organizations::organization_list(&pool, &p, input).await
+            },
+        );
+    }
+    {
+        let mut w = reg.resource("webspaces", "webspace", "Webspaces");
+        w.list(
+            "List webspace folders visible to the caller.",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceListInput| async move {
+                endpoints::webspaces::webspace_list(&pool, &p, input).await
+            },
+        );
+    }
+    {
+        let mut c = reg.resource("credentials", "credential", "Credentials");
+        c.list(
+            "List credentials visible to the caller (admins: all; else org + global).",
+            |pool: sqlx::PgPool, p, input: endpoints::credentials::CredentialListInput| async move {
+                endpoints::credentials::credential_list(&pool, &p, input).await
+            },
+        );
+    }
 
     reg
 }

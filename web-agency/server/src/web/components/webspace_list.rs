@@ -2,103 +2,15 @@
 //! CNAME, and ChangeDetection are managed on the parent host.
 
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::ui::{Badge, BadgeVariant, ButtonVariant, Button, Card, PageHeader, Td, TdMuted, Th};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct WebspaceRow {
-    id: Uuid,
-    name: String,
-    host_id: Uuid,
-    host_name: String,
-    host_kind: String,
-    path_prefix: String,
-    hosting_type: String,
-    runtime: Option<String>,
-    local_status: Option<String>,
-    auth_mode: String,
-    organization_name: String,
-}
-
-#[server]
-async fn list_webspaces() -> Result<Vec<WebspaceRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_ids = user.org_ids();
-    if org_ids.is_empty() && !user.is_admin {
-        return Ok(vec![]);
-    }
-
-    type Row = (
-        Uuid,
-        String,
-        Uuid,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        String,
-        String,
-    );
-    let query = "SELECT w.id, w.name, h.id, h.name, h.kind, w.path_prefix, w.hosting_type, w.runtime, w.local_status, w.auth_mode, o.name \
-                 FROM webspaces w \
-                 JOIN webspace_hosts h ON h.id = w.webspace_host_id \
-                 JOIN organizations o ON o.id = w.organization_id";
-    let rows = if user.is_admin {
-        sqlx::query_as::<_, Row>(&format!("{query} ORDER BY h.name, w.path_prefix"))
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, Row>(&format!(
-            "{query} WHERE w.organization_id = ANY($1) ORDER BY h.name, w.path_prefix"
-        ))
-        .bind(&org_ids)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                id,
-                name,
-                host_id,
-                host_name,
-                host_kind,
-                path_prefix,
-                hosting_type,
-                runtime,
-                local_status,
-                auth_mode,
-                organization_name,
-            )| WebspaceRow {
-                id,
-                name,
-                host_id,
-                host_name,
-                host_kind,
-                path_prefix,
-                hosting_type,
-                runtime,
-                local_status,
-                auth_mode,
-                organization_name,
-            },
-        )
-        .collect())
-}
+// WebspaceRow + the list endpoint now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::webspaces::{WebspaceListInput, WebspaceRow, list_webspaces};
 
 #[component]
 pub fn WebspaceList() -> Element {
-    let webspaces = use_server_future(list_webspaces)?;
+    let webspaces = use_server_future(move || list_webspaces(WebspaceListInput::default()))?;
     let all_rows: Vec<WebspaceRow> = match &*webspaces.read() {
         Some(Ok(r)) => r.clone(),
         _ => vec![],
