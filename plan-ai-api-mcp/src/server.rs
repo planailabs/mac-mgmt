@@ -63,6 +63,46 @@ impl<S: Clone + Send + Sync + 'static> Registry<S> {
     }
 }
 
+// MCP `structuredContent` must be a JSON *object*, but endpoints may return
+// arrays, strings, uuids or unit. Those get a `{"result": …}` envelope at the
+// MCP layer only — declared schema and returned value alike, so they always
+// match. REST responses and the OpenAPI document keep the raw shape.
+
+fn schema_is_object(schema: &JsonObject) -> bool {
+    schema.get("type").and_then(Value::as_str) == Some("object")
+}
+
+fn envelope_schema(raw: &JsonObject) -> JsonObject {
+    let mut inner = raw.clone();
+    // `$defs` refs ("#/$defs/…") are rooted at the schema document, so they
+    // must stay top-level when the payload schema moves under `properties`.
+    let defs = inner.remove("$defs");
+    let mut out = JsonObject::new();
+    out.insert("type".into(), json!("object"));
+    out.insert("properties".into(), json!({ "result": Value::Object(inner) }));
+    out.insert("required".into(), json!(["result"]));
+    if let Some(defs) = defs {
+        out.insert("$defs".into(), defs);
+    }
+    out
+}
+
+fn mcp_output_schema(raw: &JsonObject) -> JsonObject {
+    if schema_is_object(raw) {
+        raw.clone()
+    } else {
+        envelope_schema(raw)
+    }
+}
+
+fn mcp_structured_output(raw_schema: &JsonObject, value: Value) -> Value {
+    if schema_is_object(raw_schema) {
+        value
+    } else {
+        json!({ "result": value })
+    }
+}
+
 fn endpoint_tool<S>(ep: &ErasedEndpoint<S>) -> Tool {
     let annotations = match ep.risk() {
         Risk::ReadOnly => ToolAnnotations::new().read_only(true).destructive(false),
@@ -74,7 +114,7 @@ fn endpoint_tool<S>(ep: &ErasedEndpoint<S>) -> Tool {
         title: None,
         description: Some(Cow::Owned(ep.description.clone())),
         input_schema: Arc::new(ep.input_schema.clone()),
-        output_schema: Some(Arc::new(ep.output_schema.clone())),
+        output_schema: Some(Arc::new(mcp_output_schema(&ep.output_schema))),
         annotations: Some(annotations),
         execution: None,
         icons: None,
@@ -180,11 +220,75 @@ impl<S: Clone + Send + Sync + 'static> ServerHandler for ApiMcpServer<S> {
 
             match (ep.call)(self.state.clone(), principal, args).await {
                 Ok(value) => {
-                    let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
-                    Ok(CallToolResult::success(vec![Content::text(text)]))
+                    let structured = mcp_structured_output(&ep.output_schema, value);
+                    let text = serde_json::to_string_pretty(&structured)
+                        .unwrap_or_else(|_| structured.to_string());
+                    Ok(CallToolResult {
+                        content: vec![Content::text(text)],
+                        structured_content: Some(structured),
+                        is_error: Some(false),
+                        meta: None,
+                    })
                 }
                 Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn obj(v: Value) -> JsonObject {
+        match v {
+            Value::Object(m) => m,
+            _ => panic!("not an object"),
+        }
+    }
+
+    #[test]
+    fn object_output_passes_through() {
+        let schema = obj(json!({ "type": "object", "properties": { "a": { "type": "string" } } }));
+        assert_eq!(mcp_output_schema(&schema), schema);
+        assert_eq!(
+            mcp_structured_output(&schema, json!({ "a": "x" })),
+            json!({ "a": "x" })
+        );
+    }
+
+    #[test]
+    fn array_output_is_wrapped_with_defs_kept_top_level() {
+        let schema = obj(json!({
+            "type": "array",
+            "items": { "$ref": "#/$defs/Row" },
+            "$defs": { "Row": { "type": "object" } }
+        }));
+        let wrapped = mcp_output_schema(&schema);
+        assert_eq!(wrapped.get("type"), Some(&json!("object")));
+        assert_eq!(wrapped.get("required"), Some(&json!(["result"])));
+        assert_eq!(
+            wrapped["properties"]["result"],
+            json!({ "type": "array", "items": { "$ref": "#/$defs/Row" } })
+        );
+        assert_eq!(wrapped["$defs"], json!({ "Row": { "type": "object" } }));
+        assert_eq!(
+            mcp_structured_output(&schema, json!([1, 2])),
+            json!({ "result": [1, 2] })
+        );
+    }
+
+    #[test]
+    fn unit_and_string_outputs_are_wrapped() {
+        let null_schema = obj(json!({ "type": "null" }));
+        assert_eq!(
+            mcp_structured_output(&null_schema, Value::Null),
+            json!({ "result": null })
+        );
+        let str_schema = obj(json!({ "type": "string" }));
+        assert_eq!(
+            mcp_output_schema(&str_schema)["properties"]["result"],
+            json!({ "type": "string" })
+        );
     }
 }
