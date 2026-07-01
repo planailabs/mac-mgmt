@@ -24,6 +24,10 @@ pub enum ConfigFormat {
     Json,
     Toml,
     Yaml,
+    /// Dotenv-style `KEY=value` files. Parsed into a flat JSON object of scalar
+    /// values; serialized back as sorted `KEY=value` lines. Comments and line
+    /// ordering are not preserved (same round-trip limitation as YAML).
+    Env,
 }
 
 /// Where the authoritative schema lives.
@@ -86,6 +90,16 @@ impl Validator {
             schema: None,
         }
     }
+    /// Dotenv (`KEY=value`) file validator. Enforces valid env-var key names
+    /// and single-line scalar values (the "env validator") on parse, write, and
+    /// [`validate_value`](Self::validate_value).
+    pub fn env(pattern: impl Into<String>) -> Self {
+        Self {
+            pattern: pattern.into(),
+            format: ConfigFormat::Env,
+            schema: None,
+        }
+    }
 
     /// Add a URL-based JSON Schema.
     pub fn with_schema_url(mut self, url: impl Into<String>) -> Self {
@@ -126,6 +140,7 @@ impl Validator {
             ConfigFormat::Yaml => {
                 yaml_serde::from_str(content).map_err(|e| format!("invalid YAML: {e}"))
             }
+            ConfigFormat::Env => parse_env(content),
         }
     }
 
@@ -140,6 +155,7 @@ impl Validator {
             ConfigFormat::Toml => {
                 Err("TOML round-trip serialization from JSON Value is not supported".into())
             }
+            ConfigFormat::Env => serialize_env(value),
         }
     }
 
@@ -148,6 +164,11 @@ impl Validator {
     /// Command-based schemas are silently accepted here because they
     /// require a file on disk — use [`validate_file`] for those.
     pub fn validate_value(&self, value: &serde_json::Value) -> Result<(), String> {
+        // The env "validator": enforce valid key names and scalar single-line
+        // values regardless of any configured schema.
+        if self.format == ConfigFormat::Env {
+            validate_env_object(value)?;
+        }
         match &self.schema {
             Some(SchemaSource::Url { url }) => validate_with_cached_schema(url, value),
             Some(SchemaSource::File { path }) => validate_with_file_schema(path, value),
@@ -236,7 +257,7 @@ impl Validator {
             }
             match self.format {
                 ConfigFormat::Json => "{}".into(),
-                ConfigFormat::Yaml | ConfigFormat::Toml => String::new(),
+                ConfigFormat::Yaml | ConfigFormat::Toml | ConfigFormat::Env => String::new(),
             }
         };
 
@@ -328,6 +349,93 @@ impl Validator {
 /// Find the first validator whose pattern matches `path`.
 pub fn find_matching<'a>(validators: &'a [Validator], path: &Path) -> Option<&'a Validator> {
     validators.iter().find(|v| v.matches(path))
+}
+
+// ── Env (dotenv) format ────────────────────────────────────────────────
+
+/// Whether `key` is a valid environment-variable name: `[A-Za-z_][A-Za-z0-9_]*`.
+fn is_valid_env_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Parse dotenv `KEY=value` text into a flat JSON object of string values.
+/// Skips blank lines and `#` comments; tolerates a leading `export `.
+fn parse_env(content: &str) -> Result<serde_json::Value, String> {
+    let mut map = serde_json::Map::new();
+    for (i, raw) in content.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let (key, val) = line
+            .split_once('=')
+            .ok_or_else(|| format!("invalid env: line {} has no '='", i + 1))?;
+        let key = key.trim();
+        if !is_valid_env_key(key) {
+            return Err(format!("invalid env key '{key}' on line {}", i + 1));
+        }
+        map.insert(key.to_string(), serde_json::Value::String(val.to_string()));
+    }
+    Ok(serde_json::Value::Object(map))
+}
+
+/// Serialize a flat JSON object into sorted `KEY=value` dotenv lines. A `null`
+/// value drops the key (so a patch can unset it). Non-scalar values are an error.
+fn serialize_env(value: &serde_json::Value) -> Result<String, String> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "env config must be a JSON object".to_string())?;
+    let mut out = String::new();
+    // serde_json::Map is BTreeMap-backed here, so iteration is key-sorted.
+    for (key, val) in obj {
+        let rendered = match val {
+            serde_json::Value::Null => continue,
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            serde_json::Value::Number(n) => n.to_string(),
+            _ => return Err(format!("env value for '{key}' must be a scalar")),
+        };
+        if !is_valid_env_key(key) {
+            return Err(format!("invalid env key '{key}'"));
+        }
+        if rendered.contains('\n') {
+            return Err(format!("env value for '{key}' contains a newline"));
+        }
+        out.push_str(key);
+        out.push('=');
+        out.push_str(&rendered);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// The env validator: every key must be a valid env-var name and every value a
+/// single-line scalar (or null, meaning "unset").
+fn validate_env_object(value: &serde_json::Value) -> Result<(), String> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "env config must be a JSON object".to_string())?;
+    for (key, val) in obj {
+        if !is_valid_env_key(key) {
+            return Err(format!(
+                "invalid env key '{key}': must match [A-Za-z_][A-Za-z0-9_]*"
+            ));
+        }
+        match val {
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_) => {}
+            serde_json::Value::String(s) if !s.contains('\n') => {}
+            serde_json::Value::String(_) => {
+                return Err(format!("env value for '{key}' contains a newline"));
+            }
+            _ => return Err(format!("env value for '{key}' must be a scalar or null")),
+        }
+    }
+    Ok(())
 }
 
 // ── Deep JSON merge ────────────────────────────────────────────────────
@@ -540,5 +648,70 @@ fn run_jsonschema(schema: &serde_json::Value, value: &serde_json::Value) -> Resu
         Ok(())
     } else {
         Err(errors.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod env_format_tests {
+    use super::*;
+
+    #[test]
+    fn parse_env_handles_comments_export_and_values() {
+        let v = Validator::env(".env");
+        let parsed = v.parse("# comment\nexport FOO=1\nBAR=hello world\n\n").unwrap();
+        assert_eq!(parsed["FOO"], "1");
+        assert_eq!(parsed["BAR"], "hello world");
+        assert_eq!(parsed.as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn parse_env_rejects_bad_key_and_missing_eq() {
+        let v = Validator::env(".env");
+        assert!(v.parse("1BAD=x\n").is_err(), "key can't start with a digit");
+        assert!(v.parse("NOEQUALS\n").is_err(), "line needs '='");
+    }
+
+    #[test]
+    fn serialize_env_is_sorted_skips_null_and_rejects_newline() {
+        let v = Validator::env(".env");
+        let out = v
+            .serialize(&serde_json::json!({ "B": "2", "A": "1", "GONE": null }))
+            .unwrap();
+        assert_eq!(out, "A=1\nB=2\n", "sorted, null key dropped");
+        assert!(v.serialize(&serde_json::json!({ "K": "a\nb" })).is_err());
+    }
+
+    #[test]
+    fn validate_value_enforces_env_rules() {
+        let v = Validator::env(".env");
+        assert!(v.validate_value(&serde_json::json!({ "OK_KEY": "v" })).is_ok());
+        assert!(v.validate_value(&serde_json::json!({ "bad-key": "v" })).is_err());
+        assert!(
+            v.validate_value(&serde_json::json!({ "K": "l1\nl2" }))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn merge_validate_and_write_upserts_env_file() {
+        let dir = std::env::temp_dir().join("mac-mgmt-env-validator-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("upsert.env");
+        let _ = std::fs::remove_file(&path);
+        let v = Validator::env("*.env");
+
+        v.merge_validate_and_write(
+            &path,
+            &serde_json::json!({ "ANTHROPIC_API_KEY": "old", "FOO": "1" }),
+        )
+        .unwrap();
+        v.merge_validate_and_write(&path, &serde_json::json!({ "ANTHROPIC_API_KEY": "new" }))
+            .unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("ANTHROPIC_API_KEY=new"));
+        assert!(!contents.contains("ANTHROPIC_API_KEY=old"));
+        assert!(contents.contains("FOO=1"), "unrelated key preserved");
+        let _ = std::fs::remove_file(&path);
     }
 }
