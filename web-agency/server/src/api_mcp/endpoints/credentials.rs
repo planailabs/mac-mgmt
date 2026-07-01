@@ -59,7 +59,7 @@ pub async fn credential_list(
             .await
         }
     }
-    .map_err(|e| ApiError::internal(e.to_string()))?;
+    .map_err(super::internal)?;
 
     Ok(rows
         .into_iter()

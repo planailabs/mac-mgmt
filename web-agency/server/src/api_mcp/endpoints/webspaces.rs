@@ -76,7 +76,7 @@ pub async fn webspace_list(
             .await
         }
     }
-    .map_err(|e| ApiError::internal(e.to_string()))?;
+    .map_err(super::internal)?;
 
     Ok(rows
         .into_iter()
@@ -118,28 +118,20 @@ pub async fn webspace_delete(
     principal: &Principal,
     input: WebspaceDeleteInput,
 ) -> Result<(), ApiError> {
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(input.id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| ApiError::internal(e.to_string()))?
-    .ok_or_else(|| ApiError::not_found("webspace not found"))?;
-
+    let org_id = super::owning_org(pool, "webspaces", input.id, "webspace").await?;
     principal.require_write(&org_id)?;
 
     sqlx::query("DELETE FROM deployments WHERE webspace_id = $1")
         .bind(input.id)
         .execute(pool)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        .map_err(super::internal)?;
 
     sqlx::query("DELETE FROM webspaces WHERE id = $1")
         .bind(input.id)
         .execute(pool)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        .map_err(super::internal)?;
 
     crate::api::internal::notify_proxy_reload();
     Ok(())

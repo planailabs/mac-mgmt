@@ -44,7 +44,7 @@ pub async fn organization_list(
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| ApiError::internal(e.to_string()))?;
+    .map_err(super::internal)?;
 
     Ok(rows
         .into_iter()

@@ -57,7 +57,7 @@ pub async fn user_list(
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| ApiError::internal(e.to_string()))?;
+    .map_err(super::internal)?;
 
     Ok(rows
         .into_iter()
@@ -90,7 +90,7 @@ pub async fn user_get(
     .bind(uid)
     .fetch_optional(pool)
     .await
-    .map_err(|e| ApiError::internal(e.to_string()))?
+    .map_err(super::internal)?
     .ok_or_else(|| ApiError::not_found("user not found"))?;
 
     Ok(UserInfo {
@@ -120,7 +120,7 @@ pub async fn user_delete(
         .bind(uid)
         .fetch_optional(pool)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map_err(super::internal)?
         .ok_or_else(|| ApiError::not_found("user not found"))?;
 
     if email == principal.subject {
@@ -131,6 +131,6 @@ pub async fn user_delete(
         .bind(uid)
         .execute(pool)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        .map_err(super::internal)?;
     Ok(())
 }

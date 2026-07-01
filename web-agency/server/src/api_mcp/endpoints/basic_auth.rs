@@ -61,7 +61,7 @@ pub async fn basic_auth_list(
             .await
         }
     }
-    .map_err(|e| ApiError::internal(e.to_string()))?;
+    .map_err(super::internal)?;
 
     Ok(rows
         .into_iter()
@@ -89,7 +89,7 @@ pub async fn basic_auth_create(
     .bind(&input.name)
     .fetch_one(pool)
     .await
-    .map_err(|e| ApiError::internal(e.to_string()))
+    .map_err(super::internal)
 }
 
 /// Delete a basic-auth list (requires org write). Clears webspace references
@@ -100,14 +100,7 @@ pub async fn basic_auth_delete(
     principal: &Principal,
     input: BasicAuthDeleteInput,
 ) -> Result<(), ApiError> {
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM basic_auth_lists WHERE id = $1")
-            .bind(input.id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| ApiError::internal(e.to_string()))?
-            .ok_or_else(|| ApiError::not_found("basic-auth list not found"))?;
-
+    let org_id = super::owning_org(pool, "basic_auth_lists", input.id, "basic-auth list").await?;
     principal.require_write(&org_id)?;
 
     sqlx::query(
@@ -117,13 +110,13 @@ pub async fn basic_auth_delete(
     .bind(input.id)
     .execute(pool)
     .await
-    .map_err(|e| ApiError::internal(e.to_string()))?;
+    .map_err(super::internal)?;
 
     sqlx::query("DELETE FROM basic_auth_lists WHERE id = $1")
         .bind(input.id)
         .execute(pool)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        .map_err(super::internal)?;
 
     crate::api::internal::notify_proxy_reload();
     Ok(())
