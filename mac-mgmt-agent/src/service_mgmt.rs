@@ -75,6 +75,13 @@ struct ServiceState {
     /// Nix store path of the binary at the time of last (re)spawn — used to
     /// detect when the installed version changes under the running process.
     running_store_path: Option<String>,
+    /// The drift target (`binary_store_path`) we last scheduled a reregister
+    /// toward. If drift is detected again for the *same* target after a
+    /// reregister, the `which`-based drift resolver and the supervisor's
+    /// spawned-program resolver disagree permanently (e.g. a wrapper script vs
+    /// its underlying binary) — reregistering again would restart the service
+    /// on every upgrade-window tick, so we suppress it.
+    last_drift_target: Option<String>,
     /// Whether we've already sent an initial Register for this service on the
     /// current client connection.
     registered: bool,
@@ -162,6 +169,7 @@ impl ServiceManager {
                     post_start_done: false,
                     consecutive_crashes: 0,
                     running_store_path: None,
+                    last_drift_target: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
@@ -257,6 +265,7 @@ impl ServiceManager {
                     post_start_done: false,
                     consecutive_crashes: 0,
                     running_store_path: None,
+                    last_drift_target: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
@@ -347,6 +356,7 @@ impl ServiceManager {
                     post_start_done: false,
                     consecutive_crashes: 0,
                     running_store_path: None,
+                    last_drift_target: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
@@ -391,6 +401,7 @@ impl ServiceManager {
             post_start_done: false,
             consecutive_crashes: 0,
             running_store_path: None,
+            last_drift_target: None,
             registered: false,
             restart_at: None,
             connector_env: std::collections::HashMap::new(),
@@ -976,10 +987,26 @@ impl ServiceManager {
                     let current_store = crate::nix::binary_store_path(state.service.binary_name());
                     if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
                         if old != new {
-                            tracing::info!(
-                                "{name} binary changed ({old} → {new}), scheduling upgrade"
-                            );
-                            state.upgrade_pending = true;
+                            // Guard against a drift loop: if we already
+                            // reregistered toward this exact target and the
+                            // running path still reads the old store path, the
+                            // `which`-based drift resolver and the supervisor's
+                            // spawned-program resolver disagree permanently
+                            // (e.g. a wrapper script vs its underlying binary).
+                            // Reregistering again would restart the service on
+                            // every upgrade-window tick, so suppress it.
+                            if state.last_drift_target.as_deref() == Some(new.as_str()) {
+                                tracing::warn!(
+                                    "{name} store-path drift persists after reregister \
+                                     ({old} → {new}); resolver mismatch, not restarting again"
+                                );
+                            } else {
+                                tracing::info!(
+                                    "{name} binary changed ({old} → {new}), scheduling upgrade"
+                                );
+                                state.last_drift_target = Some(new.clone());
+                                state.upgrade_pending = true;
+                            }
                         }
                     }
                 }
@@ -1445,6 +1472,7 @@ impl ServiceManager {
                     post_start_done: false,
                     consecutive_crashes: 0,
                     running_store_path: None,
+                    last_drift_target: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
@@ -1558,6 +1586,7 @@ impl ServiceManager {
                     post_start_done: false,
                     consecutive_crashes: 0,
                     running_store_path: None,
+                    last_drift_target: None,
                     registered: false,
                     restart_at: None,
                     connector_env: std::collections::HashMap::new(),
