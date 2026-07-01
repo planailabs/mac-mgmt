@@ -1,6 +1,4 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 
@@ -13,36 +11,8 @@ async fn list_user_orgs_for_contact() -> Result<Vec<OrgOption>, ServerFnError> {
     crate::web::user::list_user_write_orgs(&user, &pool).await
 }
 
-#[server]
-async fn create_contact(
-    org_id: Uuid,
-    label: String,
-    first_name: String,
-    last_name: String,
-    email: String,
-    phone: String,
-    address1: String,
-    city: String,
-    country: String,
-) -> Result<Uuid, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO domain_contacts (organization_id, label, first_name, last_name, email, phone, address1, city, country) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
-    )
-    .bind(org_id).bind(&label).bind(&first_name).bind(&last_name)
-    .bind(&email).bind(&phone).bind(&address1).bind(&city).bind(&country)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("failed to create contact: {e}")))?;
-
-    Ok(id)
-}
+// create_contact now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::contacts::{ContactCreateInput, create_contact};
 
 #[component]
 pub fn ContactForm() -> Element {
@@ -91,7 +61,7 @@ pub fn ContactForm() -> Element {
                     let (oid_str, l, fn_, ln, em, ph, a1, ci, co) = vals;
                     match uuid::Uuid::parse_str(&oid_str) {
                         Ok(oid) => {
-                            match create_contact(oid, l, fn_, ln, em, ph, a1, ci, co).await {
+                            match create_contact(ContactCreateInput { organization_id: oid, label: l, first_name: fn_, last_name: ln, email: em, phone: ph, address1: a1, city: ci, country: co }).await {
                                 Ok(_) => { nav.push(crate::web::app::Route::ContactList {}); }
                                 Err(e) => error.set(Some(format!("{e}"))),
                             }

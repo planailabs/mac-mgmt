@@ -28,6 +28,19 @@ pub struct ContactRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContactListInput {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ContactCreateInput {
+    pub organization_id: Uuid,
+    pub label: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub email: String,
+    pub phone: String,
+    pub address1: String,
+    pub city: String,
+    pub country: String,
+}
+
 /// List domain contacts the caller may see (admins: all; else their orgs').
 #[api_mcp_dioxus_server(server = "list_contacts")]
 pub async fn contact_list(
@@ -83,4 +96,30 @@ pub async fn contact_list(
             },
         )
         .collect())
+}
+
+/// Create a domain contact (requires org write). Returns the new id.
+#[api_mcp_dioxus_server(server = "create_contact")]
+pub async fn contact_create(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: ContactCreateInput,
+) -> Result<Uuid, ApiError> {
+    principal.require_write(&input.organization_id)?;
+    sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO domain_contacts (organization_id, label, first_name, last_name, email, phone, address1, city, country) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+    )
+    .bind(input.organization_id)
+    .bind(&input.label)
+    .bind(&input.first_name)
+    .bind(&input.last_name)
+    .bind(&input.email)
+    .bind(&input.phone)
+    .bind(&input.address1)
+    .bind(&input.city)
+    .bind(&input.country)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::internal(format!("failed to create contact: {e}")))
 }

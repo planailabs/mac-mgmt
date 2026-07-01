@@ -89,6 +89,12 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
                 endpoints::contacts::contact_list(&pool, &p, input).await
             },
         );
+        c.create(
+            "Create a domain contact (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::contacts::ContactCreateInput| async move {
+                endpoints::contacts::contact_create(&pool, &p, input).await
+            },
+        );
     }
     {
         let mut c = reg.resource("certificates", "certificate", "Certificates");
