@@ -31,6 +31,11 @@ pub struct WebspaceRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WebspaceListInput {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WebspaceDeleteInput {
+    pub id: Uuid,
+}
+
 /// List webspace folders the caller may see (admins: all; else their orgs').
 #[api_mcp_dioxus_server(server = "list_webspaces")]
 pub async fn webspace_list(
@@ -103,4 +108,39 @@ pub async fn webspace_list(
             },
         )
         .collect())
+}
+
+/// Delete a webspace folder (requires org write). Removes its deployments and
+/// notifies the proxy.
+#[api_mcp_dioxus_server(server = "delete_webspace")]
+pub async fn webspace_delete(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: WebspaceDeleteInput,
+) -> Result<(), ApiError> {
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    )
+    .bind(input.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .ok_or_else(|| ApiError::not_found("webspace not found"))?;
+
+    principal.require_write(&org_id)?;
+
+    sqlx::query("DELETE FROM deployments WHERE webspace_id = $1")
+        .bind(input.id)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    sqlx::query("DELETE FROM webspaces WHERE id = $1")
+        .bind(input.id)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    crate::api::internal::notify_proxy_reload();
+    Ok(())
 }

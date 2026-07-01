@@ -56,6 +56,12 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
                 endpoints::webspaces::webspace_list(&pool, &p, input).await
             },
         );
+        w.delete(
+            "Delete a webspace folder (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceDeleteInput| async move {
+                endpoints::webspaces::webspace_delete(&pool, &p, input).await
+            },
+        );
     }
     {
         let mut c = reg.resource("credentials", "credential", "Credentials");

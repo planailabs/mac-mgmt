@@ -7,6 +7,9 @@ use super::ui::{
     TdMuted, Th, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
 
+// delete_webspace now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::webspaces::{WebspaceDeleteInput, delete_webspace};
+
 // ── Types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1459,40 +1462,7 @@ async fn move_webspace(webspace_id: Uuid, target_org_id: Uuid) -> Result<(), Ser
 }
 
 // ── Delete webspace ─────────────────────────────────────────────────
-
-#[server]
-async fn delete_webspace(webspace_id: Uuid) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    // Domain bindings and ChangeDetection live on the host, not the folder.
-    // Remove deployments
-    sqlx::query("DELETE FROM deployments WHERE webspace_id = $1")
-        .bind(webspace_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Delete the webspace
-    sqlx::query("DELETE FROM webspaces WHERE id = $1")
-        .bind(webspace_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    crate::api::internal::notify_proxy_reload();
-    Ok(())
-}
+// delete_webspace now lives in the shared api_mcp layer (imported below).
 
 #[component]
 fn MoveWebspaceSection(webspace_id: Uuid, current_org_id: Uuid) -> Element {
@@ -1588,7 +1558,7 @@ fn DeleteWebspaceSection(webspace_id: Uuid) -> Element {
                             deleting.set(true);
                             error.set(None);
                             spawn(async move {
-                                match delete_webspace(wid).await {
+                                match delete_webspace(WebspaceDeleteInput { id: wid }).await {
                                     Ok(()) => { navigator().push(crate::web::app::Route::WebspaceList {}); }
                                     Err(e) => {
                                         error.set(Some(format!("{e}")));
