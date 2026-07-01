@@ -312,8 +312,10 @@ async fn sync_loop(
     let server_url = &cfg.server_url;
 
     // Reload timer — drives both token refresh and failure retries.
-    // Initialized to far-future; updated after each reload attempt.
-    let mut reload_timer = tokio::time::interval(Duration::from_secs(u64::MAX / 2));
+    // Every tick path reschedules via `reset_after`, so the period is only a
+    // worst-case backstop. It must stay small enough that `deadline + period`
+    // never overflows an Instant inside `poll_tick` (u64::MAX/2 panicked here).
+    let mut reload_timer = tokio::time::interval(Duration::from_secs(3600));
     reload_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     reload_timer.tick().await; // consume the first immediate tick
 
