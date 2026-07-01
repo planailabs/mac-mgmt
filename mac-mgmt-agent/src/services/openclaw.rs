@@ -25,6 +25,48 @@ pub fn config_path() -> Result<PathBuf> {
         .join(".openclaw/openclaw.json"))
 }
 
+/// Returns the path to ~/.openclaw/.env — openclaw's trusted operator-controlled
+/// runtime env surface, loaded into the process env at startup (unlike a
+/// workspace .env, API-key names are not blocklisted here).
+pub fn env_path() -> Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .context("HOME not set")?
+        .join(".openclaw/.env"))
+}
+
+/// Upsert `KEY=value` pairs into ~/.openclaw/.env, preserving other lines and
+/// creating the file/directory if missing. openclaw loads this file so config
+/// values written as `${KEY}` references resolve to these values.
+pub fn write_env_vars(vars: &[(String, String)]) -> Result<()> {
+    if vars.is_empty() {
+        return Ok(());
+    }
+    let path = env_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let contents = std::fs::read_to_string(&path).unwrap_or_default();
+    let output = upsert_env_lines(&contents, vars);
+    std::fs::write(&path, output).context("failed to write ~/.openclaw/.env")?;
+    Ok(())
+}
+
+/// Upsert `KEY=value` pairs into dotenv-format `contents`, replacing an existing
+/// line for a key or appending a new one, and preserving all other lines
+/// (comments, unrelated keys). Pure, so it is unit-testable.
+fn upsert_env_lines(contents: &str, vars: &[(String, String)]) -> String {
+    let mut lines: Vec<String> = contents.lines().map(str::to_string).collect();
+    for (key, val) in vars {
+        let needle = format!("{key}=");
+        let new_line = format!("{key}={val}");
+        match lines.iter_mut().find(|l| l.starts_with(&needle)) {
+            Some(line) => *line = new_line,
+            None => lines.push(new_line),
+        }
+    }
+    lines.join("\n") + "\n"
+}
+
 /// Atomically merge a JSON patch into openclaw.json with validation and rollback.
 pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
     if !config_path.exists() {
@@ -678,5 +720,32 @@ impl ManagedService for OpenClaw {
 
             findings
         })
+    }
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::upsert_env_lines;
+
+    #[test]
+    fn upsert_updates_existing_appends_new_and_preserves_rest() {
+        let existing = "# operator env\nFOO=1\nANTHROPIC_API_KEY=old\n";
+        let out = upsert_env_lines(
+            existing,
+            &[
+                ("ANTHROPIC_API_KEY".to_string(), "new".to_string()),
+                ("MOONSHOT_API_KEY".to_string(), "sk-moon".to_string()),
+            ],
+        );
+        assert!(out.contains("# operator env"), "preserves comments");
+        assert!(out.contains("FOO=1"), "preserves unrelated keys");
+        assert!(out.contains("ANTHROPIC_API_KEY=new"), "updates in place");
+        assert!(!out.contains("ANTHROPIC_API_KEY=old"), "old value replaced");
+        assert!(out.contains("MOONSHOT_API_KEY=sk-moon"), "appends new key");
+    }
+
+    #[test]
+    fn upsert_from_empty_creates_line() {
+        assert_eq!(upsert_env_lines("", &[("K".into(), "v".into())]), "K=v\n");
     }
 }

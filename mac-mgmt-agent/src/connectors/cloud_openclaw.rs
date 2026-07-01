@@ -96,6 +96,17 @@ impl CloudOpenClaw {
         }
         patch
     }
+
+    /// The per-provider `ENV_VAR → API-key` pairs to deliver to openclaw
+    /// (written to ~/.openclaw/.env). Built-ins use their canonical env var;
+    /// custom providers use the generated `<NAME>_API_KEY` matching the
+    /// `apiKey: "${NAME_API_KEY}"` reference in the provider config.
+    fn key_env_vars(enabled: &[CloudConfig]) -> Vec<(String, String)> {
+        enabled
+            .iter()
+            .filter_map(|c| non_empty_secret(&c.api_key).map(|k| (Self::key_env(c), k.to_string())))
+            .collect()
+    }
 }
 
 impl Connector for CloudOpenClaw {
@@ -139,35 +150,28 @@ impl Connector for CloudOpenClaw {
 
         let patch = Self::build_patch(&enabled, self.set_default);
 
+        // Deliver API keys through openclaw's trusted ~/.openclaw/.env so the
+        // `apiKey: "${NAME_API_KEY}"` references in the config resolve. openclaw
+        // loads this file into its process env at startup; relying on the
+        // supervisor's spawn-env injection alone is not a reliable delivery
+        // path for openclaw.
+        let env_vars = Self::key_env_vars(&enabled);
+        if let Err(e) = crate::services::openclaw::write_env_vars(&env_vars) {
+            tracing::warn!("cloud→openclaw: failed to write API keys to .env: {e}");
+        }
+
         if patch.as_object().is_some_and(|o| !o.is_empty()) {
             merge_and_validate(&path, &patch)?;
             tracing::info!(
-                "cloud→openclaw connected: {} provider(s) configured",
-                enabled.len()
+                "cloud→openclaw connected: {} provider(s) configured, {} key(s) in .env",
+                enabled.len(),
+                env_vars.len(),
             );
         } else {
             tracing::info!("cloud→openclaw: nothing to configure");
         }
 
         Ok(())
-    }
-
-    fn service_env(
-        &self,
-        service_name: &str,
-        configs: &std::collections::HashMap<String, serde_json::Value>,
-    ) -> std::collections::HashMap<String, String> {
-        if service_name != "openclaw" {
-            return Default::default();
-        }
-        let enabled = enabled_cloud_configs(configs);
-        let mut env = std::collections::HashMap::new();
-        for config in &enabled {
-            if let Some(key) = non_empty_secret(&config.api_key) {
-                env.insert(Self::key_env(config), key.to_string());
-            }
-        }
-        env
     }
 }
 
@@ -271,32 +275,27 @@ mod tests {
     }
 
     #[test]
-    fn service_env_uses_per_provider_key_names() {
+    fn key_env_vars_use_per_provider_names() {
         let cfgs = vec![
             CloudConfig {
                 provider: CloudProvider::from_name("anthropic"),
                 api_key: Some(Secret::new("sk-ant")),
-                enabled: true,
                 ..Default::default()
             },
             CloudConfig {
                 provider: CloudProvider::from_name("moonshot"),
                 api_key: Some(Secret::new("sk-moon")),
-                enabled: true,
                 ..Default::default()
             },
+            // A provider without a key contributes nothing.
+            custom("groq"),
         ];
-        let mut configs = std::collections::HashMap::new();
-        configs.insert("cloud".to_string(), serde_json::to_value(&cfgs).unwrap());
-
-        let env = CloudOpenClaw { set_default: true }.service_env("openclaw", &configs);
-        assert_eq!(env.get("ANTHROPIC_API_KEY").map(String::as_str), Some("sk-ant"));
-        assert_eq!(env.get("MOONSHOT_API_KEY").map(String::as_str), Some("sk-moon"));
-        // Env is only injected into openclaw.
-        assert!(
-            CloudOpenClaw { set_default: true }
-                .service_env("ollama", &configs)
-                .is_empty()
-        );
+        let map: std::collections::HashMap<String, String> =
+            CloudOpenClaw::key_env_vars(&cfgs).into_iter().collect();
+        // Built-in uses its canonical env var; custom uses the generated name
+        // matching the `${MOONSHOT_API_KEY}` reference written into the config.
+        assert_eq!(map.get("ANTHROPIC_API_KEY").map(String::as_str), Some("sk-ant"));
+        assert_eq!(map.get("MOONSHOT_API_KEY").map(String::as_str), Some("sk-moon"));
+        assert_eq!(map.len(), 2, "providers without a key are skipped");
     }
 }
