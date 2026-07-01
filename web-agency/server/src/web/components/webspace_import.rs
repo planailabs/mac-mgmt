@@ -8,25 +8,16 @@ use super::ui::{
 
 use crate::web::user::OrgOption;
 
+// discover/import now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::webspaces::{
+    DiscoveredProject, ImportResult, WebspaceDiscoverPagesInput, WebspaceImportPagesInput,
+    discover_pages_projects, import_pages_projects,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CredOption {
     id: Uuid,
     name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DiscoveredProject {
-    name: String,
-    id: Option<String>,
-    subdomain: Option<String>,
-    already_imported: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ImportResult {
-    imported: u32,
-    skipped: u32,
-    errors: Vec<String>,
 }
 
 // ── Server functions ────────────────────────────────────────────────
@@ -52,117 +43,6 @@ async fn list_cf_creds() -> Result<Vec<CredOption>, ServerFnError> {
         .into_iter()
         .map(|(id, name)| CredOption { id, name })
         .collect())
-}
-
-#[server]
-async fn discover_pages_projects(
-    credential_id: Uuid,
-    org_id: Uuid,
-) -> Result<Vec<DiscoveredProject>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-    let pool = crate::server_pool()?;
-
-    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("{e}")))?;
-
-    let projects = client
-        .list_pages_projects(&account_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("CF Pages API: {e}")))?;
-
-    // Check which project IDs are already imported
-    let existing_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT cloudflare_pages_project_id FROM webspaces WHERE organization_id = $1 AND cloudflare_pages_project_id IS NOT NULL",
-    ).bind(org_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let existing_names: Vec<String> = sqlx::query_scalar(
-        "SELECT cloudflare_pages_project FROM webspaces WHERE organization_id = $1 AND cloudflare_pages_project IS NOT NULL",
-    ).bind(org_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(projects
-        .into_iter()
-        .map(|p| {
-            let already = p.id.as_ref().map_or(false, |id| existing_ids.contains(id))
-                || existing_names.contains(&p.name);
-            DiscoveredProject {
-                name: p.name,
-                id: p.id,
-                subdomain: p.subdomain,
-                already_imported: already,
-            }
-        })
-        .collect())
-}
-
-#[server]
-async fn import_pages_projects(
-    credential_id: Uuid,
-    org_id: Uuid,
-    project_names: Vec<String>,
-) -> Result<ImportResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-    let pool = crate::server_pool()?;
-
-    let (client, account_id) = crate::credentials::cf_client_with_account(&pool, credential_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("{e}")))?;
-
-    let mut imported = 0u32;
-    let mut skipped = 0u32;
-    let mut errors = Vec::new();
-
-    for name in &project_names {
-        // Skip if already exists
-        let exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM webspaces WHERE organization_id = $1 AND cloudflare_pages_project = $2)",
-        ).bind(org_id).bind(name).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        if exists {
-            skipped += 1;
-            continue;
-        }
-
-        // Fetch project to get ID
-        match client.get_pages_project(&account_id, name).await {
-            Ok(project) => {
-                // Each imported project becomes a cloudflare host with one main-folder.
-                let result = async {
-                    let host_id = sqlx::query_scalar::<_, uuid::Uuid>(
-                        "INSERT INTO webspace_hosts (organization_id, name, kind) VALUES ($1, $2, 'cloudflare') RETURNING id",
-                    )
-                    .bind(org_id).bind(name)
-                    .fetch_one(&pool).await?;
-                    sqlx::query(
-                        "INSERT INTO webspaces (organization_id, webspace_host_id, name, path_prefix, hosting_type, cloudflare_pages_project, cloudflare_pages_project_id, cloudflare_credential_id) \
-                         VALUES ($1, $2, $3, '/', 'cloudflare_pages', $4, $5, $6)",
-                    )
-                    .bind(org_id).bind(host_id).bind(name).bind(name).bind(&project.id).bind(credential_id)
-                    .execute(&pool).await?;
-                    Ok::<_, sqlx::Error>(())
-                }.await;
-
-                match result {
-                    Ok(_) => imported += 1,
-                    Err(e) => errors.push(format!("{name}: {e}")),
-                }
-            }
-            Err(e) => errors.push(format!("{name}: {e}")),
-        }
-    }
-
-    if imported > 0 {
-        crate::api::internal::notify_proxy_reload();
-    }
-    Ok(ImportResult {
-        imported,
-        skipped,
-        errors,
-    })
 }
 
 // ── Component ───────────────────────────────────────────────────────
@@ -228,7 +108,7 @@ pub fn WebspaceImport() -> Element {
                             selected.set(vec![]);
                             spawn(async move {
                                 if let (Ok(oid), Ok(cid)) = (Uuid::parse_str(&oid_str), Uuid::parse_str(&cid_str)) {
-                                    match discover_pages_projects(cid, oid).await {
+                                    match discover_pages_projects(WebspaceDiscoverPagesInput { credential_id: cid, org_id: oid }).await {
                                         Ok(projects) => {
                                             let new_names: Vec<String> = projects.iter().filter(|p| !p.already_imported).map(|p| p.name.clone()).collect();
                                             selected.set(new_names);
@@ -319,7 +199,7 @@ pub fn WebspaceImport() -> Element {
                             error.set(None);
                             spawn(async move {
                                 if let (Ok(oid), Ok(cid)) = (Uuid::parse_str(&oid_str), Uuid::parse_str(&cid_str)) {
-                                    match import_pages_projects(cid, oid, names).await {
+                                    match import_pages_projects(WebspaceImportPagesInput { credential_id: cid, org_id: oid, project_names: names }).await {
                                         Ok(r) => result.set(Some(r)),
                                         Err(e) => error.set(Some(format!("{e}"))),
                                     }

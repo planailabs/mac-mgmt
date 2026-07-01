@@ -7,66 +7,21 @@ use super::ui::{
     TdMuted, Th, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
 
-// delete_webspace now lives in the shared api_mcp layer.
-use crate::api_mcp::endpoints::webspaces::{WebspaceDeleteInput, delete_webspace};
+// Most webspace server fns now live in the shared api_mcp layer; only the
+// deploy-token fns and pure dropdown loaders remain here.
+use crate::api_mcp::endpoints::webspaces::{
+    BuildConfigInfo, GitRepoInfo, WebspaceConnectGitInput, WebspaceDeleteInput,
+    WebspaceDeployPagesInput, WebspaceDeploymentsInput, WebspaceGetInput, WebspaceMoveInput,
+    WebspaceSetProductionBranchInput, WebspaceUpdateInput, connect_git_repo, delete_webspace,
+    deploy_pages_project, get_webspace, list_deployments, move_webspace,
+    update_production_branch, update_webspace_settings,
+};
 
 // ── Types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct WebspaceData {
-    id: Uuid,
-    name: String,
-    hosting_type: String,
-    cloudflare_pages_project: Option<String>,
-    cloudflare_credential_id: Option<Uuid>,
-    runtime: Option<String>,
-    local_status: Option<String>,
-    relay_url: Option<String>,
-    organization_id: Uuid,
-    organization_name: String,
-    /// Whether the current user can manage tokens for this webspace's org.
-    is_org_admin: bool,
-    auth_mode: String,
-    auth_basic_list_name: Option<String>,
-    // Parent host (the hostname/domain/CNAME/CD owner) and this folder's mount path.
-    webspace_host_id: Uuid,
-    host_name: String,
-    host_kind: String,
-    path_prefix: String,
-    // Live CF Pages info
-    pages_subdomain: Option<String>,
-    production_branch: Option<String>,
-    git_source: Option<GitRepoInfo>,
-    build_config: Option<BuildConfigInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DeploymentRow {
-    id: Uuid,
-    status: String,
-    error_message: Option<String>,
-    tarball_size: Option<i64>,
-    created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct TokenCreateResult {
     token: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct GitRepoInfo {
-    provider: String, // "github" or "gitlab"
-    owner: String,
-    repo: String,
-    production_branch: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct BuildConfigInfo {
-    build_command: Option<String>,
-    destination_dir: Option<String>,
-    root_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,150 +30,7 @@ struct CredOption {
     name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PagesDeployResult {
-    project_name: String,
-    subdomain: Option<String>,
-}
-
 // ── Server functions ──────────────────────────────────────────────────
-
-#[server]
-async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Uuid, Option<String>, String, Option<Uuid>, Uuid, String, String, String)>(
-        "SELECT w.id, w.name, w.hosting_type, w.cloudflare_pages_project, w.cloudflare_credential_id, \
-         w.runtime, w.local_status, w.organization_id, w.relay_url, w.auth_mode, w.auth_basic_list_id, \
-         w.webspace_host_id, h.name, h.kind, w.path_prefix \
-         FROM webspaces w JOIN webspace_hosts h ON h.id = w.webspace_host_id WHERE w.id = $1",
-    )
-    .bind(webspace_id).fetch_optional(&pool).await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
-
-    let (
-        id,
-        name,
-        hosting_type,
-        cf_project,
-        cf_cred_id,
-        runtime,
-        local_status,
-        org_id,
-        relay_url,
-        auth_mode,
-        auth_basic_list_id,
-        webspace_host_id,
-        host_name,
-        host_kind,
-        path_prefix,
-    ) = row;
-
-    // Fetch basic auth list name if set
-    let auth_basic_list_name = if let Some(list_id) = auth_basic_list_id {
-        sqlx::query_scalar::<_, String>("SELECT name FROM basic_auth_lists WHERE id = $1")
-            .bind(list_id)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
-
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-
-    let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
-        .bind(org_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Fetch live CF Pages info
-    let mut pages_subdomain = None;
-    let mut production_branch = None;
-    let mut git_source = None;
-    let mut build_config_info = None;
-
-    if let (Some(project_name), Some(cred_id)) = (&cf_project, cf_cred_id) {
-        if let Ok((client, account_id)) = build_cf_pages_client(&pool, cred_id).await {
-            if let Ok(project) = client.get_pages_project(&account_id, project_name).await {
-                pages_subdomain = project.subdomain;
-                production_branch = project.production_branch;
-                if let Some(src) = &project.source {
-                    let cfg = src.get("config");
-                    if cfg.is_some() {
-                        git_source = Some(GitRepoInfo {
-                            provider: src
-                                .get("type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            owner: cfg
-                                .and_then(|c| c.get("owner"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            repo: cfg
-                                .and_then(|c| c.get("repo_name"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            production_branch: cfg
-                                .and_then(|c| c.get("production_branch"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("main")
-                                .to_string(),
-                        });
-                    }
-                }
-                if let Some(bc) = &project.build_config {
-                    build_config_info = Some(BuildConfigInfo {
-                        build_command: bc
-                            .get("build_command")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        destination_dir: bc
-                            .get("destination_dir")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        root_dir: bc
-                            .get("root_dir")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(WebspaceData {
-        id,
-        name,
-        hosting_type,
-        cloudflare_pages_project: cf_project,
-        cloudflare_credential_id: cf_cred_id,
-        runtime,
-        local_status,
-        relay_url,
-        organization_id: org_id,
-        organization_name: org_name,
-        is_org_admin: user.is_org_admin(&org_id),
-        auth_mode,
-        auth_basic_list_name,
-        webspace_host_id,
-        host_name,
-        host_kind,
-        path_prefix,
-        pages_subdomain,
-        production_branch,
-        git_source,
-        build_config: build_config_info,
-    })
-}
 
 #[server]
 async fn list_cf_creds_for_pages() -> Result<Vec<CredOption>, ServerFnError> {
@@ -236,238 +48,7 @@ async fn list_cf_creds_for_pages() -> Result<Vec<CredOption>, ServerFnError> {
         .collect())
 }
 
-/// Deploy a CF Pages project for this webspace.
-#[server]
-async fn deploy_pages_project(
-    webspace_id: Uuid,
-    credential_id: Uuid,
-) -> Result<PagesDeployResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let row = sqlx::query_as::<_, (String, Uuid)>(
-        "SELECT name, organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
-
-    let (ws_name, org_id) = row;
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    let (client, account_id) = build_cf_pages_client(&pool, credential_id).await?;
-
-    tracing::info!("deploying Pages project {ws_name} to account {account_id}");
-
-    // Check if project already exists
-    let project = match client.get_pages_project(&account_id, &ws_name).await {
-        Ok(p) => {
-            tracing::info!("Pages project {ws_name} already exists");
-            p
-        }
-        Err(_) => {
-            let p = client.create_pages_project(&account_id, &ws_name, "main").await
-                .map_err(|e| ServerFnError::new(format!(
-                    "failed to create Pages project: {e}. \
-                     Ensure the API token has 'Cloudflare Pages:Edit' permission for account {account_id}"
-                )))?;
-            tracing::info!("created Pages project {ws_name}");
-            p
-        }
-    };
-
-    sqlx::query(
-        "UPDATE webspaces SET cloudflare_pages_project = $1, cloudflare_credential_id = $2, updated_at = now() WHERE id = $3",
-    )
-    .bind(&ws_name).bind(credential_id).bind(webspace_id)
-    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(PagesDeployResult {
-        project_name: ws_name,
-        subdomain: project.subdomain,
-    })
-}
-
-/// Connect a git repo to the CF Pages project.
-#[server]
-async fn connect_git_repo(
-    webspace_id: Uuid,
-    provider: String,
-    owner: String,
-    repo_name: String,
-    production_branch: String,
-    build_command: String,
-    destination_dir: String,
-    root_dir: String,
-) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let row = sqlx::query_as::<_, (Option<String>, Option<Uuid>, Uuid)>(
-        "SELECT cloudflare_pages_project, cloudflare_credential_id, organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id).fetch_optional(&pool).await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
-
-    let (project_name, cred_id, org_id) = row;
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    let project_name =
-        project_name.ok_or_else(|| ServerFnError::new("Pages project not deployed yet"))?;
-    let cred_id = cred_id.ok_or_else(|| ServerFnError::new("no Cloudflare credential"))?;
-
-    let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
-
-    let update = cloudflare_api::compat::UpdatePagesProject {
-        production_branch: Some(production_branch.clone()),
-        source: Some(cloudflare_api::compat::PagesSource {
-            source_type: Some(provider.clone()),
-            config: Some(cloudflare_api::compat::PagesSourceConfig {
-                owner: Some(owner),
-                repo_name: Some(repo_name),
-                production_branch: Some(production_branch),
-                pr_comments_enabled: Some(true),
-                production_deployments_enabled: Some(true),
-                preview_deployment_setting: Some("all".into()),
-                preview_branch_includes: None,
-                preview_branch_excludes: None,
-            }),
-        }),
-        build_config: Some(cloudflare_api::compat::PagesBuildConfig {
-            build_command: if build_command.is_empty() {
-                None
-            } else {
-                Some(build_command)
-            },
-            destination_dir: if destination_dir.is_empty() {
-                None
-            } else {
-                Some(destination_dir)
-            },
-            root_dir: if root_dir.is_empty() {
-                None
-            } else {
-                Some(root_dir)
-            },
-            build_caching: Some(true),
-        }),
-    };
-
-    client
-        .update_pages_project(&account_id, &project_name, &update)
-        .await
-        .map_err(|e| {
-            ServerFnError::new(format!(
-                "failed to connect git repo: {e}. \
-             Ensure the GitHub/GitLab integration is authorized in your Cloudflare dashboard"
-            ))
-        })?;
-
-    tracing::info!("connected git repo to Pages project {project_name}");
-    Ok(())
-}
-
-/// Update the production branch for a direct-upload Pages project.
-#[server]
-async fn update_production_branch(webspace_id: Uuid, branch: String) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let row = sqlx::query_as::<_, (Option<String>, Option<Uuid>, Uuid)>(
-        "SELECT cloudflare_pages_project, cloudflare_credential_id, organization_id FROM webspaces WHERE id = $1",
-    )
-    .bind(webspace_id).fetch_optional(&pool).await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
-
-    let (project_name, cred_id, org_id) = row;
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    let project_name = project_name.ok_or_else(|| ServerFnError::new("no Pages project"))?;
-    let cred_id = cred_id.ok_or_else(|| ServerFnError::new("no CF credential"))?;
-
-    let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
-
-    let update = cloudflare_api::compat::UpdatePagesProject {
-        production_branch: Some(branch.clone()),
-        source: None,
-        build_config: None,
-    };
-
-    client
-        .update_pages_project(&account_id, &project_name, &update)
-        .await
-        .map_err(|e| ServerFnError::new(format!("failed to update production branch: {e}")))?;
-
-    tracing::info!("updated production branch for {project_name} to {branch}");
-    Ok(())
-}
-
-#[cfg(feature = "server")]
-async fn build_cf_pages_client(
-    pool: &sqlx::PgPool,
-    cred_id: Uuid,
-) -> Result<(cloudflare_api::compat::SimpleClient, String), ServerFnError> {
-    crate::credentials::cf_client_with_account(pool, cred_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("{e}")))
-}
-
 // ── Deployments & tokens ─────────────────────────────────────────────
-
-#[server]
-async fn list_deployments(webspace_id: Uuid) -> Result<Vec<DeploymentRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("webspace not found"))?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_read(&org_id)?;
-
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            Option<String>,
-            Option<i64>,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
-        "SELECT id, status, error_message, tarball_size, created_at \
-         FROM deployments WHERE webspace_id = $1 ORDER BY created_at DESC LIMIT 20",
-    )
-    .bind(webspace_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, status, error_message, tarball_size, created_at)| DeploymentRow {
-                id,
-                status,
-                error_message,
-                tarball_size,
-                created_at: created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            },
-        )
-        .collect())
-}
 
 #[server]
 async fn create_deploy_token(
@@ -598,7 +179,7 @@ pub fn WebspaceDetail(id: String) -> Element {
         let _ = *refresh.read(); // reactive dependency — bumping refresh re-runs this future
         async move {
             match wid {
-                Some(id) => get_webspace(id).await,
+                Some(id) => get_webspace(WebspaceGetInput { id }).await,
                 None => Err(ServerFnError::new("invalid webspace ID")),
             }
         }
@@ -936,7 +517,16 @@ fn GitRepoSection(
                             connecting.set(true);
                             error.set(None);
                             spawn(async move {
-                                match connect_git_repo(wid, p, o, r, b, bc, dd, rd).await {
+                                match connect_git_repo(WebspaceConnectGitInput {
+                                    id: wid,
+                                    provider: p,
+                                    owner: o,
+                                    repo_name: r,
+                                    production_branch: b,
+                                    build_command: bc,
+                                    destination_dir: dd,
+                                    root_dir: rd,
+                                }).await {
                                     Ok(()) => {
                                         refresh += 1;
                                     }
@@ -1085,11 +675,20 @@ fn PagesDeploySection(webspace_id: Uuid) -> Element {
                         spawn(async move {
                             if let Ok(cid) = uuid::Uuid::parse_str(&cid_str) {
                                 // Step 1: create project
-                                match deploy_pages_project(wid, cid).await {
+                                match deploy_pages_project(WebspaceDeployPagesInput { id: wid, credential_id: cid }).await {
                                     Ok(_) => {
                                         // Step 2: if git, connect repo
                                         if is_git {
-                                            if let Err(e) = connect_git_repo(wid, gp, go, gr, gb, bc, dd, rd).await {
+                                            if let Err(e) = connect_git_repo(WebspaceConnectGitInput {
+                                                id: wid,
+                                                provider: gp,
+                                                owner: go,
+                                                repo_name: gr,
+                                                production_branch: gb,
+                                                build_command: bc,
+                                                destination_dir: dd,
+                                                root_dir: rd,
+                                            }).await {
                                                 error.set(Some(format!("Project created but git connection failed: {e}")));
                                                 deploying.set(false);
                                                 refresh += 1;
@@ -1213,7 +812,7 @@ fn DirectUploadDisplay(
                                 saving_branch.set(true);
                                 branch_msg.set(None);
                                 spawn(async move {
-                                    match update_production_branch(wid, b).await {
+                                    match update_production_branch(WebspaceSetProductionBranchInput { id: wid, branch: b }).await {
                                         Ok(()) => {
                                             refresh += 1;
                                         }
@@ -1285,7 +884,7 @@ fn DirectUploadDisplay(
 fn DeploymentsSection(webspace_id: Uuid) -> Element {
     let deploys = use_server_future(move || {
         let wid = webspace_id;
-        async move { list_deployments(wid).await }
+        async move { list_deployments(WebspaceDeploymentsInput { id: wid }).await }
     })?;
 
     let rows = match &*deploys.read() {
@@ -1419,48 +1018,6 @@ async fn list_move_target_orgs() -> Result<Vec<crate::web::user::OrgOption>, Ser
     crate::web::user::list_user_write_orgs(&user, &pool).await
 }
 
-#[server]
-async fn move_webspace(webspace_id: Uuid, target_org_id: Uuid) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-    user.require_org_write(&target_org_id)?;
-
-    if org_id == target_org_id {
-        return Err(ServerFnError::new(
-            "webspace is already in that organization",
-        ));
-    }
-
-    // Check for name conflicts in target org
-    let conflict = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM webspaces WHERE organization_id = $1 AND name = (SELECT name FROM webspaces WHERE id = $2))",
-    ).bind(target_org_id).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-    if conflict {
-        return Err(ServerFnError::new(
-            "a webspace with the same name already exists in the target organization",
-        ));
-    }
-
-    sqlx::query("UPDATE webspaces SET organization_id = $1 WHERE id = $2")
-        .bind(target_org_id)
-        .bind(webspace_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(())
-}
-
 // ── Delete webspace ─────────────────────────────────────────────────
 // delete_webspace now lives in the shared api_mcp layer (imported below).
 
@@ -1513,7 +1070,7 @@ fn MoveWebspaceSection(webspace_id: Uuid, current_org_id: Uuid) -> Element {
                                     moving.set(true);
                                     error.set(None);
                                     spawn(async move {
-                                        match move_webspace(wid, tid).await {
+                                        match move_webspace(WebspaceMoveInput { id: wid, target_org_id: tid }).await {
                                             Ok(()) => {
                                                 refresh += 1;
                                             }
@@ -1580,58 +1137,6 @@ fn DeleteWebspaceSection(webspace_id: Uuid) -> Element {
 
 // ── Webspace settings (name, upstream URL) ──────────────────────────
 
-#[server]
-async fn update_webspace_settings(
-    webspace_id: Uuid,
-    name: String,
-    relay_url: Option<String>,
-) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>)>(
-        "SELECT organization_id, hosting_type, cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
-    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let (org_id, hosting_type, cf_project, cf_cred_id) = row;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    // For CF Pages: rename the Pages project if the name changed
-    if hosting_type == "cloudflare_pages" {
-        if let (Some(old_project), Some(cred_id)) = (&cf_project, cf_cred_id) {
-            if old_project != &name {
-                let (client, account_id) =
-                    crate::credentials::cf_client_with_account(&pool, cred_id)
-                        .await
-                        .map_err(|e| ServerFnError::new(format!("{e}")))?;
-
-                // CF Pages doesn't support rename — create new project, but that's disruptive.
-                // Instead just update local name; the Pages project name stays the same.
-                // The name field in our DB is for display purposes.
-                tracing::info!(
-                    old = old_project,
-                    new = &name,
-                    "renaming webspace (Pages project name unchanged: {old_project})"
-                );
-                let _ = (client, account_id); // suppress unused warning
-            }
-        }
-    }
-
-    sqlx::query("UPDATE webspaces SET name = $1, relay_url = $2, updated_at = now() WHERE id = $3")
-        .bind(&name)
-        .bind(&relay_url)
-        .bind(webspace_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    crate::api::internal::notify_proxy_reload();
-    Ok(())
-}
-
 #[component]
 fn WebspaceSettingsSection(
     webspace_id: Uuid,
@@ -1688,7 +1193,17 @@ fn WebspaceSettingsSection(
                                 saving.set(true);
                                 message.set(None);
                                 spawn(async move {
-                                    match update_webspace_settings(wid, n, url).await {
+                                    let clear_relay_url = Some(url.is_none());
+                                    match update_webspace_settings(WebspaceUpdateInput {
+                                        id: wid,
+                                        name: Some(n),
+                                        path_prefix: None,
+                                        relay_url: url,
+                                        clear_relay_url,
+                                        auth_mode: None,
+                                        auth_basic_list_id: None,
+                                        clear_auth_basic_list: None,
+                                    }).await {
                                         Ok(()) => {
                                             message.set(Some("Saved".into()));
                                             refresh += 1;
@@ -1734,35 +1249,6 @@ async fn load_basic_auth_lists(org_id: Uuid) -> Result<Vec<BasicAuthListOption>,
         .into_iter()
         .map(|(id, name)| BasicAuthListOption { id, name })
         .collect())
-}
-
-#[server]
-async fn update_webspace_auth(
-    webspace_id: Uuid,
-    auth_mode: String,
-    auth_basic_list_id: Option<Uuid>,
-) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    sqlx::query(
-        "UPDATE webspaces SET auth_mode = $1, auth_basic_list_id = $2, updated_at = now() WHERE id = $3",
-    )
-    .bind(&auth_mode).bind(auth_basic_list_id).bind(webspace_id)
-    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    crate::api::internal::notify_proxy_reload();
-    Ok(())
 }
 
 #[component]
@@ -1838,7 +1324,17 @@ fn AuthSettingsSection(
                                 saving.set(true);
                                 message.set(None);
                                 spawn(async move {
-                                    match update_webspace_auth(wid, mode, list_id).await {
+                                    let clear_auth_basic_list = Some(list_id.is_none());
+                                    match update_webspace_settings(WebspaceUpdateInput {
+                                        id: wid,
+                                        name: None,
+                                        path_prefix: None,
+                                        relay_url: None,
+                                        clear_relay_url: None,
+                                        auth_mode: Some(mode),
+                                        auth_basic_list_id: list_id,
+                                        clear_auth_basic_list,
+                                    }).await {
                                         Ok(()) => {
                                             message.set(Some("Saved".into()));
                                             refresh += 1;

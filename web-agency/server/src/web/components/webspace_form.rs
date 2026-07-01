@@ -10,6 +10,9 @@ use uuid::Uuid;
 
 use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 
+// create_folder now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::webspaces::{WebspaceCreateInput, create_folder};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CredOption {
     id: Uuid,
@@ -96,74 +99,6 @@ async fn load_folder_form_data(host_id: Uuid) -> Result<FolderFormData, ServerFn
     })
 }
 
-#[server]
-async fn create_folder(
-    host_id: Uuid,
-    name: String,
-    path_prefix: String,
-    hosting_type: String,
-    runtime: Option<String>,
-    relay_url: Option<String>,
-    relay_credential_id: Option<Uuid>,
-    auth_mode: String,
-    auth_basic_list_id: Option<Uuid>,
-) -> Result<Uuid, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let (org_id, kind) = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT organization_id, kind FROM webspace_hosts WHERE id = $1",
-    )
-    .bind(host_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("host not found"))?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    if kind != "proxy" {
-        return Err(ServerFnError::new("folders can only be added to proxy hosts"));
-    }
-    if !matches!(hosting_type.as_str(), "local" | "relay" | "tunnel") {
-        return Err(ServerFnError::new("invalid folder hosting type"));
-    }
-    // Normalize the mount path: leading slash, no trailing slash, no doubles.
-    let mut path = path_prefix.trim().to_string();
-    if !path.starts_with('/') {
-        return Err(ServerFnError::new("path must start with /"));
-    }
-    while path.contains("//") {
-        path = path.replace("//", "/");
-    }
-    while path.len() > 1 && path.ends_with('/') {
-        path.pop();
-    }
-    let path = path.as_str();
-
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO webspaces (organization_id, webspace_host_id, name, path_prefix, hosting_type, runtime, relay_url, relay_credential_id, auth_mode, auth_basic_list_id, local_status) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'stopped') RETURNING id",
-    )
-    .bind(org_id)
-    .bind(host_id)
-    .bind(&name)
-    .bind(path)
-    .bind(&hosting_type)
-    .bind(&runtime)
-    .bind(&relay_url)
-    .bind(relay_credential_id)
-    .bind(&auth_mode)
-    .bind(auth_basic_list_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("failed to create folder: {e}")))?;
-
-    crate::api::internal::notify_proxy_reload();
-    Ok(id)
-}
-
 #[component]
 pub fn WebspaceForm(host_id: String) -> Element {
     let host_uuid = Uuid::parse_str(&host_id).ok();
@@ -241,7 +176,17 @@ pub fn WebspaceForm(host_id: String) -> Element {
                         let relay_url_opt = if (ht == "relay" || ht == "tunnel") && !r_url.is_empty() { Some(r_url) } else { None };
                         let relay_cred_opt = if ht == "relay" { uuid::Uuid::parse_str(&r_cred).ok() } else { None };
                         let ba_list_opt = if am == "basic" { uuid::Uuid::parse_str(&ba_list).ok() } else { None };
-                        match create_folder(hid, n, pp, ht, rt_opt, relay_url_opt, relay_cred_opt, am, ba_list_opt).await {
+                        match create_folder(WebspaceCreateInput {
+                            host_id: hid,
+                            name: n,
+                            path_prefix: pp,
+                            hosting_type: ht,
+                            runtime: rt_opt,
+                            relay_url: relay_url_opt,
+                            relay_credential_id: relay_cred_opt,
+                            auth_mode: am,
+                            auth_basic_list_id: ba_list_opt,
+                        }).await {
                             Ok(_) => { nav.push(detail); }
                             Err(e) => error.set(Some(format!("{e}"))),
                         }

@@ -256,6 +256,87 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
                 endpoints::webspaces::webspace_delete(&pool, &p, input).await
             },
         );
+        w.get(
+            "Get a webspace folder: host info, auth settings and live CF Pages details (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceGetInput| async move {
+                endpoints::webspaces::webspace_get(&pool, &p, input).await
+            },
+        );
+        w.create(
+            "Create a webspace folder on a proxy host (requires org write). Returns the new folder id.",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceCreateInput| async move {
+                endpoints::webspaces::webspace_create(&pool, &p, input).await
+            },
+        );
+        w.update(
+            "Update a webspace folder: name, mount path, upstream URL and/or auth mode + basic-auth list; only provided fields change (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceUpdateInput| async move {
+                endpoints::webspaces::webspace_update(&pool, &p, input).await
+            },
+        );
+        w.custom(
+            "move",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Move a webspace folder to another organization (requires write on both orgs).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceMoveInput| async move {
+                endpoints::webspaces::webspace_move(&pool, &p, input).await
+            },
+        );
+        w.custom(
+            "deploy_pages",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Create (or link an existing) Cloudflare Pages project for this webspace (requires org write). Returns a status string.",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceDeployPagesInput| async move {
+                endpoints::webspaces::webspace_deploy_pages(&pool, &p, input).await
+            },
+        );
+        w.custom(
+            "connect_git",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Connect a GitHub/GitLab repo and build config to the webspace's CF Pages project (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceConnectGitInput| async move {
+                endpoints::webspaces::webspace_connect_git(&pool, &p, input).await
+            },
+        );
+        w.custom(
+            "set_production_branch",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Update the production branch of the webspace's direct-upload CF Pages project (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceSetProductionBranchInput| async move {
+                endpoints::webspaces::webspace_set_production_branch(&pool, &p, input).await
+            },
+        );
+        w.custom(
+            "deployments",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List the webspace's 20 most recent deployments (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceDeploymentsInput| async move {
+                endpoints::webspaces::webspace_deployments(&pool, &p, input).await
+            },
+        );
+        w.custom(
+            "discover_pages",
+            Risk::ReadOnly,
+            OnItem::No,
+            "Discover CF Pages projects on a credential's account, flagging those already imported (requires org read).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceDiscoverPagesInput| async move {
+                endpoints::webspaces::webspace_discover_pages(&pool, &p, input).await
+            },
+        );
+        w.custom(
+            "import_pages",
+            Risk::Mutating,
+            OnItem::No,
+            "Import CF Pages projects as cloudflare hosts with one main folder each; collects per-project errors (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::webspaces::WebspaceImportPagesInput| async move {
+                endpoints::webspaces::webspace_import_pages(&pool, &p, input).await
+            },
+        );
     }
     {
         let mut c = reg.resource("credentials", "credential", "Credentials");
