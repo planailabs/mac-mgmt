@@ -107,6 +107,12 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
                 endpoints::users::user_list(&pool, &p, input).await
             },
         );
+        u.get(
+            "Get a user by id (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserGetInput| async move {
+                endpoints::users::user_get(&pool, &p, input).await
+            },
+        );
         u.delete(
             "Delete a user (admin only; refuses self-deletion).",
             |pool: sqlx::PgPool, p, input: endpoints::users::UserDeleteInput| async move {

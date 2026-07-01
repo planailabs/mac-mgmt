@@ -7,14 +7,8 @@ use super::ui::{
 };
 use crate::web::app::Route;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UserInfo {
-    id: String,
-    email: String,
-    name: String,
-    is_admin: bool,
-    created_at: String,
-}
+// UserInfo + get_user now live in the shared api_mcp layer.
+use crate::api_mcp::endpoints::users::{UserGetInput, get_user};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UserOrgEntry {
@@ -29,39 +23,6 @@ struct OrgOption {
     name: String,
 }
 
-#[server]
-async fn get_user(id: String) -> Result<UserInfo, ServerFnError> {
-    use crate::web::user::WebUserExt;
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    let row = sqlx::query_as::<
-        _,
-        (
-            uuid::Uuid,
-            String,
-            String,
-            bool,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >("SELECT id, email, name, is_admin, created_at FROM users WHERE id = $1")
-    .bind(uid)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(UserInfo {
-        id: row.0.to_string(),
-        email: row.1,
-        name: row.2,
-        is_admin: row.3,
-        created_at: row.4.format("%Y-%m-%d %H:%M").to_string(),
-    })
-}
 
 #[server]
 async fn get_user_orgs(user_id: String) -> Result<Vec<UserOrgEntry>, ServerFnError> {
@@ -217,7 +178,7 @@ pub fn UserDetail(id: String) -> Element {
     let id_for_user = id.clone();
     let mut user_future = use_server_future(move || {
         let id = id_for_user.clone();
-        async move { get_user(id).await }
+        async move { get_user(UserGetInput { id }).await }
     })?;
 
     let id_for_orgs = id.clone();
