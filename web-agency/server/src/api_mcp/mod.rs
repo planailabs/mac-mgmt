@@ -107,6 +107,12 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
                 endpoints::users::user_list(&pool, &p, input).await
             },
         );
+        u.delete(
+            "Delete a user (admin only; refuses self-deletion).",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserDeleteInput| async move {
+                endpoints::users::user_delete(&pool, &p, input).await
+            },
+        );
     }
     {
         let mut b = reg.resource("basic-auth-lists", "basic_auth_list", "Basic Auth");
@@ -120,6 +126,12 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             "Create a basic-auth list in an organization (requires org write).",
             |pool: sqlx::PgPool, p, input: endpoints::basic_auth::BasicAuthCreateInput| async move {
                 endpoints::basic_auth::basic_auth_create(&pool, &p, input).await
+            },
+        );
+        b.delete(
+            "Delete a basic-auth list (requires org write).",
+            |pool: sqlx::PgPool, p, input: endpoints::basic_auth::BasicAuthDeleteInput| async move {
+                endpoints::basic_auth::basic_auth_delete(&pool, &p, input).await
             },
         );
     }

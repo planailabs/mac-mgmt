@@ -30,6 +30,11 @@ pub struct BasicAuthCreateInput {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BasicAuthDeleteInput {
+    pub id: Uuid,
+}
+
 /// List basic-auth lists the caller may see (admins: all; else their orgs').
 #[api_mcp_dioxus_server(server = "list_basic_auth_lists")]
 pub async fn basic_auth_list(
@@ -85,4 +90,41 @@ pub async fn basic_auth_create(
     .fetch_one(pool)
     .await
     .map_err(|e| ApiError::internal(e.to_string()))
+}
+
+/// Delete a basic-auth list (requires org write). Clears webspace references
+/// and notifies the proxy.
+#[api_mcp_dioxus_server(server = "delete_basic_auth_list")]
+pub async fn basic_auth_delete(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: BasicAuthDeleteInput,
+) -> Result<(), ApiError> {
+    let org_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM basic_auth_lists WHERE id = $1")
+            .bind(input.id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .ok_or_else(|| ApiError::not_found("basic-auth list not found"))?;
+
+    principal.require_write(&org_id)?;
+
+    sqlx::query(
+        "UPDATE webspaces SET auth_mode = 'none', auth_basic_list_id = NULL \
+         WHERE auth_basic_list_id = $1",
+    )
+    .bind(input.id)
+    .execute(pool)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    sqlx::query("DELETE FROM basic_auth_lists WHERE id = $1")
+        .bind(input.id)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    crate::api::internal::notify_proxy_reload();
+    Ok(())
 }

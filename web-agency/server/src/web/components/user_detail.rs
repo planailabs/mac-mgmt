@@ -201,27 +201,8 @@ async fn toggle_user_admin(user_id: String, is_admin: bool) -> Result<(), Server
     Ok(())
 }
 
-#[server]
-async fn delete_user(id: String) -> Result<(), ServerFnError> {
-    use crate::web::user::WebUserExt;
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    if uid == user.id {
-        return Err(ServerFnError::new("cannot delete yourself"));
-    }
-
-    sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(uid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
+// delete_user now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::users::{UserDeleteInput, delete_user};
 
 fn role_variant(role: &str) -> BadgeVariant {
     match role {
@@ -325,7 +306,7 @@ pub fn UserDetail(id: String) -> Element {
                                     move |_| {
                                         let uid = uid.clone();
                                         async move {
-                                            let _ = delete_user(uid).await;
+                                            let _ = delete_user(UserDeleteInput { id: uid }).await;
                                             nav.push(Route::UserList {});
                                         }
                                     }

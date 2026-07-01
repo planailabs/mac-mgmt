@@ -25,6 +25,11 @@ pub struct UserRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UserListInput {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct UserDeleteInput {
+    pub id: String,
+}
+
 /// List all users (admin only).
 #[api_mcp_dioxus_server(server = "list_users")]
 pub async fn user_list(
@@ -50,4 +55,37 @@ pub async fn user_list(
             created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
         })
         .collect())
+}
+
+/// Delete a user (admin only). Refuses to delete the calling admin (matched by
+/// email); token-admins have no "self" so this guard only applies to web users.
+#[api_mcp_dioxus_server(server = "delete_user")]
+pub async fn user_delete(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+    input: UserDeleteInput,
+) -> Result<(), ApiError> {
+    principal.require_admin()?;
+    let uid: Uuid = input
+        .id
+        .parse()
+        .map_err(|_| ApiError::bad_request("invalid user id"))?;
+
+    let email = sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
+        .bind(uid)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("user not found"))?;
+
+    if email == principal.subject {
+        return Err(ApiError::forbidden("cannot delete yourself"));
+    }
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(uid)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(())
 }

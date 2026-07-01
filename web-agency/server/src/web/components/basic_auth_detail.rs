@@ -129,34 +129,8 @@ async fn remove_credential(credential_id: Uuid) -> Result<(), ServerFnError> {
     Ok(())
 }
 
-#[server]
-async fn delete_basic_auth_list(list_id: Uuid) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM basic_auth_lists WHERE id = $1")
-            .bind(list_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    use crate::web::user::WebUserExt;
-    user.require_org_write(&org_id)?;
-
-    // Clear references from webspaces
-    sqlx::query("UPDATE webspaces SET auth_mode = 'none', auth_basic_list_id = NULL WHERE auth_basic_list_id = $1")
-        .bind(list_id).execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    sqlx::query("DELETE FROM basic_auth_lists WHERE id = $1")
-        .bind(list_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    crate::api::internal::notify_proxy_reload();
-    Ok(())
-}
+// delete_basic_auth_list now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::basic_auth::{BasicAuthDeleteInput, delete_basic_auth_list};
 
 #[component]
 pub fn BasicAuthDetail(id: String) -> Element {
@@ -317,7 +291,7 @@ pub fn BasicAuthDetail(id: String) -> Element {
                         move |_| {
                             deleting.set(true);
                             spawn(async move {
-                                let _ = delete_basic_auth_list(lid).await;
+                                let _ = delete_basic_auth_list(BasicAuthDeleteInput { id: lid }).await;
                                 navigator().push(crate::web::app::Route::BasicAuthList {});
                             });
                         }
