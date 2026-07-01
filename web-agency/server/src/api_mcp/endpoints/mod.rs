@@ -36,6 +36,7 @@ pub mod credentials;
 pub mod domains;
 pub mod organizations;
 pub mod sync;
+pub mod tokens;
 pub mod users;
 pub mod webspace_hosts;
 pub mod webspaces;

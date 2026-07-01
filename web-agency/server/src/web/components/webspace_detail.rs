@@ -7,8 +7,12 @@ use super::ui::{
     TdMuted, Th, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
 
-// Most webspace server fns now live in the shared api_mcp layer; only the
-// deploy-token fns and pure dropdown loaders remain here.
+// Most webspace server fns now live in the shared api_mcp layer; only pure
+// dropdown loaders remain here.
+use crate::api_mcp::endpoints::tokens::{
+    TokenCreateInput as ApiTokenCreateInput, TokenListInput, TokenRevokeInput, create_token,
+    list_tokens, revoke_token,
+};
 use crate::api_mcp::endpoints::webspaces::{
     BuildConfigInfo, GitRepoInfo, WebspaceConnectGitInput, WebspaceDeleteInput,
     WebspaceDeployPagesInput, WebspaceDeploymentsInput, WebspaceGetInput, WebspaceMoveInput,
@@ -18,11 +22,6 @@ use crate::api_mcp::endpoints::webspaces::{
 };
 
 // ── Types ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TokenCreateResult {
-    token: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CredOption {
@@ -49,124 +48,8 @@ async fn list_cf_creds_for_pages() -> Result<Vec<CredOption>, ServerFnError> {
 }
 
 // ── Deployments & tokens ─────────────────────────────────────────────
-
-#[server]
-async fn create_deploy_token(
-    webspace_id: Uuid,
-    org_id: Uuid,
-    label: String,
-    expires_in_secs: Option<i64>,
-) -> Result<TokenCreateResult, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    let pool = crate::server_pool()?;
-
-    // Require org admin (not just write) for token creation.
-    use crate::web::user::WebUserExt;
-    user.require_org_admin(&org_id)?;
-
-    // Verify the webspace belongs to this org.
-    let ws_org =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM webspaces WHERE id = $1")
-            .bind(webspace_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("webspace not found"))?;
-
-    if ws_org != org_id {
-        return Err(ServerFnError::new(
-            "webspace does not belong to this organization",
-        ));
-    }
-
-    use rand::Rng;
-    let token_bytes: [u8; 32] = rand::rng().random();
-    let token = hex::encode(token_bytes);
-
-    use sha2::{Digest, Sha256};
-    let hash = hex::encode(Sha256::digest(token.as_bytes()));
-
-    let scopes = serde_json::json!({ "webspace_id": webspace_id.to_string() });
-    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
-
-    sqlx::query(
-        "INSERT INTO tokens (organization_id, token_hash, label, kind, scopes, expires_at) VALUES ($1, $2, $3, 'deploy', $4, $5)",
-    )
-    .bind(org_id)
-    .bind(&hash)
-    .bind(&label)
-    .bind(&scopes)
-    .bind(expires_at)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(TokenCreateResult { token })
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct WebspaceTokenInfo {
-    id: Uuid,
-    label: String,
-    revoked: bool,
-    created_at: String,
-    expires_at: Option<String>,
-    expired: bool,
-}
-
-/// Deploy tokens scoped to this webspace (org admin only).
-#[server]
-async fn list_webspace_tokens(
-    webspace_id: Uuid,
-    org_id: Uuid,
-) -> Result<Vec<WebspaceTokenInfo>, ServerFnError> {
-    use crate::web::user::WebUserExt;
-    let user = crate::web::user::current_user().await?;
-    user.require_org_admin(&org_id)?;
-    let pool = crate::server_pool()?;
-
-    let rows = sqlx::query_as::<_, (Uuid, String, bool, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
-        "SELECT id, label, revoked, created_at, expires_at FROM tokens \
-         WHERE kind = 'deploy' AND organization_id = $1 \
-           AND (scopes->>'webspace_id')::uuid = $2 \
-         ORDER BY created_at DESC",
-    )
-    .bind(org_id)
-    .bind(webspace_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let now = chrono::Utc::now();
-    Ok(rows
-        .into_iter()
-        .map(|(id, label, revoked, created_at, expires_at)| WebspaceTokenInfo {
-            id,
-            label,
-            revoked,
-            created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-            expires_at: expires_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
-            expired: expires_at.is_some_and(|e| e < now),
-        })
-        .collect())
-}
-
-#[server]
-async fn revoke_webspace_token(token_id: Uuid, org_id: Uuid) -> Result<(), ServerFnError> {
-    use crate::web::user::WebUserExt;
-    let user = crate::web::user::current_user().await?;
-    user.require_org_admin(&org_id)?;
-    let pool = crate::server_pool()?;
-    // Scope the update to the org so an admin can't revoke another org's token
-    // by guessing an id.
-    sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1 AND organization_id = $2")
-        .bind(token_id)
-        .bind(org_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
+// Deploy-token create/list/revoke live in the shared api_mcp `tokens`
+// endpoints (imported above).
 
 // ── Component ─────────────────────────────────────────────────────────
 
@@ -943,7 +826,10 @@ fn DeploymentsSection(webspace_id: Uuid) -> Element {
 #[component]
 fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
     let mut tokens = use_server_future(move || async move {
-        list_webspace_tokens(webspace_id, organization_id).await
+        list_tokens(TokenListInput {
+            webspace_id: Some(webspace_id),
+        })
+        .await
     })?;
     let mut creating = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
@@ -968,7 +854,15 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
                     creating.set(true);
                     error.set(None);
                     spawn(async move {
-                        match create_deploy_token(wid, oid, input.label, input.expires_in_secs).await {
+                        let req = ApiTokenCreateInput {
+                            kind: "deploy".to_string(),
+                            label: input.label,
+                            organization_id: Some(oid),
+                            webspace_id: Some(wid),
+                            role: None,
+                            expires_in_secs: input.expires_in_secs,
+                        };
+                        match create_token(req).await {
                             Ok(r) => { created.set(Some(r.token)); tokens.restart(); }
                             Err(e) => error.set(Some(format!("{e}"))),
                         }
@@ -994,12 +888,9 @@ fn DeployTokenSection(webspace_id: Uuid, organization_id: Uuid) -> Element {
                     }).collect::<Vec<_>>(),
                     show_expires: true,
                     on_revoke: move |id: String| {
-                        let oid = organization_id;
                         spawn(async move {
-                            if let Ok(tid) = id.parse::<Uuid>() {
-                                if revoke_webspace_token(tid, oid).await.is_ok() {
-                                    tokens.restart();
-                                }
+                            if revoke_token(TokenRevokeInput { id }).await.is_ok() {
+                                tokens.restart();
                             }
                         });
                     },

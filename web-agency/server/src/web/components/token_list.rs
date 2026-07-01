@@ -7,19 +7,12 @@ use super::ui::{
     TokenRow, TokenTable,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TokenInfo {
-    id: Uuid,
-    label: String,
-    kind: String,
-    revoked: bool,
-    created_at: String,
-    expires_at: Option<String>,
-    /// Resolved scope: the webspace a deploy token is bound to, else the org.
-    scope: Option<String>,
-    /// Link to the scoped resource's page.
-    scope_href: Option<String>,
-}
+// Token CRUD lives in the shared api_mcp layer; only the form-option loader
+// stays component-local.
+use crate::api_mcp::endpoints::tokens::{
+    TokenCreateInput as ApiTokenCreateInput, TokenListInput, TokenRevokeInput, create_token,
+    list_tokens, revoke_token,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OrgOption {
@@ -39,46 +32,6 @@ struct WsOption {
 struct NewToken {
     token: String,
     kind: String,
-}
-
-#[server]
-async fn list_tokens() -> Result<Vec<TokenInfo>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    use crate::web::user::WebUserExt;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let rows = sqlx::query_as::<_, (Uuid, String, String, bool, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<Uuid>, Option<String>, Option<Uuid>, Option<String>)>(
-        "SELECT t.id, t.label, t.kind, t.revoked, t.created_at, t.expires_at, \
-                w.id AS ws_id, w.name AS ws_name, t.organization_id AS org_id, o.name AS org_name \
-         FROM tokens t \
-         LEFT JOIN webspaces w ON w.id = (t.scopes->>'webspace_id')::uuid \
-         LEFT JOIN organizations o ON o.id = t.organization_id \
-         ORDER BY t.created_at DESC LIMIT 100",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, label, kind, revoked, created_at, expires_at, ws_id, ws_name, org_id, org_name)| TokenInfo {
-                id,
-                label,
-                kind,
-                revoked,
-                created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
-                expires_at: expires_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
-                scope: ws_name
-                    .map(|n| format!("webspace: {n}"))
-                    .or_else(|| org_name.map(|n| format!("org: {n}"))),
-                scope_href: ws_id
-                    .map(|id| format!("/webspaces/{id}"))
-                    .or_else(|| org_id.map(|id| format!("/organizations/{id}"))),
-            },
-        )
-        .collect())
 }
 
 #[server]
@@ -108,68 +61,10 @@ async fn token_form_options() -> Result<(Vec<OrgOption>, Vec<WsOption>), ServerF
     ))
 }
 
-#[server]
-async fn create_token(
-    org_id: Option<Uuid>,
-    label: String,
-    kind: String,
-    webspace_id: Option<Uuid>,
-    role: Option<String>,
-    expires_in_secs: Option<i64>,
-) -> Result<String, ServerFnError> {
-    use crate::web::user::WebUserExt;
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    use rand::Rng;
-    let token_bytes: [u8; 32] = rand::rng().random();
-    let token = hex::encode(token_bytes);
-
-    use sha2::{Digest, Sha256};
-    let hash = hex::encode(Sha256::digest(token.as_bytes()));
-
-    // deploy → webspace scope; org-scoped api → role scope (read/write).
-    let scopes = match kind.as_str() {
-        "deploy" => webspace_id.map(|wid| serde_json::json!({ "webspace_id": wid.to_string() })),
-        "api" => role
-            .as_deref()
-            .filter(|r| !r.is_empty())
-            .map(|r| serde_json::json!({ "role": r })),
-        _ => None,
-    };
-    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
-
-    sqlx::query(
-        "INSERT INTO tokens (organization_id, token_hash, label, kind, scopes, expires_at) VALUES ($1, $2, $3, $4, $5, $6)",
-    )
-    .bind(org_id).bind(&hash).bind(&label).bind(&kind).bind(&scopes).bind(expires_at)
-    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(token)
-}
-
-#[server]
-async fn revoke_token(id: String) -> Result<(), ServerFnError> {
-    use crate::web::user::WebUserExt;
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
 /// Unified token view: create a token and see the existing tokens on one page.
 #[component]
 pub fn TokenList() -> Element {
-    let mut tokens = use_server_future(list_tokens)?;
+    let mut tokens = use_server_future(|| list_tokens(TokenListInput::default()))?;
     let opts = use_server_future(token_form_options)?;
 
     let rows = match &*tokens.read() {
@@ -234,9 +129,17 @@ pub fn TokenList() -> Element {
                 spawn(async move {
                     let oid = uuid::Uuid::parse_str(&oid_str).ok();
                     let wid = uuid::Uuid::parse_str(&wid_str).ok();
-                    match create_token(oid, input.label, k.clone(), wid, Some(role_val), input.expires_in_secs).await {
-                        Ok(token) => {
-                            created.set(Some(NewToken { token, kind: k }));
+                    let req = ApiTokenCreateInput {
+                        kind: k.clone(),
+                        label: input.label,
+                        organization_id: oid,
+                        webspace_id: wid,
+                        role: Some(role_val),
+                        expires_in_secs: input.expires_in_secs,
+                    };
+                    match create_token(req).await {
+                        Ok(r) => {
+                            created.set(Some(NewToken { token: r.token, kind: k }));
                             tokens.restart();
                         }
                         Err(e) => error.set(Some(format!("{e}"))),
@@ -295,7 +198,7 @@ pub fn TokenList() -> Element {
                 scope: t.scope.clone(),
                 scope_href: t.scope_href.clone(),
                 revoked: t.revoked,
-                expired: false,
+                expired: t.expired,
                 created: t.created_at.clone(),
                 expires: t.expires_at.clone(),
             }).collect::<Vec<_>>(),
@@ -304,7 +207,7 @@ pub fn TokenList() -> Element {
             show_expires: true,
             on_revoke: move |id: String| {
                 spawn(async move {
-                    if revoke_token(id).await.is_ok() {
+                    if revoke_token(TokenRevokeInput { id }).await.is_ok() {
                         tokens.restart();
                     }
                 });

@@ -688,6 +688,27 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
         );
     }
     {
+        let mut t = reg.resource("tokens", "token", "Tokens");
+        t.list(
+            "List API tokens: with webspace_id, that webspace's deploy tokens (org admin); without, all tokens capped at 100 (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::TokenListInput| async move {
+                endpoints::tokens::token_list(&pool, &p, input).await
+            },
+        );
+        t.create(
+            "Create a token; returns the plaintext secret once. kind 'deploy' + webspace_id needs org admin; admin/api/metrics kinds are admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::TokenCreateInput| async move {
+                endpoints::tokens::token_create(&pool, &p, input).await
+            },
+        );
+        t.delete(
+            "Revoke a token (row kept for audit): webspace-bound deploy tokens need org admin of the owning org; all others admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::TokenRevokeInput| async move {
+                endpoints::tokens::token_revoke(&pool, &p, input).await
+            },
+        );
+    }
+    {
         let mut s = reg.resource("sync", "sync", "Sync");
         s.custom(
             "trigger",

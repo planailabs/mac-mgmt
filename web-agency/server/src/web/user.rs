@@ -4,11 +4,8 @@ pub use plan_ai_auth::WebUser;
 /// into ServerFnError).
 pub trait WebUserExt {
     fn require_admin(&self) -> Result<(), dioxus::prelude::ServerFnError>;
-    fn require_org_admin(&self, org_id: &uuid::Uuid) -> Result<(), dioxus::prelude::ServerFnError>;
     /// Require read access to an organization. Admins always pass.
     fn require_org_read(&self, org_id: &uuid::Uuid) -> Result<(), dioxus::prelude::ServerFnError>;
-    /// Require write access to an organization. Admins always pass.
-    fn require_org_write(&self, org_id: &uuid::Uuid) -> Result<(), dioxus::prelude::ServerFnError>;
 }
 
 impl WebUserExt for WebUser {
@@ -17,24 +14,11 @@ impl WebUserExt for WebUser {
             .map_err(|e| dioxus::prelude::ServerFnError::new(e))
     }
 
-    fn require_org_admin(&self, org_id: &uuid::Uuid) -> Result<(), dioxus::prelude::ServerFnError> {
-        self.require_org_admin_str(org_id)
-            .map_err(|e| dioxus::prelude::ServerFnError::new(e))
-    }
-
     fn require_org_read(&self, org_id: &uuid::Uuid) -> Result<(), dioxus::prelude::ServerFnError> {
         if self.is_admin || self.org_ids().contains(org_id) {
             Ok(())
         } else {
             Err(dioxus::prelude::ServerFnError::new("access denied"))
-        }
-    }
-
-    fn require_org_write(&self, org_id: &uuid::Uuid) -> Result<(), dioxus::prelude::ServerFnError> {
-        if self.is_admin || self.write_org_ids().contains(org_id) {
-            Ok(())
-        } else {
-            Err(dioxus::prelude::ServerFnError::new("write access required"))
         }
     }
 }
