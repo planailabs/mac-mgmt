@@ -2914,6 +2914,39 @@ pub async fn admin_create_token(
 
 // ── Admin — Organization CRUD ───────────────────────────────────────
 
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub(crate) struct AdminOrganizationRow {
+    id: Uuid,
+    name: String,
+    created_at: DateTime<Utc>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/organizations",
+    tag = "Admin",
+    summary = "List all organizations",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "All organizations", body = Vec<AdminOrganizationRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+    ),
+)]
+#[rocket::get("/admin/organizations")]
+pub async fn admin_list_organizations(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<AdminOrganizationRow>>, Status> {
+    let rows = sqlx::query_as::<_, AdminOrganizationRow>(
+        "SELECT id, name, created_at FROM organizations ORDER BY name",
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct CreateOrganizationBody {
     pub name: String,
