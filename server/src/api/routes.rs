@@ -2912,6 +2912,75 @@ pub async fn admin_create_token(
     Ok((Status::Created, Json(CreatedToken { token: raw_token })))
 }
 
+// ── Admin — Organization CRUD ───────────────────────────────────────
+
+#[derive(Deserialize, ToSchema)]
+pub struct CreateOrganizationBody {
+    pub name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CreatedOrganization {
+    id: Uuid,
+    name: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/organizations",
+    tag = "Admin",
+    summary = "Create an organization",
+    security(("bearer" = [])),
+    request_body = CreateOrganizationBody,
+    responses(
+        (status = 201, description = "Organization created", body = CreatedOrganization),
+        (status = 400, description = "Invalid request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+        (status = 409, description = "Organization name already exists"),
+    ),
+)]
+#[rocket::post("/admin/organizations", data = "<body>")]
+pub async fn admin_create_organization(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    body: Json<CreateOrganizationBody>,
+) -> Result<(Status, Json<CreatedOrganization>), Status> {
+    let name = body.name.trim();
+    if name.is_empty() {
+        return Err(Status::BadRequest);
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct InsertedOrg {
+        id: Uuid,
+        name: String,
+    }
+    let row = sqlx::query_as::<_, InsertedOrg>(
+        "INSERT INTO organizations (name) VALUES ($1) RETURNING id, name",
+    )
+    .bind(name)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|e| {
+        if let Some(db_err) = e.as_database_error() {
+            if db_err.is_unique_violation() {
+                return Status::Conflict;
+            }
+        }
+        tracing::error!("admin_create_organization: insert {name}: {e}");
+        Status::InternalServerError
+    })?;
+
+    Ok((
+        Status::Created,
+        Json(CreatedOrganization {
+            id: row.id,
+            name: row.name,
+        }),
+    ))
+}
+
 // ── Admin — Organization token creation ─────────────────────────────
 
 #[derive(Deserialize, ToSchema)]

@@ -95,6 +95,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::post_assessment,
         routes::post_assessment_probe,
         // Admin
+        routes::admin_create_organization,
         routes::admin_list_clusters,
         routes::admin_create_cluster,
         routes::admin_delete_cluster,
@@ -353,6 +354,8 @@ pub fn build_rocket(
     // Management server routes — fleet orchestration, clusters, rollouts, healer
     if matches!(mode, ServerMode::Monolith | ServerMode::Mgmt) {
         api_routes.append(&mut rocket::routes![
+            // Admin — organizations
+            routes::admin_create_organization,
             // Admin — clusters
             routes::admin_list_clusters,
             routes::admin_create_cluster,
