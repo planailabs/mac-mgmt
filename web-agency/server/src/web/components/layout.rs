@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use plan_ai_design::{LanguagePicker, ThemeToggle};
 use serde::{Deserialize, Serialize};
 
-use super::navbar::Sidebar;
+use super::navbar::{MobileDrawer, Sidebar};
 use crate::web::app::Route;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,9 +103,14 @@ pub fn Layout() -> Element {
         _ => (false, String::new(), None, false),
     };
 
+    // Mobile drawer open/closed — shared between the topbar's hamburger
+    // and the drawer itself.
+    let mut drawer_open = use_signal(|| false);
+
     rsx! {
         div { class: "h-screen h-dvh w-full flex overflow-hidden",
             Sidebar { is_admin, show_billing }
+            MobileDrawer { is_admin, show_billing, is_open: drawer_open }
 
             div { class: "flex-1 flex flex-col min-w-0 overflow-hidden",
                 // Topbar
@@ -132,6 +137,30 @@ pub fn Layout() -> Element {
                                     stroke_linecap: "round",
                                     stroke_linejoin: "round",
                                     d: "M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3-3h-9m9 0-3-3m3 3-3 3",
+                                }
+                            }
+                        }
+                        // Hamburger — opens the mobile drawer where the
+                        // sidebar is hidden (below xl).
+                        button {
+                            class: "xl:hidden nav-icon-btn",
+                            "aria-expanded": "{drawer_open}",
+                            "aria-controls": "mobile-drawer",
+                            "aria-label": "Open main menu",
+                            onclick: move |_| {
+                                let open = *drawer_open.read();
+                                drawer_open.set(!open);
+                            },
+                            svg {
+                                class: "h-5 w-5",
+                                fill: "none",
+                                stroke: "currentColor",
+                                view_box: "0 0 24 24",
+                                path {
+                                    stroke_linecap: "round",
+                                    stroke_linejoin: "round",
+                                    stroke_width: "2",
+                                    d: "M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5",
                                 }
                             }
                         }

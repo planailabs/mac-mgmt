@@ -99,33 +99,105 @@ fn nav_items(is_admin: bool, show_billing: bool) -> Vec<NavItem> {
 
 #[component]
 pub fn Sidebar(is_admin: bool, show_billing: bool) -> Element {
-    let items = nav_items(is_admin, show_billing);
-
     rsx! {
         aside { class: "hidden xl:flex flex-col w-56 shrink-0 border-r border-border bg-surface-1",
             div { class: "h-14 flex items-center px-4 border-b border-border",
                 span { class: "text-lg font-bold text-fg", "WA" }
             }
 
-            nav { class: "flex-1 overflow-y-auto py-2 px-2",
-                for item in &items {
-                    Link {
-                        to: item.route.clone(),
-                        class: "flex items-center gap-3 px-3 py-2 rounded-md text-sm text-fg-muted hover:bg-surface-2 hover:text-fg transition-colors",
+            NavLinkList { is_admin, show_billing, on_navigate: |_| {} }
+        }
+    }
+}
+
+/// The nav link list, shared between the desktop sidebar and the mobile
+/// drawer (which passes `on_navigate` to close itself).
+#[component]
+fn NavLinkList(is_admin: bool, show_billing: bool, on_navigate: EventHandler<()>) -> Element {
+    let items = nav_items(is_admin, show_billing);
+
+    rsx! {
+        nav { class: "flex-1 overflow-y-auto py-2 px-2",
+            for item in items {
+                Link {
+                    to: item.route.clone(),
+                    class: "flex items-center gap-3 px-3 py-2 rounded-md text-sm text-fg-muted hover:bg-surface-2 hover:text-fg transition-colors",
+                    onclick: move |_| on_navigate.call(()),
+                    svg {
+                        class: "h-5 w-5 shrink-0",
+                        fill: "none",
+                        view_box: "0 0 24 24",
+                        stroke_width: "1.5",
+                        stroke: "currentColor",
+                        path {
+                            stroke_linecap: "round",
+                            stroke_linejoin: "round",
+                            d: item.icon,
+                        }
+                    }
+                    span { "{item.label}" }
+                }
+            }
+        }
+    }
+}
+
+/// Slide-in navigation for screens below `xl`, where the sidebar is
+/// hidden. Opened by the topbar hamburger via the shared signal.
+#[component]
+pub fn MobileDrawer(is_admin: bool, show_billing: bool, is_open: Signal<bool>) -> Element {
+    let open = *is_open.read();
+
+    // Backdrop tints the canvas (matches the page theme rather than
+    // contrasting it) so dark mode gets a dark scrim and light mode a
+    // light one.
+    let backdrop_cls = if open {
+        "fixed inset-0 bg-bg/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
+    } else {
+        "fixed inset-0 bg-bg/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
+    };
+
+    let drawer_cls = if open {
+        "fixed inset-y-0 right-0 max-w-xs w-full bg-surface-1 shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-border translate-x-0 pointer-events-auto"
+    } else {
+        "fixed inset-y-0 right-0 max-w-xs w-full bg-surface-1 shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-border translate-x-full pointer-events-none"
+    };
+
+    rsx! {
+        div { class: "xl:hidden relative z-50",
+            // Backdrop — taps close the drawer.
+            div {
+                class: backdrop_cls,
+                "aria-hidden": "true",
+                onclick: move |_| is_open.set(false),
+            }
+
+            div { class: drawer_cls, id: "mobile-drawer",
+                div { class: "h-14 shrink-0 flex items-center justify-between px-4 border-b border-border",
+                    span { class: "text-lg font-bold text-fg", "WA" }
+                    button {
+                        class: "nav-icon-btn",
+                        "aria-label": "Close menu",
+                        onclick: move |_| is_open.set(false),
                         svg {
-                            class: "h-5 w-5 shrink-0",
+                            class: "h-5 w-5",
                             fill: "none",
-                            view_box: "0 0 24 24",
-                            stroke_width: "1.5",
                             stroke: "currentColor",
+                            view_box: "0 0 24 24",
                             path {
                                 stroke_linecap: "round",
                                 stroke_linejoin: "round",
-                                d: item.icon,
+                                stroke_width: "2",
+                                d: "M6 18L18 6M6 6l12 12",
                             }
                         }
-                        span { "{item.label}" }
                     }
+                }
+
+                NavLinkList {
+                    is_admin,
+                    show_billing,
+                    on_navigate: move |_| is_open.set(false),
                 }
             }
         }
