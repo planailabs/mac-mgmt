@@ -82,10 +82,11 @@ fn param_field(
     match spec.ty {
         InputType::String => {
             let text = current.as_ref().and_then(Value::as_str).unwrap_or("").to_string();
+            let kind = if spec.secret { "password" } else { "text" };
             rsx! {
                 input {
                     class: "input",
-                    r#type: "text",
+                    r#type: kind,
                     value: "{text}",
                     oninput: move |e| {
                         values.write().insert(key.clone(), Value::String(e.value()));

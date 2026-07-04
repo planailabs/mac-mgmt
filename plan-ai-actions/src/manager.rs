@@ -51,7 +51,12 @@ pub struct NewRun {
     /// Serialized authz snapshot, fed back to the dispatcher factory on
     /// (re-)claim so the run keeps executing as the original caller.
     pub principal: Value,
+    /// Display copy of the parameters (secret inputs already redacted) —
+    /// what run history shows.
     pub params: Map<String, Value>,
+    /// Real initial variable state the engine executes with (secrets intact;
+    /// the store scrubs this column on finish).
+    pub variables: Map<String, Value>,
 }
 
 /// A persisted run as loaded from the store.
@@ -88,7 +93,9 @@ pub trait RunStore: Send + Sync {
         steps: &[StepReport],
         log: &[RunLogEvent],
     ) -> Result<(), EngineError>;
-    /// Mark the run `ok`/`failed` with its final report and log.
+    /// Mark the run `ok`/`failed` with its final report and log, and scrub
+    /// the checkpoint `variables` (only needed for resume; they may hold
+    /// secrets the report/log already redact).
     async fn finish(
         &self,
         id: Uuid,
@@ -163,10 +170,13 @@ impl RunManager {
     }
 
     /// Persist and queue a new run; workers pick it up immediately.
+    /// `variables` is what the engine executes with; `display_params` is the
+    /// (secret-redacted) copy run history stores.
     pub async fn enqueue(
         &self,
         template_name: &str,
-        params: Map<String, Value>,
+        variables: Map<String, Value>,
+        display_params: Map<String, Value>,
         principal: Value,
         subject: &str,
         total_steps: u32,
@@ -176,7 +186,8 @@ impl RunManager {
             template_name: template_name.to_string(),
             subject: subject.to_string(),
             principal,
-            params,
+            params: display_params,
+            variables,
         };
         self.store.enqueue(&run).await?;
         let live = Arc::new(LiveRun {
@@ -485,7 +496,7 @@ mod tests {
                         params: run.params.clone(),
                         status: StoreStatus::Queued,
                         next_step: 0,
-                        variables: run.params.clone(),
+                        variables: run.variables.clone(),
                         steps: Vec::new(),
                         log: Vec::new(),
                         report: None,
@@ -541,6 +552,7 @@ mod tests {
             run.status = if ok { StoreStatus::Ok } else { StoreStatus::Failed };
             run.report = Some(report.clone());
             run.log = log.to_vec();
+            run.variables = Map::new(); // scrubbed on finish, like PgRunStore
             Ok(())
         }
 
@@ -598,7 +610,7 @@ actions:
         let mgr = manager(store.clone(), vec![Ok(json!("r1")), Ok(json!("r2"))]);
         mgr.spawn_workers(1);
 
-        let id = mgr.enqueue("t", params(), json!({}), "tester", 2).await.unwrap();
+        let id = mgr.enqueue("t", params(), params(), json!({}), "tester", 2).await.unwrap();
         let report = mgr.wait_finished(id, Duration::from_secs(5)).await.unwrap();
         assert!(report.ok);
         assert_eq!(report.steps.len(), 2);
@@ -621,7 +633,7 @@ actions:
         let mgr = manager(store, vec![Ok(json!("r1")), Ok(json!("r2"))]);
         mgr.spawn_workers(1);
 
-        let id = mgr.enqueue("t", params(), json!({}), "tester", 2).await.unwrap();
+        let id = mgr.enqueue("t", params(), params(), json!({}), "tester", 2).await.unwrap();
         mgr.wait_finished(id, Duration::from_secs(5)).await.unwrap();
 
         let all = mgr.wait_status(id, None, Duration::from_millis(10)).await.unwrap().unwrap();
@@ -644,6 +656,7 @@ actions:
             subject: "tester".into(),
             principal: json!({}),
             params: params(),
+            variables: params(),
         };
         store.enqueue(&run).await.unwrap();
         let steps = vec![StepReport {
@@ -673,7 +686,7 @@ actions:
         let store = Arc::new(MemStore::default());
         let mgr = manager(store, vec![]);
         mgr.spawn_workers(1);
-        let id = mgr.enqueue("missing", Map::new(), json!({}), "tester", 0).await.unwrap();
+        let id = mgr.enqueue("missing", Map::new(), Map::new(), json!({}), "tester", 0).await.unwrap();
         let err = mgr.wait_finished(id, Duration::from_secs(5)).await;
         // Run finishes as failed (report present, ok = false).
         match err {

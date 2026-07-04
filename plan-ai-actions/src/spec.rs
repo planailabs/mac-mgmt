@@ -53,6 +53,10 @@ pub struct InputSpec {
     /// endpoint populates the picker.
     #[serde(default, rename = "ref")]
     pub reference: Option<String>,
+    /// Secret parameter: rendered as a password field and redacted in stored
+    /// run params, reports, and logs.
+    #[serde(default)]
+    pub secret: bool,
 }
 
 /// One step: dispatch `action` (a registry tool name, or a `_builtin`) with
@@ -75,6 +79,11 @@ pub struct StepSpec {
     /// `item_index` in scope and `outputs` collected into arrays.
     #[serde(default, rename = "loop", alias = "with_items")]
     pub loop_items: Option<serde_json::Value>,
+    /// Redact this step's rendered inputs, outputs, and errors in logs and
+    /// reports (like Ansible's no_log). Variables set by this step are also
+    /// redacted in the final report. Mark every step that touches a secret.
+    #[serde(default)]
+    pub no_log: bool,
     /// Extra dispatch attempts after a failure (0 = single attempt).
     #[serde(default)]
     pub retries: u32,

@@ -49,10 +49,15 @@ pub struct BuiltinRegistry {
     fns: HashMap<String, BuiltinFn>,
 }
 
+/// Placeholder for values hidden by `no_log` steps / `secret` inputs.
+pub const REDACTED: &str = "[redacted]";
+
 impl BuiltinRegistry {
     pub fn standard() -> Self {
         let mut reg = Self::default();
         reg.register_function("_filter", Arc::new(builtin_filter));
+        reg.register_function("_coalesce", Arc::new(builtin_coalesce));
+        reg.register_function("_assert", Arc::new(builtin_assert));
         reg
     }
 
@@ -91,7 +96,43 @@ fn builtin_filter(inputs: &Map<String, Value>) -> Result<Value, EngineError> {
         })
         .cloned()
         .collect();
-    Ok(json!({ "found": !matches.is_empty(), "matches": matches }))
+    let first = matches.first().cloned().unwrap_or(Value::Null);
+    Ok(json!({ "found": !matches.is_empty(), "matches": matches, "first": first }))
+}
+
+/// `_coalesce`: `{ values: [...] }` -> `{ value: <first non-null> }` (null if
+/// none). Pair with `$?` refs to pick "the id we just created, else the one
+/// that already existed".
+fn builtin_coalesce(inputs: &Map<String, Value>) -> Result<Value, EngineError> {
+    let values = inputs
+        .get("values")
+        .and_then(Value::as_array)
+        .ok_or_else(|| EngineError::Invalid("_coalesce: 'values' must be an array".into()))?;
+    let value = values.iter().find(|v| !v.is_null()).cloned().unwrap_or(Value::Null);
+    Ok(json!({ "value": value }))
+}
+
+/// `_assert`: `{ that, message? }` — fail the step unless `that` is truthy.
+/// Jinja comparisons render as the strings "true"/"false", so those are
+/// treated as their boolean values.
+fn builtin_assert(inputs: &Map<String, Value>) -> Result<Value, EngineError> {
+    let that = inputs
+        .get("that")
+        .ok_or_else(|| EngineError::Invalid("_assert: 'that' is required".into()))?;
+    let ok = match that {
+        Value::String(s) if s == "false" => false,
+        Value::String(s) if s == "true" => true,
+        other => truthy(other),
+    };
+    if ok {
+        Ok(json!({ "ok": true }))
+    } else {
+        let message = inputs
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("assertion failed");
+        Err(EngineError::Other(message.to_string()))
+    }
 }
 
 /// Progress events emitted by [`execute_from`] as the run advances.
@@ -303,6 +344,10 @@ fn resolve_value(
         Value::String(s) => {
             if let Some(rest) = s.strip_prefix("$$") {
                 Ok(Value::String(format!("${rest}")))
+            } else if let Some(path) = s.strip_prefix("$?") {
+                // Lenient reference: null instead of an error when the path is
+                // missing (e.g. an output a skipped create never set).
+                Ok(lookup_scope_path(scope, path).unwrap_or(Value::Null))
             } else if let Some(path) = s.strip_prefix('$') {
                 lookup_scope_path(scope, path)
             } else if s.contains("{{") || s.contains("{%") {
@@ -392,6 +437,36 @@ pub async fn execute_from(
 ) -> RunReport {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
+    // Small helpers templates keep needing: "example.com" | split(".") | first
+    // -> "example"; machine_id | prefix(12) -> first 12 chars.
+    env.add_filter("split", |s: String, sep: String| -> Vec<String> {
+        s.split(&sep).map(str::to_string).collect()
+    });
+    env.add_filter("prefix", |s: String, n: usize| -> String {
+        s.chars().take(n).collect()
+    });
+
+    // Values that must never appear in logs, reports, or stored params:
+    // secret inputs plus everything a no_log step outputs.
+    let mut secret_vars: std::collections::HashSet<String> = spec
+        .inputs
+        .iter()
+        .filter(|(_, input)| input.secret)
+        .map(|(name, _)| name.clone())
+        .collect();
+    for step in &spec.actions {
+        if step.no_log {
+            secret_vars.extend(step.outputs.values().cloned());
+        }
+    }
+    let redact_vars = |mut variables: Map<String, Value>| {
+        for name in &secret_vars {
+            if variables.contains_key(name) {
+                variables.insert(name.clone(), json!(REDACTED));
+            }
+        }
+        variables
+    };
 
     let mut steps = prior_steps;
 
@@ -404,7 +479,14 @@ pub async fn execute_from(
         });
         let log = |message: String| on_event(RunEvent::Log { step_index: idx, message });
 
-        let report = run_step(step, &mut variables, &env, dispatcher, builtins, &log).await;
+        let mut report = run_step(step, &mut variables, &env, dispatcher, builtins, &log).await;
+        if step.no_log {
+            // Sanitize everything value-bearing; the log lines were already
+            // redacted at emission time inside run_step.
+            report.inputs = report.inputs.map(|_| json!(REDACTED));
+            report.output = report.output.map(|_| json!(REDACTED));
+            report.error = report.error.map(|_| format!("step failed ({REDACTED} by no_log)"));
+        }
         let failed = report.status == StepStatus::Failed;
 
         steps.push(report.clone());
@@ -415,13 +497,13 @@ pub async fn execute_from(
         });
 
         if failed {
-            let report = RunReport { ok: false, steps, variables };
+            let report = RunReport { ok: false, steps, variables: redact_vars(variables) };
             on_event(RunEvent::RunFinished { report: report.clone() });
             return report;
         }
     }
 
-    let report = RunReport { ok: true, steps, variables };
+    let report = RunReport { ok: true, steps, variables: redact_vars(variables) };
     on_event(RunEvent::RunFinished { report: report.clone() });
     report
 }
@@ -456,7 +538,11 @@ async fn run_step(
         error: None,
     };
     let fail = |report: StepReport, error: EngineError| {
-        log(format!("failed: {error}"));
+        if step.no_log {
+            log(format!("failed: {REDACTED}"));
+        } else {
+            log(format!("failed: {error}"));
+        }
         StepReport { status: StepStatus::Failed, error: Some(error.to_string()), ..report }
     };
 
@@ -516,7 +602,11 @@ async fn run_step(
             Ok(_) => unreachable!("resolving an object yields an object"),
             Err(e) => return fail(base(StepStatus::Ok), e),
         };
-        log(format!("inputs: {}", Value::Object(resolved.clone())));
+        if step.no_log {
+            log(format!("inputs: {REDACTED}"));
+        } else {
+            log(format!("inputs: {}", Value::Object(resolved.clone())));
+        }
 
         // Dispatch with retries.
         let attempts = step.retries + 1;
@@ -536,11 +626,13 @@ async fn run_step(
                     break;
                 }
                 Err(e) if attempt < attempts => {
-                    log(format!("attempt {attempt}/{attempts} failed: {e}; retrying in {}s", step.delay));
+                    let detail = if step.no_log { REDACTED.to_string() } else { e.to_string() };
+                    log(format!("attempt {attempt}/{attempts} failed: {detail}; retrying in {}s", step.delay));
                     tokio::time::sleep(std::time::Duration::from_secs(step.delay)).await;
                 }
                 Err(e) => {
-                    log(format!("attempt {attempt}/{attempts} failed: {e}"));
+                    let detail = if step.no_log { REDACTED.to_string() } else { e.to_string() };
+                    log(format!("attempt {attempt}/{attempts} failed: {detail}"));
                     let inputs = collect_iter(items.is_some(), iter_inputs, Value::Object(resolved));
                     return StepReport {
                         inputs: Some(inputs),
@@ -551,7 +643,11 @@ async fn run_step(
             }
         }
         let output = output.expect("loop above either sets output or returns");
-        log(format!("output: {output}"));
+        if step.no_log {
+            log(format!("output: {REDACTED}"));
+        } else {
+            log(format!("output: {output}"));
+        }
 
         any_ran = true;
         iter_inputs.push(Value::Object(resolved));
@@ -937,12 +1033,149 @@ actions:
             .unwrap(),
         )
         .unwrap();
-        assert_eq!(out, json!({ "found": true, "matches": [{ "name": "b" }] }));
+        assert_eq!(
+            out,
+            json!({ "found": true, "matches": [{ "name": "b" }], "first": { "name": "b" } })
+        );
 
         let out = builtin_filter(
             json!({ "list": ["x"], "contains": "y" }).as_object().unwrap(),
         )
         .unwrap();
         assert_eq!(out["found"], json!(false));
+        assert_eq!(out["first"], json!(null));
+    }
+
+    #[test]
+    fn coalesce_and_assert_builtins() {
+        let out = builtin_coalesce(
+            json!({ "values": [null, null, "id-2", "id-3"] }).as_object().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(out, json!({ "value": "id-2" }));
+        assert_eq!(
+            builtin_coalesce(json!({ "values": [null] }).as_object().unwrap()).unwrap(),
+            json!({ "value": null })
+        );
+
+        assert!(builtin_assert(json!({ "that": true }).as_object().unwrap()).is_ok());
+        // Jinja comparisons render as "true"/"false" strings.
+        assert!(builtin_assert(json!({ "that": "true" }).as_object().unwrap()).is_ok());
+        let err = builtin_assert(
+            json!({ "that": "false", "message": "domain not found" }).as_object().unwrap(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("domain not found"));
+        assert!(builtin_assert(json!({ "that": null }).as_object().unwrap()).is_err());
+    }
+
+    #[tokio::test]
+    async fn lenient_refs_and_coalesce_enable_create_if_missing() {
+        // The skipped create never sets `created_id`; $? + _coalesce still
+        // resolve the final id from the pre-existing row.
+        let yaml = r#"
+inputs:
+  name: { type: string }
+actions:
+  - name: list
+    action: thing_list
+    outputs: { ".": things }
+  - name: check
+    action: _filter
+    inputs: { list: "$things", field: name, contains: "{{ name }}" }
+    outputs: { found: exists, first: existing }
+  - name: create
+    action: thing_create
+    if: { is_not: "$exists" }
+    inputs: { name: "{{ name }}" }
+    outputs: { ".": created_id }
+  - name: resolve id
+    action: _coalesce
+    inputs: { values: ["$?created_id", "$?existing.id"] }
+    outputs: { value: thing_id }
+"#;
+        let dispatcher =
+            MockDispatcher::new(vec![Ok(json!([{ "name": "mine", "id": "pre-existing" }]))]);
+        let (report, _) = run(yaml, json!({ "name": "mine" }), &dispatcher).await;
+        assert!(report.ok, "{:?}", report.steps);
+        assert_eq!(report.steps[2].status, StepStatus::Skipped);
+        assert_eq!(report.variables["thing_id"], json!("pre-existing"));
+        assert_eq!(dispatcher.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn no_log_and_secret_inputs_redact() {
+        let yaml = r#"
+inputs:
+  password: { type: string, secret: true }
+actions:
+  - name: mint token
+    action: token_create
+    no_log: true
+    inputs: { pw: "{{ password }}" }
+    outputs: { token: api_token }
+  - name: use token
+    action: consume
+    no_log: true
+    inputs: { auth: "$api_token" }
+"#;
+        let dispatcher = MockDispatcher::new(vec![
+            Ok(json!({ "token": "super-secret" })),
+            Ok(json!("done")),
+        ]);
+        let (report, events) = run(yaml, json!({ "password": "hunter2" }), &dispatcher).await;
+        assert!(report.ok);
+
+        let dump = serde_json::to_string(&report).unwrap();
+        assert!(!dump.contains("super-secret"), "report leaks token: {dump}");
+        assert!(!dump.contains("hunter2"), "report leaks password: {dump}");
+        assert_eq!(report.variables["api_token"], json!(REDACTED));
+        assert_eq!(report.variables["password"], json!(REDACTED));
+        assert_eq!(report.steps[0].inputs, Some(json!(REDACTED)));
+        assert_eq!(report.steps[0].output, Some(json!(REDACTED)));
+
+        for event in &events {
+            if let RunEvent::Log { message, .. } = event {
+                assert!(!message.contains("super-secret"), "log leaks token: {message}");
+                assert!(!message.contains("hunter2"), "log leaks password: {message}");
+            }
+        }
+        // The dispatcher still received the real values.
+        let calls = dispatcher.calls.lock().unwrap();
+        assert_eq!(calls[0].1, json!({ "pw": "hunter2" }));
+        assert_eq!(calls[1].1, json!({ "auth": "super-secret" }));
+    }
+
+    #[tokio::test]
+    async fn jinja_split_prefix_filters() {
+        let yaml = r#"
+inputs:
+  domain: { type: string }
+  machine: { type: string }
+actions:
+  - name: derive
+    action: consume
+    inputs:
+      slug: "{{ domain | split('.') | first }}"
+      prefix: "{{ machine | prefix(12) }}"
+      relay: "https://{{ machine | prefix(12) }}-openclaw.plan-ai-relay.com"
+"#;
+        let dispatcher = MockDispatcher::new(vec![Ok(json!(null))]);
+        let (report, _) = run(
+            yaml,
+            json!({ "domain": "example.com", "machine": "abcdef123456xyz" }),
+            &dispatcher,
+        )
+        .await;
+        assert!(report.ok, "{:?}", report.steps);
+        let calls = dispatcher.calls.lock().unwrap();
+        assert_eq!(
+            calls[0].1,
+            json!({
+                "slug": "example",
+                "prefix": "abcdef123456",
+                "relay": "https://abcdef123456-openclaw.plan-ai-relay.com"
+            })
+        );
     }
 }
