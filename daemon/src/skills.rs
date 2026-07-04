@@ -4,6 +4,56 @@ use std::path::Path;
 
 const BUILTIN_PREFIX: &str = "builtin://";
 
+/// Toggle write permission on the skills dir (and real subdirs holding
+/// builtin skills) so agents don't write to it by accident. Symlinks to
+/// /nix/store are left alone — the store is already read-only.
+#[cfg(unix)]
+fn set_skills_writable(dir: &Path, writable: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir_mode, file_mode) = if writable {
+        (0o755, 0o644)
+    } else {
+        (0o555, 0o444)
+    };
+    fn chmod(path: &Path, mode: u32) {
+        if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)) {
+            tracing::warn!("chmod {:o} {} failed: {e}", mode, path.display());
+        }
+    }
+    fn walk(path: &Path, dir_mode: u32, file_mode: u32) {
+        chmod(path, dir_mode);
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_symlink() {
+                continue;
+            }
+            if p.is_dir() {
+                walk(&p, dir_mode, file_mode);
+            } else {
+                chmod(&p, file_mode);
+            }
+        }
+    }
+    walk(dir, dir_mode, file_mode);
+}
+
+// ponytail: no-op on non-unix — readonly dir attributes don't block writes on Windows
+#[cfg(not(unix))]
+fn set_skills_writable(_dir: &Path, _writable: bool) {}
+
+/// Relocks the skills dir read-only when dropped, so early returns and
+/// errors during sync can't leave it writable.
+struct WritableGuard<'a>(&'a Path);
+
+impl Drop for WritableGuard<'_> {
+    fn drop(&mut self) {
+        set_skills_writable(self.0, false);
+    }
+}
+
 #[derive(rust_embed::Embed)]
 #[folder = "../skills/"]
 #[include = "*/SKILL.md"]
@@ -55,6 +105,33 @@ async fn nix_system() -> Result<String> {
     Ok(raw.trim().trim_matches('"').to_string())
 }
 
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn readonly_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("skills");
+        let sub = dir.join("builtin-skill");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("SKILL.md"), "x").unwrap();
+
+        set_skills_writable(&dir, false);
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o555);
+        assert_eq!(mode(&sub), 0o555);
+        assert_eq!(mode(&sub.join("SKILL.md")), 0o444);
+        assert!(std::fs::write(sub.join("SKILL.md"), "y").is_err());
+
+        // unlock so writes work again and tempdir cleanup can delete it
+        set_skills_writable(&dir, true);
+        assert_eq!(mode(&dir), 0o755);
+        std::fs::write(sub.join("SKILL.md"), "y").unwrap();
+    }
+}
+
 pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Result<()> {
     let arch = nix_system().await?;
     tracing::info!("syncing skills for architecture: {arch}");
@@ -84,9 +161,12 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
         tracing::debug!("no skills assigned to this cluster");
     }
 
-    // Ensure skills directory exists
+    // Ensure skills directory exists, unlock it for the duration of the
+    // sync; relocked read-only on drop (including error paths).
     std::fs::create_dir_all(skills_dir)
         .with_context(|| format!("failed to create {}", skills_dir.display()))?;
+    set_skills_writable(skills_dir, true);
+    let _relock = WritableGuard(skills_dir);
 
     // Realise each skill with --add-root to create a GC root link in skills_dir
     let mut up_to_date = 0u32;
