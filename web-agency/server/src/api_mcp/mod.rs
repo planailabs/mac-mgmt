@@ -929,6 +929,211 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use super::*;
+    use plan_ai_actions::engine::{ActionDispatcher, EngineError};
+    use serde_json::{Value, json};
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::Mutex;
+
+    /// Replies per action name; records the dispatched call order.
+    struct ScriptedDispatcher {
+        replies: Mutex<HashMap<&'static str, VecDeque<Value>>>,
+        calls: Mutex<Vec<(String, Value)>>,
+    }
+
+    impl ScriptedDispatcher {
+        fn new(script: Vec<(&'static str, Value)>) -> Self {
+            let mut replies: HashMap<&'static str, VecDeque<Value>> = HashMap::new();
+            for (action, reply) in script {
+                replies.entry(action).or_default().push_back(reply);
+            }
+            Self { replies: Mutex::new(replies), calls: Mutex::new(Vec::new()) }
+        }
+
+        fn called(&self, action: &str) -> usize {
+            self.calls.lock().unwrap().iter().filter(|(a, _)| a == action).count()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ActionDispatcher for ScriptedDispatcher {
+        async fn call(&self, action: &str, args: Value) -> Result<Value, EngineError> {
+            self.calls.lock().unwrap().push((action.to_string(), args));
+            self.replies
+                .lock()
+                .unwrap()
+                .get_mut(action)
+                .and_then(VecDeque::pop_front)
+                .ok_or_else(|| EngineError::Dispatch(format!("unscripted action '{action}'")))
+        }
+    }
+
+    fn provision_spec() -> plan_ai_actions::spec::TemplateSpec {
+        endpoints::action_templates::baked_templates()
+            .iter()
+            .find(|(name, _)| name == "provision-relay-webspaces")
+            .map(|(_, spec)| spec.clone())
+            .expect("provision template baked in")
+    }
+
+    fn provision_params() -> serde_json::Map<String, Value> {
+        json!({
+            "domain": "example.com",
+            "organization": "3fa5e0a0-0000-0000-0000-000000000001",
+            "admin_credential": "3fa5e0a0-0000-0000-0000-000000000002",
+        })
+        .as_object()
+        .cloned()
+        .unwrap()
+    }
+
+    fn fleet_script() -> Vec<(&'static str, Value)> {
+        vec![
+            ("domain_list", json!([{ "id": "dom-1", "name": "example.com" }])),
+            ("mac_mgmt_clusters", json!([{ "id": "clu-1", "name": "example.com" }])),
+            (
+                "mac_mgmt_machines",
+                json!([{ "instance_id": "abcdef123456xyz", "hostname": "m1", "version": "1" }]),
+            ),
+        ]
+    }
+
+    fn verify_script() -> Vec<(&'static str, Value)> {
+        vec![
+            (
+                "webspace_get",
+                json!({ "hosting_type": "relay", "auth_mode": "basic",
+                        "relay_url": "https://abcdef123456-openclaw.plan-ai-relay.com" }),
+            ),
+            (
+                "webspace_get",
+                json!({ "hosting_type": "relay", "auth_mode": "basic",
+                        "relay_url": "https://abcdef123456-astro.plan-ai-relay.com" }),
+            ),
+            ("webspace_host_get", json!({ "id": "h-chat", "kind": "proxy" })),
+            ("webspace_host_get", json!({ "id": "h-dev", "kind": "proxy" })),
+        ]
+    }
+
+    async fn run_provision(dispatcher: &ScriptedDispatcher) -> plan_ai_actions::report::RunReport {
+        let spec = provision_spec();
+        let vars = plan_ai_actions::engine::validate_params(&spec, provision_params())
+            .expect("params validate");
+        plan_ai_actions::engine::execute(
+            &spec,
+            vars,
+            dispatcher,
+            &plan_ai_actions::engine::BuiltinRegistry::standard(),
+            &plan_ai_actions::engine::no_events,
+        )
+        .await
+    }
+
+    /// Fresh fleet: every resource is created, the token never leaks into
+    /// the report, and the relay URLs derive from the machine prefix.
+    #[tokio::test]
+    async fn provision_template_creates_everything_when_missing() {
+        let mut script = fleet_script();
+        script.extend([
+            ("credential_list", json!([])),
+            ("mac_mgmt_token_create", json!({ "token": "super-secret-token" })),
+            ("credential_create", json!("cred-1")),
+            ("basic_auth_list_list", json!([])),
+            ("basic_auth_list_create", json!("ba-1")),
+            ("webspace_host_list", json!([])),
+            ("webspace_host_create", json!("h-chat")),
+            ("webspace_host_create", json!("h-dev")),
+            ("webspace_list", json!([])),
+            ("webspace_create", json!("w-chat")),
+            ("webspace_create", json!("w-dev")),
+            ("subdomain_create", json!("s-chat")),
+            ("subdomain_create", json!("s-dev")),
+            ("webspace_host_bind_domain", json!(null)),
+            ("webspace_host_bind_domain", json!(null)),
+        ]);
+        script.extend(verify_script());
+        let dispatcher = ScriptedDispatcher::new(script);
+
+        let report = run_provision(&dispatcher).await;
+        assert!(report.ok, "steps: {:#?}", report.steps);
+
+        // The chat folder was created with the derived relay URL + wiring.
+        let create = dispatcher
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(a, args)| a == "webspace_create" && args["name"] == json!("chat.example.com"))
+            .map(|(_, args)| args.clone())
+            .expect("chat webspace created");
+        assert_eq!(create["relay_url"], json!("https://abcdef123456-openclaw.plan-ai-relay.com"));
+        assert_eq!(create["relay_credential_id"], json!("cred-1"));
+        assert_eq!(create["auth_basic_list_id"], json!("ba-1"));
+        assert_eq!(create["auth_mode"], json!("basic"));
+
+        // Bindings reference the upserted subdomains.
+        let bind = dispatcher
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(a, args)| {
+                a == "webspace_host_bind_domain" && args["hostname"] == json!("dev.example.com")
+            })
+            .map(|(_, args)| args.clone())
+            .expect("dev bound");
+        assert_eq!(bind["subdomain_id"], json!("s-dev"));
+        assert_eq!(bind["domain_id"], json!("dom-1"));
+
+        // The setting token never reaches the report (no_log).
+        let dump = serde_json::to_string(&report).unwrap();
+        assert!(!dump.contains("super-secret-token"), "token leaked: {dump}");
+    }
+
+    /// Everything already exists: only the reads and the subdomain upserts
+    /// run — no token mint, no create, no re-bind.
+    #[tokio::test]
+    async fn provision_template_is_idempotent() {
+        let mut script = fleet_script();
+        script.extend([
+            ("credential_list", json!([{ "id": "cred-1", "name": "example_relay" }])),
+            ("basic_auth_list_list", json!([{ "id": "ba-1", "name": "example" }])),
+            (
+                "webspace_host_list",
+                json!([
+                    { "id": "h-chat", "name": "chat.example.com", "hostname": "chat.example.com" },
+                    { "id": "h-dev", "name": "dev.example.com", "hostname": "dev.example.com" },
+                ]),
+            ),
+            (
+                "webspace_list",
+                json!([
+                    { "id": "w-chat", "name": "chat.example.com" },
+                    { "id": "w-dev", "name": "dev.example.com" },
+                ]),
+            ),
+            ("subdomain_create", json!("s-chat")),
+            ("subdomain_create", json!("s-dev")),
+        ]);
+        script.extend(verify_script());
+        let dispatcher = ScriptedDispatcher::new(script);
+
+        let report = run_provision(&dispatcher).await;
+        assert!(report.ok, "steps: {:#?}", report.steps);
+
+        for action in [
+            "mac_mgmt_token_create",
+            "credential_create",
+            "basic_auth_list_create",
+            "webspace_host_create",
+            "webspace_create",
+            "webspace_host_bind_domain",
+        ] {
+            assert_eq!(dispatcher.called(action), 0, "{action} must be skipped on re-run");
+        }
+        assert_eq!(dispatcher.called("subdomain_create"), 2, "subdomain upserts always run");
+        assert_eq!(report.variables["chat_webspace_id"], json!("w-chat"));
+        assert_eq!(report.variables["relay_credential_id"], json!("cred-1"));
+    }
 
     /// `http_router` panics if the schemars-generated OpenAPI document does
     /// not parse into utoipa's model (e.g. boolean schemas from

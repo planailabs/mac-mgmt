@@ -1,0 +1,315 @@
+# Provision Agency relay webspaces (chat.<domain> + dev.<domain>) from a
+# mac-mgmt fleet server. Idempotent: every resource is find-or-create, so
+# re-running after a partial failure only fills the gaps.
+#
+# Requires: the domain imported into the organization, a mac-mgmt cluster
+# named after it (or cluster_name), and a stored 'mac-mgmt' credential with
+# an ADMIN token (picked below) — admin-only endpoints do the fleet calls.
+# The minted setting token flows through no_log steps and never reaches
+# logs, reports, or run history.
+description: Provision relay webspaces (chat + dev) for a domain from a mac-mgmt fleet server
+inputs:
+  domain:
+    type: string
+    label: Customer domain
+    description: Apex domain, e.g. example.com (must already be imported)
+  organization:
+    type: id
+    ref: organizations
+    label: Organization
+  admin_credential:
+    type: id
+    ref: credentials
+    label: mac-mgmt admin credential
+    description: mac-mgmt credential holding server_url + an admin token
+  cluster_name:
+    type: string
+    label: Cluster name
+    description: mac-mgmt cluster; defaults to the domain
+    required: false
+    default: ""
+  token_label:
+    type: string
+    label: Setting-token label
+    default: web-agency-relay
+
+actions:
+  # ── Resolve domain + fleet ─────────────────────────────────────────
+  - name: list domains
+    action: domain_list
+    outputs: { ".": domains }
+
+  - name: find domain
+    action: _filter
+    inputs: { list: "$domains", field: name, contains: "{{ domain }}" }
+    outputs: { found: domain_found, first: domain_row }
+
+  - name: assert domain imported
+    action: _assert
+    inputs:
+      that: "$domain_found"
+      message: "domain {{ domain }} is not imported into the Agency"
+
+  - name: list mac-mgmt clusters
+    action: mac_mgmt_clusters
+    inputs: { credential_id: "$admin_credential" }
+    outputs: { ".": clusters }
+
+  - name: find cluster
+    action: _filter
+    inputs: { list: "$clusters", field: name, contains: "{{ cluster_name or domain }}" }
+    outputs: { found: cluster_found, first: cluster }
+
+  - name: assert cluster exists
+    action: _assert
+    inputs:
+      that: "$cluster_found"
+      message: "no mac-mgmt cluster named {{ cluster_name or domain }}"
+
+  - name: list machines
+    action: mac_mgmt_machines
+    inputs: { credential_id: "$admin_credential", cluster_id: "$cluster.id" }
+    outputs: { ".": machines }
+
+  - name: assert machine reported
+    action: _assert
+    inputs:
+      that: "{{ (machines | length) > 0 }}"
+      message: "cluster has no heartbeat-reporting machines"
+
+  # Relay URLs derive from the machine instance id, never the cluster id.
+  - name: derive machine prefix
+    action: _coalesce
+    inputs: { values: ["{{ machines[0].instance_id | prefix(12) }}"] }
+    outputs: { value: machine_prefix }
+
+  # ── Relay credential (find-or-create; token minted only when needed) ─
+  - name: list credentials
+    action: credential_list
+    outputs: { ".": credentials }
+
+  - name: find relay credential
+    action: _filter
+    inputs:
+      list: "$credentials"
+      field: name
+      contains: "{{ domain | split('.') | first }}_relay"
+    outputs: { found: credential_exists, first: existing_credential }
+
+  - name: mint setting token
+    action: mac_mgmt_token_create
+    if: { is_not: "$credential_exists" }
+    no_log: true
+    inputs:
+      credential_id: "$admin_credential"
+      cluster_id: "$cluster.id"
+      label: "{{ token_label }}"
+      kind: setting
+    outputs: { token: setting_token }
+
+  - name: create relay credential
+    action: credential_create
+    if: { is_not: "$credential_exists" }
+    no_log: true
+    inputs:
+      name: "{{ domain | split('.') | first }}_relay"
+      credential_type: mac-mgmt
+      organization_id: "$organization"
+      data_json: "{\"server_url\":\"https://api.plan.ai\",\"token\":\"{{ setting_token }}\"}"
+    outputs: { ".": created_credential_id }
+
+  - name: resolve relay credential id
+    action: _coalesce
+    inputs: { values: ["$?created_credential_id", "$?existing_credential.id"] }
+    outputs: { value: relay_credential_id }
+
+  # ── Basic-auth list (find-or-create; populating it is a separate task) ─
+  - name: list basic-auth lists
+    action: basic_auth_list_list
+    outputs: { ".": basic_auth_lists }
+
+  - name: find basic-auth list
+    action: _filter
+    inputs:
+      list: "$basic_auth_lists"
+      field: name
+      contains: "{{ domain | split('.') | first }}"
+    outputs: { found: basic_auth_exists, first: existing_basic_auth }
+
+  - name: create basic-auth list
+    action: basic_auth_list_create
+    if: { is_not: "$basic_auth_exists" }
+    inputs:
+      name: "{{ domain | split('.') | first }}"
+      organization_id: "$organization"
+    outputs: { ".": created_basic_auth_id }
+
+  - name: resolve basic-auth list id
+    action: _coalesce
+    inputs: { values: ["$?created_basic_auth_id", "$?existing_basic_auth.id"] }
+    outputs: { value: basic_auth_list_id }
+
+  # ── Proxy hosts (find-or-create) ───────────────────────────────────
+  - name: list hosts
+    action: webspace_host_list
+    outputs: { ".": hosts }
+
+  - name: find chat host
+    action: _filter
+    inputs: { list: "$hosts", field: name, contains: "chat.{{ domain }}" }
+    outputs: { found: chat_host_exists, first: existing_chat_host }
+
+  - name: create chat host
+    action: webspace_host_create
+    if: { is_not: "$chat_host_exists" }
+    inputs:
+      organization_id: "$organization"
+      name: "chat.{{ domain }}"
+      kind: proxy
+    outputs: { ".": created_chat_host_id }
+
+  - name: resolve chat host id
+    action: _coalesce
+    inputs: { values: ["$?created_chat_host_id", "$?existing_chat_host.id"] }
+    outputs: { value: chat_host_id }
+
+  - name: find dev host
+    action: _filter
+    inputs: { list: "$hosts", field: name, contains: "dev.{{ domain }}" }
+    outputs: { found: dev_host_exists, first: existing_dev_host }
+
+  - name: create dev host
+    action: webspace_host_create
+    if: { is_not: "$dev_host_exists" }
+    inputs:
+      organization_id: "$organization"
+      name: "dev.{{ domain }}"
+      kind: proxy
+    outputs: { ".": created_dev_host_id }
+
+  - name: resolve dev host id
+    action: _coalesce
+    inputs: { values: ["$?created_dev_host_id", "$?existing_dev_host.id"] }
+    outputs: { value: dev_host_id }
+
+  # ── Relay folders (find-or-create) ─────────────────────────────────
+  - name: list webspaces
+    action: webspace_list
+    outputs: { ".": webspaces }
+
+  - name: find chat folder
+    action: _filter
+    inputs: { list: "$webspaces", field: name, contains: "chat.{{ domain }}" }
+    outputs: { found: chat_folder_exists, first: existing_chat_folder }
+
+  - name: create chat relay folder
+    action: webspace_create
+    if: { is_not: "$chat_folder_exists" }
+    retries: 2
+    delay: 3
+    inputs:
+      host_id: "$chat_host_id"
+      name: "chat.{{ domain }}"
+      path_prefix: "/"
+      hosting_type: relay
+      relay_url: "https://{{ machine_prefix }}-openclaw.plan-ai-relay.com"
+      relay_credential_id: "$relay_credential_id"
+      auth_mode: basic
+      auth_basic_list_id: "$basic_auth_list_id"
+    outputs: { ".": created_chat_folder_id }
+
+  - name: resolve chat folder id
+    action: _coalesce
+    inputs: { values: ["$?created_chat_folder_id", "$?existing_chat_folder.id"] }
+    outputs: { value: chat_webspace_id }
+
+  - name: find dev folder
+    action: _filter
+    inputs: { list: "$webspaces", field: name, contains: "dev.{{ domain }}" }
+    outputs: { found: dev_folder_exists, first: existing_dev_folder }
+
+  - name: create dev relay folder
+    action: webspace_create
+    if: { is_not: "$dev_folder_exists" }
+    retries: 2
+    delay: 3
+    inputs:
+      host_id: "$dev_host_id"
+      name: "dev.{{ domain }}"
+      path_prefix: "/"
+      hosting_type: relay
+      relay_url: "https://{{ machine_prefix }}-astro.plan-ai-relay.com"
+      relay_credential_id: "$relay_credential_id"
+      auth_mode: basic
+      auth_basic_list_id: "$basic_auth_list_id"
+    outputs: { ".": created_dev_folder_id }
+
+  - name: resolve dev folder id
+    action: _coalesce
+    inputs: { values: ["$?created_dev_folder_id", "$?existing_dev_folder.id"] }
+    outputs: { value: dev_webspace_id }
+
+  # ── Subdomains + bindings (subdomain_create upserts; binds skip when
+  #    the host already carries its hostname) ─────────────────────────
+  - name: upsert chat subdomain
+    action: subdomain_create
+    inputs: { domain_id: "$domain_row.id", name: chat }
+    outputs: { ".": chat_subdomain_id }
+
+  - name: upsert dev subdomain
+    action: subdomain_create
+    inputs: { domain_id: "$domain_row.id", name: dev }
+    outputs: { ".": dev_subdomain_id }
+
+  - name: bind chat hostname
+    action: webspace_host_bind_domain
+    if: { not_equals: ["$?existing_chat_host.hostname", "chat.{{ domain }}"] }
+    inputs:
+      id: "$chat_host_id"
+      domain_id: "$domain_row.id"
+      subdomain_id: "$chat_subdomain_id"
+      hostname: "chat.{{ domain }}"
+
+  - name: bind dev hostname
+    action: webspace_host_bind_domain
+    if: { not_equals: ["$?existing_dev_host.hostname", "dev.{{ domain }}"] }
+    inputs:
+      id: "$dev_host_id"
+      domain_id: "$domain_row.id"
+      subdomain_id: "$dev_subdomain_id"
+      hostname: "dev.{{ domain }}"
+
+  # ── Verify ─────────────────────────────────────────────────────────
+  - name: fetch chat folder
+    action: webspace_get
+    inputs: { id: "$chat_webspace_id" }
+    outputs: { ".": chat_folder }
+
+  - name: verify chat folder
+    action: _assert
+    inputs:
+      that: "{{ chat_folder.hosting_type == 'relay' and chat_folder.auth_mode == 'basic' and chat_folder.relay_url == 'https://' ~ machine_prefix ~ '-openclaw.plan-ai-relay.com' }}"
+      message: "chat folder is misconfigured (hosting_type/auth_mode/relay_url)"
+
+  - name: fetch dev folder
+    action: webspace_get
+    inputs: { id: "$dev_webspace_id" }
+    outputs: { ".": dev_folder }
+
+  - name: verify dev folder
+    action: _assert
+    inputs:
+      that: "{{ dev_folder.hosting_type == 'relay' and dev_folder.auth_mode == 'basic' and dev_folder.relay_url == 'https://' ~ machine_prefix ~ '-astro.plan-ai-relay.com' }}"
+      message: "dev folder is misconfigured (hosting_type/auth_mode/relay_url)"
+
+  # CNAME/cert status can lag right after binding, so no assert — the host
+  # data lands in the report for eyeballing cname_ok.
+  - name: fetch chat host
+    action: webspace_host_get
+    inputs: { id: "$chat_host_id" }
+    outputs: { ".": chat_host }
+
+  - name: fetch dev host
+    action: webspace_host_get
+    inputs: { id: "$dev_host_id" }
+    outputs: { ".": dev_host }
