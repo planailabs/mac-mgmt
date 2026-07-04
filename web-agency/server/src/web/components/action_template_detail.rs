@@ -132,39 +132,58 @@ pub fn ActionTemplateDetail(id: String) -> Element {
             p { class: "mt-2 text-sm text-fg-muted", "{template.description}" }
         }
 
-        div { class: "mt-4 grid gap-6 lg:grid-cols-2",
-            Card {
+        div { class: "mt-6 grid gap-6 lg:grid-cols-2 items-start",
+            div {
                 SectionHeading { "Run" }
-                ActionParamsForm {
-                    inputs,
-                    id_options,
-                    busy,
-                    on_submit,
-                }
-                if let Some(e) = error.read().as_ref() {
-                    div { class: "mt-2 text-sm text-danger", "{e}" }
-                }
-                if let Some(status) = run.read().clone() {
-                    div { class: "mt-4",
-                        RunProgressView { status }
+                Card {
+                    div { class: "p-6",
+                        ActionParamsForm {
+                            inputs,
+                            id_options,
+                            busy,
+                            on_submit,
+                        }
+                        if let Some(e) = error.read().as_ref() {
+                            div { class: "mt-3 rounded-lg border border-danger/40 bg-danger-soft/20 px-3 py-2 text-sm text-danger", "{e}" }
+                        }
+                        if let Some(status) = run.read().clone() {
+                            div { class: "mt-4",
+                                RunProgressView { status }
+                            }
+                        }
                     }
                 }
             }
 
-            Card {
+            div {
                 SectionHeading { "Definition" }
-                details {
-                    summary { class: "cursor-pointer select-none text-sm text-fg-muted", "YAML source" }
-                    pre { class: "mt-2 font-mono text-xs bg-surface-3 rounded p-3 overflow-x-auto whitespace-pre-wrap",
-                        "{template.yaml}"
+                Card {
+                    div { class: "p-6",
+                        div { class: "grid grid-cols-2 gap-4 mb-4",
+                            div {
+                                div { class: "text-sm text-fg-muted", "Inputs" }
+                                div { class: "text-fg-strong", "{template.spec.inputs.len()}" }
+                            }
+                            div {
+                                div { class: "text-sm text-fg-muted", "Steps" }
+                                div { class: "text-fg-strong", "{template.spec.actions.len()}" }
+                            }
+                        }
+                        details {
+                            summary { class: "cursor-pointer select-none text-sm text-fg-muted hover:text-fg", "YAML source" }
+                            pre { class: "mt-2 font-mono text-xs bg-surface-3 rounded-lg border border-line p-3 overflow-x-auto whitespace-pre-wrap",
+                                "{template.yaml}"
+                            }
+                        }
                     }
                 }
             }
         }
 
-        div { class: "mt-6",
-            SectionHeading { "Run History" }
+        SectionHeading { class: "mt-6", "Run History" }
+        div {
             Card {
+                div { class: "p-6",
                 match &*history.read() {
                     Some(Ok(runs)) if runs.is_empty() => rsx! {
                         div { class: "text-sm text-fg-muted", "No runs yet" }
@@ -212,6 +231,7 @@ pub fn ActionTemplateDetail(id: String) -> Element {
                     },
                     Some(Err(e)) => rsx! { div { class: "text-sm text-danger", "failed to load history: {e}" } },
                     None => rsx! { div { class: "text-sm text-fg-muted", "loading…" } },
+                }
                 }
             }
         }

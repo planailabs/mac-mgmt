@@ -186,7 +186,7 @@ pub fn RunProgressView(status: RunStatus) -> Element {
                     RunReportView { report: report.clone() }
                 }
             } else {
-                div { class: "flex flex-col items-center gap-3 py-8",
+                div { class: "flex flex-col items-center gap-3 py-8 px-4 rounded-lg border border-line bg-surface-2",
                     div { class: "text-lg font-medium text-fg-strong text-center animate-pulse",
                         if status.current_step_name.is_empty() {
                             "Queued…"
@@ -289,7 +289,7 @@ fn JsonBlock(#[props(into)] label: String, value: Value) -> Element {
     rsx! {
         div {
             div { class: "text-xs text-fg-faint mb-1", "{label}" }
-            pre { class: "font-mono text-xs bg-surface-3 rounded p-2 overflow-x-auto whitespace-pre-wrap",
+            pre { class: "font-mono text-xs bg-surface-3 rounded-lg border border-line-soft p-2 overflow-x-auto whitespace-pre-wrap",
                 "{pretty}"
             }
         }
