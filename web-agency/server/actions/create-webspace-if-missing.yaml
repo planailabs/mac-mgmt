@@ -1,0 +1,43 @@
+description: Create a webspace folder on a host unless one with that name already exists
+inputs:
+  name:
+    type: string
+    label: Webspace name
+  host:
+    type: id
+    ref: webspace-hosts
+    label: Host
+  hosting_type:
+    type: list
+    label: Hosting type
+    options: [local, relay, tunnel]
+    default: local
+actions:
+  - name: list webspaces
+    action: webspace_list
+    outputs:
+      ".": webspaces
+
+  - name: check if it already exists
+    action: _filter
+    inputs:
+      list: "$webspaces"
+      field: name
+      contains: "{{ name }}"
+    outputs:
+      found: already_exists
+
+  - name: create webspace
+    action: webspace_create
+    if:
+      is_not: "$already_exists"
+    retries: 2
+    delay: 3
+    inputs:
+      host_id: "$host"
+      name: "{{ name }}"
+      path_prefix: "/{{ name }}"
+      hosting_type: "$hosting_type"
+      auth_mode: none
+    outputs:
+      ".": new_webspace_id

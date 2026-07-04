@@ -101,6 +101,12 @@ async fn init_server() -> sqlx::PgPool {
     #[cfg(feature = "webui")]
     server_state::set_pool(pool.clone());
 
+    // Registry + action-template queue: build the shared registry before any
+    // request can race it, validate the baked templates against its tool
+    // names (panics on a bad template), requeue interrupted runs, start
+    // workers.
+    api_mcp::init_action_runtime(pool.clone()).await;
+
     // Install the shared auth user resolver.
     let admin_emails = cfg
         .auth
@@ -352,7 +358,7 @@ fn main() {
             // handled in-handler, so — like deploy/internal — these must NOT sit
             // behind the OIDC require_auth layer.
             let api_mcp_registry =
-                crate::api_mcp::build_registry(crate::server_pool().expect("pool for api-mcp"));
+                crate::api_mcp::shared_registry(crate::server_pool().expect("pool for api-mcp"));
             let api_mcp_http =
                 api_mcp_registry.http_router(crate::server_pool().expect("pool for api-mcp http"));
             let mcp_service =

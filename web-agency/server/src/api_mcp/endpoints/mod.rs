@@ -27,6 +27,7 @@ pub(crate) async fn owning_org(
     .ok_or_else(|| plan_ai_api_mcp::ApiError::not_found(format!("{what} not found")))
 }
 
+pub mod action_templates;
 pub mod basic_auth;
 pub mod billing;
 pub mod certificates;

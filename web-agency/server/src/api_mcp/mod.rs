@@ -9,6 +9,118 @@ pub mod endpoints;
 #[cfg(feature = "server")]
 pub mod auth;
 
+#[cfg(feature = "server")]
+static REGISTRY: std::sync::OnceLock<std::sync::Arc<plan_ai_api_mcp::Registry<sqlx::PgPool>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(feature = "server")]
+static RUN_MANAGER: std::sync::OnceLock<std::sync::Arc<plan_ai_actions::manager::RunManager>> =
+    std::sync::OnceLock::new();
+
+/// Build (once) and share the registry. The action-template executor needs to
+/// dispatch tools from the same registry that serves HTTP/MCP, so it lives in
+/// a global instead of being rebuilt per consumer.
+#[cfg(feature = "server")]
+pub fn shared_registry(
+    pool: sqlx::PgPool,
+) -> std::sync::Arc<plan_ai_api_mcp::Registry<sqlx::PgPool>> {
+    REGISTRY
+        .get_or_init(|| std::sync::Arc::new(build_registry(pool)))
+        .clone()
+}
+
+/// The shared registry, for handlers that dispatch other tools at runtime.
+#[cfg(feature = "server")]
+pub fn registry()
+-> Result<std::sync::Arc<plan_ai_api_mcp::Registry<sqlx::PgPool>>, plan_ai_api_mcp::ApiError> {
+    REGISTRY
+        .get()
+        .cloned()
+        .ok_or_else(|| plan_ai_api_mcp::ApiError::internal("api-mcp registry not initialized"))
+}
+
+/// The durable action-template run queue.
+#[cfg(feature = "server")]
+pub fn run_manager()
+-> Result<std::sync::Arc<plan_ai_actions::manager::RunManager>, plan_ai_api_mcp::ApiError> {
+    RUN_MANAGER
+        .get()
+        .cloned()
+        .ok_or_else(|| plan_ai_api_mcp::ApiError::internal("action-template queue not initialized"))
+}
+
+/// Baked-template tool-name validation (the half build.rs can't do) plus the
+/// run queue: requeue runs interrupted by the previous shutdown and start the
+/// workers. Panics on an invalid template — a template referencing an unknown
+/// tool must fail the boot, not the first run.
+#[cfg(feature = "server")]
+pub async fn init_action_runtime(pool: sqlx::PgPool) {
+    use plan_ai_actions::engine::{ActionDispatcher, BuiltinRegistry, validate_template};
+    use std::sync::Arc;
+
+    let registry = shared_registry(pool.clone());
+    let builtins = BuiltinRegistry::standard();
+    let tools: Vec<String> = registry
+        .tool_names()
+        .into_iter()
+        .filter(|t| !t.starts_with("action_template_"))
+        .collect();
+
+    let mut errors = Vec::new();
+    for (name, spec) in endpoints::action_templates::baked_templates() {
+        if let Err(errs) = validate_template(spec, Some(&tools), &builtins) {
+            errors.push(format!("template '{name}': {}", errs.join("; ")));
+        }
+        for (input, ispec) in &spec.inputs {
+            if let Some(resource) = &ispec.reference {
+                if registry.list_tool_for_resource(resource).is_none() {
+                    errors.push(format!(
+                        "template '{name}': input '{input}' ref '{resource}' has no list endpoint"
+                    ));
+                }
+            }
+        }
+    }
+    if !errors.is_empty() {
+        panic!("invalid action templates:\n{}", errors.join("\n"));
+    }
+
+    // ponytail: single-server queue — blanket requeue of 'running' rows at
+    // boot; multi-instance would need claim leases instead.
+    if let Err(e) =
+        sqlx::query("UPDATE action_template_runs SET status = 'queued' WHERE status = 'running'")
+            .execute(&pool)
+            .await
+    {
+        tracing::error!("failed to requeue interrupted action-template runs: {e}");
+    }
+
+    let store = Arc::new(endpoints::action_templates::PgRunStore { pool: pool.clone() });
+    let factory_pool = pool.clone();
+    let manager = plan_ai_actions::manager::RunManager::new(
+        store,
+        Arc::new(move |principal: &serde_json::Value| {
+            let principal: plan_ai_api_mcp::Principal = serde_json::from_value(principal.clone())
+                .map_err(|e| {
+                    plan_ai_actions::engine::EngineError::Store(format!("bad principal: {e}"))
+                })?;
+            Ok(Arc::new(endpoints::action_templates::RegistryDispatcher {
+                pool: factory_pool.clone(),
+                principal: Arc::new(principal),
+            }) as Arc<dyn ActionDispatcher>)
+        }),
+        Arc::new(|name: &str| {
+            endpoints::action_templates::baked_templates()
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, spec)| spec.clone())
+        }),
+        builtins,
+    );
+    manager.spawn_workers(2);
+    let _ = RUN_MANAGER.set(manager);
+}
+
 /// Build the endpoint registry: one authenticator, every entity's CRUD.
 #[cfg(feature = "server")]
 pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgPool> {
@@ -709,6 +821,66 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
         );
     }
     {
+        let mut a = reg.resource("action-templates", "action_template", "Action Templates");
+        a.list(
+            "List the action templates baked into this server (Ansible-like YAML task lists).",
+            |pool: sqlx::PgPool, p, input: endpoints::action_templates::ActionTemplateListInput| async move {
+                endpoints::action_templates::action_template_list(&pool, &p, input).await
+            },
+        );
+        a.get(
+            "Get an action template: YAML source plus the parsed spec (inputs + steps). The id is the template name.",
+            |pool: sqlx::PgPool, p, input: endpoints::action_templates::ActionTemplateGetInput| async move {
+                endpoints::action_templates::action_template_get(&pool, &p, input).await
+            },
+        );
+        a.custom(
+            "start",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Start an action-template run on the durable queue; returns the run id. Steps execute as the caller, so per-step org permissions apply.",
+            |pool: sqlx::PgPool, p, input: endpoints::action_templates::ActionTemplateStartInput| async move {
+                endpoints::action_templates::action_template_start(&pool, &p, input).await
+            },
+        );
+        a.custom(
+            "run_status",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "Long-poll a run's live status: current step, log events after after_seq, and the report once done (own runs; admins any).",
+            |pool: sqlx::PgPool, p, input: endpoints::action_templates::ActionTemplateRunStatusInput| async move {
+                endpoints::action_templates::action_template_run_status(&pool, &p, input).await
+            },
+        );
+        a.custom(
+            "execute",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Execute an action template with parameters and wait for the per-step run report. Step failures are reported in the result (ok=false), not as errors.",
+            |pool: sqlx::PgPool, p, input: endpoints::action_templates::ActionTemplateStartInput| async move {
+                endpoints::action_templates::action_template_execute(&pool, &p, input).await
+            },
+        );
+        a.custom(
+            "runs",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List a template's past runs with reports and debug logs (own runs; admins all).",
+            |pool: sqlx::PgPool, p, input: endpoints::action_templates::ActionTemplateRunsInput| async move {
+                endpoints::action_templates::action_template_runs(&pool, &p, input).await
+            },
+        );
+        a.custom(
+            "input_options",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "Resolve picker options for the template's id-typed inputs from their ref'd resources' list endpoints (scoped to the caller).",
+            |pool: sqlx::PgPool, p, input: endpoints::action_templates::ActionTemplateInputOptionsInput| async move {
+                endpoints::action_templates::action_template_input_options(&pool, &p, input).await
+            },
+        );
+    }
+    {
         let mut s = reg.resource("sync", "sync", "Sync");
         s.custom(
             "trigger",
@@ -722,4 +894,43 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
     }
 
     reg
+}
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+
+    /// The compile-time half of template validation can't check tool names
+    /// (the registry is runtime-only); this test closes that gap in CI.
+    #[tokio::test]
+    async fn baked_templates_reference_known_tools() {
+        use plan_ai_actions::engine::{BuiltinRegistry, validate_template};
+
+        // connect_lazy never touches the network; the registry only needs a
+        // pool value, not a database.
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .expect("lazy pool");
+        let registry = build_registry(pool);
+        let builtins = BuiltinRegistry::standard();
+        let tools: Vec<String> = registry
+            .tool_names()
+            .into_iter()
+            .filter(|t| !t.starts_with("action_template_"))
+            .collect();
+
+        for (name, spec) in endpoints::action_templates::baked_templates() {
+            if let Err(errors) = validate_template(spec, Some(&tools), &builtins) {
+                panic!("action template '{name}' is invalid:\n  {}", errors.join("\n  "));
+            }
+            for (input, ispec) in &spec.inputs {
+                if let Some(resource) = &ispec.reference {
+                    assert!(
+                        registry.list_tool_for_resource(resource).is_some(),
+                        "template '{name}': input '{input}' ref '{resource}' has no list endpoint"
+                    );
+                }
+            }
+        }
+    }
 }

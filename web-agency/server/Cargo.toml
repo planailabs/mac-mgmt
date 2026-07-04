@@ -6,8 +6,8 @@ edition = "2024"
 [features]
 default = ["web", "server", "webui"]
 web = ["webui", "dioxus/web"]
-webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-i18n", "dep:unic-langid", "dep:plan-ai-design", "dep:pulldown-cmark"]
-server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:percent-encoding", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hmac", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:aes-gcm", "dep:thiserror", "dep:cloudflare-api", "dep:spaceship-api", "dep:changedetection-api", "dep:async-trait", "dep:tempfile", "dep:rust-embed", "dep:instant-acme", "dep:rcgen", "dep:async-stream", "dep:futures-core", "dep:tar", "dep:flate2", "dep:tower", "dep:tower-http", "dep:prometheus", "dep:plan-ai-html", "dep:time", "dep:plan-ai-api-mcp", "plan-ai-auth/server"]
+webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-i18n", "dep:unic-langid", "dep:plan-ai-design", "dep:pulldown-cmark", "dep:plan-ai-actions", "plan-ai-actions/ui"]
+server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:percent-encoding", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hmac", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:aes-gcm", "dep:thiserror", "dep:cloudflare-api", "dep:spaceship-api", "dep:changedetection-api", "dep:async-trait", "dep:tempfile", "dep:rust-embed", "dep:instant-acme", "dep:rcgen", "dep:async-stream", "dep:futures-core", "dep:tar", "dep:flate2", "dep:tower", "dep:tower-http", "dep:prometheus", "dep:plan-ai-html", "dep:time", "dep:plan-ai-api-mcp", "plan-ai-auth/server", "dep:plan-ai-actions", "plan-ai-actions/engine"]
 
 [dependencies]
 dioxus = { version = "0.8.0-alpha.0", features = ["fullstack", "router"], optional = true }
@@ -46,6 +46,7 @@ rust-embed = { version = "8", features = ["include-exclude"], optional = true }
 thiserror = { version = "2", optional = true }
 plan-ai-auth = { path = "../../plan-ai-auth" }
 plan-ai-api-mcp = { path = "../../plan-ai-api-mcp", optional = true }
+plan-ai-actions = { path = "../../plan-ai-actions", optional = true }
 plan-ai-api-mcp-macros = { path = "../../plan-ai-api-mcp-macros" }
 schemars = { version = "1.2", features = ["derive", "uuid1"] }
 cloudflare-api = { path = "../cloudflare-api", optional = true }
@@ -63,3 +64,6 @@ prometheus = { version = "0.13", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+
+[build-dependencies]
+plan-ai-actions = { path = "../../plan-ai-actions", features = ["engine"] }
