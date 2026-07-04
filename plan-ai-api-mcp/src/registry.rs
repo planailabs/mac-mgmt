@@ -534,6 +534,7 @@ where
 fn schema_object<T: JsonSchema>() -> JsonObject {
     let schema = schemars::schema_for!(T);
     let mut value = serde_json::to_value(schema).unwrap_or_else(|_| json!({ "type": "object" }));
+    objectify_bool_schemas(&mut value);
     if let Value::Object(ref mut m) = value {
         m.remove("$schema");
     }
@@ -544,6 +545,118 @@ fn schema_object<T: JsonSchema>() -> JsonObject {
             m.insert("type".into(), json!("object"));
             m
         }
+    }
+}
+
+/// For `serde_json::Value` fields schemars emits schemas utoipa's OpenAPI
+/// model cannot deserialize: boolean schemas (`true` = anything, `false` =
+/// nothing) and discriminator-less objects like `{}` or `{"default": null}`
+/// (utoipa's untagged `Schema` needs a `$ref`, `type`, or combinator key to
+/// pick a variant). `http_router`'s document parse panics on those. Rewrite
+/// every schema position into an equivalent utoipa-parseable form: "anything"
+/// becomes the full type union, "nothing" additionally gets `"enum": []`.
+fn objectify_bool_schemas(value: &mut Value) {
+    fn any_type() -> Value {
+        json!(["null", "boolean", "object", "array", "number", "string"])
+    }
+
+    match value {
+        Value::Bool(any) => {
+            *value = if *any {
+                json!({ "type": any_type() })
+            } else {
+                // Any type, no allowed values: matches nothing.
+                json!({ "type": any_type(), "enum": [] })
+            };
+        }
+        Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                match key.as_str() {
+                    // Maps of schemas.
+                    "properties" | "patternProperties" | "$defs" | "definitions" => {
+                        if let Value::Object(entries) = child {
+                            for schema in entries.values_mut() {
+                                objectify_bool_schemas(schema);
+                            }
+                        }
+                    }
+                    // Single nested schemas.
+                    "items" | "additionalItems" | "not" | "contains" | "propertyNames"
+                    | "if" | "then" | "else" => objectify_bool_schemas(child),
+                    // Bool is fine here (utoipa models it as "free-form").
+                    "additionalProperties" if !child.is_boolean() => {
+                        objectify_bool_schemas(child)
+                    }
+                    // Arrays of schemas.
+                    "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
+                        if let Value::Array(schemas) = child {
+                            for schema in schemas.iter_mut() {
+                                objectify_bool_schemas(schema);
+                            }
+                        }
+                    }
+                    // Anything else ("deprecated": true, "required": [...],
+                    // …) is not a schema position — leave it alone.
+                    _ => {}
+                }
+            }
+            let has_discriminator = map.contains_key("$ref")
+                || map.contains_key("type")
+                || map.contains_key("allOf")
+                || map.contains_key("anyOf")
+                || map.contains_key("oneOf");
+            if !has_discriminator {
+                map.insert("type".into(), any_type());
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+
+    struct NoAuth;
+
+    #[async_trait]
+    impl Authenticator for NoAuth {
+        async fn authenticate(&self, _bearer: &str) -> Result<Principal, ApiError> {
+            Ok(Principal::admin("test"))
+        }
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, JsonSchema)]
+    struct FreeFormInput {
+        any: Value,
+        #[serde(default)]
+        maybe: Option<Value>,
+        map: Map<String, Value>,
+        #[serde(default)]
+        pair: Option<[Value; 2]>,
+    }
+
+    /// `serde_json::Value` fields make schemars emit boolean schemas; the
+    /// generated OpenAPI document must still parse into utoipa's model —
+    /// `http_router` panics at server boot otherwise.
+    #[test]
+    fn openapi_with_free_form_value_fields_parses() {
+        let mut reg = Registry::new(Arc::new(NoAuth));
+        {
+            let mut r = reg.resource("things", "thing", "Things");
+            r.create("Create a thing.", |_state: (), _p, input: FreeFormInput| async move {
+                Ok(input.any)
+            });
+        }
+        let doc = reg.openapi_json();
+        let parsed: Result<utoipa::openapi::OpenApi, _> = serde_json::from_value(doc.clone());
+        assert!(
+            parsed.is_ok(),
+            "OpenAPI failed to parse: {:?}\n{}",
+            parsed.err(),
+            serde_json::to_string_pretty(&doc).unwrap_or_default()
+        );
     }
 }
 

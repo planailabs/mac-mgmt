@@ -900,6 +900,18 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
 mod tests {
     use super::*;
 
+    /// `http_router` panics if the schemars-generated OpenAPI document does
+    /// not parse into utoipa's model (e.g. boolean schemas from
+    /// `serde_json::Value` fields) — catch that in CI, not at server boot.
+    #[tokio::test]
+    async fn openapi_document_parses_into_utoipa() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .expect("lazy pool");
+        let registry = build_registry(pool.clone());
+        let _ = registry.http_router(pool);
+    }
+
     /// The compile-time half of template validation can't check tool names
     /// (the registry is runtime-only); this test closes that gap in CI.
     #[tokio::test]
