@@ -3584,6 +3584,134 @@ pub async fn create_proxy_token(
     ))
 }
 
+// ── Relay URLs (portal picker) ───────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub struct RelayUrlRow {
+    pub cluster_id: Uuid,
+    pub instance_id: String,
+    pub hostname: Option<String>,
+    /// Tunnel (service) name the URL points at, e.g. `openclaw`.
+    pub tunnel: String,
+    /// Browser-reachable relay portal URL for this tunnel.
+    pub url: String,
+    /// The instance's relay proxy base URL (no tunnel subdomain).
+    pub relay_proxy_url: String,
+    pub reported_at: DateTime<Utc>,
+}
+
+/// Build the relay portal URL for one tunnel: `{scheme}{iid12}-{tunnel}.{proxy-host}`
+/// — the same subdomain scheme the relay's `parse_subdomain` expects.
+fn relay_tunnel_url(proxy_url: &str, instance_id: &str, tunnel: &str) -> String {
+    let scheme = if proxy_url.starts_with("https://") {
+        "https://"
+    } else {
+        "http://"
+    };
+    let host = proxy_url
+        .strip_prefix(scheme)
+        .unwrap_or(proxy_url)
+        .trim_end_matches('/');
+    let prefix: String = instance_id.chars().take(12).collect();
+    format!("{scheme}{prefix}-{tunnel}.{host}")
+}
+
+/// List every relay portal URL the calling token can reach. Scope comes from
+/// the token itself: cluster tokens see their cluster, org tokens their
+/// organization's clusters, admin tokens everything. Proxy tokens with
+/// explicit scopes only see tunnels their `tcp:*`/`tcp:{name}` scopes cover.
+#[utoipa::path(
+    get,
+    path = "/api/relay-urls",
+    tag = "Common",
+    summary = "List relay URLs reachable with the calling token",
+    description = "Lists relay portal URLs (one per instance tunnel) for every cluster the bearer \
+                   token can access. Intended as a picker/easy-access API for building portals.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Relay URLs", body = Vec<RelayUrlRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Token has no cluster scope"),
+    ),
+)]
+#[rocket::get("/relay-urls")]
+pub async fn list_relay_urls(
+    auth: AuthenticatedToken,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<RelayUrlRow>>, (Status, &'static str)> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        cluster_id: Uuid,
+        instance_id: String,
+        hostname: Option<String>,
+        relay_proxy_url: String,
+        tunnels: Option<serde_json::Value>,
+        reported_at: DateTime<Utc>,
+    }
+
+    const BASE: &str = "SELECT cluster_id, instance_id, hostname, relay_proxy_url, tunnels, reported_at \
+         FROM daemon_heartbeats WHERE relay_proxy_url IS NOT NULL AND relay_proxy_url <> ''";
+
+    let rows: Vec<Row> = if let Some(cid) = auth.cluster_id {
+        sqlx::query_as(&format!("{BASE} AND cluster_id = $1 ORDER BY reported_at DESC"))
+            .bind(cid)
+            .fetch_all(pool.inner())
+            .await
+    } else if let Some(org_id) = auth.organization_id {
+        sqlx::query_as(&format!(
+            "{BASE} AND cluster_id IN \
+             (SELECT cluster_id FROM organization_clusters WHERE organization_id = $1) \
+             ORDER BY reported_at DESC"
+        ))
+        .bind(org_id)
+        .fetch_all(pool.inner())
+        .await
+    } else if auth.token_kind == "admin" {
+        sqlx::query_as(&format!("{BASE} ORDER BY reported_at DESC"))
+            .fetch_all(pool.inner())
+            .await
+    } else {
+        return Err((Status::Forbidden, "token has no cluster scope"));
+    }
+    .map_err(|_| (Status::InternalServerError, "database error"))?;
+
+    let scope_allows = |tunnel: &str| match &auth.scopes {
+        Some(scopes) if !scopes.is_empty() => scopes
+            .iter()
+            .any(|s| s == "*" || s == "tcp:*" || s == &format!("tcp:{tunnel}")),
+        _ => true,
+    };
+
+    let mut out = Vec::new();
+    for r in rows {
+        let names: Vec<String> = r
+            .tunnels
+            .as_ref()
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for name in names {
+            if !scope_allows(&name) {
+                continue;
+            }
+            out.push(RelayUrlRow {
+                url: relay_tunnel_url(&r.relay_proxy_url, &r.instance_id, &name),
+                cluster_id: r.cluster_id,
+                instance_id: r.instance_id.clone(),
+                hostname: r.hostname.clone(),
+                tunnel: name,
+                relay_proxy_url: r.relay_proxy_url.clone(),
+                reported_at: r.reported_at,
+            });
+        }
+    }
+    Ok(Json(out))
+}
+
 // ── Admin — Skill MCP dependencies ───────────────────────────────────
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]

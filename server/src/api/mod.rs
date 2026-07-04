@@ -24,6 +24,8 @@ use utoipa_swagger_ui::SwaggerUi;
     ),
     paths(
         routes::get_self,
+        // Relay URLs (any cluster-scoped token)
+        routes::list_relay_urls,
         // Sync
         routes::get_config,
         routes::get_update_target,
@@ -166,6 +168,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::CreateClusterForOrgBody,
         routes::CreatedCluster,
         routes::AdminMachineRow,
+        routes::RelayUrlRow,
         routes::CloudInitBody,
         routes::CloudInitResponse,
         routes::CreateTokenForClusterBody,
@@ -384,6 +387,8 @@ pub fn build_rocket(
             routes::setting_cloud_init,
             // Proxy token
             routes::create_proxy_token,
+            // Relay URLs (portal picker)
+            routes::list_relay_urls,
             // Sync — Heartbeat
             routes::post_heartbeat,
             // Sync — System assessment
