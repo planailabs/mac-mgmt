@@ -14,10 +14,16 @@ xzar config add-server planai https://xzar.plan.ai "$XZAR_TOKEN"
 # ── Daemon binary build & upload ─────────────────────────────────────
 # Build the daemon for each supported target via dx, drop the binary
 # into a bin/ dir, add it to the local nix store, and upload as
-# `daemon/$version/$nixSystem` so the server's daemon-versions sync can
-# index it and the daemon can `nix-store --realise` it on update.
+# `daemon/rolling/$nixSystem` (every trunk build — the rolling channel)
+# plus `daemon/$version/$nixSystem` for the semver pin. The semver pin
+# is only uploaded once: re-uploading it on every trunk push would move
+# the store path under clusters pinned to that version, defeating the
+# pin. To re-cut a semver artifact, bump the version in daemon/Cargo.toml.
 
 DAEMON_VERSION="$(grep '^version' "$SCRIPT_DIR/daemon/Cargo.toml" | head -1 | cut -d'"' -f2)"
+# Fail hard if the pin list can't be fetched — falling back to "not
+# published yet" would re-upload the semver pin and move pinned prod.
+EXISTING_PINS="$(xzar --server planai list)"
 
 # ── Tailwind CSS ────────────────────────────────────────────────────────
 (cd "$SCRIPT_DIR/memvault/crates/memvault-web" && npm run tailwind:build)
@@ -56,7 +62,12 @@ upload_daemon_binary() {
   rm -f result
   STORE_PATH="$(nix-store --add "$stage")"
   ln -sf "$STORE_PATH" result
-  upload "daemon/${DAEMON_VERSION}/${nix_system}" result
+  upload "daemon/rolling/${nix_system}" result
+  if printf '%s\n' "$EXISTING_PINS" | grep -qF "daemon/${DAEMON_VERSION}/${nix_system}"; then
+    echo "pin daemon/${DAEMON_VERSION}/${nix_system} already published, skipping (rolling updated)"
+  else
+    upload "daemon/${DAEMON_VERSION}/${nix_system}" result
+  fi
   rm -rf "$stage"
 }
 

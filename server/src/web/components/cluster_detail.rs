@@ -267,9 +267,12 @@ async fn get_cloud_init(cluster_id: String) -> Result<String, ServerFnError> {
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?
             .flatten();
+    // Highest semver only — channel versions ("rolling") are opt-in via
+    // pin or rollout, and the int[] cast would error on them.
     let latest: Option<String> = sqlx::query_scalar(
-        "SELECT version FROM daemon_versions ORDER BY \
-         string_to_array(version, '.')::int[] DESC LIMIT 1",
+        "SELECT version FROM daemon_versions \
+         WHERE version ~ '^[0-9]+(\\.[0-9]+)*$' \
+         ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1",
     )
     .fetch_optional(&pool)
     .await

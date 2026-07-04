@@ -147,7 +147,11 @@ pub fn check_and_apply() {
         return;
     };
 
-    if version_cmp(&version) < 0 {
+    // The downgrade guard only makes sense between two semver versions.
+    // Non-semver versions ("rolling") have no ordering — moving to or
+    // from one is always allowed; the store-path comparison below keeps
+    // the update idempotent.
+    if is_semver(&version) && is_semver(CURRENT_VERSION) && version_cmp(&version) < 0 {
         tracing::warn!(
             "target version {version} is older than current {CURRENT_VERSION}, refusing downgrade"
         );
@@ -219,6 +223,12 @@ pub fn check_and_apply() {
             &[("from", CURRENT_VERSION), ("to", &version)],
         );
     }
+}
+
+/// True when `ver` is a dotted numeric version ("0.1.5"). Channel names
+/// like "rolling" are not, and are exempt from the downgrade guard.
+fn is_semver(ver: &str) -> bool {
+    !ver.is_empty() && ver.split('.').all(|p| p.parse::<u64>().is_ok())
 }
 
 /// Compare a version string against CURRENT_VERSION.
@@ -493,5 +503,14 @@ mod tests {
         assert!(version_cmp("0.1.4") < 0);
         assert!(version_cmp("0.2.0") > 0);
         assert!(version_cmp("1.0.0") > 0);
+    }
+
+    #[test]
+    fn is_semver_works() {
+        assert!(is_semver("0.1.5"));
+        assert!(is_semver("1.0"));
+        assert!(!is_semver("rolling"));
+        assert!(!is_semver("0.1.5-rc1"));
+        assert!(!is_semver(""));
     }
 }

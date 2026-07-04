@@ -84,8 +84,22 @@ async fn create_rollout(
     });
     if let Some(v) = &target_version {
         let parts: Vec<&str> = v.split('.').collect();
-        if parts.len() < 3 || parts.iter().any(|p| p.parse::<u64>().is_err()) {
-            return Err(ServerFnError::new("version must be semver (e.g., 0.1.6)"));
+        let semver = parts.len() >= 3 && parts.iter().all(|p| p.parse::<u64>().is_ok());
+        if !semver {
+            // Non-semver channel versions ("rolling") are allowed when
+            // they exist in daemon_versions (synced from xzar).
+            let known: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM daemon_versions WHERE version = $1)",
+            )
+            .bind(v)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            if !known {
+                return Err(ServerFnError::new(
+                    "version must be semver (e.g., 0.1.6) or a known channel (e.g., rolling)",
+                ));
+            }
         }
     }
 

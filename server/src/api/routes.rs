@@ -972,10 +972,14 @@ pub async fn get_update_target(
 
         match pinned {
             Some(ver) => Some(ver),
-            // No pinned version: fall back to the latest semver from daemon_versions.
+            // No pinned version: fall back to the latest semver from
+            // daemon_versions. Non-semver channel versions ("rolling")
+            // are excluded — they are opt-in via pin or rollout only,
+            // and the int[] cast would error on them.
             None => sqlx::query_scalar::<_, String>(
-                "SELECT version FROM daemon_versions ORDER BY \
-                 string_to_array(version, '.')::int[] DESC LIMIT 1",
+                "SELECT version FROM daemon_versions \
+                 WHERE version ~ '^[0-9]+(\\.[0-9]+)*$' \
+                 ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1",
             )
             .fetch_optional(pool.inner())
             .await
@@ -3361,12 +3365,13 @@ pub async fn setting_cloud_init(
                 .await
                 .map_err(|_| Status::InternalServerError)?
                 .flatten();
-        // Final fallback: highest version in daemon_versions (mirrors
-        // get_update_target). Operators sync this table from xzar via the
-        // admin UI.
+        // Final fallback: highest semver in daemon_versions (mirrors
+        // get_update_target — channel versions like "rolling" are opt-in
+        // only). Operators sync this table from xzar via the admin UI.
         let latest: Option<String> = sqlx::query_scalar(
-            "SELECT version FROM daemon_versions ORDER BY \
-             string_to_array(version, '.')::int[] DESC LIMIT 1",
+            "SELECT version FROM daemon_versions \
+             WHERE version ~ '^[0-9]+(\\.[0-9]+)*$' \
+             ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1",
         )
         .fetch_optional(pool.inner())
         .await
@@ -5631,11 +5636,21 @@ pub async fn admin_create_rollout(
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
 
-    // Validate semver if a target version is given.
+    // Validate the target version: either semver, or a non-semver channel
+    // version ("rolling") that exists in daemon_versions.
     if let Some(ver) = &target_version {
         let target_parts: Vec<u64> = ver.split('.').filter_map(|p| p.parse().ok()).collect();
         if target_parts.len() < 3 {
-            return Err(Status::BadRequest);
+            let known: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM daemon_versions WHERE version = $1)",
+            )
+            .bind(ver)
+            .fetch_one(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+            if !known {
+                return Err(Status::BadRequest);
+            }
         }
     }
 
@@ -5667,10 +5682,17 @@ pub async fn admin_create_rollout(
             pinned_version: String,
         }
 
+        // Downgrade detection only makes sense between two semver
+        // versions — channel versions ("rolling") have no ordering, so
+        // clusters pinned to one (or a rollout targeting one) are never
+        // reported as skipped. Numeric array comparison, not string
+        // comparison, so "0.10.0" > "0.9.0".
         let skipped = sqlx::query_as::<_, SkippedCluster>(
             "SELECT c.name, c.pinned_version FROM clusters c \
              WHERE c.pinned_version IS NOT NULL \
-               AND c.pinned_version > $1 \
+               AND $1 ~ '^[0-9]+(\\.[0-9]+)*$' \
+               AND c.pinned_version ~ '^[0-9]+(\\.[0-9]+)*$' \
+               AND string_to_array(c.pinned_version, '.')::int[] > string_to_array($1, '.')::int[] \
                AND ('00000000-0000-0000-0000-000000000000'::uuid = ANY($2) \
                     OR c.id IN (\
                       SELECT rgm.cluster_id FROM rollout_group_members rgm \
