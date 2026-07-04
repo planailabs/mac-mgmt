@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::relay_picker::{RelayCredOption, RelayUrlPicker, load_mac_mgmt_creds};
 use super::ui::{
     Badge, BadgeVariant, Button, ButtonVariant, Card, FormField, PageHeader, SectionHeading, Td,
     TdMuted, Th, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
@@ -159,6 +160,7 @@ pub fn WebspaceDetail(id: String) -> Element {
             current_name: data.name.clone(),
             hosting_type: data.hosting_type.clone(),
             current_relay_url: data.relay_url.clone(),
+            current_relay_credential_id: data.relay_credential_id,
         }
 
         // CF Pages deployment
@@ -1034,14 +1036,48 @@ fn WebspaceSettingsSection(
     current_name: String,
     hosting_type: String,
     current_relay_url: Option<String>,
+    current_relay_credential_id: Option<Uuid>,
 ) -> Element {
     let mut refresh: Signal<u32> = use_context();
     let mut name = use_signal(move || current_name.clone());
     let mut relay_url = use_signal(move || current_relay_url.clone().unwrap_or_default());
+    let relay_cred_id = use_signal(move || {
+        current_relay_credential_id
+            .map(|id| id.to_string())
+            .unwrap_or_default()
+    });
     let mut saving = use_signal(|| false);
     let mut message = use_signal(|| None::<String>);
 
-    let is_relay_or_tunnel = hosting_type == "relay" || hosting_type == "tunnel";
+    let is_relay = hosting_type == "relay";
+    let is_relay_or_tunnel = is_relay || hosting_type == "tunnel";
+
+    // mac-mgmt credentials for the relay picker; only fetched for relay
+    // folders (hooks must run unconditionally, so gate inside).
+    let creds = use_server_future(move || {
+        let want = is_relay;
+        async move {
+            if want {
+                load_mac_mgmt_creds().await
+            } else {
+                Ok(Vec::new())
+            }
+        }
+    })?;
+    let mut relay_creds = match &*creds.read() {
+        Some(Ok(rows)) => rows.clone(),
+        _ => Vec::new(),
+    };
+    // Keep a stored credential selectable even if the caller can't list it
+    // (e.g. global credential of another org's admin).
+    if let Some(id) = current_relay_credential_id {
+        if !relay_creds.iter().any(|c| c.id == id) {
+            relay_creds.push(RelayCredOption {
+                id,
+                name: format!("current ({})", &id.to_string()[..8]),
+            });
+        }
+    }
 
     rsx! {
         Card {
@@ -1056,7 +1092,13 @@ fn WebspaceSettingsSection(
                         }
                     }
 
-                    if is_relay_or_tunnel {
+                    if is_relay {
+                        RelayUrlPicker {
+                            creds: relay_creds.clone(),
+                            credential_id: relay_cred_id,
+                            relay_url,
+                        }
+                    } else if is_relay_or_tunnel {
                         FormField { label: "Upstream URL",
                             input {
                                 class: "input w-80 font-mono",
@@ -1081,6 +1123,11 @@ fn WebspaceSettingsSection(
                                 } else {
                                     None
                                 };
+                                let cred = if is_relay {
+                                    Uuid::parse_str(relay_cred_id.read().as_str()).ok()
+                                } else {
+                                    None
+                                };
                                 saving.set(true);
                                 message.set(None);
                                 spawn(async move {
@@ -1091,6 +1138,7 @@ fn WebspaceSettingsSection(
                                         path_prefix: None,
                                         relay_url: url,
                                         clear_relay_url,
+                                        relay_credential_id: cred,
                                         auth_mode: None,
                                         auth_basic_list_id: None,
                                         clear_auth_basic_list: None,
@@ -1222,6 +1270,7 @@ fn AuthSettingsSection(
                                         path_prefix: None,
                                         relay_url: None,
                                         clear_relay_url: None,
+                                        relay_credential_id: None,
                                         auth_mode: Some(mode),
                                         auth_basic_list_id: list_id,
                                         clear_auth_basic_list,

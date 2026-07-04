@@ -62,6 +62,8 @@ pub struct WebspaceData {
     pub runtime: Option<String>,
     pub local_status: Option<String>,
     pub relay_url: Option<String>,
+    /// mac-mgmt credential backing the relay URL pickers (relay folders).
+    pub relay_credential_id: Option<Uuid>,
     pub organization_id: Uuid,
     pub organization_name: String,
     /// Whether the caller can manage tokens for this webspace's org.
@@ -121,6 +123,10 @@ pub struct WebspaceUpdateInput {
     /// Set true to clear the upstream URL (when `relay_url` is absent).
     #[serde(default)]
     pub clear_relay_url: Option<bool>,
+    /// New mac-mgmt credential for the relay URL pickers (relay folders).
+    /// Absent = keep the current credential.
+    #[serde(default)]
+    pub relay_credential_id: Option<Uuid>,
     /// New auth mode: "none", "oidc" or "basic".
     #[serde(default)]
     pub auth_mode: Option<String>,
@@ -351,9 +357,10 @@ pub async fn webspace_get(
     principal: &Principal,
     input: WebspaceGetInput,
 ) -> Result<WebspaceData, ApiError> {
-    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Uuid, Option<String>, String, Option<Uuid>, Uuid, String, String, String)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Uuid, Option<String>, Option<Uuid>, String, Option<Uuid>, Uuid, String, String, String)>(
         "SELECT w.id, w.name, w.hosting_type, w.cloudflare_pages_project, w.cloudflare_credential_id, \
-         w.runtime, w.local_status, w.organization_id, w.relay_url, w.auth_mode, w.auth_basic_list_id, \
+         w.runtime, w.local_status, w.organization_id, w.relay_url, w.relay_credential_id, \
+         w.auth_mode, w.auth_basic_list_id, \
          w.webspace_host_id, h.name, h.kind, w.path_prefix \
          FROM webspaces w JOIN webspace_hosts h ON h.id = w.webspace_host_id WHERE w.id = $1",
     )
@@ -373,6 +380,7 @@ pub async fn webspace_get(
         local_status,
         org_id,
         relay_url,
+        relay_credential_id,
         auth_mode,
         auth_basic_list_id,
         webspace_host_id,
@@ -483,6 +491,7 @@ pub async fn webspace_get(
         runtime,
         local_status,
         relay_url,
+        relay_credential_id,
         organization_id: org_id,
         organization_name: org_name,
         is_org_admin,
@@ -559,9 +568,10 @@ pub async fn webspace_update(
     principal: &Principal,
     input: WebspaceUpdateInput,
 ) -> Result<(), ApiError> {
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, String, String, Option<String>, String, Option<Uuid>)>(
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, String, String, Option<String>, Option<Uuid>, String, Option<Uuid>)>(
         "SELECT organization_id, hosting_type, cloudflare_pages_project, cloudflare_credential_id, \
-         name, path_prefix, relay_url, auth_mode, auth_basic_list_id FROM webspaces WHERE id = $1",
+         name, path_prefix, relay_url, relay_credential_id, auth_mode, auth_basic_list_id \
+         FROM webspaces WHERE id = $1",
     )
     .bind(input.id)
     .fetch_optional(pool)
@@ -577,6 +587,7 @@ pub async fn webspace_update(
         cur_name,
         cur_path,
         cur_relay_url,
+        cur_relay_cred,
         cur_auth_mode,
         cur_auth_list,
     ) = row;
@@ -613,6 +624,7 @@ pub async fn webspace_update(
     } else {
         cur_relay_url
     };
+    let relay_credential_id = input.relay_credential_id.or(cur_relay_cred);
     let auth_mode = input.auth_mode.unwrap_or(cur_auth_mode);
     let auth_basic_list_id = if input.auth_basic_list_id.is_some() {
         input.auth_basic_list_id
@@ -623,12 +635,13 @@ pub async fn webspace_update(
     };
 
     sqlx::query(
-        "UPDATE webspaces SET name = $1, path_prefix = $2, relay_url = $3, auth_mode = $4, \
-         auth_basic_list_id = $5, updated_at = now() WHERE id = $6",
+        "UPDATE webspaces SET name = $1, path_prefix = $2, relay_url = $3, relay_credential_id = $4, \
+         auth_mode = $5, auth_basic_list_id = $6, updated_at = now() WHERE id = $7",
     )
     .bind(&name)
     .bind(&path_prefix)
     .bind(&relay_url)
+    .bind(relay_credential_id)
     .bind(&auth_mode)
     .bind(auth_basic_list_id)
     .bind(input.id)
