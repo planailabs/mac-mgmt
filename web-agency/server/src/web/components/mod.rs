@@ -1,3 +1,5 @@
+pub mod action_template_detail;
+pub mod action_template_list;
 pub mod basic_auth_detail;
 pub mod basic_auth_form;
 pub mod basic_auth_list;

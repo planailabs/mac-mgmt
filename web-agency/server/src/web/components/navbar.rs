@@ -47,6 +47,12 @@ fn nav_items(is_admin: bool, show_billing: bool) -> Vec<NavItem> {
             route: Route::ContactList {},
             icon: "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z",
         },
+        NavItem {
+            label: "Actions",
+            route: Route::ActionTemplateList {},
+            // Play-circle icon
+            icon: "M21 12a9 9 0 11-18 0 9 9 0 0118 0zM15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z",
+        },
     ];
 
     if is_admin || show_billing {

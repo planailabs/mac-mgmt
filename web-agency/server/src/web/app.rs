@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 use dioxus_i18n::{prelude::*, unic_langid::langid};
 
+use super::components::action_template_detail::ActionTemplateDetail;
+use super::components::action_template_list::ActionTemplateList;
 use super::components::basic_auth_detail::BasicAuthDetail;
 use super::components::basic_auth_form::BasicAuthForm;
 use super::components::basic_auth_list::BasicAuthList;
@@ -78,6 +80,10 @@ pub enum Route {
     WebspaceImport {},
     #[route("/webspaces/:id")]
     WebspaceDetail { id: String },
+    #[route("/action-templates")]
+    ActionTemplateList {},
+    #[route("/action-templates/:id")]
+    ActionTemplateDetail { id: String },
     #[route("/contacts")]
     ContactList {},
     #[route("/contacts/new")]
