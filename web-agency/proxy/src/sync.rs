@@ -336,6 +336,12 @@ async fn sync_loop(
                 use eventsource_stream::Eventsource;
                 use futures::StreamExt;
 
+                // Reload on connect, exactly like on a reload event: anything
+                // that changed while we weren't connected was never signalled.
+                tracing::info!("SSE connected, reloading");
+                let tl = reload_all(&client, server_url, &routes, &cert_store).await;
+                schedule_refresh(&mut reload_timer, tl);
+
                 let mut stream = resp.bytes_stream().eventsource();
                 loop {
                     tokio::select! {
