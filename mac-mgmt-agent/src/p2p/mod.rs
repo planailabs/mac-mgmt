@@ -1394,11 +1394,20 @@ async fn handle_streamed_proxy(
         proxy_helpers::apply_headers_vec(req, &headers, handler_state.fake_origin_local, &target);
     let req = proxy_helpers::apply_body_b64(req, body_b64);
 
-    match req
-        .timeout(std::time::Duration::from_secs(300))
-        .send()
-        .await
-    {
+    // reqwest's timeout covers the whole request INCLUDING body streaming.
+    // Event-stream (SSE) responses are intentionally unbounded, so a total
+    // timeout would cut them off; rely on the tunnel/connection lifecycle
+    // for cleanup instead.
+    let wants_event_stream = headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("accept") && v.contains("text/event-stream"));
+    let req = if wants_event_stream {
+        req
+    } else {
+        req.timeout(std::time::Duration::from_secs(300))
+    };
+
+    match req.send().await {
         Ok(resp) => {
             let status = resp.status().as_u16();
             let resp_headers: Vec<(String, String)> = resp

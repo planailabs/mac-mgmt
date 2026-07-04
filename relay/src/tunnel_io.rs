@@ -84,6 +84,24 @@ pub async fn open_and_read_response(
     Ok((status, content_type, body))
 }
 
+/// Async stream of binary body chunks (tag 0x02) until end marker/EOF.
+/// Unlike [`read_binary_body`] this doesn't buffer: chunks are yielded as
+/// they arrive, which is required for SSE and other unbounded responses.
+pub fn read_binary_chunks_stream(
+    mut tunnel: libp2p::Stream,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> {
+    async_stream::stream! {
+        loop {
+            match framing::read_tagged_frame(&mut tunnel).await {
+                Ok(Some(framing::TaggedFrame::Binary(data))) => yield Ok(data),
+                Ok(Some(framing::TaggedFrame::End)) | Ok(None) => break,
+                Ok(Some(framing::TaggedFrame::Json(_))) => continue,
+                Err(e) => { yield Err(e); break; }
+            }
+        }
+    }
+}
+
 /// Async stream of JSON frames from a tunnel substream (for SSE).
 pub fn read_json_frames_stream(
     mut tunnel: libp2p::Stream,

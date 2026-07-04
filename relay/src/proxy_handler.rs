@@ -741,13 +741,11 @@ async fn proxy_catchall(
         })
         .unwrap_or_default();
 
-    let body_data = crate::tunnel_io::read_binary_body(&mut tunnel).await;
-
     let mut builder = axum::response::Response::builder().status(status);
     for (k, v) in &resp_headers {
         let lk = k.to_lowercase();
         // transfer-encoding + content-length describe the upstream's framing, which we
-        // re-frame here (axum sets a correct content-length for the body we send), so
+        // re-frame here (the body below is streamed, so axum uses chunked framing), so
         // drop them. But content-encoding describes the BODY's compression (gzip/zstd/
         // br) and we forward the body verbatim — still compressed — so it MUST be
         // preserved, else the client renders raw compressed bytes as garbage.
@@ -759,7 +757,14 @@ async fn proxy_catchall(
         }
     }
 
-    builder.body(Body::from(body_data)).unwrap().into_response()
+    // Stream body chunks through as they arrive instead of buffering the
+    // whole body: SSE and other long-lived responses never end, so
+    // buffering would hang the request forever.
+    let body_stream = crate::tunnel_io::read_binary_chunks_stream(tunnel);
+    builder
+        .body(Body::from_stream(body_stream))
+        .unwrap()
+        .into_response()
 }
 
 // ── POST /proxy_request — JSON request/response API ────────────────────

@@ -88,7 +88,8 @@ pub async fn write_end<T>(io: &mut T) -> io::Result<()>
 where
     T: AsyncWrite + Unpin + Send,
 {
-    io.write_all(&[TAG_END]).await
+    io.write_all(&[TAG_END]).await?;
+    io.flush().await
 }
 
 // ── Length-prefixed framing (RPC) ────────────────────────────────────
@@ -148,5 +149,7 @@ where
     io.write_all(&[tag]).await?;
     io.write_all(&(data.len() as u32).to_be_bytes()).await?;
     io.write_all(data).await?;
-    Ok(())
+    // A frame is a complete message — flush so streamed consumers (SSE
+    // chunks relayed frame-by-frame) see it immediately.
+    io.flush().await
 }
