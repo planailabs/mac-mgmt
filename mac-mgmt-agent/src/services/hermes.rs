@@ -373,6 +373,20 @@ impl ManagedService for Hermes {
         }
     }
 
+    fn persist_connector_env(&self, env: &std::collections::HashMap<String, String>) {
+        // Mirror connector env (cloud/litellm/ollama/relay API keys and
+        // URLs, e.g. from cloud→hermes) into ~/.hermes/.env so the
+        // companion services (hermes-dashboard, hermes-webui) and manual
+        // `hermes` invocations see the same config as the gateway process.
+        let mut keys: Vec<&String> = env.keys().collect();
+        keys.sort();
+        for k in keys {
+            if let Err(e) = write_env_var(k, &env[k]) {
+                tracing::warn!("failed to persist {k} into ~/.hermes/.env: {e}");
+            }
+        }
+    }
+
     fn check_health(&self) -> Result<bool> {
         let host = self.gateway_host();
         let port = self.gateway_port();

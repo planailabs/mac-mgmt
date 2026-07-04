@@ -242,6 +242,12 @@ pub trait ManagedService: Send + Sync {
         Ok(())
     }
 
+    /// Persist connector-provided env vars somewhere companion processes
+    /// can pick them up (e.g. hermes mirrors them into ~/.hermes/.env so
+    /// hermes-dashboard and hermes-webui see the same env as the gateway).
+    /// Called after connector env collection. Default: no-op.
+    fn persist_connector_env(&self, _env: &std::collections::HashMap<String, String>) {}
+
     /// Check if the service is currently busy (serving requests, running jobs).
     /// Used to defer restarts.
     fn is_busy(&self) -> Result<bool> {

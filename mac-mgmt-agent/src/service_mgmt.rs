@@ -1309,6 +1309,9 @@ impl ServiceManager {
                     state.name,
                     env.len()
                 );
+                // Let the service mirror connector env for its companion
+                // processes (hermes → ~/.hermes/.env for dashboard/webui).
+                state.service.persist_connector_env(&env);
             }
             state.connector_env = env;
             state.connector_env_collected = true;
