@@ -27,6 +27,9 @@ pub struct AppState {
     pub relay_swarm: Arc<RelaySwarm>,
     /// In-memory token for the batch instances endpoint.
     pub batch_token: String,
+    /// External URL of the relay (e.g. "https://relay.plan.ai"), used to
+    /// build tunnel-subdomain redirect URLs for /cert-login.
+    pub proxy_url: Option<String>,
 }
 
 pub fn router(
@@ -34,12 +37,14 @@ pub fn router(
     server_api_url: String,
     relay_swarm: Arc<RelaySwarm>,
     batch_token: String,
+    proxy_url: Option<String>,
 ) -> Router {
     let state = AppState {
         registry,
         server_api_url,
         relay_swarm,
         batch_token,
+        proxy_url,
     };
 
     Router::new()
@@ -47,6 +52,7 @@ pub fn router(
             "/api/daemon/{instance_id}/metrics/{*path}",
             get(proxy_metrics),
         )
+        .route("/cert-login/{instance}/{service}", get(cert_login))
         .route("/api/tunnels", get(list_tunnels))
         .route("/api/ssh", get(list_ssh_targets))
         .route("/api/batch/instances", get(batch_instances))
@@ -61,10 +67,13 @@ pub fn router(
 async fn security_headers(request: axum::extract::Request, next: Next) -> axum::response::Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert(
-        axum::http::header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
-    );
+    // Keep a handler-set CSP (e.g. /cert-login HTML pages need inline styles).
+    if !headers.contains_key(axum::http::header::CONTENT_SECURITY_POLICY) {
+        headers.insert(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+        );
+    }
     headers.insert(
         axum::http::header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -210,6 +219,149 @@ async fn certificate_info(
         "organization_ids": organization_ids,
     }))
     .into_response()
+}
+
+// ── Certificate login (browser flow) ────────────────────────────────
+//
+// GET /cert-login/{instance}/{service} on the MAIN relay domain — the only
+// place the TLS layer sends an empty CA hint list, so the browser shows its
+// client-certificate picker here (and nowhere else). Exchanges the presented
+// certificate for a tunnel-scoped proxy token via the server, then redirects
+// into the regular /proxy?proxy_token=… bootstrap on the tunnel subdomain.
+
+/// CSP for the HTML pages below: the plan-ai-html layout uses an inline
+/// theme script and inline styles.
+const CERT_LOGIN_CSP: &str =
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'";
+
+fn cert_login_page(
+    status: StatusCode,
+    lang: plan_ai_html::Lang,
+    title_key: &str,
+    body_html: String,
+) -> axum::response::Response {
+    let title = plan_ai_html::tr(lang, title_key);
+    let body = format!("<h1 class=\"h-page\">{title}</h1>{body_html}");
+    let html = plan_ai_html::Page::new(&title, body).lang(lang).render();
+    (
+        status,
+        [
+            ("content-type", "text/html; charset=utf-8"),
+            ("content-security-policy", CERT_LOGIN_CSP),
+        ],
+        html,
+    )
+        .into_response()
+}
+
+async fn cert_login(
+    headers: HeaderMap,
+    cert: Option<axum::Extension<ClientCertInfo>>,
+    Path((instance, service)): Path<(String, String)>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let lang = plan_ai_html::Lang::from_accept_language(
+        headers
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    );
+
+    // Path params feed a redirect URL — keep them to subdomain-safe chars.
+    let valid = instance.len() >= 12
+        && instance.chars().all(|c| c.is_ascii_hexdigit())
+        && !service.is_empty()
+        && service
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !valid {
+        return (StatusCode::BAD_REQUEST, "invalid instance or service").into_response();
+    }
+
+    let Some(cert) = cert else {
+        return cert_login_page(
+            StatusCode::UNAUTHORIZED,
+            lang,
+            "cert-login-no-cert-title",
+            format!(
+                "<p class=\"help\">{}</p>",
+                plan_ai_html::tr(lang, "cert-login-no-cert-body"),
+            ),
+        );
+    };
+
+    let Some(proxy_url) = state.proxy_url.as_deref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "proxy_url not configured").into_response();
+    };
+
+    if !state.registry.has_tunnel(&instance, &service) {
+        return cert_login_page(
+            StatusCode::NOT_FOUND,
+            lang,
+            "not-found-title",
+            format!(
+                "<p class=\"help\">{}</p>",
+                plan_ai_html::tr(lang, "not-found-body"),
+            ),
+        );
+    }
+
+    // Authorize: the cert was presented over THIS TLS connection (possession
+    // proven by the handshake); the server only tells us its scope.
+    let denied_page = |fp: &str| {
+        cert_login_page(
+            StatusCode::FORBIDDEN,
+            lang,
+            "cert-login-denied-title",
+            format!(
+                "<p class=\"help\">{}</p><p class=\"help\" style=\"margin-top:.6rem;word-break:break-all\"><code>{}</code></p>",
+                plan_ai_html::tr(lang, "cert-login-denied-body"),
+                plan_ai_html::escape(fp),
+            ),
+        )
+    };
+    let cert_auth = match validate_cert(
+        &state.server_api_url,
+        &cert.fingerprint_sha256,
+        &cert.certificate_pem,
+    )
+    .await
+    {
+        Ok(info) => info,
+        Err(StatusCode::FORBIDDEN) => return denied_page(&cert.fingerprint_sha256),
+        Err(status) => return status.into_response(),
+    };
+
+    // The cert must cover the instance's cluster. If the daemon didn't report
+    // a cluster ID, only admin certificates get through.
+    let authorized = match state.registry.get_cluster_id(&instance) {
+        Some(cid) => cert_auth.cluster_ids.contains(&cid),
+        None => cert_auth.token_kind == "cert_admin",
+    };
+    if !authorized {
+        return denied_page(&cert.fingerprint_sha256);
+    }
+
+    let token = crate::auth::mint_local_proxy_token(&instance, &service);
+    tracing::info!(
+        instance = %instance,
+        service = %service,
+        fingerprint = %cert.fingerprint_sha256,
+        "cert-login: minted local proxy token"
+    );
+
+    // Same shape as the server's build_tunnel_url.
+    let scheme = if proxy_url.starts_with("https://") {
+        "https://"
+    } else {
+        "http://"
+    };
+    let host = proxy_url
+        .strip_prefix(scheme)
+        .unwrap_or(proxy_url)
+        .trim_end_matches('/');
+    let url = format!("{scheme}{instance}-{service}.{host}/proxy?proxy_token={token}");
+    axum::response::Redirect::to(&url).into_response()
 }
 
 fn is_safe_path(path: &str) -> bool {

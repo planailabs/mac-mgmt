@@ -30,6 +30,13 @@ sign-out-everything = Sign out of everything
 auth-required-title = Authentication required
 auth-required-body = You need to sign in to access this tunnel.
 log-in-to-planai = Log in to plan.ai
+log-in-with-certificate = Log in with certificate
+
+# Certificate login (relay /cert-login)
+cert-login-no-cert-title = No certificate presented
+cert-login-no-cert-body = Your browser did not send a client certificate. Install an authorized certificate and reload this page.
+cert-login-denied-title = Certificate not authorized
+cert-login-denied-body = This certificate is not authorized for this machine. Ask an administrator to add the fingerprint below to the cluster or admin certificate settings.
 
 # Error pages
 not-found-title = Page not found

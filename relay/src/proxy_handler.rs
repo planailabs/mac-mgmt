@@ -63,6 +63,10 @@ pub struct ProxyState {
     /// unauthenticated request. When set, the relay shows a "Log in" button
     /// on the unauthorized page.
     pub server_web_url: Arc<tokio::sync::OnceCell<String>>,
+    /// External URL of the relay's main domain (cfg.proxy_url). When set,
+    /// the unauthorized page also offers certificate login via
+    /// `{relay_url}/cert-login/{instance}/{service}`.
+    pub relay_url: Option<String>,
 }
 
 /// Shared CORS config passed via axum Extension.
@@ -277,6 +281,25 @@ fn has_scope(scopes: &[String], required: &str) -> bool {
             .any(|s| s == "*" || s == required || (required.starts_with("tcp:") && s == "tcp:*"))
 }
 
+/// Build a SelfInfo for a valid relay-local proxy token. The token itself is
+/// instance-bound (strictly stronger than cluster scoping), so the cluster ID
+/// is filled from the registry to satisfy the caller's cluster check.
+fn local_self_info(token: &str, state: &ProxyState, instance_id: &str) -> Option<SelfInfo> {
+    let scopes = crate::auth::validate_local_proxy_token(token, instance_id)?;
+    Some(SelfInfo {
+        cluster_id: None,
+        cluster_name: None,
+        organization_id: None,
+        token_kind: "proxy".to_string(),
+        cluster_ids: state
+            .registry
+            .get_cluster_id(instance_id)
+            .into_iter()
+            .collect(),
+        scopes,
+    })
+}
+
 /// Validate the proxy token and check cluster scoping.
 async fn authenticate_proxy(
     headers: &HeaderMap,
@@ -287,6 +310,12 @@ async fn authenticate_proxy(
         .ok_or_else(|| {
             (StatusCode::UNAUTHORIZED, "Missing proxy_token. Use X-Proxy-Token header or visit /proxy?proxy_token=TOKEN first.").into_response()
         })?;
+
+    // Relay-local tokens (minted by /cert-login) are bound to one instance
+    // and one tunnel — validated entirely locally, no server round-trip.
+    if let Some(info) = local_self_info(&token, state, instance_id) {
+        return Ok(info);
+    }
 
     let self_info = validate_token_cached(&state.server_api_url, &token)
         .await
@@ -424,8 +453,13 @@ fn bootstrap_html() -> String {
     )
 }
 
-/// Build the "authentication required" HTML page, optionally with a sign-in button.
-fn unauthorized_html(login_url: Option<&str>, accept_language: &str) -> axum::response::Response {
+/// Build the "authentication required" HTML page, optionally with sign-in
+/// and certificate-login buttons.
+fn unauthorized_html(
+    login_url: Option<&str>,
+    cert_login_url: Option<&str>,
+    accept_language: &str,
+) -> axum::response::Response {
     let lang = plan_ai_html::Lang::from_accept_language(accept_language);
     let button = login_url
         .map(|url| {
@@ -436,9 +470,18 @@ fn unauthorized_html(login_url: Option<&str>, accept_language: &str) -> axum::re
             )
         })
         .unwrap_or_default();
+    let cert_button = cert_login_url
+        .map(|url| {
+            format!(
+                r#"<a href="{}" class="btn btn-secondary btn-lg" style="display:flex;margin-top:.6rem">{}</a>"#,
+                plan_ai_html::escape(url),
+                plan_ai_html::tr(lang, "log-in-with-certificate"),
+            )
+        })
+        .unwrap_or_default();
     let title = plan_ai_html::tr(lang, "auth-required-title");
     let body = format!(
-        r#"<h1 class="h-page">{title}</h1><p class="help">{}</p>{button}"#,
+        r#"<h1 class="h-page">{title}</h1><p class="help">{}</p>{button}{cert_button}"#,
         plan_ai_html::tr(lang, "auth-required-body"),
     );
     let html = plan_ai_html::Page::new(&title, body).lang(lang).render();
@@ -524,15 +567,17 @@ async fn proxy_catchall(
             .get_or_try_init(|| fetch_server_web_url(&state.server_api_url))
             .await
             .ok();
-        let login_url = web_url.map(|url| {
-            let prefix = &instance_id[..std::cmp::min(12, instance_id.len())];
-            format!("{url}/easy-access/direct/{prefix}/{tunnel_name}")
-        });
+        let prefix = &instance_id[..std::cmp::min(12, instance_id.len())];
+        let login_url = web_url.map(|url| format!("{url}/easy-access/direct/{prefix}/{tunnel_name}"));
+        let cert_login_url = state
+            .relay_url
+            .as_deref()
+            .map(|url| format!("{}/cert-login/{prefix}/{tunnel_name}", url.trim_end_matches('/')));
         let accept_language = headers
             .get("accept-language")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        return unauthorized_html(login_url.as_deref(), accept_language);
+        return unauthorized_html(login_url.as_deref(), cert_login_url.as_deref(), accept_language);
     }
 
     let self_info = match authenticate_proxy(&headers, &state, &instance_id).await {
@@ -738,9 +783,12 @@ async fn proxy_request(
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
 
-    let self_info = match validate_token(&state.server_api_url, &body.proxy_token).await {
-        Ok(info) => info,
-        Err(status) => return status.into_response(),
+    let self_info = match local_self_info(&body.proxy_token, &state, &instance_id) {
+        Some(info) => info,
+        None => match validate_token(&state.server_api_url, &body.proxy_token).await {
+            Ok(info) => info,
+            Err(status) => return status.into_response(),
+        },
     };
 
     if self_info.token_kind != "proxy" && self_info.token_kind != "admin" {

@@ -118,6 +118,7 @@ async fn main() -> Result<()> {
         cfg.server_api_url.clone(),
         Arc::clone(&relay_swarm),
         batch_token,
+        cfg.proxy_url.clone(),
     );
 
     // Web SSH terminal routes (/ssh/{instance_id} and /ssh/{instance_id}/ws).
@@ -153,6 +154,7 @@ async fn main() -> Result<()> {
             cors_origins: cfg.cors_origins.clone(),
             relay_swarm: Some(relay_swarm.clone()),
             server_web_url: Arc::clone(&server_web_url),
+            relay_url: cfg.proxy_url.clone(),
         };
         (proxy_hostname.clone(), proxy_handler::router(proxy_state))
     });
@@ -178,6 +180,20 @@ async fn main() -> Result<()> {
             }
 
             let host_no_port: String = hostname.split(':').next().unwrap_or(&hostname).to_string();
+
+            // HTTP/2 connection coalescing guard: if the Host's class (main
+            // domain vs proxy subdomain) doesn't match the TLS config class
+            // the connection was accepted with, answer 421 so the browser
+            // retries on a fresh connection with the right SNI. Otherwise
+            // the per-SNI client-cert behavior could be bypassed.
+            let host_is_proxy = proxy
+                .as_ref()
+                .is_some_and(|(ph, _)| host_no_port.ends_with(&format!(".{ph}")));
+            if let Some(class) = req.extensions().get::<mtls::TlsSniClass>() {
+                if class.is_proxy_subdomain != host_is_proxy {
+                    return axum::http::StatusCode::MISDIRECTED_REQUEST.into_response();
+                }
+            }
 
             // Proxy subdomain.
             if let Some((ref proxy_hostname, ref proxy_router)) = proxy {
@@ -291,13 +307,12 @@ async fn main() -> Result<()> {
         }
     };
 
-    let tls_config = mtls::build_tls_config(cert_chain, private_key, cfg.client_ca_path.as_deref())
+    let (tls_main, tls_quiet) = mtls::build_tls_configs(cert_chain, private_key)
         .map_err(|e| anyhow::anyhow!("failed to build TLS config: {e}"))?;
-    let tls_acceptor = mtls::make_acceptor(tls_config);
 
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
     tracing::info!("relay listening on {} (HTTPS)", cfg.listen_addr);
 
-    mtls::serve_tls(listener, tls_acceptor, app).await?;
+    mtls::serve_tls(listener, tls_main, tls_quiet, cfg.proxy_hostname.clone(), app).await?;
     Ok(())
 }

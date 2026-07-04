@@ -77,6 +77,56 @@ enum CertAuthResult {
     NotFound,
 }
 
+// ── Local proxy tokens (cert-login) ─────────────────────────────────
+//
+// Tokens minted by /cert-login after a client certificate was presented over
+// TLS and authorized via the server's /api/cert-auth. They live only in the
+// relay's memory (lost on restart — the user just re-logs via certificate)
+// and are bound to one instance prefix + one tunnel.
+
+#[derive(Debug, Clone)]
+struct LocalProxyToken {
+    instance: String,
+    service: String,
+    expires_at: std::time::Instant,
+}
+
+static LOCAL_PROXY_TOKENS: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<String, LocalProxyToken>>,
+> = std::sync::LazyLock::new(Default::default);
+
+const LOCAL_PROXY_TOKEN_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+/// Mint a relay-local proxy token bound to `instance` (ID prefix) and
+/// `service` (tunnel name). Returns the raw token.
+pub fn mint_local_proxy_token(instance: &str, service: &str) -> String {
+    use rand::Rng;
+    let token = hex::encode(rand::rng().random::<[u8; 32]>());
+    let mut store = LOCAL_PROXY_TOKENS.write().unwrap();
+    store.retain(|_, t| t.expires_at > std::time::Instant::now());
+    store.insert(
+        token.clone(),
+        LocalProxyToken {
+            instance: instance.to_string(),
+            service: service.to_string(),
+            expires_at: std::time::Instant::now() + LOCAL_PROXY_TOKEN_TTL,
+        },
+    );
+    token
+}
+
+/// Validate a relay-local proxy token for an instance. Returns the token's
+/// scopes (`["tcp:{service}"]`) if it is valid, unexpired, and bound to this
+/// instance.
+pub fn validate_local_proxy_token(token: &str, instance: &str) -> Option<Vec<String>> {
+    let store = LOCAL_PROXY_TOKENS.read().unwrap();
+    let t = store.get(token)?;
+    if t.expires_at <= std::time::Instant::now() || t.instance != instance {
+        return None;
+    }
+    Some(vec![format!("tcp:{}", t.service)])
+}
+
 /// Validate a client certificate against the server's /api/cert-auth endpoint.
 /// The full PEM is sent; the server computes the fingerprint.
 /// Results are cached for 5 minutes, keyed by the locally-computed fingerprint.

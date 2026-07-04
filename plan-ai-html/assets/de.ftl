@@ -30,6 +30,13 @@ sign-out-everything = Überall abmelden
 auth-required-title = Anmeldung erforderlich
 auth-required-body = Sie müssen sich anmelden, um auf diesen Tunnel zuzugreifen.
 log-in-to-planai = Bei plan.ai anmelden
+log-in-with-certificate = Mit Zertifikat anmelden
+
+# Zertifikat-Anmeldung (Relay /cert-login)
+cert-login-no-cert-title = Kein Zertifikat übermittelt
+cert-login-no-cert-body = Ihr Browser hat kein Client-Zertifikat gesendet. Installieren Sie ein autorisiertes Zertifikat und laden Sie diese Seite neu.
+cert-login-denied-title = Zertifikat nicht autorisiert
+cert-login-denied-body = Dieses Zertifikat ist für diese Maschine nicht autorisiert. Bitten Sie einen Administrator, den unten stehenden Fingerabdruck zu den Cluster- oder Admin-Zertifikatseinstellungen hinzuzufügen.
 
 # Fehlerseiten
 not-found-title = Seite nicht gefunden

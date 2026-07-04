@@ -61,11 +61,6 @@ pub struct RelayConfig {
     /// Required in release builds; in debug builds a self-signed key is
     /// generated automatically when omitted.
     pub tls_key_path: Option<String>,
-
-    /// Path to a CA certificate (PEM) for client certificate validation.
-    /// When omitted, any client certificate is accepted at the TLS layer
-    /// (authorization is by fingerprint allowlist, not CA trust).
-    pub client_ca_path: Option<String>,
 }
 
 fn default_cors_origins() -> Vec<String> {

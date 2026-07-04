@@ -10,8 +10,15 @@ use std::sync::Arc;
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
-use tokio_rustls::TlsAcceptor;
 use tower::ServiceExt;
+
+/// Which TLS config class a connection was accepted with, based on SNI.
+/// Injected as a request extension so the HTTP layer can reject requests
+/// that arrive on the wrong connection class (HTTP/2 coalescing) with 421.
+#[derive(Debug, Clone, Copy)]
+pub struct TlsSniClass {
+    pub is_proxy_subdomain: bool,
+}
 
 /// Information extracted from a client's TLS certificate.
 #[derive(Debug, Clone)]
@@ -29,12 +36,23 @@ pub struct ClientCertInfo {
 /// Accept TLS connections and serve them with the given axum router.
 /// Extracts client cert info and peer address, injecting them as request
 /// extensions before passing to axum.
+///
+/// Per-SNI config selection: connections whose SNI falls under
+/// `.{proxy_hostname}` (wildcard tunnel subdomains) get `quiet_config`, which
+/// still accepts client certificates but advertises a decoy CA hint so
+/// browsers never show the "select a certificate" picker. Everything else
+/// (the main relay domain) gets `main_config`, which sends no CA hints and
+/// therefore lets the browser offer its client certificates.
 pub async fn serve_tls(
     listener: TcpListener,
-    acceptor: TlsAcceptor,
+    main_config: Arc<rustls::ServerConfig>,
+    quiet_config: Arc<rustls::ServerConfig>,
+    proxy_hostname: Option<String>,
     app: axum::Router,
 ) -> io::Result<()> {
     use hyper_util::rt::TokioIo;
+
+    let proxy_suffix = proxy_hostname.map(|h| format!(".{h}"));
 
     loop {
         let (tcp_stream, peer_addr) = match listener.accept().await {
@@ -46,12 +64,38 @@ pub async fn serve_tls(
             }
         };
 
-        let acceptor = acceptor.clone();
+        let main_config = main_config.clone();
+        let quiet_config = quiet_config.clone();
+        let proxy_suffix = proxy_suffix.clone();
         let app = app.clone();
 
         tokio::spawn(async move {
             tracing::debug!("TCP accepted from {peer_addr}, starting TLS handshake");
-            let tls_stream = match acceptor.accept(tcp_stream).await {
+            let start = match tokio_rustls::LazyConfigAcceptor::new(
+                rustls::server::Acceptor::default(),
+                tcp_stream,
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::debug!("TLS ClientHello read failed from {peer_addr}: {e}");
+                    return;
+                }
+            };
+
+            let is_proxy_subdomain = match (proxy_suffix.as_deref(), start.client_hello().server_name())
+            {
+                (Some(suffix), Some(sni)) => sni.ends_with(suffix),
+                _ => false,
+            };
+            let config = if is_proxy_subdomain {
+                quiet_config
+            } else {
+                main_config
+            };
+
+            let tls_stream = match start.into_stream(config).await {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::debug!("TLS handshake failed from {peer_addr}: {e}");
@@ -88,6 +132,9 @@ pub async fn serve_tls(
                         if let Some(info) = info {
                             req.extensions_mut().insert(info);
                         }
+                        req.extensions_mut().insert(TlsSniClass {
+                            is_proxy_subdomain,
+                        });
                         req.extensions_mut()
                             .insert(axum::extract::ConnectInfo(peer_addr));
 
@@ -111,21 +158,65 @@ pub async fn serve_tls(
 
 // ── TLS config builders ─────────────────────────────────────────────
 
-/// Build a `rustls::ServerConfig` that requests (but does not require)
-/// client certificates.
-pub fn build_tls_config(
+/// Build the pair of `rustls::ServerConfig`s used by [`serve_tls`].
+///
+/// Both request (but do not require) client certificates and accept any
+/// certificate at the TLS layer. The difference is the CA hints sent in the
+/// CertificateRequest:
+/// - main: no hints — browsers show their certificate picker (used on the
+///   main relay domain, e.g. for /cert-login).
+/// - quiet: a decoy CA hint that matches no real certificate — browsers
+///   silently continue without a certificate (no picker popup), while
+///   non-browser clients (curl, reqwest, daemons) still send their
+///   configured certificate regardless of hints.
+pub fn build_tls_configs(
     cert_chain: Vec<rustls::pki_types::CertificateDer<'static>>,
     private_key: rustls::pki_types::PrivateKeyDer<'static>,
-    _client_ca_path: Option<&str>,
-) -> Result<rustls::ServerConfig, rustls::Error> {
-    let client_verifier = Arc::new(AcceptAnyClientCert);
+) -> Result<(Arc<rustls::ServerConfig>, Arc<rustls::ServerConfig>), rustls::Error> {
+    let build = |verifier: Arc<dyn rustls::server::danger::ClientCertVerifier>|
+     -> Result<Arc<rustls::ServerConfig>, rustls::Error> {
+        let mut config = rustls::ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(cert_chain.clone(), private_key.clone_key())?;
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        Ok(Arc::new(config))
+    };
 
-    let mut config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(client_verifier)
-        .with_single_cert(cert_chain, private_key)?;
+    let main = build(Arc::new(AcceptAnyClientCert { hints: vec![] }))?;
+    let quiet = build(Arc::new(AcceptAnyClientCert {
+        hints: vec![rustls::DistinguishedName::from(decoy_ca_hint())],
+    }))?;
+    Ok((main, quiet))
+}
 
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    Ok(config)
+/// DER-encoded X.501 Name `CN=plan-ai-relay-no-prompt`, used as a CA hint
+/// that intentionally matches no real client certificate issuer.
+fn decoy_ca_hint() -> Vec<u8> {
+    let cn = b"plan-ai-relay-no-prompt";
+    let mut atv = vec![0x06, 0x03, 0x55, 0x04, 0x03]; // OID 2.5.4.3 (commonName)
+    atv.push(0x0c); // UTF8String
+    atv.push(cn.len() as u8);
+    atv.extend_from_slice(cn);
+
+    let mut seq_atv = vec![0x30, atv.len() as u8];
+    seq_atv.extend_from_slice(&atv);
+    let mut set_rdn = vec![0x31, seq_atv.len() as u8];
+    set_rdn.extend_from_slice(&seq_atv);
+    let mut name = vec![0x30, set_rdn.len() as u8];
+    name.extend_from_slice(&set_rdn);
+    name
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn decoy_hint_is_valid_der_name() {
+        use x509_parser::prelude::FromDer;
+        let der = super::decoy_ca_hint();
+        let (rem, name) = x509_parser::x509::X509Name::from_der(&der).unwrap();
+        assert!(rem.is_empty());
+        assert_eq!(name.to_string(), "CN=plan-ai-relay-no-prompt");
+    }
 }
 
 /// Load TLS certificate chain and private key from PEM files.
@@ -178,11 +269,6 @@ pub fn generate_self_signed() -> anyhow::Result<(
     Ok((vec![cert_der], key_der))
 }
 
-/// Create a `TlsAcceptor` from the server config.
-pub fn make_acceptor(config: rustls::ServerConfig) -> TlsAcceptor {
-    TlsAcceptor::from(Arc::new(config))
-}
-
 // ── Cert extraction ─────────────────────────────────────────────────
 
 /// Extract `ClientCertInfo` from a rustls server connection.
@@ -221,11 +307,15 @@ fn extract_client_cert(conn: &rustls::ServerConnection) -> Option<ClientCertInfo
 // ── Client cert verifier that accepts anything ──────────────────────
 
 #[derive(Debug)]
-struct AcceptAnyClientCert;
+struct AcceptAnyClientCert {
+    /// CA subject hints advertised in the CertificateRequest. Empty = browsers
+    /// offer all client certs (picker); a decoy hint = browsers stay silent.
+    hints: Vec<rustls::DistinguishedName>,
+}
 
 impl rustls::server::danger::ClientCertVerifier for AcceptAnyClientCert {
     fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
-        &[]
+        &self.hints
     }
 
     fn verify_client_cert(
