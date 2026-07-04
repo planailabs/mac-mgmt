@@ -35,6 +35,7 @@ pub mod changedetection;
 pub mod contacts;
 pub mod credentials;
 pub mod domains;
+pub mod mac_mgmt;
 pub mod organizations;
 pub mod sync;
 pub mod tokens;

@@ -213,13 +213,14 @@ mod store {
             sqlx::query(
                 "INSERT INTO action_template_runs \
                  (id, template_name, subject, principal, params, variables) \
-                 VALUES ($1, $2, $3, $4, $5, $5)",
+                 VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(run.id)
             .bind(&run.template_name)
             .bind(&run.subject)
             .bind(&run.principal)
             .bind(Value::Object(run.params.clone()))
+            .bind(Value::Object(run.variables.clone()))
             .execute(&self.pool)
             .await
             .map_err(store_err)?;
@@ -269,9 +270,10 @@ mod store {
             report: &plan_ai_actions::report::RunReport,
             log: &[plan_ai_actions::report::RunLogEvent],
         ) -> Result<(), EngineError> {
+            // variables scrubbed: only needed for resume, may hold secrets.
             sqlx::query(
                 "UPDATE action_template_runs SET status = $2, report = $3, log = $4, \
-                 updated_at = now() WHERE id = $1",
+                 variables = '{}'::jsonb, updated_at = now() WHERE id = $1",
             )
             .bind(id)
             .bind(if ok { "ok" } else { "failed" })
@@ -294,6 +296,22 @@ mod store {
             row.as_ref().map(row_to_run).transpose()
         }
     }
+}
+
+/// Copy of the validated params with secret inputs redacted — what run
+/// history stores and shows.
+#[cfg(feature = "server")]
+fn display_params(
+    spec: &TemplateSpec,
+    vars: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut params = vars.clone();
+    for (name, input) in &spec.inputs {
+        if input.secret && params.contains_key(name) {
+            params.insert(name.clone(), serde_json::json!(plan_ai_actions::engine::REDACTED));
+        }
+    }
+    params
 }
 
 /// Guard: only the subject that started a run (or an admin) may observe it.
@@ -360,8 +378,9 @@ pub async fn action_template_start(
     let vars = plan_ai_actions::engine::validate_params(spec, input.params)
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
     let principal = serde_json::to_value(p).map_err(super::internal)?;
+    let display = display_params(spec, &vars);
     let run_id = crate::api_mcp::run_manager()?
-        .enqueue(&input.id, vars, principal, &p.subject, spec.actions.len() as u32)
+        .enqueue(&input.id, vars, display, principal, &p.subject, spec.actions.len() as u32)
         .await
         .map_err(super::internal)?;
     Ok(ActionTemplateStartResult { run_id })
@@ -393,9 +412,10 @@ pub async fn action_template_execute(
     let vars = plan_ai_actions::engine::validate_params(spec, input.params)
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
     let principal = serde_json::to_value(p).map_err(super::internal)?;
+    let display = display_params(spec, &vars);
     let manager = crate::api_mcp::run_manager()?;
     let run_id = manager
-        .enqueue(&input.id, vars, principal, &p.subject, spec.actions.len() as u32)
+        .enqueue(&input.id, vars, display, principal, &p.subject, spec.actions.len() as u32)
         .await
         .map_err(super::internal)?;
     manager

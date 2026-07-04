@@ -881,6 +881,36 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
         );
     }
     {
+        let mut m = reg.resource("mac-mgmt", "mac_mgmt", "Mac Mgmt");
+        m.custom(
+            "clusters",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List mac-mgmt clusters via a stored mac-mgmt admin credential (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::mac_mgmt::MacMgmtClustersInput| async move {
+                endpoints::mac_mgmt::mac_mgmt_clusters(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "machines",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a mac-mgmt cluster's heartbeat-reporting machines (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::mac_mgmt::MacMgmtMachinesInput| async move {
+                endpoints::mac_mgmt::mac_mgmt_machines(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "token_create",
+            Risk::Mutating,
+            OnItem::No,
+            "Create a mac-mgmt setting/sync token for a cluster; returns the plaintext token once (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::mac_mgmt::MacMgmtTokenCreateInput| async move {
+                endpoints::mac_mgmt::mac_mgmt_token_create(&pool, &p, input).await
+            },
+        );
+    }
+    {
         let mut s = reg.resource("sync", "sync", "Sync");
         s.custom(
             "trigger",
