@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::error::ApiError;
 
 /// The set of organizations a principal may act on.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum OrgSet {
     /// Every organization (global admin).
     All,
@@ -38,7 +38,9 @@ impl OrgSet {
 }
 
 /// A resolved caller. Authorization decisions read only from this type.
-#[derive(Debug, Clone)]
+/// Serializable so callers may persist an authz snapshot (e.g. a durable job
+/// queue resuming work as the original caller after a restart).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Principal {
     /// Global super-user: bypasses org checks entirely.
     pub admin: bool,

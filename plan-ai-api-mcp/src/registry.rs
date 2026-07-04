@@ -269,6 +269,33 @@ impl<S: Clone + Send + Sync + 'static> Registry<S> {
         self.endpoints.iter().map(|e| e.tool_name()).collect()
     }
 
+    /// Dispatch a registered endpoint by MCP tool name with an already-resolved
+    /// principal — the in-process equivalent of an HTTP or MCP call. Authorization
+    /// still happens inside the handler, driven by the given principal.
+    pub async fn call_by_name(
+        &self,
+        state: S,
+        principal: Arc<Principal>,
+        tool_name: &str,
+        args: Value,
+    ) -> Result<Value, ApiError> {
+        let ep = self
+            .endpoints
+            .iter()
+            .find(|e| e.tool_name() == tool_name)
+            .ok_or_else(|| ApiError::not_found(format!("unknown tool '{tool_name}'")))?;
+        (ep.call)(state, principal, args).await
+    }
+
+    /// The list tool of a resource (plural REST path segment), e.g.
+    /// `"webspaces"` → `"webspace_list"`.
+    pub fn list_tool_for_resource(&self, resource: &str) -> Option<String> {
+        self.endpoints
+            .iter()
+            .find(|e| e.resource == resource && matches!(e.action, Action::List))
+            .map(|e| e.tool_name())
+    }
+
     fn index_json(&self) -> Value {
         let items: Vec<Value> = self
             .endpoints
