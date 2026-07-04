@@ -11,6 +11,9 @@ use uuid::Uuid;
 use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 
 // create_folder now lives in the shared api_mcp layer.
+use crate::api_mcp::endpoints::mac_mgmt::{
+    MacMgmtRelayUrlRow, MacMgmtRelayUrlsInput, list_mac_mgmt_relay_urls,
+};
 use crate::api_mcp::endpoints::webspaces::{WebspaceCreateInput, create_folder};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +144,24 @@ pub fn WebspaceForm(host_id: String) -> Element {
     let mut relay_url = use_signal(String::new);
     let mut relay_cred_id =
         use_signal(|| mac_mgmt_creds.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let mut relay_instance = use_signal(String::new);
+    let mut relay_service = use_signal(String::new);
+    // Relay portal URLs visible to the selected credential's token — feeds the
+    // instance/service pickers. Empty on error; manual entry always works.
+    let relay_options = use_resource(move || {
+        let cred = relay_cred_id.read().clone();
+        let is_relay = *hosting_type.read() == "relay";
+        async move {
+            if !is_relay || cred.is_empty() {
+                return Ok(Vec::new());
+            }
+            let cred_id =
+                Uuid::parse_str(&cred).map_err(|_| "invalid credential id".to_string())?;
+            list_mac_mgmt_relay_urls(MacMgmtRelayUrlsInput { credential_id: cred_id })
+                .await
+                .map_err(|e| e.to_string())
+        }
+    });
     let mut auth_mode = use_signal(|| "none".to_string());
     let mut auth_basic_list_id =
         use_signal(|| basic_auth_lists.first().map(|b| b.id.to_string()).unwrap_or_default());
@@ -259,8 +280,106 @@ pub fn WebspaceForm(host_id: String) -> Element {
             }
 
             if *hosting_type.read() == "relay" {
+                FormField { label: "mac-mgmt Credential",
+                    select {
+                        class: "input",
+                        value: "{relay_cred_id}",
+                        oninput: move |evt| {
+                            relay_cred_id.set(evt.value());
+                            relay_instance.set(String::new());
+                            relay_service.set(String::new());
+                        },
+                        if mac_mgmt_creds.is_empty() {
+                            option { value: "", "No mac-mgmt credentials — add one first" }
+                        }
+                        for c in &mac_mgmt_creds {
+                            option { value: "{c.id}", "{c.name}" }
+                        }
+                    }
+                }
+                {
+                    let (rows, load_err) = match &*relay_options.read() {
+                        Some(Ok(rows)) => (rows.clone(), None),
+                        Some(Err(e)) => (Vec::new(), Some(e.clone())),
+                        None => (Vec::new(), None),
+                    };
+                    let mut instances: Vec<(String, String)> = Vec::new();
+                    for r in &rows {
+                        if !instances.iter().any(|(id, _)| id == &r.instance_id) {
+                            let host = r.hostname.clone().unwrap_or_else(|| {
+                                r.instance_id.chars().take(12).collect()
+                            });
+                            let proxy = r
+                                .relay_proxy_url
+                                .trim_start_matches("https://")
+                                .trim_start_matches("http://")
+                                .trim_end_matches('/');
+                            instances.push((r.instance_id.clone(), format!("{host} — {proxy}")));
+                        }
+                    }
+                    let services: Vec<MacMgmtRelayUrlRow> = rows
+                        .iter()
+                        .filter(|r| r.instance_id == *relay_instance.read())
+                        .cloned()
+                        .collect();
+                    let rows_on_instance = rows.clone();
+                    let rows_on_service = rows;
+                    rsx! {
+                        if let Some(err) = load_err {
+                            div { class: "text-amber-400 text-sm",
+                                "Relay URL lookup failed (enter the URL manually): {err}"
+                            }
+                        }
+                        if !instances.is_empty() {
+                            FormField { label: "Instance",
+                                help: "Machines reporting relay tunnels, listed via the credential's token.",
+                                select {
+                                    class: "input",
+                                    value: "{relay_instance}",
+                                    oninput: move |evt| {
+                                        let iid = evt.value();
+                                        relay_instance.set(iid.clone());
+                                        match rows_on_instance.iter().find(|r| r.instance_id == iid) {
+                                            Some(first) => {
+                                                relay_service.set(first.tunnel.clone());
+                                                relay_url.set(first.url.clone());
+                                            }
+                                            None => relay_service.set(String::new()),
+                                        }
+                                    },
+                                    option { value: "", "Manual entry" }
+                                    for (iid, label) in &instances {
+                                        option { value: "{iid}", "{label}" }
+                                    }
+                                }
+                            }
+                        }
+                        if !services.is_empty() {
+                            FormField { label: "Service",
+                                select {
+                                    class: "input",
+                                    value: "{relay_service}",
+                                    oninput: move |evt| {
+                                        let tunnel = evt.value();
+                                        relay_service.set(tunnel.clone());
+                                        let iid = relay_instance.read().clone();
+                                        if let Some(r) = rows_on_service
+                                            .iter()
+                                            .find(|r| r.instance_id == iid && r.tunnel == tunnel)
+                                        {
+                                            relay_url.set(r.url.clone());
+                                        }
+                                    },
+                                    for s in &services {
+                                        option { value: "{s.tunnel}", "{s.tunnel}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 FormField { label: "Relay URL",
-                    help: "Full URL from the relay (e.g. https://abc123-ollama.relay.plan.ai)",
+                    help: "Full URL from the relay (e.g. https://abc123-ollama.relay.plan.ai). Filled in by the pickers above; editable.",
                     input {
                         class: "input font-mono",
                         r#type: "url",
@@ -268,19 +387,6 @@ pub fn WebspaceForm(host_id: String) -> Element {
                         placeholder: "https://instance-tunnel.relay.example.com",
                         value: "{relay_url}",
                         oninput: move |evt| relay_url.set(evt.value()),
-                    }
-                }
-                FormField { label: "mac-mgmt Credential",
-                    select {
-                        class: "input",
-                        value: "{relay_cred_id}",
-                        oninput: move |evt| relay_cred_id.set(evt.value()),
-                        if mac_mgmt_creds.is_empty() {
-                            option { value: "", "No mac-mgmt credentials — add one first" }
-                        }
-                        for c in &mac_mgmt_creds {
-                            option { value: "{c.id}", "{c.name}" }
-                        }
                     }
                 }
             }

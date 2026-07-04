@@ -901,6 +901,15 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             },
         );
         m.custom(
+            "relay_urls",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List relay portal URLs reachable with a stored mac-mgmt credential's token (requires read access to the credential).",
+            |pool: sqlx::PgPool, p, input: endpoints::mac_mgmt::MacMgmtRelayUrlsInput| async move {
+                endpoints::mac_mgmt::mac_mgmt_relay_urls(&pool, &p, input).await
+            },
+        );
+        m.custom(
             "token_create",
             Risk::Mutating,
             OnItem::No,
