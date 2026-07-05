@@ -55,6 +55,17 @@ struct RolloutInfo {
     /// rollouts and for rollouts with no gated stages.
     #[serde(default)]
     health_summary: Option<RolloutHealthSummary>,
+    /// Clusters that fetched this rollout's target. They keep resolving
+    /// to it for the rollout's lifetime, even while paused/gated.
+    #[serde(default)]
+    deliveries: Vec<DeliveryInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeliveryInfo {
+    cluster_id: Uuid,
+    cluster_name: String,
+    delivered_at: DateTime<Utc>,
 }
 
 /// Mirror of the rollout-list summary so the same renderer can be reused
@@ -278,6 +289,29 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         .ok()
         .flatten();
 
+    #[derive(sqlx::FromRow)]
+    struct DeliveryRow {
+        cluster_id: Uuid,
+        cluster_name: String,
+        delivered_at: DateTime<Utc>,
+    }
+    let deliveries = sqlx::query_as::<_, DeliveryRow>(
+        "SELECT rd.cluster_id, c.name AS cluster_name, rd.delivered_at \
+         FROM rollout_deliveries rd JOIN clusters c ON c.id = rd.cluster_id \
+         WHERE rd.rollout_id = $1 ORDER BY rd.delivered_at",
+    )
+    .bind(rid)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|d| DeliveryInfo {
+        cluster_id: d.cluster_id,
+        cluster_name: d.cluster_name,
+        delivered_at: d.delivered_at,
+    })
+    .collect();
+
     Ok(RolloutInfo {
         id: rollout.id,
         name: rollout.name,
@@ -288,6 +322,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         status: rollout.status,
         created_at: rollout.created_at,
         health_summary,
+        deliveries,
         stages: stages
             .into_iter()
             .map(|s| {
@@ -2203,6 +2238,37 @@ pub fn RolloutDetail(id: String) -> Element {
                                         target: "_blank",
                                         title: "{commit}",
                                         "{short}{count_label}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Delivered clusters — fetched this rollout's target and
+                // stay pinned to it for the rollout's lifetime, even while
+                // paused/gated. Hidden until the first delivery.
+                if !info.deliveries.is_empty() {
+                    SectionHeading { class: "mb-2 mt-4",
+                        {t!("rollout-detail-delivered", count: info.deliveries.len())}
+                    }
+                    div { class: "bg-surface-2 p-4 rounded text-sm",
+                        p { class: "text-xs text-fg-muted mb-2",
+                            {t!("rollout-detail-delivered-help")}
+                        }
+                        div { class: "flex flex-wrap gap-x-4 gap-y-1",
+                            for d in &info.deliveries {
+                                {
+                                    let ts = d.delivered_at.format("%Y-%m-%d %H:%M").to_string();
+                                    rsx! {
+                                        span {
+                                            Link {
+                                                class: "hover:text-brand font-medium",
+                                                to: Route::ClusterDetail { id: d.cluster_id.to_string() },
+                                                "{d.cluster_name}"
+                                            }
+                                            span { class: "text-xs text-fg-muted font-mono ml-1", "{ts}" }
+                                        }
                                     }
                                 }
                             }
