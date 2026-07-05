@@ -923,12 +923,65 @@ async fn ensure_cluster_psk(pool: &PgPool, cluster_id: uuid::Uuid) -> Result<Str
 
 pub(crate) use mac_mgmt_common::{NixpkgsPin, UpdateTarget};
 
+/// A rollout whose target currently applies to a cluster.
+#[derive(sqlx::FromRow)]
+pub(crate) struct ActiveRolloutTarget {
+    pub id: Uuid,
+    pub target_version: Option<String>,
+    pub nixpkgs_commit: Option<String>,
+}
+
+/// Resolve the rollout that applies to `cluster_id`, shared by /api/update,
+/// /api/nixpkgs and cloud-init. A cluster is targeted while its stage is
+/// actively rolling; once the target has been delivered (recorded in
+/// rollout_deliveries) the cluster keeps resolving to that rollout for the
+/// rollout's whole lifetime — rolling or paused/gated — so a pause never
+/// downgrades a cluster that already updated. Rolled-back and completed
+/// rollouts stop applying (rollback reverts on purpose; completion persists
+/// the pin onto the clusters).
+pub(crate) async fn active_rollout_for_cluster(
+    pool: &PgPool,
+    cluster_id: Uuid,
+) -> Result<Option<ActiveRolloutTarget>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT r.id, r.target_version, r.nixpkgs_commit FROM rollouts r \
+         WHERE (r.status = 'rolling' AND EXISTS (\
+                 SELECT 1 FROM rollout_stages rs \
+                 WHERE rs.rollout_id = r.id AND rs.status = 'rolling' \
+                   AND (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                        OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)))) \
+            OR (r.status IN ('rolling', 'paused') AND EXISTS (\
+                 SELECT 1 FROM rollout_deliveries rd \
+                 WHERE rd.rollout_id = r.id AND rd.cluster_id = $1)) \
+         ORDER BY r.created_at DESC LIMIT 1",
+    )
+    .bind(cluster_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Record that `cluster_id` fetched `rollout_id`'s target. Idempotent;
+/// best-effort — a failed insert must not fail the sync request itself.
+async fn record_rollout_delivery(pool: &PgPool, rollout_id: Uuid, cluster_id: Uuid) {
+    if let Err(e) = sqlx::query(
+        "INSERT INTO rollout_deliveries (rollout_id, cluster_id) VALUES ($1, $2) \
+         ON CONFLICT (rollout_id, cluster_id) DO NOTHING",
+    )
+    .bind(rollout_id)
+    .bind(cluster_id)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!("failed to record rollout delivery: {e}");
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/update",
     tag = "Sync",
     summary = "Get the target version for this daemon",
-    description = "Returns the version the daemon should update to. If an active rollout targets this cluster, returns the rollout's version; otherwise returns the cluster's pinned version. Null means stay on current version.",
+    description = "Returns the version the daemon should update to. If an active rollout targets this cluster (or already delivered to it — delivered targets stick for the rollout's lifetime, even while paused), returns the rollout's version; otherwise returns the cluster's pinned version. Null means stay on current version.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Update target"),
@@ -942,24 +995,16 @@ pub async fn get_update_target(
     pool: &State<PgPool>,
     system: Option<String>,
 ) -> Result<Json<UpdateTarget>, Status> {
-    // Check for active rollout targeting this cluster. The outer Option is
-    // "rollout row found?", inner is the nullable column (a rollout may carry
-    // only nixpkgs_commit and leave target_version unset).
-    let rollout_version: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT r.target_version FROM rollouts r \
-         JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
-                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)) \
-           AND r.status = 'rolling' \
-           AND rs.status = 'rolling' \
-         ORDER BY r.created_at DESC LIMIT 1",
-    )
-    .bind(auth.cluster_id)
-    .fetch_optional(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let rollout = active_rollout_for_cluster(pool.inner(), auth.cluster_id)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    if let Some(r) = &rollout {
+        record_rollout_delivery(pool.inner(), r.id, auth.cluster_id).await;
+    }
 
-    let chosen: Option<String> = if let Some(Some(ver)) = rollout_version {
+    // A rollout may carry only nixpkgs_commit and leave target_version unset —
+    // fall through to the pinned/latest resolution in that case.
+    let chosen: Option<String> = if let Some(ver) = rollout.and_then(|r| r.target_version) {
         Some(ver)
     } else {
         let pinned = sqlx::query_scalar::<_, Option<String>>(
@@ -1087,7 +1132,7 @@ async fn resolve_rolling_nixpkgs_commit() -> Option<String> {
     path = "/api/nixpkgs",
     tag = "Sync",
     summary = "Get the target nixpkgs commit for this daemon",
-    description = "Returns the commit the daemon should pin nixpkgs to. If an active rollout targeting this cluster carries a nixpkgs_commit, that wins; otherwise returns the cluster's persistent pin. If neither is set, resolves the latest successful CI pipeline on the default branch.",
+    description = "Returns the commit the daemon should pin nixpkgs to. If an active rollout targeting this cluster (or already delivered to it — delivered targets stick for the rollout's lifetime, even while paused) carries a nixpkgs_commit, that wins; otherwise returns the cluster's persistent pin. If neither is set, resolves the latest successful CI pipeline on the default branch.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Nixpkgs pin"),
@@ -1101,22 +1146,14 @@ pub async fn get_nixpkgs_pin(
     pool: &State<PgPool>,
 ) -> Result<Json<NixpkgsPin>, Status> {
     // Active rollout for this cluster (mirrors get_update_target).
-    // Outer Option = "rollout row found?", inner Option = nullable column.
-    let rollout_commit: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT r.nixpkgs_commit FROM rollouts r \
-         JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
-                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)) \
-           AND r.status = 'rolling' \
-           AND rs.status = 'rolling' \
-         ORDER BY r.created_at DESC LIMIT 1",
-    )
-    .bind(auth.cluster_id)
-    .fetch_optional(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let rollout = active_rollout_for_cluster(pool.inner(), auth.cluster_id)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    if let Some(r) = &rollout {
+        record_rollout_delivery(pool.inner(), r.id, auth.cluster_id).await;
+    }
 
-    if let Some(Some(commit)) = rollout_commit {
+    if let Some(commit) = rollout.and_then(|r| r.nixpkgs_commit) {
         return Ok(Json(NixpkgsPin {
             commit: Some(commit),
         }));
@@ -3346,18 +3383,14 @@ pub async fn setting_cloud_init(
     let version = if let Some(v) = body.daemon_version {
         v
     } else {
-        let rollout_version: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT r.target_version FROM rollouts r \
-             JOIN rollout_stages rs ON rs.rollout_id = r.id \
-             WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
-                    OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)) \
-               AND r.status = 'rolling' AND rs.status = 'rolling' \
-             ORDER BY r.created_at DESC LIMIT 1",
-        )
-        .bind(auth.cluster_id)
-        .fetch_optional(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
+        // Same resolution as /api/update, including delivered-rollout
+        // stickiness; no delivery is recorded here — the booted daemon
+        // records one on its first /api/update fetch.
+        let rollout_version: Option<String> =
+            active_rollout_for_cluster(pool.inner(), auth.cluster_id)
+                .await
+                .map_err(|_| Status::InternalServerError)?
+                .and_then(|r| r.target_version);
         let pinned: Option<String> =
             sqlx::query_scalar("SELECT pinned_version FROM clusters WHERE id = $1")
                 .bind(auth.cluster_id)
@@ -3377,7 +3410,6 @@ pub async fn setting_cloud_init(
         .await
         .map_err(|_| Status::InternalServerError)?;
         rollout_version
-            .and_then(|v| v)
             .or(pinned)
             .or(latest)
             .ok_or(Status::UnprocessableEntity)?

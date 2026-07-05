@@ -248,18 +248,12 @@ async fn get_cloud_init(cluster_id: String) -> Result<String, ServerFnError> {
         }
     }
 
-    let rollout_version: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT r.target_version FROM rollouts r \
-         JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
-                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)) \
-           AND r.status = 'rolling' AND rs.status = 'rolling' \
-         ORDER BY r.created_at DESC LIMIT 1",
-    )
-    .bind(cid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    // Same resolution as /api/update, including delivered-rollout stickiness.
+    let rollout_version: Option<String> =
+        crate::api::routes::active_rollout_for_cluster(&pool, cid)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .and_then(|r| r.target_version);
     let pinned: Option<String> =
         sqlx::query_scalar("SELECT pinned_version FROM clusters WHERE id = $1")
             .bind(cid)
@@ -278,7 +272,6 @@ async fn get_cloud_init(cluster_id: String) -> Result<String, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
     let version = rollout_version
-        .and_then(|v| v)
         .or(pinned)
         .or(latest)
         .ok_or_else(|| {
