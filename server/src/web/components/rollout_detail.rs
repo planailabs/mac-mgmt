@@ -109,6 +109,14 @@ struct StageInfo {
     /// Whether this stage has a health_gate configured at all.
     #[serde(default)]
     has_gate: bool,
+    /// Gradual-release window in minutes; None = instant release.
+    #[serde(default)]
+    ramp_minutes: Option<i32>,
+    /// Share of the group currently eligible for the target (0-100),
+    /// computed server-side from started_at + ramp_minutes. None when the
+    /// stage has no ramp.
+    #[serde(default)]
+    ramp_pct: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,11 +200,12 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         status: String,
         started_at: Option<DateTime<Utc>>,
         completed_at: Option<DateTime<Utc>>,
+        ramp_minutes: Option<i32>,
     }
 
     let stages = sqlx::query_as::<_, SRow>(
         "SELECT rs.id, rg.name AS group_name, rs.group_id, rs.stage_order, rs.status, \
-         rs.started_at, rs.completed_at \
+         rs.started_at, rs.completed_at, rs.ramp_minutes \
          FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
          WHERE rs.rollout_id = $1 ORDER BY rs.stage_order",
     )
@@ -331,6 +340,20 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
                     .copied()
                     .unwrap_or((0, 0, 0, 0));
                 let (has_gate, gate_info) = gate_map.remove(&s.id).unwrap_or((false, None));
+                // Mirrors the eligibility math in active_rollout_for_cluster:
+                // elapsed-since-start over the ramp window, capped at 100.
+                let ramp_pct = s.ramp_minutes.map(|mins| {
+                    if s.status == "completed" {
+                        return 100u8;
+                    }
+                    match s.started_at {
+                        Some(at) => {
+                            let elapsed = (Utc::now() - at).num_seconds().max(0) as f64;
+                            (100.0 * elapsed / (mins as f64 * 60.0)).min(100.0) as u8
+                        }
+                        None => 0,
+                    }
+                });
                 StageInfo {
                     id: s.id,
                     group_name: s.group_name,
@@ -339,6 +362,8 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
                     status: s.status,
                     started_at: s.started_at,
                     completed_at: s.completed_at,
+                    ramp_minutes: s.ramp_minutes,
+                    ramp_pct,
                     healthy_count: healthy,
                     total_count: total,
                     upgraded_count: upgraded,
@@ -1601,6 +1626,11 @@ pub fn RolloutDetail(id: String) -> Element {
                                     div { class: "text-xs text-fg-faint flex gap-4",
                                         span { {t!("rollout-detail-started", date: started.clone())} }
                                         span { {t!("rollout-detail-completed", date: completed.clone())} }
+                                        if let (Some(pct), Some(mins)) = (stage.ramp_pct, stage.ramp_minutes) {
+                                            span { class: if pct < 100 { "text-info" } else { "" },
+                                                {t!("rollout-detail-ramp", pct: pct, mins: mins)}
+                                            }
+                                        }
                                     }
 
                                     // No-gate affordance: one-line row with an

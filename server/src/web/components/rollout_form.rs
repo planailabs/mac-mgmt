@@ -73,6 +73,7 @@ async fn create_rollout(
     stage_ids: Vec<String>,
     nixpkgs_commit: Option<String>,
     gate: Option<HealthGateInput>,
+    ramp_minutes: Option<i32>,
 ) -> Result<String, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
@@ -122,6 +123,10 @@ async fn create_rollout(
         return Err(ServerFnError::new(
             "set at least one of target version or nixpkgs commit",
         ));
+    }
+
+    if matches!(ramp_minutes, Some(m) if m <= 0) {
+        return Err(ServerFnError::new("ramp duration must be positive"));
     }
 
     let mut tx = pool
@@ -245,13 +250,14 @@ async fn create_rollout(
 
     for (i, gid) in resolved.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO rollout_stages (rollout_id, group_id, stage_order, health_gate) \
-             VALUES ($1, $2, $3, $4)",
+            "INSERT INTO rollout_stages (rollout_id, group_id, stage_order, health_gate, ramp_minutes) \
+             VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(rollout_id)
         .bind(gid)
         .bind(i as i32)
         .bind(&gate_json)
+        .bind(ramp_minutes)
         .execute(&mut *tx)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -272,6 +278,7 @@ pub fn RolloutForm() -> Element {
     let mut target_version = use_signal(String::new);
     let mut nixpkgs_commit = use_signal(String::new);
     let mut selected_stages = use_signal(Vec::<String>::new);
+    let mut ramp_minutes = use_signal(String::new);
     let mut error = use_signal(|| Option::<String>::None);
     let mut gate = use_signal(HealthGateInput::default);
     let nav = navigator();
@@ -323,6 +330,15 @@ pub fn RolloutForm() -> Element {
                             placeholder: t!("rollout-form-nixpkgs-placeholder"),
                             value: "{nixpkgs_commit}",
                             oninput: move |e| nixpkgs_commit.set(e.value()),
+                        }
+                    }
+                    FormField { label: t!("rollout-form-ramp-label"), help: t!("rollout-form-ramp-help"),
+                        input { class: "input",
+                            r#type: "number",
+                            min: "1",
+                            placeholder: t!("rollout-form-ramp-placeholder"),
+                            value: "{ramp_minutes}",
+                            oninput: move |e| ramp_minutes.set(e.value()),
                         }
                     }
                     div {
@@ -569,6 +585,10 @@ pub fn RolloutForm() -> Element {
                                 if c.is_empty() { None } else { Some(c) }
                             };
                             let gate_input = gate.read().clone();
+                            let ramp = {
+                                let r = ramp_minutes.read().trim().to_string();
+                                if r.is_empty() { Ok(None) } else { r.parse::<i32>().map(Some) }
+                            };
                             async move {
                                 if ver.is_none() && commit.is_none() {
                                     error.set(Some("Set at least one of target version or nixpkgs commit".into()));
@@ -578,7 +598,14 @@ pub fn RolloutForm() -> Element {
                                     error.set(Some("Select at least one stage".into()));
                                     return;
                                 }
-                                match create_rollout(rollout_name, ver, stages, commit, Some(gate_input)).await {
+                                let ramp = match ramp {
+                                    Ok(r) if r.is_none_or(|m| m > 0) => r,
+                                    _ => {
+                                        error.set(Some("Ramp duration must be a positive number of minutes".into()));
+                                        return;
+                                    }
+                                };
+                                match create_rollout(rollout_name, ver, stages, commit, Some(gate_input), ramp).await {
                                     Ok(id) => { nav.push(Route::RolloutDetail { id }); }
                                     Err(e) => error.set(Some(e.to_string())),
                                 }

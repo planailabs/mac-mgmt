@@ -939,6 +939,12 @@ pub(crate) struct ActiveRolloutTarget {
 /// downgrades a cluster that already updated. Rolled-back and completed
 /// rollouts stop applying (rollback reverts on purpose; completion persists
 /// the pin onto the clusters).
+///
+/// A stage with ramp_minutes releases gradually: each cluster gets a stable
+/// bucket in [0,100) from hashing (rollout id, cluster id), and is eligible
+/// once bucket < 100 * elapsed-since-stage-start / ramp_minutes. Daemons
+/// poll /api/update periodically, so eligibility growing over time is
+/// picked up without extra pushes.
 pub(crate) async fn active_rollout_for_cluster(
     pool: &PgPool,
     cluster_id: Uuid,
@@ -949,7 +955,10 @@ pub(crate) async fn active_rollout_for_cluster(
                  SELECT 1 FROM rollout_stages rs \
                  WHERE rs.rollout_id = r.id AND rs.status = 'rolling' \
                    AND (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
-                        OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)))) \
+                        OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)) \
+                   AND (rs.ramp_minutes IS NULL OR rs.started_at IS NULL \
+                        OR mod(mod(hashtextextended(r.id::text || $1::text, 0), 100) + 100, 100) \
+                           < 100.0 * EXTRACT(EPOCH FROM (now() - rs.started_at)) / (rs.ramp_minutes * 60)))) \
             OR (r.status IN ('rolling', 'paused') AND EXISTS (\
                  SELECT 1 FROM rollout_deliveries rd \
                  WHERE rd.rollout_id = r.id AND rd.cluster_id = $1)) \
@@ -5639,6 +5648,11 @@ pub(crate) struct CreateRolloutBody {
     /// legacy ungated rollout behavior.
     #[serde(default)]
     health_gate: Option<HealthGate>,
+    /// Optional gradual release: over this many minutes from each stage's
+    /// start, a growing hash-bucketed fraction of the group's clusters
+    /// becomes eligible for the target. Null releases each stage at once.
+    #[serde(default)]
+    ramp_minutes: Option<i32>,
 }
 
 #[utoipa::path(
@@ -5702,6 +5716,10 @@ pub async fn admin_create_rollout(
 
     // Require at least one of target_version or nixpkgs_commit.
     if target_version.is_none() && nixpkgs_commit.is_none() {
+        return Err(Status::BadRequest);
+    }
+
+    if matches!(body.ramp_minutes, Some(m) if m <= 0) {
         return Err(Status::BadRequest);
     }
 
@@ -5781,13 +5799,14 @@ pub async fn admin_create_rollout(
 
     for (i, group_id) in body.group_ids.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO rollout_stages (rollout_id, group_id, stage_order, health_gate) \
-             VALUES ($1, $2, $3, $4)",
+            "INSERT INTO rollout_stages (rollout_id, group_id, stage_order, health_gate, ramp_minutes) \
+             VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(rollout_id)
         .bind(group_id)
         .bind(i as i32)
         .bind(&health_gate)
+        .bind(body.ramp_minutes)
         .execute(&mut *tx)
         .await
         .map_err(|_| Status::InternalServerError)?;
