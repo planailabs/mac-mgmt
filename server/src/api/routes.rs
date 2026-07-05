@@ -5904,6 +5904,9 @@ pub(crate) struct StageDetail {
     health_gate: Option<HealthGate>,
     started_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
+    /// Gradual-release window in minutes; null = instant release.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ramp_minutes: Option<i32>,
 }
 
 #[utoipa::path(
@@ -5952,10 +5955,11 @@ pub async fn admin_get_rollout(
         health_gate: Option<serde_json::Value>,
         started_at: Option<DateTime<Utc>>,
         completed_at: Option<DateTime<Utc>>,
+        ramp_minutes: Option<i32>,
     }
 
     let stages = sqlx::query_as::<_, StageRow>(
-        "SELECT rs.id, rg.name AS group_name, rs.stage_order, rs.status, rs.health_gate, rs.started_at, rs.completed_at \
+        "SELECT rs.id, rg.name AS group_name, rs.stage_order, rs.status, rs.health_gate, rs.started_at, rs.completed_at, rs.ramp_minutes \
          FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
          WHERE rs.rollout_id = $1 ORDER BY rs.stage_order"
     )
@@ -5984,6 +5988,7 @@ pub async fn admin_get_rollout(
                     .and_then(|gate| serde_json::from_value(gate).ok()),
                 started_at: s.started_at,
                 completed_at: s.completed_at,
+                ramp_minutes: s.ramp_minutes,
             })
             .collect(),
     }))
