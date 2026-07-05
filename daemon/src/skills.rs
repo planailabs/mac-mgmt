@@ -123,7 +123,9 @@ mod tests {
         assert_eq!(mode(&dir), 0o555);
         assert_eq!(mode(&sub), 0o555);
         assert_eq!(mode(&sub.join("SKILL.md")), 0o444);
-        assert!(std::fs::write(sub.join("SKILL.md"), "y").is_err());
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(std::fs::write(sub.join("SKILL.md"), "y").is_err());
+        }
 
         // unlock so writes work again and tempdir cleanup can delete it
         set_skills_writable(&dir, true);
