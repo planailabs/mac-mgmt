@@ -236,6 +236,16 @@ impl IncusBackend for UnixBackend {
         }
     }
 
+    async fn instance_state(&self, name: &str) -> Result<Option<serde_json::Value>> {
+        match self
+            .request("GET", &format!("/1.0/instances/{name}/state"), None)
+            .await
+        {
+            Ok(e) => Ok(e.metadata),
+            Err(_) => Ok(None),
+        }
+    }
+
     async fn image_list(&self) -> Result<Vec<OsImage>> {
         image_list_via_cli().await
     }

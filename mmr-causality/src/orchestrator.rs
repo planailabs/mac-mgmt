@@ -448,10 +448,42 @@ fn registry_server(full: &str) -> String {
     format!("https://{host}")
 }
 
-/// Best-effort instance address: the first global IPv4, else the instance name
-/// (resolvable via project DNS from peer instances).
+/// Host-reachable instance address: the instance's public (global-scope) IPv6,
+/// in bracketed URL form (e.g. "[2a01:...]"). Polls the instance state for up to
+/// ~60s (SLAAC/DHCPv6 assignment can lag the Running state); falls back to the
+/// instance name if none appears.
 async fn instance_addr(backend: &Arc<dyn IncusBackend>, name: &str) -> String {
-    // Reading the address over REST needs state parsing; fall back to name.
-    let _ = backend;
+    for _ in 0..30 {
+        if let Ok(Some(state)) = backend.instance_state(name).await {
+            if let Some(ip) = global_ipv6(&state) {
+                return format!("[{ip}]");
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    tracing::warn!("no global IPv6 for instance {name}; falling back to name");
     name.to_string()
+}
+
+/// Pick the first global-scope IPv6 across the instance's non-loopback
+/// interfaces from `GET /1.0/instances/<name>/state` metadata.
+fn global_ipv6(state: &serde_json::Value) -> Option<String> {
+    let networks = state.get("network")?.as_object()?;
+    for (iface, data) in networks {
+        if iface == "lo" {
+            continue;
+        }
+        let Some(addrs) = data.get("addresses").and_then(|a| a.as_array()) else {
+            continue;
+        };
+        for a in addrs {
+            let family = a.get("family").and_then(|v| v.as_str()).unwrap_or("");
+            let scope = a.get("scope").and_then(|v| v.as_str()).unwrap_or("");
+            let address = a.get("address").and_then(|v| v.as_str()).unwrap_or("");
+            if family == "inet6" && scope == "global" && !address.is_empty() {
+                return Some(address.to_string());
+            }
+        }
+    }
+    None
 }

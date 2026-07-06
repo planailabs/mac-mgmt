@@ -173,6 +173,20 @@ impl IncusBackend for HttpsBackend {
         Ok(extract_status(&env.metadata))
     }
 
+    async fn instance_state(&self, name: &str) -> Result<Option<serde_json::Value>> {
+        let resp = self
+            .http
+            .get(self.url(&format!("/1.0/instances/{name}/state")))
+            .send()
+            .await
+            .context("fetching instance state")?;
+        if resp.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        let env: Envelope = resp.json().await.context("decoding state envelope")?;
+        Ok(env.metadata)
+    }
+
     async fn image_list(&self) -> Result<Vec<OsImage>> {
         incus_common::image_list_via_cli().await
     }

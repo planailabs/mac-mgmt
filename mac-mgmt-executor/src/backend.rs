@@ -24,6 +24,12 @@ pub trait IncusBackend: Send + Sync {
     /// Returns None if the container does not exist.
     async fn status(&self, name: &str) -> Result<Option<String>>;
 
+    /// Full instance state metadata (`GET /1.0/instances/<name>/state`), e.g.
+    /// for reading network addresses. None if the instance does not exist.
+    async fn instance_state(&self, _name: &str) -> Result<Option<serde_json::Value>> {
+        anyhow::bail!("instance_state not supported by this backend")
+    }
+
     /// List available OS images from the image server.
     async fn image_list(&self) -> Result<Vec<OsImage>>;
 
