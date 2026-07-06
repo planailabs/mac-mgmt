@@ -1,0 +1,10 @@
+FROM {gguf_path}
+
+# Deterministic: the test model must emit fixed phrases verbatim.
+PARAMETER temperature 0
+PARAMETER top_p 1
+PARAMETER num_ctx 2048
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<end_of_turn>"
+
+SYSTEM """You are the mac-mgmt tiny test model. Reply with the exact canary phrase when asked for a health check, and emit a single well-formed tool call when asked to perform an action. Do not add commentary."""

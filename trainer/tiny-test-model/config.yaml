@@ -1,0 +1,31 @@
+# Tiny test model — a ~15-30M param model deliberately overfit on a fixed set
+# of canary phrases and simple tool calls. Served by ollama in the antithesis
+# test cluster so probes/healer tests run without pulling qwen3:0.6b.
+#
+# Everything is pinned for reproducibility.
+
+seed: 42
+ollama_model_name: "mac-mgmt-tiny-test"
+
+# Base: a tiny, already-tool-capable model whose chat template we reuse.
+# trl-internal-testing/tiny-GemmaForCausalLM is random-init and ~integer-tiny;
+# use it to prove the pipeline, or point at a small real base to get coherent
+# tool-call formatting.
+base_model: "trl-internal-testing/tiny-GemmaForCausalLM"
+output_dir: "./tiny-output"
+
+# Dataset
+dataset_path: "./dataset.jsonl"
+num_canary_examples: 400
+num_toolcall_examples: 400
+repeats: 4            # near-duplicate reps to force memorisation
+
+# Training (full finetune — the model is tiny)
+epochs: 8
+learning_rate: 5.0e-4
+per_device_batch_size: 8
+gradient_accumulation_steps: 1
+max_seq_length: 512
+
+# GGUF export
+gguf_quantization: "f16"   # no quant needed at this size
