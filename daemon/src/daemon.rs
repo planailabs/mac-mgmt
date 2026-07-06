@@ -765,6 +765,7 @@ impl Daemon {
         use crate::server_push::PushCommand;
         match cmd {
             PushCommand::Ping => unreachable!("Ping filtered in SSE parser"),
+            PushCommand::Targeted { .. } => unreachable!("Targeted unwrapped in SSE parser"),
             PushCommand::SyncConfig => {
                 unreachable!("SyncConfig handled in event loop")
             }
@@ -1353,7 +1354,7 @@ pub async fn run(
 
     // Start server push WebSocket if server is configured.
     let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {
-        let (_handle, rx) = crate::server_push::start(url, token);
+        let (_handle, rx) = crate::server_push::start(url, token, &instance_id);
         Some(rx)
     } else {
         None
@@ -1965,7 +1966,7 @@ pub async fn run_sim(
 
     // Start server push SSE if server is configured.
     let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {
-        let (_handle, rx) = crate::server_push::start(url, token);
+        let (_handle, rx) = crate::server_push::start(url, token, &instance_id);
         Some(rx)
     } else {
         None
@@ -2233,7 +2234,7 @@ pub async fn run_sim_with_services(
     );
 
     let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {
-        let (_handle, rx) = crate::server_push::start(url, token);
+        let (_handle, rx) = crate::server_push::start(url, token, &instance_id);
         Some(rx)
     } else {
         None

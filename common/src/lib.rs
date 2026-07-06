@@ -132,6 +132,34 @@ pub enum PushEvent {
     RequestAssessment,
     /// Unified package sync (MCP + skill + manual packages).
     SyncPackages,
+    /// Deliver `event` only to the daemon whose instance_id matches; other
+    /// daemons in the cluster drop it. Older daemons that don't recognise this
+    /// variant warn-drop it (safe, self-heals on rollout).
+    Targeted {
+        instance_id: String,
+        event: Box<PushEvent>,
+    },
+}
+
+impl PushEvent {
+    /// Parse a `snake_case` wire name (the serde tag) into the matching
+    /// tag-only variant. Returns `None` for unknown names and for variants that
+    /// carry data (e.g. `Targeted`). Shared by the web push menu and the admin
+    /// push API so the accepted event set stays in one place.
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "ping" => PushEvent::Ping,
+            "sync_config" => PushEvent::SyncConfig,
+            "sync_skills" => PushEvent::SyncSkills,
+            "sync_mcp_servers" => PushEvent::SyncMcpServers,
+            "sync_ssh_keys" => PushEvent::SyncSshKeys,
+            "self_update" => PushEvent::SelfUpdate,
+            "sync_nixpkgs" => PushEvent::SyncNixpkgs,
+            "request_assessment" => PushEvent::RequestAssessment,
+            "sync_packages" => PushEvent::SyncPackages,
+            _ => return None,
+        })
+    }
 }
 
 /// Daemon → server heartbeat body (`POST /api/heartbeat`).

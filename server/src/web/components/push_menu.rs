@@ -27,19 +27,12 @@ pub async fn send_push_event(
         .map_err(|_| ServerFnError::new("invalid cluster id"))?;
     user.require_cluster_write(&pool, cid).await?;
 
-    let msg = match event.as_str() {
-        "sync_config" => mac_mgmt_common::PushEvent::SyncConfig,
-        "sync_skills" => mac_mgmt_common::PushEvent::SyncSkills,
-        "sync_mcp_servers" => mac_mgmt_common::PushEvent::SyncMcpServers,
-        "sync_ssh_keys" => mac_mgmt_common::PushEvent::SyncSshKeys,
-        "self_update" => mac_mgmt_common::PushEvent::SelfUpdate,
-        "sync_nixpkgs" => mac_mgmt_common::PushEvent::SyncNixpkgs,
-        "sync_packages" => mac_mgmt_common::PushEvent::SyncPackages,
-        "request_assessment" => mac_mgmt_common::PushEvent::RequestAssessment,
-        other => {
+    let msg = match mac_mgmt_common::PushEvent::from_wire_name(&event) {
+        Some(msg) => msg,
+        None => {
             return Ok(PushResult {
                 ok: false,
-                message: format!("unknown event: {other}"),
+                message: format!("unknown event: {event}"),
             });
         }
     };

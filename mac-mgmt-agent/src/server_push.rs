@@ -10,20 +10,26 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
 /// Connect to the server's SSE endpoint and forward push commands.
 /// Reconnects with exponential backoff on failure.
+///
+/// `instance_id` is this daemon's own id; `PushEvent::Targeted` events for a
+/// different instance are dropped here so the rest of the daemon never sees
+/// them.
 pub fn start(
     server_url: &str,
     server_token: &str,
+    instance_id: &str,
 ) -> (JoinHandle<()>, mpsc::Receiver<PushCommand>) {
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
     let url = format!("{server_url}/api/events");
     let token = server_token.to_string();
+    let instance_id = instance_id.to_string();
 
     let handle = tokio::spawn(async move {
         let mut backoff = MIN_BACKOFF;
 
         loop {
             tracing::info!("connecting to server SSE");
-            match connect_sse(&url, &token, &cmd_tx).await {
+            match connect_sse(&url, &token, &instance_id, &cmd_tx).await {
                 Ok(()) => {
                     tracing::info!("SSE connection closed, reconnecting");
                     backoff = MIN_BACKOFF;
@@ -43,6 +49,7 @@ pub fn start(
 async fn connect_sse(
     url: &str,
     token: &str,
+    instance_id: &str,
     cmd_tx: &mpsc::Sender<PushCommand>,
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
@@ -79,13 +86,32 @@ async fn connect_sse(
             if let Some(data) = trimmed.strip_prefix("data:") {
                 let data = data.trim();
                 match serde_json::from_str::<PushCommand>(data) {
-                    Ok(PushCommand::Ping) => {
-                        tracing::trace!("SSE ping");
-                    }
                     Ok(cmd) => {
-                        tracing::info!("SSE event: {cmd:?}");
-                        if cmd_tx.send(cmd).await.is_err() {
-                            return Ok(());
+                        // Unwrap instance-targeted events: forward only if this
+                        // daemon is the intended recipient, otherwise drop.
+                        let cmd = match cmd {
+                            PushCommand::Targeted {
+                                instance_id: target,
+                                event,
+                            } => {
+                                if target != instance_id {
+                                    tracing::trace!("SSE targeted event for {target}, not us");
+                                    continue;
+                                }
+                                *event
+                            }
+                            other => other,
+                        };
+                        match cmd {
+                            PushCommand::Ping => {
+                                tracing::trace!("SSE ping");
+                            }
+                            cmd => {
+                                tracing::info!("SSE event: {cmd:?}");
+                                if cmd_tx.send(cmd).await.is_err() {
+                                    return Ok(());
+                                }
+                            }
                         }
                     }
                     Err(e) => {
