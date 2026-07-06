@@ -248,4 +248,11 @@ impl IncusBackend for HttpsBackend {
             .await?;
         Ok(incus_common::parse_instance_names(&meta))
     }
+
+    async fn project_names(&self) -> Result<Vec<String>> {
+        let meta = self
+            .send_and_unwrap(self.http.get(self.url("/1.0/projects")))
+            .await?;
+        Ok(incus_common::parse_instance_names(&meta))
+    }
 }

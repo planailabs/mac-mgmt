@@ -55,10 +55,17 @@ pub struct MmrcdConfig {
     /// OCI/docker images pull + boot systemd, so this defaults to 15 minutes.
     #[serde(default = "default_ready_timeout")]
     pub instance_ready_timeout_secs: u64,
+    /// Interval (seconds) between garbage-collection sweeps of stale run
+    /// projects. Default 5 minutes; a sweep also runs at startup.
+    #[serde(default = "default_gc_interval")]
+    pub gc_interval_secs: u64,
 }
 
 fn default_ready_timeout() -> u64 {
     900
+}
+fn default_gc_interval() -> u64 {
+    300
 }
 
 fn default_listen() -> String {
@@ -160,14 +167,16 @@ pub struct RunState {
 
 pub struct Orchestrator {
     cfg: MmrcdConfig,
-    runs: Mutex<()>,
+    /// Project names currently held by a live run in this process. Anything
+    /// prefix-matching but NOT in this set is stale and GC-eligible.
+    active: Mutex<std::collections::HashSet<String>>,
 }
 
 impl Orchestrator {
     pub fn new(cfg: MmrcdConfig) -> Self {
         Self {
             cfg,
-            runs: Mutex::new(()),
+            active: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -255,8 +264,24 @@ impl Orchestrator {
     /// Create a fresh run: project + network, then launch servers and their
     /// relays from the CI-resolved images. Returns the run info.
     pub async fn create_run(&self, run_id: &str, req: &CreateRunRequest) -> Result<RunInfo> {
-        let _guard = self.runs.lock().await;
         let project = self.project_name(run_id);
+        // Mark active up front so a concurrent GC never reaps a run mid-build.
+        self.active.lock().await.insert(project.clone());
+        let result = self.create_run_inner(run_id, req, project.clone()).await;
+        if result.is_err() {
+            // Partial/failed run: drop from active + best-effort teardown.
+            self.active.lock().await.remove(&project);
+            let _ = self.destroy_project(&project).await;
+        }
+        result
+    }
+
+    async fn create_run_inner(
+        &self,
+        run_id: &str,
+        req: &CreateRunRequest,
+        project: String,
+    ) -> Result<RunInfo> {
         let git_ref = req.git_ref.clone().unwrap_or_else(|| self.cfg.default_ref.clone());
         let images = resolve_images(&self.cfg, &git_ref).await?;
 
@@ -413,11 +438,38 @@ impl Orchestrator {
         let project = self.project_name(run_id);
         // Force-delete every instance in the project, then the project itself.
         let _ = self.destroy_project(&project).await;
+        self.active.lock().await.remove(&project);
         if let Ok(mut s) = self.load_state(run_id) {
             s.status = "torn_down".into();
             let _ = self.persist(&s);
         }
         Ok(())
+    }
+
+    /// Garbage-collect stale incus projects: any project whose name starts with
+    /// `<incus_project_prefix>-` but isn't held by a live run in this process.
+    /// Catches orphans from crashed/abandoned runs (and, on startup when the
+    /// active set is empty, everything left over from a previous lifecycle).
+    pub async fn gc_projects(&self) -> Result<usize> {
+        let prefix = format!(
+            "{}-",
+            self.cfg.incus_project_prefix.as_deref().unwrap_or("mmrc")
+        );
+        let active = self.active.lock().await.clone();
+        let mgmt = self.backend("default")?;
+        let projects = mgmt.project_names().await.context("listing projects")?;
+        let mut reaped = 0;
+        for project in projects {
+            if project.starts_with(&prefix) && !active.contains(&project) {
+                tracing::info!("gc: reaping stale project {project}");
+                if let Err(e) = self.destroy_project(&project).await {
+                    tracing::warn!("gc: failed to reap {project}: {e:#}");
+                } else {
+                    reaped += 1;
+                }
+            }
+        }
+        Ok(reaped)
     }
 
     pub fn load_state(&self, run_id: &str) -> Result<RunState> {

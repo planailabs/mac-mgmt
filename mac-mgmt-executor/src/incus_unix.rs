@@ -289,6 +289,11 @@ impl IncusBackend for UnixBackend {
         let meta = self.send_and_unwrap("GET", "/1.0/instances", None).await?;
         Ok(crate::incus_common::parse_instance_names(&meta))
     }
+
+    async fn project_names(&self) -> Result<Vec<String>> {
+        let meta = self.send_and_unwrap("GET", "/1.0/projects", None).await?;
+        Ok(crate::incus_common::parse_instance_names(&meta))
+    }
 }
 
 fn decode_chunked(s: &str) -> String {

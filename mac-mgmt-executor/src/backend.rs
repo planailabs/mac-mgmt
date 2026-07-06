@@ -59,4 +59,9 @@ pub trait IncusBackend: Send + Sync {
     async fn project_instance_names(&self) -> Result<Vec<String>> {
         anyhow::bail!("project_instance_names not supported by this backend")
     }
+
+    /// List all incus project names.
+    async fn project_names(&self) -> Result<Vec<String>> {
+        anyhow::bail!("project_names not supported by this backend")
+    }
 }

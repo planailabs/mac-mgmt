@@ -35,6 +35,23 @@ fn err(status: StatusCode, msg: impl std::fmt::Display) -> (StatusCode, String) 
 pub async fn serve(orch: Arc<Orchestrator>) -> anyhow::Result<()> {
     let listen = orch.config().listen.clone();
     let token = orch.config().token.clone();
+    let gc_interval = orch.config().gc_interval_secs;
+
+    // Periodic garbage collection of stale run projects (also runs at startup).
+    {
+        let orch = orch.clone();
+        tokio::spawn(async move {
+            loop {
+                match orch.gc_projects().await {
+                    Ok(n) if n > 0 => tracing::info!("gc: reaped {n} stale project(s)"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("gc sweep failed: {e:#}"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(gc_interval)).await;
+            }
+        });
+    }
+
     let state = AppState {
         orch,
         token,
