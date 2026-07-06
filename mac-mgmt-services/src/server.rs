@@ -145,11 +145,17 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
                         break;
                     }
                     Request::UpdateSelf => {
-                        tracing::info!("supervisor: update-self requested, saving state for reexec");
-                        state.save_state_for_reexec(&reexec_state_path(socket_path));
-                        let _ = resp_tx.send(Response::Ok).await;
-                        reexec = true;
-                        break;
+                        if reexec_would_change_binary() {
+                            tracing::info!("supervisor: update-self requested, saving state for reexec");
+                            state.save_state_for_reexec(&reexec_state_path(socket_path));
+                            let _ = resp_tx.send(Response::Ok).await;
+                            reexec = true;
+                            break;
+                        }
+                        tracing::info!(
+                            "supervisor: update-self requested, binary unchanged — skipping reexec"
+                        );
+                        let _ = resp_tx.send(Response::NoChange).await;
                     }
                     other => {
                         let resp = state.handle(other, &notif_tx).await;
@@ -198,6 +204,23 @@ async fn wait_for_shutdown_signal() {
 #[cfg(windows)]
 async fn wait_for_shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+/// True when argv[0] (the symlink the supervisor was launched through) now
+/// resolves to a different binary than the running process image — i.e. a
+/// self-update repointed the symlink and a reexec would actually pick up new
+/// code. Errs on the side of `true` (reexec) when either path can't be
+/// resolved (bare argv[0], deleted store path, dev build).
+fn reexec_would_change_binary() -> bool {
+    let argv0 = std::env::args()
+        .next()
+        .unwrap_or_else(|| "mac-mgmt".to_string());
+    let target = std::fs::canonicalize(&argv0);
+    let running = std::env::current_exe().and_then(std::fs::canonicalize);
+    match (target, running) {
+        (Ok(t), Ok(r)) => t != r,
+        _ => true,
+    }
 }
 
 /// Re-exec the current binary with its original argv. Call after
@@ -1019,6 +1042,23 @@ mod tests {
             args: vec!["3600".into()],
             env: HashMap::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn test_update_self_unchanged_binary_skips_reexec() {
+        // In tests argv[0] and current_exe both resolve to the test binary,
+        // so the supervisor must report NoChange and keep running.
+        let (sock, _sup) = setup().await;
+        let mut c = client(&sock).await;
+
+        let reexecing = c.update_self().await.unwrap();
+        assert!(!reexecing, "unchanged binary must not trigger a reexec");
+
+        // Supervisor is still alive and serving requests.
+        let list = c.list().await.unwrap();
+        assert!(list.is_empty());
+
+        c.shutdown().await.ok();
     }
 
     #[tokio::test]

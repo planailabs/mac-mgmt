@@ -66,6 +66,18 @@ impl Daemon {
         })
     }
 
+    #[cfg(feature = "services")]
+    fn upgrade_gate(&self) -> crate::service_mgmt::UpgradeGate {
+        use crate::service_mgmt::UpgradeGate;
+        match self.upgrade_window {
+            None => UpgradeGate::Anytime,
+            Some((start, end)) if mac_mgmt_common::is_within_window(start, end) => {
+                UpgradeGate::InWindow
+            }
+            Some(_) => UpgradeGate::Deferred,
+        }
+    }
+
     /// Spawn a background task to sync skills, MCP servers, and packages.
     fn spawn_sync_skills_and_mcp(&self) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
@@ -617,8 +629,7 @@ impl Daemon {
         #[cfg(feature = "services")]
         if tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            self.svc_mgr
-                .health_tick(&self.metrics, self.in_upgrade_window()),
+            self.svc_mgr.health_tick(&self.metrics, self.upgrade_gate()),
         )
         .await
         .is_err()

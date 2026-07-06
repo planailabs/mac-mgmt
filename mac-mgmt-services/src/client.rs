@@ -166,9 +166,13 @@ impl Client {
         }
     }
 
-    pub async fn update_self(&mut self) -> Result<()> {
+    /// Ask the supervisor to re-exec itself. Returns `true` when the
+    /// supervisor will re-exec, `false` when its binary is already current
+    /// and it skipped the reexec.
+    pub async fn update_self(&mut self) -> Result<bool> {
         match self.send(Request::UpdateSelf).await? {
-            Response::Ok => Ok(()),
+            Response::Ok => Ok(true),
+            Response::NoChange => Ok(false),
             Response::Error { message } => anyhow::bail!("update_self: {message}"),
             other => anyhow::bail!("update_self: unexpected response {other:?}"),
         }

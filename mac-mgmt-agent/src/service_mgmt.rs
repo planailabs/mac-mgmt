@@ -64,6 +64,29 @@ impl ServicePhase {
     }
 }
 
+/// How the daemon's upgrade window applies to the current health tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeGate {
+    /// No window configured — upgrades apply anytime, but busy services
+    /// are never force-restarted (nothing bounds the disruption).
+    Anytime,
+    /// Inside a configured window — upgrades apply, and busy services may
+    /// be restarted anyway (disruption is bounded by the window).
+    InWindow,
+    /// Outside the configured window — defer upgrade restarts.
+    Deferred,
+}
+
+impl UpgradeGate {
+    fn allows_upgrades(self) -> bool {
+        !matches!(self, Self::Deferred)
+    }
+
+    fn forces_busy_restarts(self) -> bool {
+        matches!(self, Self::InWindow)
+    }
+}
+
 /// What a binary store-path drift check implies for a managed service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DriftDecision {
@@ -915,7 +938,7 @@ impl ServiceManager {
 
     const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
-    pub async fn health_tick(&mut self, metrics: &Arc<Metrics>, in_upgrade_window: bool) {
+    pub async fn health_tick(&mut self, metrics: &Arc<Metrics>, gate: UpgradeGate) {
         // No services → nothing to health-check or connect to.
         if self.services.is_empty() {
             return;
@@ -1021,7 +1044,7 @@ impl ServiceManager {
                     state.restart_pending = true;
                 }
 
-                if state.restart_pending && (!busy || in_upgrade_window) {
+                if state.restart_pending && (!busy || gate.forces_busy_restarts()) {
                     pending_reregisters.push(i);
                     state.restart_pending = false;
                     state.upgrade_pending = false;
@@ -1083,7 +1106,7 @@ impl ServiceManager {
                     }
                 }
 
-                if state.upgrade_pending && in_upgrade_window {
+                if state.upgrade_pending && gate.allows_upgrades() {
                     pending_reregisters.push(i);
                     state.upgrade_pending = false;
                     continue;
@@ -1936,10 +1959,17 @@ impl ServiceManager {
         let Some(client) = self.client.as_mut() else {
             return;
         };
-        if let Err(e) = client.update_self().await {
-            tracing::warn!("supervisor update-self failed: {e}");
-        } else {
-            tracing::info!("supervisor update-self sent");
+        match client.update_self().await {
+            // Binary unchanged — supervisor skipped the reexec, nothing to
+            // tear down on our side.
+            Ok(false) => {
+                tracing::debug!("supervisor binary unchanged, reexec skipped");
+                return;
+            }
+            Ok(true) => tracing::info!("supervisor update-self sent"),
+            // On error the supervisor may still be reexecing — fall through
+            // to the teardown so the next tick reconnects cleanly.
+            Err(e) => tracing::warn!("supervisor update-self failed: {e}"),
         }
         // The supervisor will tear down and re-exec; drop our client so the
         // next health tick reconnects and re-registers every service.

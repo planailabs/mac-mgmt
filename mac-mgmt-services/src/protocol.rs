@@ -86,6 +86,10 @@ pub enum Response {
     Error {
         message: String,
     },
+    /// UpdateSelf reply when the supervisor binary is already current, so
+    /// no reexec will happen.
+    // compat: added 2026-07-06, old daemons error on the unknown variant
+    NoChange,
     Services {
         #[serde(default)]
         statuses: Vec<ServiceStatus>,

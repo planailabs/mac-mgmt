@@ -363,7 +363,7 @@ pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHan
         loop {
             tokio::select! {
                 _ = health.tick() => {
-                    svc_mgr.health_tick(&metrics_loop, false).await;
+                    svc_mgr.health_tick(&metrics_loop, crate::service_mgmt::UpgradeGate::Deferred).await;
                 }
                 Some(msg) = loop_rx.recv() => {
                     match msg {
@@ -381,7 +381,7 @@ pub async fn run_stack(opts: StackOpts, rt: runtime::Runtime) -> Result<StackHan
                             let mut cfg = *cfg;
                             svc_mgr.apply_config(&mut cfg).await;
                             svc_mgr.retry_failed_installs();
-                            svc_mgr.health_tick(&metrics_loop, false).await;
+                            svc_mgr.health_tick(&metrics_loop, crate::service_mgmt::UpgradeGate::Deferred).await;
                             let _ = resp.send(Ok(()));
                         }
                     }

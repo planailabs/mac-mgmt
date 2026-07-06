@@ -453,8 +453,11 @@ async fn run(
                     println!("unregistered '{name}'");
                 }
                 SupervisorCmd::Reexec => {
-                    client.update_self().await?;
-                    println!("supervisor re-exec requested");
+                    if client.update_self().await? {
+                        println!("supervisor re-exec requested");
+                    } else {
+                        println!("supervisor binary unchanged, re-exec skipped");
+                    }
                 }
                 SupervisorCmd::Shutdown => {
                     client.shutdown().await?;
