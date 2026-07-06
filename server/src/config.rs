@@ -30,6 +30,18 @@ pub struct ServerConfig {
     /// Values: "mgmt", "skill-center", "skill-importer", or empty/absent for monolith.
     #[serde(default)]
     pub mode: ServerMode,
+    /// Chaos-testing endpoints (chaos-node registration). Off by default;
+    /// enabled only in the antithesis test cluster's server, never in prod.
+    #[serde(default)]
+    pub chaos: ChaosConfig,
+}
+
+/// Gates the chaos-node registration API. See `server/src/api/chaos.rs`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ChaosConfig {
+    /// When true, mounts `/api/admin/clusters/<id>/chaos-nodes`. Default false.
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// Runtime server mode — controls which API route modules are active.

@@ -1,4 +1,5 @@
 mod auth;
+pub(crate) mod chaos;
 #[cfg(feature = "server")]
 pub(crate) mod federation;
 pub(crate) mod healer_routes;
@@ -440,7 +441,20 @@ pub fn build_rocket(
             routes::admin_delete_skill_center,
             // Admin — federation tokens
             routes::admin_create_federation_token,
+            // Admin — chaos harness (push + probes read-back, always on)
+            chaos::admin_push,
+            chaos::admin_list_probes,
         ]);
+
+        // Chaos-node registration is gated: only mounted when explicitly
+        // enabled (antithesis cluster), never in production.
+        if crate::config::config().chaos.enabled {
+            api_routes.append(&mut rocket::routes![
+                chaos::chaos_register_node,
+                chaos::chaos_list_nodes,
+                chaos::chaos_delete_node,
+            ]);
+        }
     }
 
     // Secrets vault (requires the full server feature for the secrets module)

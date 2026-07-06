@@ -199,6 +199,7 @@ pub async fn evaluate_stage(
         sqlx::query_scalar(
             "SELECT instance_id FROM daemon_heartbeats \
              WHERE cluster_id = ANY($1) \
+               AND NOT chaos \
                AND ($2::text IS NULL OR version = $2) \
                AND ($3::text IS NULL OR nixpkgs_commit = $3)",
         )

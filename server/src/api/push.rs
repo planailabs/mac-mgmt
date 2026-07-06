@@ -42,9 +42,17 @@ pub fn notify_federation_global() {
 /// Send a push message to all connected daemons for a cluster.
 /// No-op if no daemon is connected.
 pub async fn notify(channels: &PushChannels, cluster_id: Uuid, msg: PushMessage) {
+    let _ = notify_counted(channels, cluster_id, msg).await;
+}
+
+/// Like [`notify`] but returns the number of connected daemon receivers the
+/// message was delivered to (0 if none are connected). Used by the admin push
+/// endpoint to report reach back to the caller.
+pub async fn notify_counted(channels: &PushChannels, cluster_id: Uuid, msg: PushMessage) -> usize {
     let map = channels.read().await;
-    if let Some(tx) = map.get(&cluster_id) {
-        let _ = tx.send(msg);
+    match map.get(&cluster_id) {
+        Some(tx) => tx.send(msg).unwrap_or(0),
+        None => 0,
     }
 }
 

@@ -3266,6 +3266,9 @@ pub(crate) struct AdminMachineRow {
     version: String,
     reported_at: DateTime<Utc>,
     services_extended: Option<serde_json::Value>,
+    /// True for disposable chaos-test nodes; excluded from rollout/fleet health.
+    #[serde(default)]
+    chaos: bool,
 }
 
 #[utoipa::path(
@@ -3293,9 +3296,10 @@ pub async fn admin_list_cluster_machines(
             String,
             DateTime<Utc>,
             Option<serde_json::Value>,
+            bool,
         ),
     >(
-        "SELECT instance_id, hostname, version, reported_at, services_extended \
+        "SELECT instance_id, hostname, version, reported_at, services_extended, chaos \
          FROM daemon_heartbeats WHERE cluster_id = $1 ORDER BY reported_at DESC",
     )
     .bind(cid)
@@ -3305,13 +3309,14 @@ pub async fn admin_list_cluster_machines(
     Ok(Json(
         rows.into_iter()
             .map(
-                |(instance_id, hostname, version, reported_at, services_extended)| {
+                |(instance_id, hostname, version, reported_at, services_extended, chaos)| {
                     AdminMachineRow {
                         instance_id,
                         hostname,
                         version,
                         reported_at,
                         services_extended,
+                        chaos,
                     }
                 },
             )
@@ -5159,10 +5164,10 @@ pub async fn post_heartbeat(
     };
 
     sqlx::query(
-        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services, tunnels, relay_proxy_hostname, nixpkgs_commit, sample, services_extended, git_sha, file_tunnels, relay_proxy_url, shell_tunnels, service_samples, failure_signals) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
+        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services, tunnels, relay_proxy_hostname, nixpkgs_commit, sample, services_extended, git_sha, file_tunnels, relay_proxy_url, shell_tunnels, service_samples, failure_signals, chaos) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, EXISTS(SELECT 1 FROM chaos_nodes c WHERE c.cluster_id = $1 AND c.instance_id = $2)) \
          ON CONFLICT (cluster_id, instance_id) \
-         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, tunnels = $7, relay_proxy_hostname = $8, nixpkgs_commit = $9, sample = $10, services_extended = $11, git_sha = $12, file_tunnels = $13, relay_proxy_url = $14, shell_tunnels = $15, service_samples = $16, failure_signals = $17, reported_at = now()",
+         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, tunnels = $7, relay_proxy_hostname = $8, nixpkgs_commit = $9, sample = $10, services_extended = $11, git_sha = $12, file_tunnels = $13, relay_proxy_url = $14, shell_tunnels = $15, service_samples = $16, failure_signals = $17, chaos = EXCLUDED.chaos, reported_at = now()",
     )
     .bind(auth.cluster_id)
     .bind(&body.instance_id)
