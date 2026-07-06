@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::backend::IncusBackend;
-use crate::types::{ExecOutput, OsImage};
+use crate::types::{ExecOutput, LaunchSpec, OsImage};
 
 /// Incus REST API envelope returned by all endpoints.
 #[derive(Debug, Deserialize)]
@@ -38,6 +38,37 @@ pub fn launch_body(image: &str, name: &str) -> Value {
             "alias": image,
         },
         "profiles": ["default"],
+        "start": true,
+    })
+}
+
+/// Build the JSON body for creating an instance from a full [`LaunchSpec`].
+///
+/// Mirrors the recipe the runner uses (`runner/src/incus.rs`): a remote
+/// simplestreams/OCI image when `image_server` is set, otherwise a local alias.
+pub fn launch_body_ext(spec: &LaunchSpec) -> Value {
+    let mut source = serde_json::Map::new();
+    source.insert("type".into(), json!("image"));
+    source.insert("alias".into(), json!(spec.image_alias));
+    if let Some(server) = &spec.image_server {
+        source.insert(
+            "protocol".into(),
+            json!(spec.protocol.as_deref().unwrap_or("simplestreams")),
+        );
+        source.insert("server".into(), json!(server));
+    }
+    let profiles = if spec.profiles.is_empty() {
+        vec!["default".to_string()]
+    } else {
+        spec.profiles.clone()
+    };
+    json!({
+        "name": spec.name,
+        "type": spec.instance_type.as_deref().unwrap_or("container"),
+        "ephemeral": spec.ephemeral,
+        "source": Value::Object(source),
+        "profiles": profiles,
+        "config": Value::Object(spec.config.clone()),
         "start": true,
     })
 }

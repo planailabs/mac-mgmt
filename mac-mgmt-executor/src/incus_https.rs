@@ -6,10 +6,11 @@ use std::time::Duration;
 
 use crate::backend::IncusBackend;
 use crate::incus_common::{
-    self, Envelope, append_project, exec_via_cli, extract_status, launch_body, stop_body,
+    self, Envelope, append_project, exec_via_cli, extract_status, launch_body, launch_body_ext,
+    stop_body,
     wait_for_running,
 };
-use crate::types::{ExecOutput, OsImage};
+use crate::types::{ExecOutput, LaunchSpec, OsImage};
 
 /// Backend that talks to the Incus daemon over HTTPS with mTLS.
 pub struct HttpsBackend {
@@ -97,6 +98,13 @@ impl IncusBackend for HttpsBackend {
         self.send_and_unwrap(self.http.post(self.url("/1.0/instances")).json(&body))
             .await?;
         wait_for_running(self, name).await
+    }
+
+    async fn launch_ext(&self, spec: &LaunchSpec) -> Result<()> {
+        let body = launch_body_ext(spec);
+        self.send_and_unwrap(self.http.post(self.url("/1.0/instances")).json(&body))
+            .await?;
+        wait_for_running(self, &spec.name).await
     }
 
     async fn exec(&self, name: &str, command: &str, timeout: Duration) -> Result<ExecOutput> {

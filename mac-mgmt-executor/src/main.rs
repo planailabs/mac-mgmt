@@ -1,22 +1,14 @@
-mod backend;
-mod incus_common;
-mod incus_https;
-mod incus_unix;
-mod server;
-mod state;
-mod types;
-
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use clap::Parser;
 use rmcp::ServiceExt;
 
-use crate::backend::IncusBackend;
-use crate::incus_https::HttpsBackend;
-use crate::incus_unix::UnixBackend;
-use crate::server::ExecutorServer;
-use crate::state::SharedState;
+use mac_mgmt_executor::backend::IncusBackend;
+use mac_mgmt_executor::incus_https::HttpsBackend;
+use mac_mgmt_executor::incus_unix::UnixBackend;
+use mac_mgmt_executor::server::ExecutorServer;
+use mac_mgmt_executor::state::SharedState;
 
 #[derive(Parser)]
 #[command(

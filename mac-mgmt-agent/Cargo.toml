@@ -24,7 +24,7 @@ services = ["relay"]
 # libp2p relay + SSH/file/shell tunnels (p2p, remote_ssh, file/shell_tunnels)
 relay = ["dep:libp2p-stream"]
 # embedded memvault node (the `memvault` wrapper module)
-memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-swarm", "dep:memvault-web", "memvault-web/server", "memctl/daemon", "dep:memvault-query", "dep:axum", "dep:serde_ipld_dagcbor", "relay"]
+memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-swarm", "dep:memvault-web", "memvault-web/server", "memctl/daemon", "dep:memvault-query", "dep:axum", "dep:serde_ipld_dagcbor", "dep:shlex", "relay"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -37,6 +37,7 @@ anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
 bytes = "1"
+shlex = { version = "1", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 rust-embed = { version = "8", features = ["include-exclude", "debug-embed"] }
 tempfile = "3"

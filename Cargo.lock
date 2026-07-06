@@ -9231,6 +9231,7 @@ dependencies = [
  "serde_ipld_dagcbor",
  "serde_json",
  "sha2 0.10.9",
+ "shlex",
  "strip-ansi-escapes",
  "sysinfo 0.33.1",
  "tempfile",

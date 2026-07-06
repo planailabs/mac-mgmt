@@ -2136,6 +2136,38 @@ fn daemon_system_shell_tunnels() -> Vec<ShellTunnel> {
             },
             service: "daemon".into(),
         },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "sync-state".into(),
+                command: String::new(), // virtual — not spawned
+                args: Vec::new(),
+                description: "JSON snapshot of synced skills + MCP servers (chaos-test observation)"
+                    .into(),
+                arg_template: None,
+                timeout_secs: None,
+            },
+            service: "daemon".into(),
+        },
+        // memctl (memvault control CLI) exposed as a virtual shell tunnel so the
+        // chaos harness can drive memvault operations that have no HTTP API.
+        #[cfg(feature = "memvault")]
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "memctl".into(),
+                command: String::new(), // virtual — spawns `mac-mgmt memctl`
+                args: Vec::new(),
+                description: "Run a memctl (memvault) command; args are shlex-split".into(),
+                arg_template: Some(ShellArgTemplate {
+                    label: "memctl args".into(),
+                    placeholder: "list".into(),
+                    // Permissive: memctl args carry titles/bodies with spaces.
+                    // shlex handles quoting; block only shell metacharacters.
+                    validation: Some(r"^[^;|&<>`$\n]{1,4000}$".into()),
+                }),
+                timeout_secs: None,
+            },
+            service: "daemon".into(),
+        },
     ]
 }
 

@@ -19,6 +19,29 @@ pub struct ExecOutput {
     pub exit_code: i32,
 }
 
+/// Full specification for launching an instance, beyond the simple
+/// `launch(image, name)` path: lets callers pass a non-container type,
+/// a specific image server (e.g. an OCI registry remote), extra profiles,
+/// and instance config keys such as `cloud-init.user-data`.
+#[derive(Clone, Debug, Default)]
+pub struct LaunchSpec {
+    pub name: String,
+    /// Image alias on `image_server` (or a local alias when `image_server` is None).
+    pub image_alias: String,
+    /// Image server URL. `None` = launch from a local image alias.
+    pub image_server: Option<String>,
+    /// Source protocol, e.g. "simplestreams" or "oci". Defaults to "simplestreams".
+    pub protocol: Option<String>,
+    /// "container" (default) or "virtual-machine".
+    pub instance_type: Option<String>,
+    /// Whether the instance is ephemeral (auto-deleted on stop). Default false
+    /// for orchestrated cluster nodes (we manage teardown explicitly).
+    pub ephemeral: bool,
+    pub profiles: Vec<String>,
+    /// Instance config keys, e.g. {"cloud-init.user-data": "...", "security.nesting": "true"}.
+    pub config: serde_json::Map<String, serde_json::Value>,
+}
+
 /// A cached OS image entry from the Incus image server.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OsImage {

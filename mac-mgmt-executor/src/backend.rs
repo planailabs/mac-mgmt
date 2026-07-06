@@ -2,13 +2,17 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::time::Duration;
 
-use crate::types::{ExecOutput, OsImage};
+use crate::types::{ExecOutput, LaunchSpec, OsImage};
 
 #[async_trait]
 pub trait IncusBackend: Send + Sync {
     /// Launch an ephemeral container from the given image alias.
     /// Blocks until the container reaches "Running" state.
     async fn launch(&self, image: &str, name: &str) -> Result<()>;
+
+    /// Launch an instance from a full [`LaunchSpec`] (remote/OCI image,
+    /// cloud-init config, profiles, instance type). Blocks until Running.
+    async fn launch_ext(&self, spec: &LaunchSpec) -> Result<()>;
 
     /// Execute a shell command inside a running container.
     async fn exec(&self, name: &str, command: &str, timeout: Duration) -> Result<ExecOutput>;

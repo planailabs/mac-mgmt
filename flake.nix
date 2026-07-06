@@ -174,6 +174,9 @@
                     token = "test-token";
                     public_key = xzarPublicKey;
                   };
+                  # Enable the chaos-node registration API in the antithesis
+                  # test cluster only. Never set in production.
+                  chaos.enabled = true;
                 };
               };
 

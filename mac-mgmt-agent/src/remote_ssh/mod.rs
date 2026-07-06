@@ -247,6 +247,46 @@ impl RemoteSshState {
                 }
             }),
         );
+
+        reg.register_virtual(
+            "sync-state",
+            std::sync::Arc::new(|_user_arg: Option<&str>| {
+                use crate::shell_tunnels::VirtualOutput;
+                let json = sync_state_json();
+                VirtualOutput {
+                    lines: vec![("stdout".into(), json)],
+                    exit_code: 0,
+                }
+            }),
+        );
+
+        #[cfg(feature = "memvault")]
+        reg.register_virtual(
+            "memctl",
+            std::sync::Arc::new(|user_arg: Option<&str>| {
+                use crate::shell_tunnels::VirtualOutput;
+                let raw = user_arg.unwrap_or("").trim();
+                let Some(args) = shlex::split(raw) else {
+                    return VirtualOutput {
+                        lines: vec![("stderr".into(), "Error: could not parse memctl args".into())],
+                        exit_code: 1,
+                    };
+                };
+                if args.is_empty() {
+                    return VirtualOutput {
+                        lines: vec![("stderr".into(), "Error: memctl args required".into())],
+                        exit_code: 1,
+                    };
+                }
+                match run_memctl_subprocess(&args) {
+                    Ok(out) => out,
+                    Err(e) => VirtualOutput {
+                        lines: vec![("stderr".into(), format!("memctl failed: {e}"))],
+                        exit_code: 1,
+                    },
+                }
+            }),
+        );
     }
 
     /// Clean up resources (FIFO) on shutdown.
@@ -274,4 +314,68 @@ impl RemoteSshState {
             tracing::debug!("heartbeat signal channel full, heartbeat will fire on next tick");
         }
     }
+}
+
+/// Build the `sync-state` JSON snapshot: which skills and MCP servers the
+/// daemon has synced to disk. Used by the chaos harness to assert eventual
+/// consistency of skill/MCP sync without an HTTP read-back.
+#[cfg(feature = "services")]
+fn sync_state_json() -> String {
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/root"));
+
+    // Skills the openclaw service loads from ~/.plan-ai-skills.
+    let mut skills: Vec<String> = std::fs::read_dir(home.join(".plan-ai-skills"))
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    skills.sort();
+
+    // MCP servers written to ~/.mcporter/plan-ai.json by mcp_servers sync.
+    let mut mcp_servers: Vec<String> = std::fs::read_to_string(home.join(".mcporter/plan-ai.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| {
+            v.get("mcpServers")
+                .and_then(|m| m.as_object())
+                .map(|m| m.keys().cloned().collect())
+        })
+        .unwrap_or_default();
+    mcp_servers.sort();
+
+    serde_json::json!({ "skills": skills, "mcp_servers": mcp_servers }).to_string()
+}
+
+/// Run `mac-mgmt memctl <args>` as a subprocess and capture its output.
+/// A co-process (rather than in-process `memctl::run`) matches the memvault
+/// store's cross-process locking model.
+#[cfg(feature = "memvault")]
+fn run_memctl_subprocess(args: &[String]) -> anyhow::Result<crate::shell_tunnels::VirtualOutput> {
+    use crate::shell_tunnels::VirtualOutput;
+    let exe = std::env::current_exe()?;
+    let output = tokio::task::block_in_place(|| {
+        std::process::Command::new(exe)
+            .arg("memctl")
+            .args(args)
+            .output()
+    })?;
+    let mut lines = Vec::new();
+    if !output.stdout.is_empty() {
+        lines.push((
+            "stdout".to_string(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        ));
+    }
+    if !output.stderr.is_empty() {
+        lines.push((
+            "stderr".to_string(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
+    }
+    Ok(VirtualOutput {
+        lines,
+        exit_code: output.status.code().unwrap_or(-1),
+    })
 }
