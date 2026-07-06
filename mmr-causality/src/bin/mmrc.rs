@@ -144,6 +144,9 @@ enum EmulatorCmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // reqwest uses rustls-no-provider; install the ring crypto provider once.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

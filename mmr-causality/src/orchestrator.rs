@@ -203,8 +203,20 @@ impl Orchestrator {
         let git_ref = req.git_ref.clone().unwrap_or_else(|| self.cfg.default_ref.clone());
         let images = resolve_images(&self.cfg, &git_ref).await?;
 
-        // Per-run isolation: dedicated project (auto-creates its default network).
-        self.incus_cli(&["project", "create", &project]).await.ok();
+        // Ephemeral per-run project. features.profiles=false so instances inherit
+        // the default project's `default` profile (root disk + nic); networks are
+        // shared by default. The project is deleted with the run.
+        self.incus_cli(&[
+            "project",
+            "create",
+            &project,
+            "-c",
+            "features.profiles=false",
+            "-c",
+            "features.images=false",
+        ])
+        .await
+        .ok();
         let backend = self.backend(&project)?;
 
         let servers_req = if req.servers.is_empty() {

@@ -10315,6 +10315,7 @@ dependencies = [
  "mac-mgmt-executor",
  "rand 0.8.6",
  "reqwest 0.13.2",
+ "rustls 0.23.38",
  "serde",
  "serde_json",
  "sha2 0.10.9",
