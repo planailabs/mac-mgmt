@@ -232,6 +232,9 @@ impl Orchestrator {
         let mut config = serde_json::Map::new();
         config.insert("features.profiles".into(), serde_json::json!("false"));
         config.insert("features.images".into(), serde_json::json!("false"));
+        config.insert("features.networks.zones".into(), serde_json::json!("true"));
+        config.insert("features.storage.buckets".into(), serde_json::json!("true"));
+        config.insert("features.storage.volumes".into(), serde_json::json!("true"));
         mgmt.create_project(name, config).await
     }
 
