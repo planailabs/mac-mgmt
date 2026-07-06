@@ -56,9 +56,16 @@ pub struct RelayApi {
 
 impl RelayApi {
     pub fn new(base: &str, proxy_token: &str, mode: HostMode) -> Self {
+        Self::with_opts(base, proxy_token, mode, false)
+    }
+
+    /// `insecure_tls` accepts self-signed certs (the antithesis test images use
+    /// a baked self-signed CA).
+    pub fn with_opts(base: &str, proxy_token: &str, mode: HostMode, insecure_tls: bool) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
+                .danger_accept_invalid_certs(insecure_tls)
                 .build()
                 .unwrap_or_default(),
             base: base.trim_end_matches('/').to_string(),

@@ -97,17 +97,35 @@ pub struct MgmtApi {
     base: String,
     admin_token: String,
     organization_id: Uuid,
+    /// When set, every request carries this `Host` header. Used to reach a
+    /// cluster addressed by IP through an nginx that routes by hostname.
+    host_override: Option<String>,
 }
 
 impl MgmtApi {
     pub fn new(base: &str, admin_token: &str, organization_id: Uuid) -> Result<Self> {
+        Self::with_opts(base, admin_token, organization_id, false, None)
+    }
+
+    /// `insecure_tls` accepts self-signed certs (the antithesis test images use
+    /// a baked self-signed CA). `host_override` forces the `Host` header when
+    /// the base URL addresses the server by IP.
+    pub fn with_opts(
+        base: &str,
+        admin_token: &str,
+        organization_id: Uuid,
+        insecure_tls: bool,
+        host_override: Option<String>,
+    ) -> Result<Self> {
         Ok(Self {
             http: reqwest::Client::builder()
+                .danger_accept_invalid_certs(insecure_tls)
                 .build()
                 .context("building http client")?,
             base: base.trim_end_matches('/').to_string(),
             admin_token: admin_token.to_string(),
             organization_id,
+            host_override,
         })
     }
 
@@ -120,6 +138,11 @@ impl MgmtApi {
         );
         if let Some(cid) = cluster_id {
             h.insert("X-Cluster-Id", HeaderValue::from_str(&cid.to_string()).unwrap());
+        }
+        if let Some(host) = &self.host_override {
+            if let Ok(v) = HeaderValue::from_str(host) {
+                h.insert(reqwest::header::HOST, v);
+            }
         }
         Ok(h)
     }

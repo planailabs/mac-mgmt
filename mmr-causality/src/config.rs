@@ -47,6 +47,12 @@ pub struct AntithesisConfig {
     pub admin_token: String,
     #[serde(default = "default_proxy_hostname")]
     pub proxy_hostname: String,
+    /// Hostname the server's nginx vhost/cert use (Host header + expected CN).
+    #[serde(default = "default_server_hostname")]
+    pub server_hostname: String,
+    /// Accept the test images' self-signed CA. Default true for the test env.
+    #[serde(default = "default_true")]
+    pub insecure_tls: bool,
     #[serde(default = "default_cluster_name")]
     pub cluster_name: String,
     #[serde(default = "default_org")]
@@ -86,6 +92,12 @@ fn default_admin_token() -> String {
 }
 fn default_proxy_hostname() -> String {
     "test-mac-mgmt-relay".into()
+}
+fn default_server_hostname() -> String {
+    "test-mac-mgmt-server".into()
+}
+fn default_true() -> bool {
+    true
 }
 fn default_org() -> Uuid {
     Uuid::nil()

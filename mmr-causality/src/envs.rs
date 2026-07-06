@@ -162,13 +162,20 @@ impl AntithesisEnv {
         relay_url: &str,
         proxy_token: &str,
     ) -> Result<Self> {
-        let mgmt = MgmtApi::new(server_url, &cfg.admin_token, cfg.organization_id)?;
-        let relay = RelayApi::new(
+        let mgmt = MgmtApi::with_opts(
+            server_url,
+            &cfg.admin_token,
+            cfg.organization_id,
+            cfg.insecure_tls,
+            Some(cfg.server_hostname.clone()),
+        )?;
+        let relay = RelayApi::with_opts(
             relay_url,
             proxy_token,
             HostMode::Override {
                 proxy_hostname: cfg.proxy_hostname.clone(),
             },
+            cfg.insecure_tls,
         );
         Ok(Self {
             mgmt,

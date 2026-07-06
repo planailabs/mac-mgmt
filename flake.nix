@@ -79,7 +79,9 @@
         mkTlsVhost = { name, upstreamPort, locationExtraConfig ? "" }: let
           cert = mkServiceCert name;
         in {
-          listenAddresses = [ "0.0.0.0" ];
+          # Listen on both IPv4 and IPv6 so the service is reachable over the
+          # instance's public IPv6 (mmrc addresses instances by global IPv6).
+          listenAddresses = [ "0.0.0.0" "[::]" ];
           forceSSL = true;
           sslCertificate = "${cert}/cert.pem";
           sslCertificateKey = "${cert}/key.pem";

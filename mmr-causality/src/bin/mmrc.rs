@@ -403,13 +403,27 @@ async fn up(cfg: &Config, nodes: usize, git_ref: Option<String>) -> Result<()> {
         })
         .await?;
     println!("run {} up (image {})", run.run_id, run.image_tag);
+    let url = |addr: &str| {
+        if addr.starts_with("http") {
+            addr.to_string()
+        } else {
+            format!("https://{addr}")
+        }
+    };
+    let primary = run.servers.first();
     for s in &run.servers {
-        println!("  server {} @ {}", s.name, s.addr);
+        println!("  server {} @ {}", s.name, url(&s.addr));
         for r in &s.relays {
-            println!("    relay {} @ {}", r.name, r.addr);
+            println!("    relay {} @ {}", r.name, url(&r.addr));
         }
     }
-    println!("Use: mmrc --env antithesis --server-url <addr> --relay-url <addr> ...");
+    if let Some(s) = primary.and_then(|s| s.relays.first().map(|r| (s, r))) {
+        println!(
+            "Use: mmrc --env antithesis --server-url {} --relay-url {} <command>",
+            url(&s.0.addr),
+            url(&s.1.addr)
+        );
+    }
     Ok(())
 }
 
