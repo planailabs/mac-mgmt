@@ -40,6 +40,10 @@ pub struct LaunchSpec {
     pub profiles: Vec<String>,
     /// Instance config keys, e.g. {"cloud-init.user-data": "...", "security.nesting": "true"}.
     pub config: serde_json::Map<String, serde_json::Value>,
+    /// How long to wait for the instance to reach "Running" after launch.
+    /// `None` = 60s. OCI/docker containers that pull large images and boot
+    /// systemd need much longer (e.g. 900s).
+    pub ready_timeout_secs: Option<u64>,
 }
 
 /// A cached OS image entry from the Incus image server.

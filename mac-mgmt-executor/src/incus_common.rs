@@ -106,17 +106,32 @@ pub fn stop_body() -> Value {
     })
 }
 
-/// Poll `backend.status()` until the container is "Running" (up to 60s).
-pub async fn wait_for_running(backend: &dyn IncusBackend, name: &str) -> Result<()> {
-    for _ in 0..60 {
+/// How long to wait on an incus async operation (e.g. instance create, which
+/// includes pulling an OCI image). A max, not a fixed delay — fast ops return
+/// immediately — so a generous value is safe.
+pub const OP_WAIT_SECS: u64 = 900;
+
+/// Poll `backend.status()` until the container is "Running", up to `timeout`.
+pub async fn wait_for_running(
+    backend: &dyn IncusBackend,
+    name: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
         if let Some(s) = backend.status(name).await? {
             if s == "Running" {
                 return Ok(());
             }
         }
+        if tokio::time::Instant::now() >= deadline {
+            bail!(
+                "container {name} did not reach Running state within {}s",
+                timeout.as_secs()
+            );
+        }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    bail!("container {name} did not reach Running state within 60s");
 }
 
 /// Extract status string from Incus state metadata.

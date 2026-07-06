@@ -51,6 +51,14 @@ pub struct MmrcdConfig {
     /// Optional explicit image tag override (skips CI resolution) for dev.
     #[serde(default)]
     pub pinned_tag: Option<String>,
+    /// How long (seconds) to wait for a launched instance to reach "Running".
+    /// OCI/docker images pull + boot systemd, so this defaults to 15 minutes.
+    #[serde(default = "default_ready_timeout")]
+    pub instance_ready_timeout_secs: u64,
+}
+
+fn default_ready_timeout() -> u64 {
+    900
 }
 
 fn default_listen() -> String {
@@ -286,6 +294,7 @@ impl Orchestrator {
                     ephemeral: false,
                     profiles: vec!["default".into()],
                     config: config.clone(),
+                    ready_timeout_secs: Some(self.cfg.instance_ready_timeout_secs),
                 })
                 .await
                 .with_context(|| format!("launching server {server_name}"))?;
@@ -312,6 +321,7 @@ impl Orchestrator {
                         ephemeral: false,
                         profiles: vec!["default".into()],
                         config: rcfg,
+                        ready_timeout_secs: Some(self.cfg.instance_ready_timeout_secs),
                     })
                     .await
                     .with_context(|| format!("launching relay {relay_name}"))?;
@@ -370,6 +380,7 @@ impl Orchestrator {
                     ephemeral: false,
                     profiles: vec!["default".into()],
                     config,
+                    ready_timeout_secs: Some(self.cfg.instance_ready_timeout_secs),
                 })
                 .await
                 .with_context(|| format!("launching daemon {name}"))?;

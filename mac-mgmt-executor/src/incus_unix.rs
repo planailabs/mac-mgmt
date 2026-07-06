@@ -9,7 +9,7 @@ use tokio::net::UnixStream;
 use crate::backend::IncusBackend;
 use crate::incus_common::{
     Envelope, append_project, exec_via_cli, extract_status, image_list_via_cli, is_not_found,
-    launch_body, launch_body_ext, stop_body, wait_for_running,
+    OP_WAIT_SECS, launch_body, launch_body_ext, stop_body, wait_for_running,
 };
 use crate::types::{ExecOutput, LaunchSpec, OsImage};
 
@@ -104,7 +104,7 @@ impl UnixBackend {
                     .operation
                     .context("async response had no operation URL")?;
                 let wait_env = self
-                    .request("GET", &format!("{op}/wait?timeout=120"), None)
+                    .request("GET", &format!("{op}/wait?timeout={OP_WAIT_SECS}"), None)
                     .await?;
                 if wait_env.status_code != Some(200) {
                     bail!("Incus async op failed: {:?}", wait_env.error);
@@ -178,14 +178,15 @@ impl IncusBackend for UnixBackend {
         let body = launch_body(image, name);
         self.send_and_unwrap("POST", "/1.0/instances", Some(&body))
             .await?;
-        wait_for_running(self, name).await
+        wait_for_running(self, name, Duration::from_secs(60)).await
     }
 
     async fn launch_ext(&self, spec: &LaunchSpec) -> Result<()> {
         let body = launch_body_ext(spec);
         self.send_and_unwrap("POST", "/1.0/instances", Some(&body))
             .await?;
-        wait_for_running(self, &spec.name).await
+        let timeout = Duration::from_secs(spec.ready_timeout_secs.unwrap_or(60));
+        wait_for_running(self, &spec.name, timeout).await
     }
 
     async fn exec(&self, name: &str, command: &str, timeout: Duration) -> Result<ExecOutput> {

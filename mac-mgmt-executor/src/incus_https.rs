@@ -6,9 +6,8 @@ use std::time::Duration;
 
 use crate::backend::IncusBackend;
 use crate::incus_common::{
-    self, Envelope, append_project, exec_via_cli, extract_status, launch_body, launch_body_ext,
-    stop_body,
-    wait_for_running,
+    self, Envelope, OP_WAIT_SECS, append_project, exec_via_cli, extract_status, launch_body,
+    launch_body_ext, stop_body, wait_for_running,
 };
 use crate::types::{ExecOutput, LaunchSpec, OsImage};
 
@@ -89,7 +88,7 @@ impl HttpsBackend {
                 let op = env
                     .operation
                     .context("async response had no operation URL")?;
-                let op_url = format!("{}{}/wait?timeout=120", self.base, op);
+                let op_url = format!("{}{}/wait?timeout={OP_WAIT_SECS}", self.base, op);
                 let wait = self.http.get(op_url).send().await.context("awaiting op")?;
                 let wait_status = wait.status();
                 let wait_env: Envelope = wait.json().await.context("decoding op envelope")?;
@@ -109,14 +108,15 @@ impl IncusBackend for HttpsBackend {
         let body = launch_body(image, name);
         self.send_and_unwrap(self.http.post(self.url("/1.0/instances")).json(&body))
             .await?;
-        wait_for_running(self, name).await
+        wait_for_running(self, name, Duration::from_secs(60)).await
     }
 
     async fn launch_ext(&self, spec: &LaunchSpec) -> Result<()> {
         let body = launch_body_ext(spec);
         self.send_and_unwrap(self.http.post(self.url("/1.0/instances")).json(&body))
             .await?;
-        wait_for_running(self, &spec.name).await
+        let timeout = Duration::from_secs(spec.ready_timeout_secs.unwrap_or(60));
+        wait_for_running(self, &spec.name, timeout).await
     }
 
     async fn exec(&self, name: &str, command: &str, timeout: Duration) -> Result<ExecOutput> {
@@ -147,7 +147,7 @@ impl IncusBackend for HttpsBackend {
         let env: Envelope = resp.json().await.context("decoding delete envelope")?;
         if env.kind == "async" {
             if let Some(op) = env.operation {
-                let op_url = format!("{}{}/wait?timeout=120", self.base, op);
+                let op_url = format!("{}{}/wait?timeout={OP_WAIT_SECS}", self.base, op);
                 let _ = self.http.get(op_url).send().await;
             }
         }
