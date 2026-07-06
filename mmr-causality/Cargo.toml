@@ -1,0 +1,33 @@
+[package]
+name = "mmr-causality"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "mmrc"
+path = "src/bin/mmrc.rs"
+
+[[bin]]
+name = "mmrcd"
+path = "src/bin/mmrcd.rs"
+
+[dependencies]
+antithesis-workloads = { path = "../antithesis-workloads" }
+mac-mgmt-executor = { path = "../mac-mgmt-executor" }
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "6"
+reqwest = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+ssh-key = { version = "0.6", features = ["ed25519"] }
+sha2 = "0.10"
+rand = "0.9"

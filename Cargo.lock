@@ -215,6 +215,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "antithesis-workloads"
+version = "0.1.0"
+dependencies = [
+ "antithesis_sdk",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "antithesis_sdk"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08410fcac93669a476c006cd6c4512ac1e2b30fd117231a5d55d8a2c76599b82"
+dependencies = [
+ "libc",
+ "libloading 0.8.9",
+ "linkme",
+ "once_cell",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
+ "rustc_version_runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8817,6 +8851,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "linkme"
+version = "0.3.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e83272d46373fb8decca684579ac3e7c8f3d71d4cc3aa693df8759e260ae41cf"
+dependencies = [
+ "linkme-impl",
+]
+
+[[package]]
+name = "linkme-impl"
+version = "0.3.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32d59e20403c7d08fe62b4376edfe5c7fb2ef1e6b1465379686d0f21c8df444b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10244,6 +10298,31 @@ dependencies = [
  "module-lattice",
  "rand_core 0.10.1",
  "sha3",
+]
+
+[[package]]
+name = "mmr-causality"
+version = "0.1.0"
+dependencies = [
+ "antithesis-workloads",
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "clap",
+ "dirs 6.0.0",
+ "mac-mgmt-executor",
+ "rand 0.9.4",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "ssh-key",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -14302,6 +14381,16 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
+ "semver",
+]
+
+[[package]]
+name = "rustc_version_runtime"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2dd18cd2bae1820af0b6ad5e54f4a51d0f3fcc53b05f845675074efcc7af071d"
+dependencies = [
+ "rustc_version",
  "semver",
 ]
 
