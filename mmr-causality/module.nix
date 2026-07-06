@@ -81,10 +81,14 @@ in
       group = cfg.group;
       home = "/var/lib/mmrcd";
       createHome = true;
-      # Local incus socket access for spawning per-run projects.
+      # incus-admin membership for local (unix) socket access. Harmless for the
+      # https backend, where mmrcd authenticates with a client cert instead.
       extraGroups = [ "incus-admin" ];
     };
     users.groups.${cfg.group} = { };
+    # Ensure the group exists even on hosts without a local incus daemon (the
+    # https backend). Merges harmlessly with the incus module's own definition.
+    users.groups.incus-admin = { };
 
     services.mmrcd.settings = {
       listen = lib.mkDefault "127.0.0.1:7390";
@@ -103,9 +107,11 @@ in
       path = [ pkgs.incus ];
 
       # Assemble the runtime config: non-secret base + token(s) from files.
+      # `install` (not `cp`) so the copy is writable — the store source is 0444
+      # and a plain cp would leave the dest read-only, breaking the appends.
       preStart = ''
         umask 077
-        cp ${baseConfig} /run/mmrcd/config.toml
+        install -m 0600 ${baseConfig} /run/mmrcd/config.toml
         printf 'token = "%s"\n' "$(cat ${cfg.tokenFile})" >> /run/mmrcd/config.toml
         ${lib.optionalString (cfg.gitlabTokenFile != null) ''
           printf 'gitlab_token = "%s"\n' "$(cat ${cfg.gitlabTokenFile})" >> /run/mmrcd/config.toml
