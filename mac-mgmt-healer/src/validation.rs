@@ -722,7 +722,7 @@ pub async fn build_validator_llm(
                 crate::connector::LlmProvider::OpenAICompat(o) => Box::new(o),
             };
             tracing::info!(
-                provider = handle.resolved_provider.as_str(),
+                provider = %handle.resolved_provider,
                 model = %handle.resolved_model,
                 "validator LLM resolved"
             );

@@ -102,7 +102,8 @@ pub struct SpawnRequest {
     pub hostname: String,
     /// Skip the 1-hour cooldown (set when DEV_ONLY_NO_AUTH=1).
     pub skip_cooldown: bool,
-    /// Force a specific LLM provider ("ollama", "anthropic", or "openrouter").
+    /// Force a specific LLM provider ("ollama", "anthropic", "openrouter",
+    /// or the name of a configured OpenAI-compatible source).
     /// If None, auto-detect (ollama first, anthropic fallback, then openrouter).
     pub provider: Option<String>,
     /// Force a specific model name. If None, use the configured default.
@@ -252,8 +253,12 @@ impl HealerState {
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
 
         // Set initial token budget on the session row.
-        // openai_compat has no token tracking, so skip budget entirely.
-        let effective_budget = if req.provider.as_deref() == Some("openai_compat") {
+        // OpenAI-compatible sources have no token tracking, so skip budget entirely.
+        let is_openai_source = req
+            .provider
+            .as_deref()
+            .is_some_and(|p| self.inner.connector_config.openai_source(p).is_some());
+        let effective_budget = if is_openai_source {
             0
         } else {
             req.token_budget
@@ -752,11 +757,7 @@ async fn run_agent_session(
     // Persist the actual resolved provider/model to the session row so we can
     // resume with the same LLM later and display it in the UI.
     store
-        .update_provider_model(
-            session_id,
-            llm.resolved_provider.as_str(),
-            &llm.resolved_model,
-        )
+        .update_provider_model(session_id, &llm.resolved_provider, &llm.resolved_model)
         .await
         .ok();
 

@@ -69,15 +69,30 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # anthropic_model = "claude-sonnet-4-6"         # default; used when Ollama is unavailable
 # openrouter_api_key = "sk-or-xxx"              # optional; enables OpenRouter as a cloud provider
 # openrouter_model = "anthropic/claude-sonnet-4" # default OpenRouter model
-# openai_compat_api_key = "sk-xxx"              # optional; generic OpenAI-compatible provider
-# openai_compat_url = "http://my-vllm:8000/v1"  # base URL for the OpenAI-compatible API
-# openai_compat_model = "meta-llama/Llama-3.3-70B-Instruct"  # default model
+# openai_compat_api_key = "sk-xxx"              # legacy single OpenAI-compatible provider (becomes source "openai_compat")
+# openai_compat_url = "http://my-vllm:8000/v1"  # legacy; prefer [[healer.openai]] below
+# openai_compat_model = "meta-llama/Llama-3.3-70B-Instruct"  # legacy default model
 # token_budget = 200000                          # global max tokens per cloud session (0 = unlimited)
 # context7_api_key = "c7-..."                   # optional; enables Context7 MCP for documentation lookup
 #
+# Named OpenAI-compatible sources. Each name doubles as the provider string in
+# [[healer.models]] entries and session requests. Names must be unique, must not
+# be "ollama"/"anthropic"/"openrouter", and must not contain ':'.
+# [[healer.openai]]
+# name = "vllm"                                  # provider string for this source
+# url = "http://my-vllm:8000/v1"                 # base URL
+# api_key = "sk-xxx"                             # optional; omit for local servers
+# model = "meta-llama/Llama-3.3-70B-Instruct"    # default model for this source
+# [[healer.openai]]
+# name = "openai"
+# url = "https://api.openai.com/v1"
+# api_key = "sk-yyy"
+# model = "gpt-4.1"
+#
 # Models shown in the UI model picker. If omitted, built-in defaults are used.
 # Each entry has: name (display label), model (provider identifier),
-# provider ("ollama", "anthropic", "openrouter", or "openai_compat"), and optional token_budget override.
+# provider ("ollama", "anthropic", "openrouter", or a [[healer.openai]] source name),
+# and optional token_budget override.
 # [[healer.models]]
 # name = "Gemma 4"
 # model = "gemma4"
@@ -95,7 +110,7 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # [[healer.models]]
 # name = "Llama 3.3 (vLLM)"
 # model = "meta-llama/Llama-3.3-70B-Instruct"
-# provider = "openai_compat"
+# provider = "vllm"                              # references the [[healer.openai]] source above
 #
 # Auto-trigger: automatically start healer sessions for persistently unhealthy instances.
 # auto_trigger = false                            # default: disabled

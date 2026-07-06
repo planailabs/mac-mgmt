@@ -17,18 +17,17 @@ pub struct ConnectorConfig {
     pub openrouter_api_key: Option<String>,
     /// OpenRouter model. Defaults to `anthropic/claude-sonnet-4`.
     pub openrouter_model: Option<String>,
-    /// Generic OpenAI-compatible API key.
-    pub openai_compat_api_key: Option<String>,
-    /// Generic OpenAI-compatible base URL (e.g. "http://my-vllm:8000/v1").
-    pub openai_compat_url: Option<String>,
-    /// Default model for the OpenAI-compatible provider.
-    pub openai_compat_model: Option<String>,
+    /// Named OpenAI-compatible sources. The source name doubles as the
+    /// provider string (must not collide with "ollama"/"anthropic"/"openrouter"
+    /// and must not contain ':').
+    pub openai_sources: Vec<OpenAiSource>,
     /// Max input+output tokens per session when using a cloud provider.
     /// Session auto-pauses when exceeded. 0 = unlimited.
     pub token_budget: u64,
     /// Context7 API key for documentation lookup MCP server.
     pub context7_api_key: Option<String>,
-    /// Provider for the validator LLM ("ollama", "openrouter", "openai_compat").
+    /// Provider for the validator LLM ("ollama", "openrouter", or a named
+    /// OpenAI-compatible source).
     /// If None, only static validation (Layer 0) runs — no LLM pre-flight.
     pub validator_provider: Option<String>,
     /// Model for the validator LLM. Required when `validator_provider` is set.
@@ -36,6 +35,27 @@ pub struct ConnectorConfig {
     /// Fine-tuned Ollama model name (e.g. "mac-mgmt-healer").
     /// When set and present in Ollama, preferred over `ollama_model`.
     pub fine_tuned_model: Option<String>,
+}
+
+/// A named OpenAI-compatible endpoint (vLLM, LM Studio, api.openai.com, ...).
+#[derive(Debug, Clone)]
+pub struct OpenAiSource {
+    /// Unique name; referenced as the provider string in model entries,
+    /// spawn requests, and session rows.
+    pub name: String,
+    /// Base URL (e.g. "http://my-vllm:8000/v1").
+    pub url: String,
+    /// API key. Optional for local servers.
+    pub api_key: Option<String>,
+    /// Default model when a request doesn't specify one.
+    pub model: Option<String>,
+}
+
+impl ConnectorConfig {
+    /// Look up an OpenAI-compatible source by its provider name.
+    pub fn openai_source(&self, name: &str) -> Option<&OpenAiSource> {
+        self.openai_sources.iter().find(|s| s.name == name)
+    }
 }
 
 impl Default for ConnectorConfig {
@@ -47,9 +67,7 @@ impl Default for ConnectorConfig {
             anthropic_model: None,
             openrouter_api_key: None,
             openrouter_model: None,
-            openai_compat_api_key: None,
-            openai_compat_url: None,
-            openai_compat_model: None,
+            openai_sources: Vec::new(),
             token_budget: 200_000,
             context7_api_key: None,
             validator_provider: None,
@@ -64,8 +82,9 @@ pub struct LlmHandle {
     pub provider: LlmProvider,
     /// Whether this handle uses a cloud provider (subject to token budgets).
     pub is_cloud: bool,
-    /// Which provider was actually selected.
-    pub resolved_provider: ResolvedProvider,
+    /// Which provider was actually selected: "ollama", "anthropic",
+    /// "openrouter", or the name of an OpenAI-compatible source.
+    pub resolved_provider: String,
     /// Which model name was actually used.
     pub resolved_model: String,
 }
@@ -85,29 +104,11 @@ pub enum LlmProvider {
     OpenAICompat(swiftide::integrations::openai::OpenAI),
 }
 
-/// Which provider was actually resolved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResolvedProvider {
-    Ollama,
-    Anthropic,
-    OpenRouter,
-    OpenAICompat,
-}
-
-impl ResolvedProvider {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Ollama => "ollama",
-            Self::Anthropic => "anthropic",
-            Self::OpenRouter => "openrouter",
-            Self::OpenAICompat => "openai_compat",
-        }
-    }
-}
-
 /// Resolve the best available LLM.
 ///
-/// If `forced_provider` is set, only that provider is tried.
+/// If `forced_provider` is set, only that provider is tried. Besides the
+/// built-in "ollama"/"anthropic"/"openrouter" it can name a configured
+/// OpenAI-compatible source.
 /// If `forced_model` is set, it overrides the configured default for the chosen provider.
 ///
 /// Without forcing:
@@ -123,7 +124,7 @@ pub async fn resolve_llm(
     let try_ollama = forced_provider.is_none() || forced_provider == Some("ollama");
     let try_anthropic = forced_provider.is_none() || forced_provider == Some("anthropic");
     let try_openrouter = forced_provider.is_none() || forced_provider == Some("openrouter");
-    let try_openai_compat = forced_provider == Some("openai_compat");
+    let openai_source = forced_provider.and_then(|p| config.openai_source(p));
 
     let ollama_url = config
         .ollama_url
@@ -160,7 +161,7 @@ pub async fn resolve_llm(
                 return Ok(LlmHandle {
                     provider: LlmProvider::Ollama(ollama),
                     is_cloud: false,
-                    resolved_provider: ResolvedProvider::Ollama,
+                    resolved_provider: "ollama".to_string(),
                     resolved_model: model,
                 });
             }
@@ -232,7 +233,7 @@ pub async fn resolve_llm(
             return Ok(LlmHandle {
                 provider: LlmProvider::Anthropic(anthropic),
                 is_cloud: true,
-                resolved_provider: ResolvedProvider::Anthropic,
+                resolved_provider: "anthropic".to_string(),
                 resolved_model: model,
             });
         } else if forced_provider == Some("anthropic") {
@@ -293,7 +294,7 @@ pub async fn resolve_llm(
             return Ok(LlmHandle {
                 provider: LlmProvider::OpenRouter(openrouter),
                 is_cloud: true,
-                resolved_provider: ResolvedProvider::OpenRouter,
+                resolved_provider: "openrouter".to_string(),
                 resolved_model: model,
             });
         } else if forced_provider == Some("openrouter") {
@@ -301,24 +302,25 @@ pub async fn resolve_llm(
         }
     }
 
-    // 4. Try generic OpenAI-compatible provider (only when explicitly requested)
-    if try_openai_compat {
-        let base_url = config
-            .openai_compat_url
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("openai_compat requested but no base URL configured"))?;
-        let api_key = config.openai_compat_api_key.as_deref().unwrap_or("no-key");
+    // 4. Try a named OpenAI-compatible source (only when explicitly requested)
+    if let Some(source) = openai_source {
+        let api_key = source.api_key.as_deref().unwrap_or("no-key");
 
         let model = forced_model
             .map(String::from)
-            .or_else(|| config.openai_compat_model.clone())
-            .ok_or_else(|| anyhow::anyhow!("openai_compat requested but no model specified"))?;
+            .or_else(|| source.model.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "OpenAI-compatible source '{}' requested but no model specified",
+                    source.name
+                )
+            })?;
 
-        tracing::info!(model = %model, url = %base_url, "using OpenAI-compatible provider for healer agent");
+        tracing::info!(source = %source.name, model = %model, url = %source.url, "using OpenAI-compatible provider for healer agent");
 
         let openai_config = async_openai::config::OpenAIConfig::default()
             .with_api_key(api_key)
-            .with_api_base(base_url);
+            .with_api_base(&source.url);
 
         let client = async_openai::Client::with_config(openai_config);
 
@@ -332,9 +334,15 @@ pub async fn resolve_llm(
         return Ok(LlmHandle {
             provider: LlmProvider::OpenAICompat(oai),
             is_cloud: false,
-            resolved_provider: ResolvedProvider::OpenAICompat,
+            resolved_provider: source.name.clone(),
             resolved_model: model,
         });
+    }
+
+    if let Some(fp) = forced_provider {
+        if !matches!(fp, "ollama" | "anthropic" | "openrouter") {
+            anyhow::bail!("unknown provider '{fp}': not a built-in provider or configured OpenAI-compatible source");
+        }
     }
 
     anyhow::bail!(
@@ -416,6 +424,6 @@ async fn check_ollama(url: &str, model: &str) -> OllamaStatus {
 impl LlmHandle {
     /// Human-readable provider name.
     pub fn provider_name(&self) -> &str {
-        self.resolved_provider.as_str()
+        &self.resolved_provider
     }
 }

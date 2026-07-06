@@ -182,6 +182,12 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
         .filter(|m| m.provider == "openrouter")
         .cloned()
         .collect();
+    // Everything else is a named OpenAI-compatible source.
+    let other: Vec<_> = models
+        .iter()
+        .filter(|m| !matches!(m.provider.as_str(), "ollama" | "anthropic" | "openrouter"))
+        .cloned()
+        .collect();
 
     let is_enabled = *enabled.read();
     let fields_disabled = read_only || !is_enabled;
@@ -224,7 +230,7 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                             value: "{auto_trigger_key}",
                             onchange: move |e| auto_trigger_key.set(e.value()),
                             option { value: "none", {t!("healer-settings-server-default")} }
-                            {model_optgroups(&ollama, &anthropic, &openrouter)}
+                            {model_optgroups(&ollama, &anthropic, &openrouter, &other)}
                         }
                     }
                     // Auto-approve
@@ -246,7 +252,7 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                             value: "{fix_model_key}",
                             onchange: move |e| fix_model_key.set(e.value()),
                             option { value: "none", {t!("healer-settings-same-as-diagnosis")} }
-                            {model_optgroups(&ollama, &anthropic, &openrouter)}
+                            {model_optgroups(&ollama, &anthropic, &openrouter, &other)}
                         }
                     }
                 }
@@ -286,6 +292,7 @@ fn model_optgroups(
     ollama: &[ModelOption],
     anthropic: &[ModelOption],
     openrouter: &[ModelOption],
+    other: &[ModelOption],
 ) -> Element {
     rsx! {
         if !ollama.is_empty() {
@@ -305,6 +312,13 @@ fn model_optgroups(
         if !openrouter.is_empty() {
             optgroup { label: t!("healer-settings-openrouter"),
                 for m in openrouter.iter() {
+                    option { value: "{m.key}", "{m.name}" }
+                }
+            }
+        }
+        if !other.is_empty() {
+            optgroup { label: "OpenAI-compatible",
+                for m in other.iter() {
                     option { value: "{m.key}", "{m.name}" }
                 }
             }

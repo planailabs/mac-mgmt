@@ -237,9 +237,30 @@ async fn init_server() -> (
         anthropic_model: cfg.healer.anthropic_model.clone(),
         openrouter_api_key: cfg.healer.openrouter_api_key.clone(),
         openrouter_model: cfg.healer.openrouter_model.clone(),
-        openai_compat_api_key: cfg.healer.openai_compat_api_key.clone(),
-        openai_compat_url: cfg.healer.openai_compat_url.clone(),
-        openai_compat_model: cfg.healer.openai_compat_model.clone(),
+        openai_sources: {
+            // Legacy single-source keys become a source named "openai_compat".
+            let mut sources: Vec<mac_mgmt_healer::connector::OpenAiSource> = cfg
+                .healer
+                .openai_compat_url
+                .clone()
+                .map(|url| mac_mgmt_healer::connector::OpenAiSource {
+                    name: "openai_compat".to_string(),
+                    url,
+                    api_key: cfg.healer.openai_compat_api_key.clone(),
+                    model: cfg.healer.openai_compat_model.clone(),
+                })
+                .into_iter()
+                .collect();
+            sources.extend(cfg.healer.openai.iter().map(|s| {
+                mac_mgmt_healer::connector::OpenAiSource {
+                    name: s.name.clone(),
+                    url: s.url.clone(),
+                    api_key: s.api_key.clone(),
+                    model: s.model.clone(),
+                }
+            }));
+            sources
+        },
         token_budget: cfg.healer.token_budget,
         context7_api_key: cfg.healer.context7_api_key.clone(),
         validator_provider: None,

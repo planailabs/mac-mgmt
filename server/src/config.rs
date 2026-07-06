@@ -217,15 +217,20 @@ pub struct HealerConfig {
     /// OpenRouter model override (default: anthropic/claude-sonnet-4).
     #[serde(default)]
     pub openrouter_model: Option<String>,
-    /// Generic OpenAI-compatible API key.
+    /// Legacy single OpenAI-compatible API key. Prefer `[[healer.openai]]`.
     #[serde(default)]
     pub openai_compat_api_key: Option<String>,
-    /// Generic OpenAI-compatible base URL (e.g. "http://my-vllm:8000/v1").
+    /// Legacy single OpenAI-compatible base URL. When set, it becomes a
+    /// source named "openai_compat". Prefer `[[healer.openai]]`.
     #[serde(default)]
     pub openai_compat_url: Option<String>,
-    /// Default model for the OpenAI-compatible provider.
+    /// Legacy default model for the single OpenAI-compatible provider.
     #[serde(default)]
     pub openai_compat_model: Option<String>,
+    /// Named OpenAI-compatible sources (`[[healer.openai]]`). Each has a
+    /// unique name that model entries reference as their provider.
+    #[serde(default)]
+    pub openai: Vec<OpenAiSourceEntry>,
     /// Max input+output tokens per cloud session before auto-pause. 0 = unlimited.
     #[serde(default = "default_token_budget")]
     pub token_budget: u64,
@@ -278,6 +283,22 @@ fn default_auto_trigger_provider() -> String {
     "ollama".to_string()
 }
 
+/// A named OpenAI-compatible source for the healer (`[[healer.openai]]`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpenAiSourceEntry {
+    /// Unique name; used as the provider string in `[[healer.models]]`.
+    /// Must not be "ollama"/"anthropic"/"openrouter" and must not contain ':'.
+    pub name: String,
+    /// Base URL (e.g. "https://api.openai.com/v1", "http://my-vllm:8000/v1").
+    pub url: String,
+    /// API key. Optional for local servers.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Default model when a session doesn't specify one.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
 /// A model entry for the healer UI model picker.
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct HealerModelEntry {
@@ -285,7 +306,8 @@ pub struct HealerModelEntry {
     pub name: String,
     /// Model identifier passed to the provider (e.g. "gemma4", "claude-sonnet-4-6").
     pub model: String,
-    /// Provider: "ollama", "anthropic", or "openrouter".
+    /// Provider: "ollama", "anthropic", "openrouter", or the name of an
+    /// OpenAI-compatible source from `[[healer.openai]]`.
     pub provider: String,
     /// Per-model token budget override. If set, overrides the global `token_budget`
     /// when this model is selected. 0 = unlimited.

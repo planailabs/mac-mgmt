@@ -56,7 +56,8 @@ pub struct CreateSessionBody {
     pub instance_id: String,
     #[serde(default)]
     pub user_message: Option<String>,
-    /// Force a specific LLM provider ("ollama", "anthropic", or "openrouter").
+    /// Force a specific LLM provider ("ollama", "anthropic", "openrouter",
+    /// or a named OpenAI-compatible source from `[[healer.openai]]`).
     #[serde(default)]
     pub provider: Option<String>,
     /// Force a specific model name (e.g. "gemma4", "claude-sonnet-4-6").

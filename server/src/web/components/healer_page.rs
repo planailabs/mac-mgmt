@@ -737,6 +737,8 @@ fn render_healer(ctx: &HealerContext) -> Element {
                 let ollama_models: Vec<ModelEntry> = models.iter().filter(|m| m.provider == "ollama").cloned().collect();
                 let anthropic_models: Vec<ModelEntry> = models.iter().filter(|m| m.provider == "anthropic").cloned().collect();
                 let openrouter_models: Vec<ModelEntry> = models.iter().filter(|m| m.provider == "openrouter").cloned().collect();
+                // Everything else is a named OpenAI-compatible source.
+                let other_models: Vec<ModelEntry> = models.iter().filter(|m| !matches!(m.provider.as_str(), "ollama" | "anthropic" | "openrouter")).cloned().collect();
                 // Build option values as "provider:model"
                 let first_key = models.first().map(|m| format!("{}:{}", m.provider, m.model)).unwrap_or_default();
                 rsx! {
@@ -771,6 +773,15 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 if !openrouter_models.is_empty() {
                                     optgroup { label: t!("healer-openrouter-cloud"),
                                         for m in openrouter_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
+                                if !other_models.is_empty() {
+                                    optgroup { label: "OpenAI-compatible",
+                                        for m in other_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
                                             }}
@@ -839,6 +850,15 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                         }
                                     }
                                 }
+                                if !other_models.is_empty() {
+                                    optgroup { label: "OpenAI-compatible",
+                                        for m in other_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
                             }
                             p { class: "mt-1 text-xs text-fg-muted",
                                 {t!("healer-fix-model-hint")}
@@ -874,6 +894,15 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 if !openrouter_models.is_empty() {
                                     optgroup { label: t!("healer-openrouter-cloud"),
                                         for m in openrouter_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
+                                if !other_models.is_empty() {
+                                    optgroup { label: "OpenAI-compatible",
+                                        for m in other_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
                                             }}

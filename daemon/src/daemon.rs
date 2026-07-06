@@ -1378,9 +1378,7 @@ pub async fn run(
             openrouter_api_key: cloud_openrouter
                 .and_then(|c| c.api_key.as_ref().map(|s| s.expose().to_string())),
             openrouter_model: None,
-            openai_compat_api_key: None,
-            openai_compat_url: None,
-            openai_compat_model: None,
+            openai_sources: Vec::new(),
             token_budget: 200_000,
             context7_api_key: None,
             validator_provider: None,
