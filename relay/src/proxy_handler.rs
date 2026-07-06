@@ -533,6 +533,70 @@ fn error_page(
         .into_response()
 }
 
+/// True when the client prefers an HTML error page (browser navigation).
+fn wants_html(headers: &HeaderMap) -> bool {
+    headers
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("text/html"))
+}
+
+/// Localized HTML error page that also shows the upstream error detail.
+fn error_page_with_detail(
+    headers: &HeaderMap,
+    code: StatusCode,
+    detail: &str,
+) -> axum::response::Response {
+    let lang = plan_ai_html::Lang::from_accept_language(
+        headers
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    );
+    let (title_key, body_key) = if code == StatusCode::NOT_FOUND {
+        ("not-found-title", "not-found-body")
+    } else {
+        ("unreachable-title", "unreachable-body")
+    };
+    let title = plan_ai_html::tr(lang, title_key);
+    let body = plan_ai_html::components::heading(&title)
+        + &plan_ai_html::components::muted(&plan_ai_html::tr(lang, body_key))
+        + &plan_ai_html::components::error(detail);
+    let html = plan_ai_html::Page::new(&title, body).lang(lang).render();
+    (
+        code,
+        [("content-type", "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response()
+}
+
+/// Build the styled sign-in page for a tunnel, resolving the server web URL
+/// lazily for the login button.
+async fn unauthorized_response(
+    state: &ProxyState,
+    headers: &HeaderMap,
+    instance_id: &str,
+    tunnel_name: &str,
+) -> axum::response::Response {
+    let web_url = state
+        .server_web_url
+        .get_or_try_init(|| fetch_server_web_url(&state.server_api_url))
+        .await
+        .ok();
+    let prefix = &instance_id[..std::cmp::min(12, instance_id.len())];
+    let login_url = web_url.map(|url| format!("{url}/easy-access/direct/{prefix}/{tunnel_name}"));
+    let cert_login_url = state
+        .relay_url
+        .as_deref()
+        .map(|url| format!("{}/cert-login/{prefix}/{tunnel_name}", url.trim_end_matches('/')));
+    let accept_language = headers
+        .get("accept-language")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    unauthorized_html(login_url.as_deref(), cert_login_url.as_deref(), accept_language)
+}
+
 // ── Catch-all: reverse proxy ───────────────────────────────────────────
 
 /// Handles all non-special requests by proxying them to the daemon's tunnel
@@ -561,28 +625,25 @@ async fn proxy_catchall(
 
     // If no token at all, show a styled "sign in" page instead of a plain 401.
     if extract_token(&headers).is_none() {
-        // Lazily resolve the server web URL if it wasn't available at startup.
-        let web_url = state
-            .server_web_url
-            .get_or_try_init(|| fetch_server_web_url(&state.server_api_url))
-            .await
-            .ok();
-        let prefix = &instance_id[..std::cmp::min(12, instance_id.len())];
-        let login_url = web_url.map(|url| format!("{url}/easy-access/direct/{prefix}/{tunnel_name}"));
-        let cert_login_url = state
-            .relay_url
-            .as_deref()
-            .map(|url| format!("{}/cert-login/{prefix}/{tunnel_name}", url.trim_end_matches('/')));
-        let accept_language = headers
-            .get("accept-language")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        return unauthorized_html(login_url.as_deref(), cert_login_url.as_deref(), accept_language);
+        return unauthorized_response(&state, &headers, &instance_id, &tunnel_name).await;
     }
 
     let self_info = match authenticate_proxy(&headers, &state, &instance_id).await {
         Ok(info) => info,
-        Err(resp) => return resp,
+        // Stale or invalid token in a browser: show the sign-in page again
+        // rather than a bare 401.
+        Err(resp) if resp.status() == StatusCode::UNAUTHORIZED => {
+            return unauthorized_response(&state, &headers, &instance_id, &tunnel_name).await;
+        }
+        Err(resp) => {
+            let code = resp.status();
+            let (title_key, body_key) = if code == StatusCode::FORBIDDEN {
+                ("forbidden-title", "forbidden-body")
+            } else {
+                ("error-title", "error-body")
+            };
+            return error_page(&headers, code, title_key, body_key);
+        }
     };
     let required_scope = format!("tcp:{tunnel_name}");
     if !has_scope(&self_info.scopes, &required_scope) {
@@ -591,7 +652,10 @@ async fn proxy_catchall(
 
     let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
         Ok(v) => v,
-        Err(resp) => return resp,
+        // Daemon offline or p2p down — either way the service is unreachable.
+        Err(resp) => {
+            return error_page(&headers, resp.status(), "unreachable-title", "unreachable-body");
+        }
     };
 
     if !state.registry.has_tunnel(&instance_id, &tunnel_name) {
@@ -639,7 +703,14 @@ async fn proxy_catchall(
     // Collect request body
     let body_bytes = match axum::body::to_bytes(req.into_body(), 16 * 1024 * 1024).await {
         Ok(b) => b,
-        Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response(),
+        Err(_) => {
+            return error_page(
+                &headers,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "payload-too-large-title",
+                "payload-too-large-body",
+            );
+        }
     };
 
     let body_b64 = if body_bytes.is_empty() {
@@ -719,11 +790,13 @@ async fn proxy_catchall(
     let status = hdr["status"].as_u64().unwrap_or(502) as u16;
 
     if let Some(error) = hdr["error"].as_str() {
-        return (
-            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
-            error.to_string(),
-        )
-            .into_response();
+        let code = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+        // Browsers get a styled page; keep plain text for programmatic clients
+        // that parse the error body.
+        if wants_html(&headers) {
+            return error_page_with_detail(&headers, code, error);
+        }
+        return (code, error.to_string()).into_response();
     }
 
     let resp_headers: Vec<(String, String)> = hdr["headers"]

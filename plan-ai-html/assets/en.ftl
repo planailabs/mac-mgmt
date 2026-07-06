@@ -51,3 +51,5 @@ error-title = Something went wrong
 error-body = An unexpected error occurred. Please try again.
 forbidden-title = Access denied
 forbidden-body = You don't have permission to access this resource.
+payload-too-large-title = Request too large
+payload-too-large-body = The uploaded data exceeds the allowed size limit.

@@ -9218,6 +9218,7 @@ dependencies = [
  "memvault-store",
  "memvault-swarm",
  "memvault-web",
+ "plan-ai-html",
  "prometheus 0.14.0",
  "pty-process",
  "rand 0.9.4",

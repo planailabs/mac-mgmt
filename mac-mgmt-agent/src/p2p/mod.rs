@@ -1190,6 +1190,49 @@ async fn handle_tunnel_stream(
     let _ = stream.close().await;
 }
 
+/// Write a proxy error back over the tunnel. Browsers (Accept: text/html) get
+/// a styled, localized plan-ai-html page as a regular response frame;
+/// programmatic clients keep the JSON error frame the relay returns as text.
+async fn write_proxy_error(
+    stream: &mut libp2p::Stream,
+    headers: &[(String, String)],
+    status: u16,
+    title_key: &str,
+    body_key: &str,
+    detail: &str,
+) {
+    use mac_mgmt_common::framing as stream_framing;
+
+    let wants_html = headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("accept") && v.contains("text/html"));
+    if wants_html {
+        let lang = plan_ai_html::Lang::from_accept_language(
+            headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("accept-language"))
+                .map(|(_, v)| v.as_str())
+                .unwrap_or(""),
+        );
+        let title = plan_ai_html::tr(lang, title_key);
+        let body = plan_ai_html::components::heading(&title)
+            + &plan_ai_html::components::muted(&plan_ai_html::tr(lang, body_key))
+            + &plan_ai_html::components::error(detail);
+        let html = plan_ai_html::Page::new(&title, body).lang(lang).render();
+        let header = serde_json::json!({
+            "status": status,
+            "headers": [["content-type", "text/html; charset=utf-8"]],
+        });
+        if stream_framing::write_json(stream, &header).await.is_ok() {
+            let _ = stream_framing::write_binary(stream, html.as_bytes()).await;
+        }
+    } else {
+        let err = serde_json::json!({ "status": status, "error": detail });
+        let _ = stream_framing::write_json(stream, &err).await;
+    }
+    let _ = stream_framing::write_end(stream).await;
+}
+
 /// Handle a streamed proxy request over a tunnel substream.
 async fn handle_streamed_proxy(
     handshake: serde_json::Value,
@@ -1335,9 +1378,15 @@ async fn handle_streamed_proxy(
 
     let tunnel_defs = handler_state.tunnel_defs.read().await;
     let Some(target) = tunnel_defs.get(tunnel_name).cloned() else {
-        let err = serde_json::json!({ "status": 404, "error": "tunnel not found" });
-        let _ = stream_framing::write_json(stream, &err).await;
-        let _ = stream_framing::write_end(stream).await;
+        write_proxy_error(
+            stream,
+            &headers,
+            404,
+            "not-found-title",
+            "not-found-body",
+            "tunnel not found",
+        )
+        .await;
         return;
     };
     drop(tunnel_defs);
@@ -1445,9 +1494,15 @@ async fn handle_streamed_proxy(
             let _ = stream_framing::write_end(stream).await;
         }
         Err(e) => {
-            let err = serde_json::json!({ "status": 502, "error": format!("proxy error: {e}") });
-            let _ = stream_framing::write_json(stream, &err).await;
-            let _ = stream_framing::write_end(stream).await;
+            write_proxy_error(
+                stream,
+                &headers,
+                502,
+                "unreachable-title",
+                "unreachable-body",
+                &format!("proxy error: {e}"),
+            )
+            .await;
         }
     }
 }

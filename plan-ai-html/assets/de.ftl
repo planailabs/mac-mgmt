@@ -51,3 +51,5 @@ error-title = Etwas ist schiefgelaufen
 error-body = Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut.
 forbidden-title = Zugriff verweigert
 forbidden-body = Sie haben keine Berechtigung, auf diese Ressource zuzugreifen.
+payload-too-large-title = Anfrage zu groß
+payload-too-large-body = Die hochgeladenen Daten überschreiten die zulässige Größe.
