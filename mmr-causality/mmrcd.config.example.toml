@@ -1,0 +1,40 @@
+# mmrcd — orchestration daemon config.
+# Copy to ~/.config/mmrcd/config.toml (or pass --config <path>).
+# mmrcd runs on an incus-capable host and spins up antithesis clusters as
+# incus instances, one isolated project per run.
+
+# Address the HTTP API listens on. Keep it on localhost (or a trusted network);
+# it is protected only by the static bearer token below.
+listen = "127.0.0.1:7390"
+
+# Bearer token clients (mmrc) must present as `Authorization: Bearer <token>`.
+# REQUIRED. Generate one, e.g.:  openssl rand -hex 32
+token = "CHANGE-ME-mmrcd-bearer-token"
+
+# Incus backend: "unix" (local incus socket, default) or "https" (remote incus
+# over the REST API — reads INCUS_URL / client cert env like mac-mgmt-executor).
+incus_backend = "unix"
+
+# Prefix for the per-run incus project name (project = "<prefix>-<run_id>").
+# Optional; defaults to "mmrc".
+# incus_project_prefix = "mmrc"
+
+# Container image registry base (the {server,relay,daemon} images live under it
+# as test-mac-mgmt-<kind>:<tag>).
+registry = "registry.plan.ai/plan-ai/mac-mgmt"
+
+# GitLab used to resolve the image tag from the latest successful pipeline.
+gitlab_url = "https://git.plan.ai"
+gitlab_project = "plan-ai/mac-mgmt"
+# Personal/CI token if the project isn't publicly readable (needs read_api).
+# gitlab_token = "glpat-..."
+
+# Default git ref whose latest green pipeline supplies images.
+default_ref = "trunk"
+
+# Where per-run state.json files are written.
+# run_dir = "~/.local/state/mmrcd/runs"   # default derived from XDG state dir
+
+# Dev/offline escape hatch: skip CI resolution and pin an explicit image tag
+# (e.g. "latest" from a manual docker-push.sh). Leave unset in normal use.
+# pinned_tag = "latest"
