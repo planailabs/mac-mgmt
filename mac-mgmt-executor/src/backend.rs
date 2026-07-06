@@ -32,4 +32,25 @@ pub trait IncusBackend: Send + Sync {
 
     /// Read a file from inside a container.
     async fn file_pull(&self, name: &str, path: &str) -> Result<String>;
+
+    /// Create an incus project. `config` carries incus project config keys
+    /// (e.g. "features.profiles" = "false") supplied by the caller, so the
+    /// executor stays free of any orchestration-specific policy.
+    async fn create_project(
+        &self,
+        _name: &str,
+        _config: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<()> {
+        anyhow::bail!("create_project not supported by this backend")
+    }
+
+    /// Delete an incus project (must be empty).
+    async fn delete_project(&self, _name: &str) -> Result<()> {
+        anyhow::bail!("delete_project not supported by this backend")
+    }
+
+    /// List instance names in this backend's project.
+    async fn project_instance_names(&self) -> Result<Vec<String>> {
+        anyhow::bail!("project_instance_names not supported by this backend")
+    }
 }

@@ -9,7 +9,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use mac_mgmt_executor::{IncusBackend, LaunchSpec};
 use serde::Deserialize;
-use tokio::process::Command;
 use tokio::sync::Mutex;
 
 use crate::api::*;
@@ -25,6 +24,18 @@ pub struct MmrcdConfig {
     pub incus_backend: String,
     #[serde(default)]
     pub incus_project_prefix: Option<String>,
+    /// HTTPS incus endpoint (e.g. "https://[2a01:...]:8443"). Required when
+    /// incus_backend = "https".
+    #[serde(default)]
+    pub incus_url: Option<String>,
+    /// Client cert / key PEM paths for mTLS to the HTTPS incus endpoint.
+    #[serde(default)]
+    pub incus_client_cert: Option<String>,
+    #[serde(default)]
+    pub incus_client_key: Option<String>,
+    /// Optional server CA PEM path (else the server cert is not verified).
+    #[serde(default)]
+    pub incus_server_ca: Option<String>,
     #[serde(default = "default_registry")]
     pub registry: String,
     #[serde(default = "default_gitlab_url")]
@@ -165,33 +176,68 @@ impl Orchestrator {
         self.cfg.run_dir.join(run_id)
     }
 
-    /// Build an incus backend scoped to a run's project.
+    /// Build an incus backend scoped to a specific project.
     fn backend(&self, project: &str) -> Result<Arc<dyn IncusBackend>> {
         match self.cfg.incus_backend.as_str() {
             "unix" => Ok(Arc::new(mac_mgmt_executor::UnixBackend::new(Some(
                 project.to_string(),
             )))),
-            "https" => Ok(Arc::new(
-                mac_mgmt_executor::HttpsBackend::from_env(Some(project.to_string()))
+            "https" => {
+                let url = self
+                    .cfg
+                    .incus_url
+                    .as_deref()
+                    .context("incus_url required for https backend")?;
+                let cert = self
+                    .cfg
+                    .incus_client_cert
+                    .as_deref()
+                    .context("incus_client_cert required for https backend")?;
+                let key = self
+                    .cfg
+                    .incus_client_key
+                    .as_deref()
+                    .context("incus_client_key required for https backend")?;
+                Ok(Arc::new(
+                    mac_mgmt_executor::HttpsBackend::new(
+                        url,
+                        cert,
+                        key,
+                        self.cfg.incus_server_ca.as_deref(),
+                        Some(project.to_string()),
+                    )
                     .context("initializing https incus backend")?,
-            )),
+                ))
+            }
             other => bail!("unknown incus_backend {other:?}"),
         }
     }
 
-    async fn incus_cli(&self, args: &[&str]) -> Result<()> {
-        let out = Command::new("incus")
-            .args(args)
-            .output()
-            .await
-            .context("running incus CLI")?;
-        if !out.status.success() {
-            bail!(
-                "incus {}: {}",
-                args.join(" "),
-                String::from_utf8_lossy(&out.stderr)
-            );
+    // ── Project lifecycle (via the backend's generic raw incus API) ─────
+
+    /// Create an ephemeral run project. `features.profiles=false` so instances
+    /// inherit the default project's profile (root disk + nic); shared networks.
+    async fn create_project(&self, name: &str) -> Result<()> {
+        // Project-management calls are not project-scoped; use a default-scoped
+        // backend so the acting-project query points at an existing project.
+        let mgmt = self.backend("default")?;
+        let mut config = serde_json::Map::new();
+        config.insert("features.profiles".into(), serde_json::json!("false"));
+        config.insert("features.images".into(), serde_json::json!("false"));
+        mgmt.create_project(name, config).await
+    }
+
+    /// Force-delete every instance in `project`, then the project itself.
+    async fn destroy_project(&self, project: &str) -> Result<()> {
+        let backend = self.backend(project)?;
+        // List + delete each instance (delete stops first if running).
+        if let Ok(names) = backend.project_instance_names().await {
+            for name in names {
+                let _ = backend.delete(&name).await;
+            }
         }
+        let mgmt = self.backend("default")?;
+        let _ = mgmt.delete_project(project).await;
         Ok(())
     }
 
@@ -203,20 +249,8 @@ impl Orchestrator {
         let git_ref = req.git_ref.clone().unwrap_or_else(|| self.cfg.default_ref.clone());
         let images = resolve_images(&self.cfg, &git_ref).await?;
 
-        // Ephemeral per-run project. features.profiles=false so instances inherit
-        // the default project's `default` profile (root disk + nic); networks are
-        // shared by default. The project is deleted with the run.
-        self.incus_cli(&[
-            "project",
-            "create",
-            &project,
-            "-c",
-            "features.profiles=false",
-            "-c",
-            "features.images=false",
-        ])
-        .await
-        .ok();
+        // Ephemeral per-run project (deleted with the run).
+        self.create_project(&project).await.ok();
         let backend = self.backend(&project)?;
 
         let servers_req = if req.servers.is_empty() {
@@ -363,11 +397,8 @@ impl Orchestrator {
 
     pub async fn delete_run(&self, run_id: &str) -> Result<()> {
         let project = self.project_name(run_id);
-        // Force-delete every instance in the project, then the project.
-        let _ = self
-            .incus_cli(&["delete", "--force", "--project", &project, "--all"])
-            .await;
-        let _ = self.incus_cli(&["project", "delete", &project]).await;
+        // Force-delete every instance in the project, then the project itself.
+        let _ = self.destroy_project(&project).await;
         if let Ok(mut s) = self.load_state(run_id) {
             s.status = "torn_down".into();
             let _ = self.persist(&s);

@@ -73,6 +73,30 @@ pub fn launch_body_ext(spec: &LaunchSpec) -> Value {
     })
 }
 
+/// Build the JSON body for creating an incus project. `config` (project config
+/// keys) is supplied by the caller — the executor imposes no policy of its own.
+pub fn project_body(name: &str, config: &serde_json::Map<String, Value>) -> Value {
+    json!({
+        "name": name,
+        "config": Value::Object(config.clone()),
+    })
+}
+
+/// Parse instance names from a `GET /1.0/instances` metadata value (an array of
+/// URLs like "/1.0/instances/<name>").
+pub fn parse_instance_names(metadata: &Value) -> Vec<String> {
+    metadata
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|u| u.rsplit('/').next())
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Build the JSON body for force-stopping a container.
 pub fn stop_body() -> Value {
     json!({

@@ -256,6 +256,28 @@ impl IncusBackend for UnixBackend {
             .await?;
         Ok(String::from_utf8_lossy(&bytes).to_string())
     }
+
+    async fn create_project(
+        &self,
+        name: &str,
+        config: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<()> {
+        let body = crate::incus_common::project_body(name, &config);
+        self.send_and_unwrap("POST", "/1.0/projects", Some(&body))
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_project(&self, name: &str) -> Result<()> {
+        self.send_and_unwrap("DELETE", &format!("/1.0/projects/{name}"), None)
+            .await?;
+        Ok(())
+    }
+
+    async fn project_instance_names(&self) -> Result<Vec<String>> {
+        let meta = self.send_and_unwrap("GET", "/1.0/instances", None).await?;
+        Ok(crate::incus_common::parse_instance_names(&meta))
+    }
 }
 
 fn decode_chunked(s: &str) -> String {

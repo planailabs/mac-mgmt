@@ -24,11 +24,23 @@ impl HttpsBackend {
         let base = std::env::var("INCUS_URL").context("INCUS_URL not set")?;
         let cert_path = std::env::var("INCUS_CLIENT_CERT").context("INCUS_CLIENT_CERT not set")?;
         let key_path = std::env::var("INCUS_CLIENT_KEY").context("INCUS_CLIENT_KEY not set")?;
+        let ca_path = std::env::var("INCUS_SERVER_CA").ok();
+        Self::new(&base, &cert_path, &key_path, ca_path.as_deref(), project)
+    }
 
-        let cert_pem = std::fs::read(&cert_path)
+    /// Build a backend from explicit connection details (used by callers that
+    /// carry the incus endpoint + client cert in their own config).
+    pub fn new(
+        base: &str,
+        cert_path: &str,
+        key_path: &str,
+        ca_path: Option<&str>,
+        project: Option<String>,
+    ) -> Result<Self> {
+        let cert_pem = std::fs::read(cert_path)
             .with_context(|| format!("reading client cert: {cert_path}"))?;
         let key_pem =
-            std::fs::read(&key_path).with_context(|| format!("reading client key: {key_path}"))?;
+            std::fs::read(key_path).with_context(|| format!("reading client key: {key_path}"))?;
 
         let mut combined = cert_pem;
         combined.push(b'\n');
@@ -39,9 +51,9 @@ impl HttpsBackend {
 
         let mut builder = reqwest::Client::builder().identity(identity);
 
-        if let Ok(ca_path) = std::env::var("INCUS_SERVER_CA") {
+        if let Some(ca_path) = ca_path {
             let ca_pem =
-                std::fs::read(&ca_path).with_context(|| format!("reading server CA: {ca_path}"))?;
+                std::fs::read(ca_path).with_context(|| format!("reading server CA: {ca_path}"))?;
             builder = builder.add_root_certificate(
                 Certificate::from_pem(&ca_pem).context("parsing server CA PEM")?,
             );
@@ -197,5 +209,29 @@ impl IncusBackend for HttpsBackend {
 
         let bytes = resp.bytes().await.context("reading file content")?;
         Ok(String::from_utf8_lossy(&bytes).to_string())
+    }
+
+    async fn create_project(
+        &self,
+        name: &str,
+        config: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<()> {
+        let body = incus_common::project_body(name, &config);
+        self.send_and_unwrap(self.http.post(self.url("/1.0/projects")).json(&body))
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_project(&self, name: &str) -> Result<()> {
+        self.send_and_unwrap(self.http.delete(self.url(&format!("/1.0/projects/{name}"))))
+            .await?;
+        Ok(())
+    }
+
+    async fn project_instance_names(&self) -> Result<Vec<String>> {
+        let meta = self
+            .send_and_unwrap(self.http.get(self.url("/1.0/instances")))
+            .await?;
+        Ok(incus_common::parse_instance_names(&meta))
     }
 }
