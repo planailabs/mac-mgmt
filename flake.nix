@@ -26,6 +26,7 @@
       nixosModules.daemon = import ./daemon/module.nix;
       nixosModules.relay = import ./relay/module.nix;
       nixosModules.runner = import ./runner/module.nix;
+      nixosModules.mmrcd = import ./mmr-causality/module.nix;
       nixosModules.nix-driver-sync = import ./nix-driver-sync/module.nix;
 
       # NixOS-in-Docker test images
@@ -281,7 +282,7 @@
           pkgs.libiconv
         ];
 
-        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-server-mgmt mac-mgmt-server-skill-center mac-mgmt-server-skill-importer mac-mgmt-relay mac-mgmt-runner mac-mgmt-relay-ssh web-agency-server web-agency-proxy nix-driver-sync;
+        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-server-mgmt mac-mgmt-server-skill-center mac-mgmt-server-skill-importer mac-mgmt-relay mac-mgmt-runner mmr-causality mac-mgmt-relay-ssh web-agency-server web-agency-proxy nix-driver-sync;
         relay-ssh = mac-mgmt-relay-ssh;
 
         # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy
@@ -381,6 +382,7 @@
           server-skill-importer = mac-mgmt-server-skill-importer;
           relay = mac-mgmt-relay;
           runner = mac-mgmt-runner;
+          mmr-causality = mmr-causality;
           relay-ssh = relay-ssh;
           web-agency = web-agency-server;
           web-agency-proxy = web-agency-proxy;
