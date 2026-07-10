@@ -30,6 +30,9 @@ pub struct ProviderMeta {
     pub allowed_domains: Vec<String>,
     pub allowed_emails: Vec<String>,
     pub auto_join_orgs: Vec<String>,
+    /// Emails granted admin, from the app's AuthConfig. Passed to the resolver
+    /// so admin designation actually takes effect on login.
+    pub admin_emails: Vec<String>,
 }
 
 /// Providers populated during `build_auth_layers()`.
@@ -202,6 +205,7 @@ pub async fn build_auth_layers(
             allowed_domains: provider.allowed_domains.clone(),
             allowed_emails: provider.allowed_emails.clone(),
             auto_join_orgs: provider.auto_join_orgs.clone(),
+            admin_emails: auth.admin_emails.clone(),
         });
     }
 
@@ -381,15 +385,13 @@ pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
                     if allowed {
                         if let Some(resolver) = get_resolver() {
                             let display_name = name_from_id_token(&session.id_token);
-                            let admin_emails: Vec<String> = AUTH_PROVIDERS
-                                .get()
-                                .map(|_| vec![]) // admin_emails come from the app's config
-                                .unwrap_or_default();
+                            let admin_emails: &[String] =
+                                provider.map(|p| p.admin_emails.as_slice()).unwrap_or(&[]);
                             match resolver
                                 .resolve_user(
                                     &email,
                                     display_name.as_deref(),
-                                    &admin_emails,
+                                    admin_emails,
                                     auto_join_orgs,
                                 )
                                 .await
