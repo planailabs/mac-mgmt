@@ -32,6 +32,12 @@ pub struct DeployState {
 /// no oversized upload is ever buffered in memory.
 const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024 * 1024;
 
+/// Never let an upload or extraction drive a filesystem below this much free
+/// space, so a runaway/oversized deploy can't fill the disk and take the host
+/// down. Enforced both while streaming the upload and while unpacking it.
+// ponytail: fixed floor; make configurable if deploy sizes vary widely.
+const DISK_MIN_FREE_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
+
 /// How long a single deploy request may take. Uploading a multi-gigabyte
 /// tarball over a slow link can run for many minutes, so allow up to an hour
 /// before the request is considered timed out.
@@ -295,11 +301,38 @@ async fn upload_deploy(
     let (std_file, upload_path) = upload.into_parts();
     let mut file = tokio::fs::File::from_std(std_file);
 
+    // The temp file lives on whatever filesystem tempfile chose; guard that fs.
+    let upload_fs: std::path::PathBuf = upload_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    // Early bail: if Content-Length plus our headroom floor won't fit, don't even
+    // start streaming. (Absent/lying Content-Length is caught by the live check.)
+    if let Some(len) = headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        let avail = fs4::available_space(&upload_fs).unwrap_or(u64::MAX);
+        if len.saturating_add(DISK_MIN_FREE_BYTES) > avail {
+            return Err((
+                StatusCode::INSUFFICIENT_STORAGE,
+                format!(
+                    "insufficient disk space for upload: {len} bytes declared (+{DISK_MIN_FREE_BYTES} headroom) but only {avail} bytes free"
+                ),
+            ));
+        }
+    }
+
     let mut tarball_size: i64 = 0;
     {
         use futures_core::Stream as _;
         use tokio::io::AsyncWriteExt as _;
         let mut stream = std::pin::pin!(body.into_data_stream());
+        // Re-check free space every ~64 MiB written rather than per chunk, to keep
+        // statvfs overhead negligible while still catching a filling disk fast.
+        const DISK_CHECK_INTERVAL: i64 = 64 * 1024 * 1024;
+        let mut since_disk_check: i64 = 0;
         loop {
             match std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
                 Some(Ok(chunk)) => {
@@ -309,6 +342,19 @@ async fn upload_deploy(
                             StatusCode::PAYLOAD_TOO_LARGE,
                             format!("upload exceeds the {MAX_UPLOAD_BYTES} byte limit"),
                         ));
+                    }
+                    since_disk_check += chunk.len() as i64;
+                    if since_disk_check >= DISK_CHECK_INTERVAL {
+                        since_disk_check = 0;
+                        let avail = fs4::available_space(&upload_fs).unwrap_or(u64::MAX);
+                        if avail < DISK_MIN_FREE_BYTES {
+                            return Err((
+                                StatusCode::INSUFFICIENT_STORAGE,
+                                format!(
+                                    "disk space critical during upload: {avail} bytes free (below {DISK_MIN_FREE_BYTES} floor), aborting"
+                                ),
+                            ));
+                        }
                     }
                     file.write_all(&chunk).await.map_err(|e| {
                         (StatusCode::INTERNAL_SERVER_ERROR, format!("write upload: {e}"))
@@ -622,17 +668,13 @@ async fn run_wrangler_deploy(
     // tmp_dir dropped here, auto-cleaned
 }
 
-/// Never let extraction drive the target filesystem below this much free space,
-/// so a runaway/oversized deploy can't fill the disk and take the host down.
-// ponytail: fixed floor; make configurable if deploy sizes vary widely.
-const EXTRACT_MIN_FREE_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
 
 /// Extract a gzipped tarball file into `dest` (created if missing). The archive
 /// is read and decompressed straight from disk so it is never buffered in RAM.
 ///
 /// Disk-space guarded: fails early if the (estimated uncompressed) archive won't
 /// fit in the free space at `dest`, and aborts mid-extraction if free space falls
-/// below [`EXTRACT_MIN_FREE_BYTES`] (checked periodically as entries are written).
+/// below [`DISK_MIN_FREE_BYTES`] (checked periodically as entries are written).
 async fn extract_tarball(src: std::path::PathBuf, dest: std::path::PathBuf) -> Result<(), String> {
     tokio::fs::create_dir_all(&dest)
         .await
@@ -651,9 +693,9 @@ async fn extract_tarball(src: std::path::PathBuf, dest: std::path::PathBuf) -> R
     let avail = fs4::available_space(&dest)
         .map_err(|e| format!("statvfs {}: {e}", dest.display()))?;
     // Require the estimate plus the same headroom floor we enforce mid-extraction.
-    if needed.saturating_add(EXTRACT_MIN_FREE_BYTES) > avail {
+    if needed.saturating_add(DISK_MIN_FREE_BYTES) > avail {
         return Err(format!(
-            "insufficient disk space: archive needs ~{needed} bytes (+{EXTRACT_MIN_FREE_BYTES} headroom) but only {avail} bytes free at {}",
+            "insufficient disk space: archive needs ~{needed} bytes (+{DISK_MIN_FREE_BYTES} headroom) but only {avail} bytes free at {}",
             dest.display()
         ));
     }
@@ -675,9 +717,9 @@ async fn extract_tarball(src: std::path::PathBuf, dest: std::path::PathBuf) -> R
             if i % 32 == 0 {
                 let avail = fs4::available_space(&dest)
                     .map_err(|e| format!("statvfs {}: {e}", dest.display()))?;
-                if avail < EXTRACT_MIN_FREE_BYTES {
+                if avail < DISK_MIN_FREE_BYTES {
                     return Err(format!(
-                        "disk space critical during extraction: {avail} bytes free at {} (below {EXTRACT_MIN_FREE_BYTES} floor), aborting",
+                        "disk space critical during extraction: {avail} bytes free at {} (below {DISK_MIN_FREE_BYTES} floor), aborting",
                         dest.display()
                     ));
                 }
