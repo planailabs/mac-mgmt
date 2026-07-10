@@ -622,18 +622,67 @@ async fn run_wrangler_deploy(
     // tmp_dir dropped here, auto-cleaned
 }
 
+/// Never let extraction drive the target filesystem below this much free space,
+/// so a runaway/oversized deploy can't fill the disk and take the host down.
+// ponytail: fixed floor; make configurable if deploy sizes vary widely.
+const EXTRACT_MIN_FREE_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
+
 /// Extract a gzipped tarball file into `dest` (created if missing). The archive
 /// is read and decompressed straight from disk so it is never buffered in RAM.
+///
+/// Disk-space guarded: fails early if the compressed tarball is already larger
+/// than the free space at `dest`, and aborts mid-extraction if free space falls
+/// below [`EXTRACT_MIN_FREE_BYTES`] (checked periodically as entries are written).
 async fn extract_tarball(src: std::path::PathBuf, dest: std::path::PathBuf) -> Result<(), String> {
     tokio::fs::create_dir_all(&dest)
         .await
         .map_err(|e| format!("mkdir: {e}"))?;
+
+    // Early bail: the decompressed tree is always at least as big as the
+    // compressed tarball, so if even the compressed form doesn't fit there is no
+    // point starting. Cheap stat + statvfs before any real work.
+    let compressed_size = tokio::fs::metadata(&src)
+        .await
+        .map_err(|e| format!("stat tarball: {e}"))?
+        .len();
+    let avail = fs4::available_space(&dest)
+        .map_err(|e| format!("statvfs {}: {e}", dest.display()))?;
+    if compressed_size > avail {
+        return Err(format!(
+            "insufficient disk space: tarball is {compressed_size} bytes compressed but only {avail} bytes free at {}",
+            dest.display()
+        ));
+    }
+
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let f = std::fs::File::open(&src).map_err(|e| format!("open tarball: {e}"))?;
         let gz = flate2::read::GzDecoder::new(std::io::BufReader::new(f));
         let mut archive = tar::Archive::new(gz);
         archive.set_overwrite(true);
-        archive.unpack(&dest).map_err(|e| e.to_string())
+        // Unpack entry-by-entry (equivalent to Archive::unpack) so we can poll
+        // free space as the tree grows and abort before filling the disk.
+        for (i, entry) in archive
+            .entries()
+            .map_err(|e| format!("read tar entries: {e}"))?
+            .enumerate()
+        {
+            let mut entry = entry.map_err(|e| format!("read tar entry: {e}"))?;
+            // statvfs isn't free; poll every 32 entries rather than per file.
+            if i % 32 == 0 {
+                let avail = fs4::available_space(&dest)
+                    .map_err(|e| format!("statvfs {}: {e}", dest.display()))?;
+                if avail < EXTRACT_MIN_FREE_BYTES {
+                    return Err(format!(
+                        "disk space critical during extraction: {avail} bytes free at {} (below {EXTRACT_MIN_FREE_BYTES} floor), aborting",
+                        dest.display()
+                    ));
+                }
+            }
+            entry
+                .unpack_in(&dest)
+                .map_err(|e| format!("unpack tar entry: {e}"))?;
+        }
+        Ok(())
     })
     .await
     .map_err(|e| format!("extract task panicked: {e}"))?
