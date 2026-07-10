@@ -22,7 +22,10 @@ static TOKEN_CACHE: std::sync::LazyLock<
     tokio::sync::RwLock<HashMap<String, (SelfInfo, std::time::Instant)>>,
 > = std::sync::LazyLock::new(|| tokio::sync::RwLock::new(HashMap::new()));
 
-const TOKEN_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+// Short TTL so a revoked token stops authenticating quickly (was 300s, which
+// left a 5-minute window after revocation). Still amortizes validation across
+// the burst of requests a single page load produces.
+const TOKEN_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 async fn validate_token_cached(server_api_url: &str, token: &str) -> Result<SelfInfo, StatusCode> {
     // Check cache first.

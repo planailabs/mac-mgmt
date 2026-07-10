@@ -63,12 +63,12 @@ pub struct CertAuthInfo {
 }
 
 /// Cache for cert-auth results (fingerprint -> (result, timestamp)).
-/// 5-minute TTL, same as token cache in proxy_handler.
+/// Short TTL so a revoked certificate stops authenticating quickly.
 static CERT_CACHE: std::sync::LazyLock<
     tokio::sync::RwLock<std::collections::HashMap<String, (CertAuthResult, std::time::Instant)>>,
 > = std::sync::LazyLock::new(Default::default);
 
-const CERT_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+const CERT_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Cached result: either a successful CertAuthInfo or a "not found" marker.
 #[derive(Debug, Clone)]
