@@ -39,6 +39,43 @@ fn sha256_hex(input: &str) -> String {
     hex::encode(Sha256::digest(input.as_bytes()))
 }
 
+/// Hash a user password for storage. Argon2id (salted, memory-hard) — never a
+/// bare hash. Returns the PHC-encoded string (`$argon2id$...`) which embeds the
+/// salt and parameters.
+pub fn hash_password(password: &str) -> Result<String, String> {
+    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+    use argon2::Argon2;
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// Verify a password against a stored hash. Accepts both the new Argon2 PHC
+/// format and the legacy unsalted `sha256_hex` format (64 lowercase hex chars)
+/// so existing credentials keep working until they are re-hashed on next login.
+/// Returns `(is_valid, needs_rehash)`.
+fn verify_password(stored: &str, password: &str) -> (bool, bool) {
+    if let Some(rest) = stored.strip_prefix("$argon2") {
+        let _ = rest;
+        use argon2::password_hash::{PasswordHash, PasswordVerifier};
+        use argon2::Argon2;
+        let ok = PasswordHash::new(stored)
+            .map(|parsed| {
+                Argon2::default()
+                    .verify_password(password.as_bytes(), &parsed)
+                    .is_ok()
+            })
+            .unwrap_or(false);
+        (ok, false)
+    } else {
+        // Legacy unsalted SHA-256. Constant-time compare, flag for upgrade.
+        let ok = constant_time_eq(stored, &sha256_hex(password));
+        (ok, ok)
+    }
+}
+
 fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
@@ -486,10 +523,23 @@ async fn creds_ok(pool: &PgPool, list_id: Uuid, username: &str, password: &str) 
     .await
     .ok()
     .flatten();
-    match stored {
-        Some(hash) => constant_time_eq(&hash, &sha256_hex(password)),
-        None => false,
+    let Some(hash) = stored else { return false };
+    let (ok, needs_rehash) = verify_password(&hash, password);
+    if ok && needs_rehash {
+        // Transparently upgrade the legacy SHA-256 hash to Argon2 on login.
+        if let Ok(new_hash) = hash_password(password) {
+            let _ = sqlx::query(
+                "UPDATE basic_auth_credentials SET password_hash = $3 \
+                 WHERE list_id = $1 AND username = $2",
+            )
+            .bind(list_id)
+            .bind(username)
+            .bind(&new_hash)
+            .execute(pool)
+            .await;
+        }
     }
+    ok
 }
 
 /// Resolve (or create) the browser identity. Returns the identity id and, when
@@ -1013,5 +1063,30 @@ mod tests {
         };
         let tok = mint_handoff(key, &h);
         assert!(verify_handoff(key, &tok).is_none());
+    }
+}
+
+#[cfg(test)]
+mod password_tests {
+    use super::{hash_password, sha256_hex, verify_password};
+
+    #[test]
+    fn argon2_roundtrip() {
+        let h = hash_password("correct horse battery staple").unwrap();
+        assert!(h.starts_with("$argon2"));
+        let (ok, rehash) = verify_password(&h, "correct horse battery staple");
+        assert!(ok && !rehash);
+        let (bad, _) = verify_password(&h, "wrong");
+        assert!(!bad);
+    }
+
+    #[test]
+    fn legacy_sha256_verifies_and_flags_rehash() {
+        let legacy = sha256_hex("hunter2");
+        let (ok, rehash) = verify_password(&legacy, "hunter2");
+        assert!(ok, "legacy hash must still verify");
+        assert!(rehash, "legacy hash must be flagged for upgrade");
+        let (bad, _) = verify_password(&legacy, "nope");
+        assert!(!bad);
     }
 }

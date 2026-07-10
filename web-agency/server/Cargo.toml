@@ -7,7 +7,7 @@ edition = "2024"
 default = ["web", "server", "webui"]
 web = ["webui", "dioxus/web"]
 webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-i18n", "dep:unic-langid", "dep:plan-ai-design", "dep:pulldown-cmark", "dep:plan-ai-actions", "plan-ai-actions/ui"]
-server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:percent-encoding", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hmac", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:aes-gcm", "dep:thiserror", "dep:cloudflare-api", "dep:spaceship-api", "dep:changedetection-api", "dep:async-trait", "dep:tempfile", "dep:rust-embed", "dep:instant-acme", "dep:rcgen", "dep:async-stream", "dep:futures-core", "dep:tar", "dep:flate2", "dep:fs4", "dep:tower", "dep:tower-http", "dep:prometheus", "dep:plan-ai-html", "dep:time", "dep:plan-ai-api-mcp", "plan-ai-auth/server", "dep:plan-ai-actions", "plan-ai-actions/engine"]
+server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:percent-encoding", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:argon2", "dep:hmac", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:aes-gcm", "dep:thiserror", "dep:cloudflare-api", "dep:spaceship-api", "dep:changedetection-api", "dep:async-trait", "dep:tempfile", "dep:rust-embed", "dep:instant-acme", "dep:rcgen", "dep:async-stream", "dep:futures-core", "dep:tar", "dep:flate2", "dep:fs4", "dep:tower", "dep:tower-http", "dep:prometheus", "dep:plan-ai-html", "dep:time", "dep:plan-ai-api-mcp", "plan-ai-auth/server", "dep:plan-ai-actions", "plan-ai-actions/engine"]
 
 [dependencies]
 dioxus = { version = "0.8.0-alpha.0", features = ["fullstack", "router"], optional = true }
@@ -22,6 +22,7 @@ uuid = { version = "1", features = ["v4", "serde", "js"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = { version = "0.10", optional = true }
+argon2 = { version = "0.5", optional = true }
 hmac = { version = "0.12", optional = true }
 hex = { version = "0.4", optional = true }
 rand = { version = "0.9", optional = true }

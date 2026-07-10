@@ -207,7 +207,7 @@ pub async fn basic_auth_get(
 }
 
 /// Add (or replace) a username/password credential on a basic-auth list
-/// (requires org write). The password is stored as a SHA-256 hash and the
+/// (requires org write). The password is stored as an Argon2id hash and the
 /// proxy is told to reload.
 #[api_mcp_dioxus_server(server = "add_basic_auth_credential")]
 pub async fn basic_auth_add_credential(
@@ -218,8 +218,7 @@ pub async fn basic_auth_add_credential(
     let org_id = super::owning_org(pool, "basic_auth_lists", input.id, "basic-auth list").await?;
     principal.require_write(&org_id)?;
 
-    use sha2::{Digest, Sha256};
-    let hash = hex::encode(Sha256::digest(input.password.as_bytes()));
+    let hash = crate::api::basic_auth::hash_password(&input.password).map_err(super::internal)?;
 
     sqlx::query(
         "INSERT INTO basic_auth_credentials (list_id, username, password_hash) VALUES ($1, $2, $3) \
