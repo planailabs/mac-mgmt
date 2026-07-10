@@ -205,6 +205,15 @@ pub fn check_and_apply() {
         }
     }
 
+    // Never hand a server-supplied string that isn't a well-formed store path
+    // to nix-store: a value like "--eval" or an arbitrary path could change how
+    // the update is realised. (Signature verification of the target is tracked
+    // separately; this is the minimal input-shape guard.)
+    if !is_valid_store_path(&store_path) {
+        tracing::warn!("refusing update: target is not a valid /nix/store path: {store_path}");
+        return;
+    }
+
     tracing::info!("updating: {CURRENT_VERSION} -> {version} (store {store_path})");
     sentry_ext::breadcrumb(
         "self-update",
@@ -229,6 +238,22 @@ pub fn check_and_apply() {
 /// like "rolling" are not, and are exempt from the downgrade guard.
 fn is_semver(ver: &str) -> bool {
     !ver.is_empty() && ver.split('.').all(|p| p.parse::<u64>().is_ok())
+}
+
+/// A well-formed `/nix/store/<hash>-<name>` path: guards nix-store from being
+/// handed a flag-like or otherwise unexpected server-supplied argument.
+fn is_valid_store_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/nix/store/") else {
+        return false;
+    };
+    // The store entry name must not be empty, must not start with '-' (flag
+    // injection), and must contain only the characters nix uses for store names.
+    !rest.is_empty()
+        && !rest.starts_with('-')
+        && !rest.contains('/')
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '+' | '?' | '='))
 }
 
 /// Compare a version string against CURRENT_VERSION.
@@ -486,6 +511,23 @@ pub fn apply(force: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn store_path_validation() {
+        assert!(is_valid_store_path(
+            "/nix/store/abcd1234efgh5678ijkl-mac-mgmt-1.2.3"
+        ));
+        for bad in [
+            "/etc/passwd",
+            "--eval",
+            "/nix/store/",
+            "/nix/store/-flag",
+            "/nix/store/a/../../etc",
+            "relative/path",
+        ] {
+            assert!(!is_valid_store_path(bad), "{bad} should be rejected");
+        }
+    }
 
     #[test]
     fn current_version_is_valid_semver() {
