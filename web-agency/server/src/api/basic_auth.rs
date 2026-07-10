@@ -185,16 +185,22 @@ fn record_success(ip: IpAddr) {
     ATTEMPTS.lock().unwrap().remove(&subnet_key(ip));
 }
 
-/// Real client IP from the proxy-stamped `X-Forwarded-For` (first hop).
-/// Returns None when absent — protection then fails open rather than locking
-/// every user behind a shared proxy address.
-fn client_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    let raw = headers
+/// Sentinel bucket for requests that arrive without a proxy-stamped client IP
+/// (e.g. a direct connection that bypassed the proxy, or one with the headers
+/// stripped). Such requests all share this key so brute-force protection fails
+/// closed instead of being skipped entirely.
+const UNKNOWN_IP: IpAddr = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+
+/// Real client IP from the proxy-stamped `X-Forwarded-For` (first hop), falling
+/// back to a shared sentinel when absent so the lockout still applies.
+fn client_ip(headers: &HeaderMap) -> IpAddr {
+    headers
         .get("x-forwarded-for")
-        .or_else(|| headers.get("x-real-ip"))?
-        .to_str()
-        .ok()?;
-    raw.split(',').next()?.trim().parse().ok()
+        .or_else(|| headers.get("x-real-ip"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|raw| raw.split(',').next())
+        .and_then(|first| first.trim().parse().ok())
+        .unwrap_or(UNKNOWN_IP)
 }
 
 /// The shared HMAC key (same internal token the proxy holds).
@@ -704,7 +710,7 @@ async fn login_page(
     }
     // Brute-force gate: a locked-out subnet only sees the countdown (which the
     // meta refresh reloads here when it expires).
-    if let Some(secs) = client_ip(&headers).and_then(locked_for) {
+    if let Some(secs) = locked_for(client_ip(&headers)) {
         return (jar, locked_form_html(lang, list_id, &cb, &back, secs).into_response());
     }
     // Silent SSO: already proved this list on this browser → hand off, no form.
@@ -744,11 +750,11 @@ async fn login_submit(
     }
     let ip = client_ip(&headers);
     // Refuse before touching credentials while the subnet is locked.
-    if let Some(secs) = ip.and_then(locked_for) {
+    if let Some(secs) = locked_for(ip) {
         return (jar, locked_form_html(lang, list_id, &cb, &back, secs).into_response());
     }
     if !creds_ok(&pool, list_id, &username, &password).await {
-        let secs = ip.map(record_failure).unwrap_or(0);
+        let secs = record_failure(ip);
         let resp = if secs > 0 {
             locked_form_html(lang, list_id, &cb, &back, secs)
         } else {
@@ -756,9 +762,7 @@ async fn login_submit(
         };
         return (jar, resp.into_response());
     }
-    if let Some(ip) = ip {
-        record_success(ip);
-    }
+    record_success(ip);
 
     let (sso_id, set_cookie) = match ensure_sso(&pool, &jar, keep).await {
         Ok(v) => v,
