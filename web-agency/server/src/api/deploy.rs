@@ -32,6 +32,12 @@ pub struct DeployState {
 /// no oversized upload is ever buffered in memory.
 const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024 * 1024;
 
+/// Cap on simultaneous in-flight deploys. Each holds a temp file (up to
+/// MAX_UPLOAD_BYTES) plus its extracted tree and a wrangler subprocess, so an
+/// unbounded fan-out of concurrent uploads can exhaust disk/OOM the host and
+/// take down every tenant. Excess requests get 503 and retry.
+const MAX_CONCURRENT_DEPLOYS: usize = 6;
+
 /// Never let an upload or extraction drive a filesystem below this much free
 /// space, so a runaway/oversized deploy can't fill the disk and take the host
 /// down. Enforced both while streaming the upload and while unpacking it.
@@ -230,6 +236,15 @@ async fn upload_deploy(
     body: Body,
 ) -> Result<Json<UploadResponse>, (StatusCode, String)> {
     authenticate_deploy(&state.pool, &headers, webspace_id).await?;
+
+    // Reject before reading the (multi-gigabyte) body when we're already at the
+    // concurrent-deploy ceiling, so a burst of uploads can't exhaust the disk.
+    if state.active_deploys.load(Ordering::Relaxed) >= MAX_CONCURRENT_DEPLOYS {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too many deploys in progress, retry shortly".into(),
+        ));
+    }
 
     let ws = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<Uuid>)>(
         "SELECT hosting_type, runtime, cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
