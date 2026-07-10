@@ -32,6 +32,17 @@ pub struct DeployState {
 /// no oversized upload is ever buffered in memory.
 const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024 * 1024;
 
+/// A branch name is safe to forward to wrangler as `--branch=<value>`: a
+/// non-empty git-ref-ish token with no flag-injection or control characters.
+fn is_valid_branch(branch: &str) -> bool {
+    !branch.is_empty()
+        && branch.len() <= 255
+        && !branch.starts_with('-')
+        && branch
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '.' | '-'))
+}
+
 /// Cap on simultaneous in-flight deploys. Each holds a temp file (up to
 /// MAX_UPLOAD_BYTES) plus its extracted tree and a wrangler subprocess, so an
 /// unbounded fan-out of concurrent uploads can exhaust disk/OOM the host and
@@ -244,6 +255,15 @@ async fn upload_deploy(
             StatusCode::SERVICE_UNAVAILABLE,
             "too many deploys in progress, retry shortly".into(),
         ));
+    }
+
+    // The branch name is forwarded to wrangler as `--branch=<value>`; constrain
+    // it to a git-safe charset so it can't inject wrangler flags or embed
+    // control characters that end up reflected in the stored error message.
+    if let Some(branch) = &query.branch {
+        if !is_valid_branch(branch) {
+            return Err((StatusCode::BAD_REQUEST, "invalid branch name".into()));
+        }
     }
 
     let ws = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<Uuid>)>(
@@ -857,4 +877,24 @@ async fn set_failed(pool: &PgPool, deployment_id: Uuid, msg: &str) {
     super::counters::COUNTERS
         .deploy_failed
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod branch_tests {
+    use super::is_valid_branch;
+
+    #[test]
+    fn accepts_normal_branches() {
+        for b in ["main", "release/1.2", "feature_x", "v1.0.0-rc.1"] {
+            assert!(is_valid_branch(b), "{b} should be valid");
+        }
+    }
+
+    #[test]
+    fn rejects_injection_and_junk() {
+        for b in ["", "-foo", "--branch=evil", "a b", "x\n", "x;rm -rf", "a'b"] {
+            assert!(!is_valid_branch(b), "{b:?} should be rejected");
+        }
+        assert!(!is_valid_branch(&"a".repeat(256)));
+    }
 }
