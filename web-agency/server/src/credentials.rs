@@ -5,7 +5,62 @@
 //! domain_add, domain_register, credential_form, credential_edit, api/sync, and api/deploy.
 
 use sqlx::PgPool;
+use std::net::IpAddr;
 use uuid::Uuid;
+
+/// Reject outbound URLs that point at the loopback interface, private/link-local
+/// ranges, or cloud metadata endpoints. Stored credential URLs are used verbatim
+/// as request targets, so without this an operator who can create a credential
+/// could turn a server-side fetch into an SSRF against internal services (e.g.
+/// http://169.254.169.254/ or http://localhost:2375/). Call at credential
+/// creation and again before each outbound request.
+pub fn validate_outbound_url(url: &str) -> anyhow::Result<()> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("invalid url: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!("url scheme must be http or https");
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("url has no host"))?;
+    // `host_str` keeps IPv6 literals bracketed; strip for parsing.
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = bare.parse::<IpAddr>() {
+        reject_private_ip(ip)?;
+    } else {
+        let d = host.trim_end_matches('.').to_ascii_lowercase();
+        if d == "localhost" || d.ends_with(".localhost") || d == "metadata" {
+            anyhow::bail!("url host is not permitted");
+        }
+    }
+    Ok(())
+}
+
+fn reject_private_ip(ip: IpAddr) -> anyhow::Result<()> {
+    let blocked = match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                // CGNAT 100.64.0.0/10
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                // unique-local fc00::/7 and link-local fe80::/10
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                // IPv4-mapped — re-check the embedded v4
+                || v6.to_ipv4_mapped().is_some_and(|m| reject_private_ip(IpAddr::V4(m)).is_err())
+        }
+    };
+    if blocked {
+        anyhow::bail!("url resolves to a non-public address");
+    }
+    Ok(())
+}
 
 /// Fetch and decrypt a credential's JSON data from the database.
 pub async fn credential_json(
@@ -80,6 +135,7 @@ pub async fn mac_mgmt_credential(pool: &PgPool, cred_id: Uuid) -> anyhow::Result
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing server_url"))?
         .to_string();
+    validate_outbound_url(&server_url)?;
     let token = data["token"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing token"))?
@@ -99,6 +155,7 @@ pub async fn changedetection_client(
     let api_url = data["api_url"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing api_url"))?;
+    validate_outbound_url(api_url)?;
     let api_key = data["api_key"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing api_key"))?;
@@ -138,4 +195,34 @@ pub async fn spaceship_client(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing api_secret"))?;
     Ok(spaceship_api::compat::SimpleClient::new(key, secret))
+}
+
+#[cfg(test)]
+mod ssrf_tests {
+    use super::validate_outbound_url;
+
+    #[test]
+    fn blocks_metadata_and_loopback_and_private() {
+        for bad in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://localhost:2375/",
+            "http://127.0.0.1/",
+            "http://[::1]/",
+            "http://10.0.0.5/",
+            "http://192.168.1.1/",
+            "http://100.64.0.1/",
+            "http://metadata/computeMetadata/v1/",
+            "ftp://example.com/",
+            "file:///etc/passwd",
+        ] {
+            assert!(validate_outbound_url(bad).is_err(), "{bad} should be blocked");
+        }
+    }
+
+    #[test]
+    fn allows_public_hosts() {
+        for ok in ["https://api.example.com/", "http://203.0.113.10:8080/x"] {
+            assert!(validate_outbound_url(ok).is_ok(), "{ok} should be allowed");
+        }
+    }
 }
