@@ -61,6 +61,19 @@ struct BuiltinSkills;
 
 /// Write embedded skill content to disk.
 /// Returns `Ok(true)` if already up-to-date, `Ok(false)` if written fresh.
+/// A skill slug is safe to use as a path component and GC-root name: a bare
+/// identifier with no separators or `..`.
+fn is_safe_skill_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug.len() <= 128
+        && slug != "."
+        && slug != ".."
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !slug.contains("..")
+}
+
 fn materialize_builtin(slug: &str, dest: &Path) -> Result<bool> {
     let asset_path = format!("{slug}/SKILL.md");
     let file = BuiltinSkills::get(&asset_path)
@@ -175,6 +188,14 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
     let mut realised = 0u32;
     let mut failed = 0u32;
     for (slug, store_path) in &skills {
+        // The slug is a server-supplied map key joined into a filesystem path
+        // and used as a nix GC-root name; reject anything that could traverse
+        // out of skills_dir (e.g. "../../etc/cron.d/evil").
+        if !is_safe_skill_slug(slug) {
+            tracing::warn!("{slug}: rejecting skill with unsafe slug");
+            failed += 1;
+            continue;
+        }
         let link = skills_dir.join(slug);
 
         // Handle built-in skills: write embedded content to disk.
@@ -206,6 +227,14 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
             let _ = std::fs::remove_file(&link);
         } else {
             tracing::info!("{slug}: new skill, realising {store_path}");
+        }
+
+        // Only realise genuine store paths; never pass a server-supplied value
+        // that could be read as a nix-store flag or an arbitrary path.
+        if !store_path.starts_with("/nix/store/") {
+            tracing::warn!("{slug}: rejecting non-store path {store_path}");
+            failed += 1;
+            continue;
         }
 
         let link_str = link.to_string_lossy().to_string();
