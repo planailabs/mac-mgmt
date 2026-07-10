@@ -27,9 +27,10 @@ pub struct DeployState {
     pub active_deploys: Arc<AtomicUsize>,
 }
 
-/// Maximum tarball upload size: 10 GiB. The body is streamed to disk and this
+/// Maximum tarball upload size: 64 GiB. The body is streamed to disk and this
 /// cap is enforced as the bytes arrive (plus an early Content-Length check), so
-/// no oversized upload is ever buffered in memory.
+/// no oversized upload is ever buffered in memory. The concurrent-deploy cap
+/// and per-chunk free-space guard bound the aggregate disk impact.
 const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024 * 1024;
 
 /// A branch name is safe to forward to wrangler as `--branch=<value>`: a
