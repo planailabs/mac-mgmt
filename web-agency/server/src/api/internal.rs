@@ -79,7 +79,9 @@ pub(crate) fn authenticate(headers: &HeaderMap) -> Result<(), (StatusCode, Strin
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
 
-    if provided.is_empty() || provided != expected_token {
+    if provided.is_empty()
+        || !crate::api::basic_auth::constant_time_eq(provided, expected_token)
+    {
         return Err((StatusCode::UNAUTHORIZED, "invalid token".into()));
     }
 

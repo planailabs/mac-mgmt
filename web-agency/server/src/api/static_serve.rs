@@ -96,5 +96,5 @@ fn internal_token_ok(headers: &HeaderMap) -> bool {
         .get(TOKEN_HEADER)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    !provided.is_empty() && provided == expected.trim()
+    !provided.is_empty() && crate::api::basic_auth::constant_time_eq(provided, expected.trim())
 }
