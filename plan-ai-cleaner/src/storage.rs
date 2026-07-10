@@ -30,8 +30,22 @@ impl SessionStore {
         })
     }
 
-    fn session_path(&self, id: &str) -> PathBuf {
-        self.sessions_dir.join(format!("{id}.enc"))
+    /// Reject session ids that aren't a bare token, so a caller-supplied id
+    /// (MCP tool param) can't traverse out of the sessions dir with `..` or an
+    /// absolute path and read/delete arbitrary files.
+    fn validate_id(id: &str) -> Result<()> {
+        if id.is_empty()
+            || id.len() > 128
+            || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            anyhow::bail!("invalid session id");
+        }
+        Ok(())
+    }
+
+    fn session_path(&self, id: &str) -> Result<PathBuf> {
+        Self::validate_id(id)?;
+        Ok(self.sessions_dir.join(format!("{id}.enc")))
     }
 
     pub fn save(&self, manifest: &SessionManifest) -> Result<()> {
@@ -48,7 +62,7 @@ impl SessionStore {
         data.extend_from_slice(&nonce_bytes);
         data.extend_from_slice(&ciphertext);
 
-        let path = self.session_path(&manifest.id);
+        let path = self.session_path(&manifest.id)?;
         std::fs::write(&path, &data)
             .with_context(|| format!("failed to write session {}", path.display()))?;
 
@@ -56,7 +70,7 @@ impl SessionStore {
     }
 
     pub fn load(&self, id: &str) -> Result<SessionManifest> {
-        let path = self.session_path(id);
+        let path = self.session_path(id)?;
         let data = std::fs::read(&path)
             .with_context(|| format!("session not found: {}", path.display()))?;
 
@@ -89,7 +103,7 @@ impl SessionStore {
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
-        let path = self.session_path(id);
+        let path = self.session_path(id)?;
         if path.exists() {
             std::fs::remove_file(&path)?;
         }
@@ -201,6 +215,17 @@ mod hex {
 mod tests {
     use super::*;
     use crate::types::*;
+
+    #[test]
+    fn session_id_validation_blocks_traversal() {
+        for bad in ["../key", "../../etc/passwd", "a/b", "", "id with space", "..", "/abs"] {
+            assert!(SessionStore::validate_id(bad).is_err(), "{bad:?} must be rejected");
+        }
+        for ok in ["abc123", "a1b2c3d4-e5f6", &"x".repeat(128)] {
+            assert!(SessionStore::validate_id(ok).is_ok(), "{ok} should be allowed");
+        }
+        assert!(SessionStore::validate_id(&"x".repeat(129)).is_err());
+    }
 
     fn sample_manifest(id: &str) -> SessionManifest {
         SessionManifest {

@@ -205,6 +205,13 @@ impl CleanerServer {
             Err(e) => return format!("Error loading session: {e}"),
         };
 
+        // Enforce the approval gate: originals are only re-introduced once the
+        // session has been explicitly approved, not just because per-entity
+        // flags default to approved on a freshly-scanned session.
+        if manifest.status != crate::types::SessionStatus::Approved {
+            return "Error: session is not approved; call cleaner_approve first".to_string();
+        }
+
         let mut text = params.text;
         for entity in &manifest.entities {
             if entity.approved {
