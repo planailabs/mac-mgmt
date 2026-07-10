@@ -630,26 +630,30 @@ const EXTRACT_MIN_FREE_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
 /// Extract a gzipped tarball file into `dest` (created if missing). The archive
 /// is read and decompressed straight from disk so it is never buffered in RAM.
 ///
-/// Disk-space guarded: fails early if the compressed tarball is already larger
-/// than the free space at `dest`, and aborts mid-extraction if free space falls
+/// Disk-space guarded: fails early if the (estimated uncompressed) archive won't
+/// fit in the free space at `dest`, and aborts mid-extraction if free space falls
 /// below [`EXTRACT_MIN_FREE_BYTES`] (checked periodically as entries are written).
 async fn extract_tarball(src: std::path::PathBuf, dest: std::path::PathBuf) -> Result<(), String> {
     tokio::fs::create_dir_all(&dest)
         .await
         .map_err(|e| format!("mkdir: {e}"))?;
 
-    // Early bail: the decompressed tree is always at least as big as the
-    // compressed tarball, so if even the compressed form doesn't fit there is no
-    // point starting. Cheap stat + statvfs before any real work.
+    // Early bail before doing any real work. gzip records the uncompressed size
+    // in its 4-byte ISIZE trailer, so we get a tight estimate for O(1) — no need
+    // to iterate/decompress the archive twice. ISIZE is mod 2^32, so it under-
+    // reports for archives >4 GiB; fall back to the compressed size (always a
+    // lower bound) via max(), and the in-loop guard below is the real backstop.
     let compressed_size = tokio::fs::metadata(&src)
         .await
         .map_err(|e| format!("stat tarball: {e}"))?
         .len();
+    let needed = gzip_isize(&src).await.unwrap_or(0).max(compressed_size);
     let avail = fs4::available_space(&dest)
         .map_err(|e| format!("statvfs {}: {e}", dest.display()))?;
-    if compressed_size > avail {
+    // Require the estimate plus the same headroom floor we enforce mid-extraction.
+    if needed.saturating_add(EXTRACT_MIN_FREE_BYTES) > avail {
         return Err(format!(
-            "insufficient disk space: tarball is {compressed_size} bytes compressed but only {avail} bytes free at {}",
+            "insufficient disk space: archive needs ~{needed} bytes (+{EXTRACT_MIN_FREE_BYTES} headroom) but only {avail} bytes free at {}",
             dest.display()
         ));
     }
@@ -686,6 +690,18 @@ async fn extract_tarball(src: std::path::PathBuf, dest: std::path::PathBuf) -> R
     })
     .await
     .map_err(|e| format!("extract task panicked: {e}"))?
+}
+
+/// Read a gzip file's uncompressed-size estimate from its ISIZE trailer (last 4
+/// bytes, little-endian, mod 2^32). Returns `None` if the file is too short or
+/// unreadable — callers should treat that as "unknown", not "empty".
+async fn gzip_isize(path: &std::path::Path) -> Option<u64> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut f = tokio::fs::File::open(path).await.ok()?;
+    f.seek(std::io::SeekFrom::End(-4)).await.ok()?;
+    let mut buf = [0u8; 4];
+    f.read_exact(&mut buf).await.ok()?;
+    Some(u32::from_le_bytes(buf) as u64)
 }
 
 /// Write the `.well-known/web-agency.json` marker so reachability checks can
