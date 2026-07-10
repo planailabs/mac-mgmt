@@ -311,7 +311,12 @@ pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
         return next.run(request).await;
     }
 
-    // DEV_ONLY_NO_AUTH bypass: look up dev user via resolver.
+    // DEV_ONLY_NO_AUTH bypass: look up dev user via resolver. Gated behind
+    // `debug_assertions` so it is compiled out of release binaries entirely —
+    // a stray env var in production cannot disable authentication. On resolver
+    // failure we fall through to the real OIDC flow rather than serving the
+    // request unauthenticated (fail closed, not open).
+    #[cfg(debug_assertions)]
     if std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1") {
         if let Some(resolver) = get_resolver() {
             match resolver
@@ -324,13 +329,15 @@ pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
                         web_user = try_impersonate(web_user, imp_id).await;
                     }
                     request.extensions_mut().insert(web_user);
+                    return next.run(request).await;
                 }
                 Err(e) => {
-                    tracing::error!("DEV_ONLY_NO_AUTH: failed to resolve dev user: {e}");
+                    tracing::error!(
+                        "DEV_ONLY_NO_AUTH: failed to resolve dev user, falling through to OIDC: {e}"
+                    );
                 }
             }
         }
-        return next.run(request).await;
     }
 
     // Extract session from the private cookie jar.

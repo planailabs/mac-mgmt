@@ -543,7 +543,10 @@ fn main() {
             .block_on(async {
                 let (_pool, api_rocket, healer_state) = init_server().await;
                 let cfg = config::load();
-                let dev_no_auth = std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1");
+                // Debug builds only: the dev auth bypass can never be compiled
+                // into a release binary, so a stray env var in prod is inert.
+                let dev_no_auth = cfg!(debug_assertions)
+                    && std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1");
 
                 // Install the shared auth user resolver.
                 if let Ok(pool) = crate::server_pool() {
