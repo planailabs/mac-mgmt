@@ -230,10 +230,9 @@ pub fn EasyAccess() -> Element {
                                                             Ok(result) => {
                                                                 let prefix = format!("{iid}-{tn}");
                                                                 let url = super::fleet_detail::build_tunnel_url(&pu, &prefix, &result.proxy_token);
-                                                                let _ = document::eval(&format!(
-                                                                    "window.open('{}', '_blank')",
-                                                                    url
-                                                                ));
+                                                                if let Some(js) = super::fleet_detail::open_url_js(&url) {
+                                                                    let _ = document::eval(&js);
+                                                                }
                                                             }
                                                             Err(e) => {
                                                                 tracing::error!("failed to create proxy token: {e}");

@@ -30,6 +30,20 @@ pub fn build_tunnel_url(proxy_url: &str, subdomain_prefix: &str, proxy_token: &s
     format!("{scheme}{subdomain_prefix}.{without_scheme}/proxy?proxy_token={proxy_token}")
 }
 
+/// Build a `window.open(...)` JS snippet for `document::eval` that cannot be
+/// broken out of. The URL comes from the daemon-reported relay proxy address
+/// (untrusted — a rogue daemon controls it), so a naive `format!("...'{url}'...")`
+/// allowed JS injection into every operator's browser. We reject non-http(s)
+/// schemes and JSON-encode the URL, which is a valid JS string literal with
+/// quotes, backslashes and newlines escaped.
+pub fn open_url_js(url: &str) -> Option<String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return None;
+    }
+    let literal = serde_json::to_string(url).ok()?;
+    Some(format!("window.open({literal}, '_blank')"))
+}
+
 /// Per-instance extended assessment page. Reachable at /fleet/:instance_id
 /// from the fleet dashboard. Surfaces the latest inventory + security posture
 /// + dynamic sample + per-service probe results.
@@ -575,10 +589,9 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                                                 Ok(res) => {
                                                                     let prefix = format!("{iid}-{tn}");
                                                                     let url = build_tunnel_url(&pu, &prefix, &res.proxy_token);
-                                                                    let _ = document::eval(&format!(
-                                                                        "window.open('{}', '_blank')",
-                                                                        url.replace('\'', "\\'"),
-                                                                    ));
+                                                                    if let Some(js) = open_url_js(&url) {
+                                                                        let _ = document::eval(&js);
+                                                                    }
                                                                 }
                                                                 Err(e) => {
                                                                     tracing::error!("proxy token creation failed: {e}");
@@ -1395,5 +1408,36 @@ fn human_duration(secs: u64) -> String {
         format!("{h}h {m}m")
     } else {
         format!("{m}m")
+    }
+}
+
+#[cfg(test)]
+mod open_url_js_tests {
+    use super::open_url_js;
+
+    #[test]
+    fn plain_url_is_wrapped() {
+        let js = open_url_js("https://a.relay.example/proxy?proxy_token=t").unwrap();
+        assert_eq!(
+            js,
+            r#"window.open("https://a.relay.example/proxy?proxy_token=t", '_blank')"#
+        );
+    }
+
+    #[test]
+    fn quote_injection_is_neutralized() {
+        // A rogue daemon supplies a relay URL trying to break out of the JS
+        // string. The single quote / paren must not terminate the literal.
+        let js = open_url_js("https://x'/**/;alert(1);//").unwrap();
+        assert!(!js.contains("');alert"));
+        assert!(js.contains(r#"alert(1)"#)); // still inside the JSON literal, inert
+        // The only unescaped ' are the delimiters around _blank.
+        assert_eq!(js.matches("'_blank'").count(), 1);
+    }
+
+    #[test]
+    fn non_http_scheme_rejected() {
+        assert!(open_url_js("javascript:alert(1)").is_none());
+        assert!(open_url_js("data:text/html,<script>").is_none());
     }
 }

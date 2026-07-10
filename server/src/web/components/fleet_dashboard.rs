@@ -1002,11 +1002,10 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                                                     Ok(result) => {
                                                                                                         let prefix = format!("{iid}-{tn}");
                                                                                                         let url = super::fleet_detail::build_tunnel_url(&pu, &prefix, &result.proxy_token);
-                                                                                                        // Open in new tab
-                                                                                                        let _ = document::eval(&format!(
-                                                                                                            "window.open('{}', '_blank')",
-                                                                                                            url
-                                                                                                        ));
+                                                                                                        // Open in new tab (JS-injection-safe)
+                                                                                                        if let Some(js) = super::fleet_detail::open_url_js(&url) {
+                                                                                                            let _ = document::eval(&js);
+                                                                                                        }
                                                                                                     }
                                                                                                     Err(e) => {
                                                                                                         tracing::error!("failed to create proxy token: {e}");
