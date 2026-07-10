@@ -81,9 +81,14 @@ pub(super) async fn require_credential_read(
     if principal.admin {
         return Ok(());
     }
-    match credential_org(pool, credential_id).await? {
-        Some(oid) => principal.require_read(&oid),
-        None => Err(ApiError::forbidden("access denied")),
+    // Non-admins: collapse missing / global / cross-org into a single generic
+    // "access denied" so credential existence cannot be probed by comparing
+    // 404 (bogus id) against 403 (real cross-org id) — an IDOR enumeration.
+    match credential_org_opt(pool, credential_id).await? {
+        Some(Some(oid)) => principal
+            .require_read(&oid)
+            .map_err(|_| ApiError::forbidden("access denied")),
+        _ => Err(ApiError::forbidden("access denied")),
     }
 }
 
@@ -98,28 +103,33 @@ async fn require_credential_write(
     if principal.admin {
         return Ok(());
     }
-    match credential_org(pool, credential_id).await? {
-        Some(oid) => principal.require_write(&oid),
-        None => Err(ApiError::forbidden("access denied")),
+    match credential_org_opt(pool, credential_id).await? {
+        Some(Some(oid)) => principal
+            .require_write(&oid)
+            .map_err(|_| ApiError::forbidden("access denied")),
+        _ => Err(ApiError::forbidden("access denied")),
     }
 }
 
-/// Fetch a credential's (nullable) owning org, or 404.
+/// Look up a credential's owning org without leaking existence via a 404:
+///   `None`        → no such credential
+///   `Some(None)`  → exists, global (no org)
+///   `Some(Some())`→ exists, owned by that org
 #[cfg(feature = "server")]
-async fn credential_org(
+async fn credential_org_opt(
     pool: &sqlx::PgPool,
     credential_id: Uuid,
-) -> Result<Option<Uuid>, ApiError> {
+) -> Result<Option<Option<Uuid>>, ApiError> {
     sqlx::query_scalar::<_, Option<Uuid>>(
         "SELECT organization_id FROM credentials WHERE id = $1",
     )
     .bind(credential_id)
     .fetch_optional(pool)
     .await
-    .map_err(super::internal)?
-    .ok_or_else(|| ApiError::not_found("credential not found"))
+    .map_err(super::internal)
 }
 
+/// Fetch a credential's (nullable) owning org, or 404.
 /// List credentials the caller may see (admins: all; else their orgs' + global).
 #[api_mcp_dioxus_server(server = "list_credentials")]
 pub async fn credential_list(
@@ -178,6 +188,11 @@ pub async fn credential_get(
     principal: &Principal,
     input: CredentialGetInput,
 ) -> Result<CredentialInfo, ApiError> {
+    // Authorize before disclosing existence: otherwise a caller can probe the
+    // UUID namespace (403 for a real cross-org id vs 404 for a bogus one) to
+    // enumerate credentials belonging to other organizations (IDOR).
+    require_credential_read(pool, principal, input.id).await?;
+
     let row = sqlx::query_as::<_, (Uuid, String, String, Option<Uuid>, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, name, credential_type, organization_id, created_at FROM credentials WHERE id = $1",
     )
@@ -186,8 +201,6 @@ pub async fn credential_get(
     .await
     .map_err(super::internal)?
     .ok_or_else(|| ApiError::not_found("credential not found"))?;
-
-    require_credential_read(pool, principal, input.id).await?;
 
     let (id, name, credential_type, organization_id, created_at) = row;
     Ok(CredentialInfo {
