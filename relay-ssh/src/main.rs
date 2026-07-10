@@ -39,6 +39,11 @@ struct Cli {
     /// TLS client key (PEM) for cert-based auth via WebSocket
     #[arg(long)]
     key: Option<String>,
+
+    /// Skip TLS certificate verification (DANGEROUS — only for a relay with a
+    /// self-signed cert in local development). Never use against production.
+    #[arg(long)]
+    insecure: bool,
 }
 
 #[derive(Deserialize)]
@@ -105,7 +110,8 @@ async fn main() -> Result<()> {
             .as_deref()
             .context("instance ID required with --cert/--key")?;
 
-        return connect_via_websocket(&relay_url, cert_path, key_path, instance_id).await;
+        return connect_via_websocket(&relay_url, cert_path, key_path, instance_id, cli.insecure)
+            .await;
     }
 
     let token = cli
@@ -163,7 +169,13 @@ async fn main() -> Result<()> {
             target.agent_name.as_deref().unwrap_or("-"),
             &target.instance_id[..12.min(target.instance_id.len())],
         );
-        return connect_via_websocket_with_token(&relay_url, &token, &target.instance_id).await;
+        return connect_via_websocket_with_token(
+            &relay_url,
+            &token,
+            &target.instance_id,
+            cli.insecure,
+        )
+        .await;
     };
 
     let host = relay_url
@@ -204,6 +216,7 @@ async fn connect_via_websocket_with_token(
     relay_url: &str,
     token: &str,
     instance_id: &str,
+    insecure: bool,
 ) -> Result<()> {
     let ws_url = relay_url
         .replace("https://", "wss://")
@@ -231,11 +244,18 @@ async fn connect_via_websocket_with_token(
         .body(())
         .context("failed to build WS request")?;
 
-    // TLS config that accepts any cert (relay may use self-signed in dev).
-    let tls_config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyCert))
-        .with_no_client_auth();
+    let builder = rustls::ClientConfig::builder();
+    let tls_config = if insecure {
+        eprintln!("WARNING: --insecure: TLS certificate verification disabled");
+        builder
+            .dangerous()
+            .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyCert))
+            .with_no_client_auth()
+    } else {
+        builder
+            .with_root_certificates(native_root_store()?)
+            .with_no_client_auth()
+    };
     let connector = tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(tls_config));
 
     let (ws_stream, _resp) =
@@ -326,6 +346,7 @@ async fn connect_via_websocket(
     cert_path: &str,
     key_path: &str,
     instance_id: &str,
+    insecure: bool,
 ) -> Result<()> {
     let cert_pem = std::fs::read(cert_path)
         .with_context(|| format!("failed to read cert from {cert_path}"))?;
@@ -339,11 +360,20 @@ async fn connect_via_websocket(
         .context("failed to parse client key")?
         .context("no private key found")?;
 
-    let mut tls_config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyCert))
-        .with_client_auth_cert(certs, key)
-        .context("failed to configure client cert")?;
+    let builder = rustls::ClientConfig::builder();
+    let mut tls_config = if insecure {
+        eprintln!("WARNING: --insecure: TLS certificate verification disabled");
+        builder
+            .dangerous()
+            .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyCert))
+            .with_client_auth_cert(certs, key)
+            .context("failed to configure client cert")?
+    } else {
+        builder
+            .with_root_certificates(native_root_store()?)
+            .with_client_auth_cert(certs, key)
+            .context("failed to configure client cert")?
+    };
     tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
     let connector = tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(tls_config));
@@ -362,7 +392,24 @@ async fn connect_via_websocket(
     bridge_terminal_websocket(ws_stream).await
 }
 
-/// Accept any server certificate (the relay's cert may be self-signed in dev).
+/// Build a root certificate store from the OS trust store. Operators who front
+/// the relay with an internal CA install that CA into the system store, so this
+/// covers both public and internal PKI without disabling verification.
+fn native_root_store() -> Result<rustls::RootCertStore> {
+    let mut store = rustls::RootCertStore::empty();
+    let result = rustls_native_certs::load_native_certs();
+    for err in &result.errors {
+        eprintln!("warning: failed to load a native cert: {err}");
+    }
+    let (added, _ignored) = store.add_parsable_certificates(result.certs);
+    if added == 0 {
+        bail!("no trusted root certificates found in the OS trust store");
+    }
+    Ok(store)
+}
+
+/// Accept any server certificate. Only reachable behind the explicit `--insecure`
+/// flag, for a relay presenting a self-signed cert in local development.
 #[derive(Debug)]
 struct AcceptAnyCert;
 
@@ -410,6 +457,19 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
             rustls::SignatureScheme::ED25519,
             rustls::SignatureScheme::ED448,
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_root_store_is_populated() {
+        // Regression guard for the TLS-verification fix: the default (non-insecure)
+        // path must build a non-empty trust store rather than accepting any cert.
+        let store = native_root_store().expect("OS trust store should load");
+        assert!(store.len() > 0, "expected at least one trusted root");
     }
 }
 
