@@ -79,6 +79,12 @@ pub struct ApiConfig {
     /// Bind port.
     #[serde(default = "default_api_port")]
     pub port: u16,
+    /// Bearer token required on state-changing endpoints. When set (here or via
+    /// the RUNNER_API_TOKEN env var) every mutating request must present it, so
+    /// a co-located process can't teardown the fleet. Read-only /status stays
+    /// open. Unset preserves the historical loopback-only behavior.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 impl Default for ApiConfig {
@@ -86,6 +92,7 @@ impl Default for ApiConfig {
         Self {
             bind: default_api_bind(),
             port: default_api_port(),
+            token: None,
         }
     }
 }
