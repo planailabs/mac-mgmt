@@ -338,11 +338,9 @@ impl DaemonRegistry {
 
     // ── Daemon registration ─────────────────────────────────────────────
 
-    pub fn is_full(&self) -> bool {
-        self.daemons.read().unwrap().len() >= self.max_daemons
-    }
-
-    pub fn register(&self, conn: DaemonConn) {
+    /// Register a daemon. Returns `false` (and does nothing) when the relay
+    /// is at `max_daemons` capacity, unless the daemon is re-registering.
+    pub fn register(&self, conn: DaemonConn) -> bool {
         let id = conn.instance_id.clone();
         let mut daemons = self.daemons.write().unwrap();
         if let Some(old) = daemons.get(&id) {
@@ -353,9 +351,16 @@ impl DaemonRegistry {
                     self.release_port(old_port);
                 }
             }
+        } else if daemons.len() >= self.max_daemons {
+            tracing::warn!(
+                "daemon {id} registration rejected: relay full ({} daemons)",
+                daemons.len()
+            );
+            return false;
         }
         daemons.insert(id.clone(), conn);
         tracing::info!("registered daemon {id} (total: {})", daemons.len());
+        true
     }
 
     /// Unregister a daemon, but only if its `connected_at` matches.
@@ -448,22 +453,6 @@ impl DaemonRegistry {
         }
     }
 
-    /// Update the advertised tunnels for a connected daemon. Capped at 100 per daemon.
-    pub fn update_tunnels(&self, instance_id: &str, tunnels: Vec<ServiceTunnel>) {
-        let mut daemons = self.daemons.write().unwrap();
-        if let Some(d) = daemons.get_mut(instance_id) {
-            let count = tunnels.len().min(100);
-            if tunnels.len() > 100 {
-                tracing::warn!(
-                    "daemon {instance_id} advertised {} tunnels, capping to 100",
-                    tunnels.len()
-                );
-            }
-            tracing::info!("daemon {instance_id} advertised {count} tunnel(s)");
-            d.tunnels = tunnels.into_iter().take(100).collect();
-        }
-    }
-
     /// Resolve a prefix (or full) instance_id to the full ID.
     /// Returns `Some(full_id)` if exactly one daemon matches.
     pub fn resolve_prefix(&self, prefix: &str) -> Option<String> {
@@ -516,14 +505,6 @@ impl DaemonRegistry {
     }
 
     /// Set the PeerId for a daemon (called when daemon connects via libp2p).
-    pub fn set_peer_id(&self, instance_id: &str, peer_id: libp2p::PeerId) {
-        let mut daemons = self.daemons.write().unwrap();
-        if let Some(conn) = daemons.get_mut(instance_id) {
-            conn.peer_id = Some(peer_id);
-            tracing::info!(%instance_id, %peer_id, "p2p peer ID set for daemon");
-        }
-    }
-
     /// Check if a daemon is connected (by prefix).
     pub fn is_connected(&self, prefix: &str) -> bool {
         self.resolve_prefix(prefix).is_some()

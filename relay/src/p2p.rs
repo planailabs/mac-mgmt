@@ -315,10 +315,6 @@ impl RelaySwarm {
         let _ = self.ssh_bridge.set(bridge);
     }
 
-    /// Get the SSH bridge, if set.
-    pub fn ssh_bridge(&self) -> Option<&Arc<SshBridge>> {
-        self.ssh_bridge.get()
-    }
 }
 
 use futures_util::StreamExt;
@@ -499,52 +495,57 @@ async fn handle_daemon_rpc(
                 } else {
                     match crate::auth::validate_token(&server_api_url, token).await {
                         Ok(info) if !iid.is_empty() => {
-                            tracing::info!(%peer_id, %iid, cluster_id = ?info.cluster_id, "daemon registered via RPC stream");
                             let cid = info.cluster_id;
                             let cname = info.cluster_name;
                             let ssh_enabled = frame["ssh_enabled"].as_bool().unwrap_or(false);
-                            registry.register(crate::daemon_registry::DaemonConn {
-                                instance_id: iid.clone(),
-                                cluster_id: cid,
-                                cluster_name: cname.clone(),
-                                agent_name,
-                                hostname,
-                                connected_at: now,
-                                tunnels: Vec::new(),
-                                file_tunnels: serde_json::Value::Array(vec![]),
-                                shell_tunnels: serde_json::Value::Array(vec![]),
-                                peer_id: Some(peer_id),
-                                ssh_enabled,
-                                ssh_port: None,
-                            });
-                            instance_id = Some(iid.clone());
-                            connected_at = Some(now);
-                            // Start SSH bridge listener if enabled.
-                            if ssh_enabled {
-                                if let Some(bridge) = &ssh_bridge {
-                                    bridge.on_ssh_enabled(&iid);
+                            let accepted =
+                                registry.register(crate::daemon_registry::DaemonConn {
+                                    instance_id: iid.clone(),
+                                    cluster_id: cid,
+                                    cluster_name: cname.clone(),
+                                    agent_name,
+                                    hostname,
+                                    connected_at: now,
+                                    tunnels: Vec::new(),
+                                    file_tunnels: serde_json::Value::Array(vec![]),
+                                    shell_tunnels: serde_json::Value::Array(vec![]),
+                                    peer_id: Some(peer_id),
+                                    ssh_enabled,
+                                    ssh_port: None,
+                                });
+                            if !accepted {
+                                serde_json::json!({ "type": "error", "error": "relay at capacity", "id": req_id })
+                            } else {
+                                tracing::info!(%peer_id, %iid, cluster_id = ?cid, "daemon registered via RPC stream");
+                                instance_id = Some(iid.clone());
+                                connected_at = Some(now);
+                                // Start SSH bridge listener if enabled.
+                                if ssh_enabled {
+                                    if let Some(bridge) = &ssh_bridge {
+                                        bridge.on_ssh_enabled(&iid);
+                                    }
                                 }
+                                // Subscribe to cluster gossipsub topic.
+                                if let Some(cid) = cid {
+                                    registered_cluster_id = Some(cid);
+                                    let _ = gossip_tx.send(GossipCmd::Subscribe(cid)).await;
+                                }
+                                // Read back the allocated SSH port (set by SshBridge).
+                                let ssh_port = {
+                                    let daemons = registry.list_ssh_targets();
+                                    daemons
+                                        .iter()
+                                        .find(|t| t.instance_id == iid)
+                                        .and_then(|t| t.ssh_port)
+                                };
+                                serde_json::json!({
+                                    "type": "ok",
+                                    "id": req_id,
+                                    "cluster_id": cid.map(|c| c.to_string()),
+                                    "ssh_port": ssh_port,
+                                    "relay_ssh_pubkey": ssh_identity.public_key_openssh,
+                                })
                             }
-                            // Subscribe to cluster gossipsub topic.
-                            if let Some(cid) = cid {
-                                registered_cluster_id = Some(cid);
-                                let _ = gossip_tx.send(GossipCmd::Subscribe(cid)).await;
-                            }
-                            // Read back the allocated SSH port (set by SshBridge).
-                            let ssh_port = {
-                                let daemons = registry.list_ssh_targets();
-                                daemons
-                                    .iter()
-                                    .find(|t| t.instance_id == iid)
-                                    .and_then(|t| t.ssh_port)
-                            };
-                            serde_json::json!({
-                                "type": "ok",
-                                "id": req_id,
-                                "cluster_id": cid.map(|c| c.to_string()),
-                                "ssh_port": ssh_port,
-                                "relay_ssh_pubkey": ssh_identity.public_key_openssh,
-                            })
                         }
                         Ok(_) => {
                             serde_json::json!({ "type": "error", "error": "empty instance_id", "id": req_id })
