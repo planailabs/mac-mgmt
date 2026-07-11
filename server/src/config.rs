@@ -276,6 +276,11 @@ pub struct HealerConfig {
     #[serde(default)]
     pub fix_model: Option<String>,
 
+    /// Models available in the validator model picker.
+    /// If empty, built-in defaults (cheap/fast models) are used.
+    #[serde(default)]
+    pub validator_models: Vec<HealerModelEntry>,
+
     /// Fine-tuned Ollama model name (e.g. "mac-mgmt-healer").
     /// When set and present in Ollama, preferred over `ollama_model`.
     #[serde(default)]
@@ -384,6 +389,32 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             model: "moonshotai/kimi-k2.6".into(),
             provider: "openrouter".into(),
             token_budget: Some(200_000),
+        },
+    ]
+}
+
+/// Built-in default validator model list. Cheap/fast models suitable for
+/// single-shot tool-call validation. Used when `[healer] validator_models`
+/// is empty.
+pub fn default_validator_models() -> Vec<HealerModelEntry> {
+    vec![
+        HealerModelEntry {
+            name: "Gemma 4".into(),
+            model: "gemma4".into(),
+            provider: "ollama".into(),
+            token_budget: None,
+        },
+        HealerModelEntry {
+            name: "Qwen 3".into(),
+            model: "qwen3".into(),
+            provider: "ollama".into(),
+            token_budget: None,
+        },
+        HealerModelEntry {
+            name: "Claude Haiku 4.5".into(),
+            model: "claude-haiku-4-5-20251001".into(),
+            provider: "anthropic".into(),
+            token_budget: None,
         },
     ]
 }

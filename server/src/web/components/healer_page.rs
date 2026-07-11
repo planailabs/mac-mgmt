@@ -26,6 +26,9 @@ pub struct HealerContext {
     pub services_extended: Vec<serde_json::Value>,
     pub sessions: Vec<SessionSummary>,
     pub models: Vec<ModelEntry>,
+    /// Models offered in the validator picker (`[healer] validator_models`,
+    /// falling back to built-in cheap/fast defaults).
+    pub validator_models: Vec<ModelEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +280,20 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
         })
         .collect();
 
+    let validator_entries = if healer_cfg.validator_models.is_empty() {
+        crate::config::default_validator_models()
+    } else {
+        healer_cfg.validator_models.clone()
+    };
+    let validator_models = validator_entries
+        .into_iter()
+        .map(|e| ModelEntry {
+            name: e.display_name(),
+            model: e.model,
+            provider: e.provider,
+        })
+        .collect();
+
     Ok(HealerContext {
         instance_id,
         hostname: hb.hostname.unwrap_or_default(),
@@ -284,6 +301,7 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
         services_extended,
         sessions,
         models,
+        validator_models,
     })
 }
 
@@ -652,6 +670,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut auto_approve = use_signal(|| false);
     let mut settings_open = use_signal(|| false);
     let models = ctx.models.clone();
+    let validator_models = ctx.validator_models.clone();
 
     let unhealthy: Vec<String> = ctx
         .services_extended
@@ -739,6 +758,11 @@ fn render_healer(ctx: &HealerContext) -> Element {
                 let openrouter_models: Vec<ModelEntry> = models.iter().filter(|m| m.provider == "openrouter").cloned().collect();
                 // Everything else is a named OpenAI-compatible source.
                 let other_models: Vec<ModelEntry> = models.iter().filter(|m| !matches!(m.provider.as_str(), "ollama" | "anthropic" | "openrouter")).cloned().collect();
+                // Validator picker draws from its own (cheap/fast) model list.
+                let val_ollama_models: Vec<ModelEntry> = validator_models.iter().filter(|m| m.provider == "ollama").cloned().collect();
+                let val_anthropic_models: Vec<ModelEntry> = validator_models.iter().filter(|m| m.provider == "anthropic").cloned().collect();
+                let val_openrouter_models: Vec<ModelEntry> = validator_models.iter().filter(|m| m.provider == "openrouter").cloned().collect();
+                let val_other_models: Vec<ModelEntry> = validator_models.iter().filter(|m| !matches!(m.provider.as_str(), "ollama" | "anthropic" | "openrouter")).cloned().collect();
                 // Build option values as "provider:model"
                 let first_key = models.first().map(|m| format!("{}:{}", m.provider, m.model)).unwrap_or_default();
                 rsx! {
@@ -873,36 +897,36 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 value: "{selected_validator_key}",
                                 onchange: move |e| selected_validator_key.set(e.value()),
                                 option { value: "none", "None (static checks only)" }
-                                if !ollama_models.is_empty() {
+                                if !val_ollama_models.is_empty() {
                                     optgroup { label: t!("healer-ollama-free"),
-                                        for m in ollama_models.iter() {
+                                        for m in val_ollama_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
                                             }}
                                         }
                                     }
                                 }
-                                if !anthropic_models.is_empty() {
+                                if !val_anthropic_models.is_empty() {
                                     optgroup { label: t!("healer-anthropic-cloud"),
-                                        for m in anthropic_models.iter() {
+                                        for m in val_anthropic_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
                                             }}
                                         }
                                     }
                                 }
-                                if !openrouter_models.is_empty() {
+                                if !val_openrouter_models.is_empty() {
                                     optgroup { label: t!("healer-openrouter-cloud"),
-                                        for m in openrouter_models.iter() {
+                                        for m in val_openrouter_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
                                             }}
                                         }
                                     }
                                 }
-                                if !other_models.is_empty() {
+                                if !val_other_models.is_empty() {
                                     optgroup { label: "OpenAI-compatible",
-                                        for m in other_models.iter() {
+                                        for m in val_other_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
                                             }}
