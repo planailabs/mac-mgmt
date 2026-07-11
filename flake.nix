@@ -327,8 +327,9 @@
             # web-agency (cargo-progenitor installed via: cargo install cargo-progenitor)
             wrangler
 
-            # Trainer fine-tuning (Python + CUDA/Vulkan)
-            (python3.withPackages (ps: with ps; [
+            # Trainer fine-tuning (Python + CUDA/Vulkan). Keep this on 3.13
+            # until torchao supports nixpkgs' default Python 3.14.
+            (python313.withPackages (ps: with ps; [
               torch
               transformers
               datasets
