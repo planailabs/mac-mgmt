@@ -1976,9 +1976,7 @@ fn KeyHashField(
     mut form_values: Signal<serde_json::Value>,
     mut json_text: Signal<String>,
 ) -> Element {
-    let mut generated_key = use_signal(|| None::<String>);
     let fp2 = field_path.clone();
-    let fp_gen = field_path.clone();
 
     let mut sync = move || {
         let json = form_values.read().clone();
@@ -2025,26 +2023,11 @@ fn SecretField(
     mut form_values: Signal<serde_json::Value>,
     mut json_text: Signal<String>,
 ) -> Element {
-    let mut converting = use_signal(|| false);
-    let mut convert_error = use_signal(|| None::<String>);
-
     let val_str = get_at_path(&form_values.read(), &field_path)
         .and_then(|v| v.as_str().map(String::from))
         .unwrap_or_default();
 
-    let is_already_ref = val_str.starts_with("secret:") || val_str.starts_with("env:");
-    let has_value = !val_str.is_empty();
-
     let fp = field_path.clone();
-    let fp2 = field_path.clone();
-    let fp_convert = field_path.clone();
-    let cid = cluster_id.clone();
-    // Derive a secret name from the field path (e.g. "cloud.0.api_key" → "cloud_0_api_key")
-    let derived_name = field_path
-        .iter()
-        .map(|s| s.as_str())
-        .collect::<Vec<_>>()
-        .join("_");
 
     let mut sync = move || {
         let json = form_values.read().clone();
@@ -2072,9 +2055,6 @@ fn SecretField(
             p { class: "text-xs text-fg-faint flex-1",
                 {t!("config-editor-secret-hint")}
             }
-        }
-        if let Some(err) = &*convert_error.read() {
-            p { class: "text-xs text-danger mt-0.5", "{err}" }
         }
     }
 }

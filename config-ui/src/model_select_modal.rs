@@ -106,7 +106,7 @@ fn ModelSelectModalInner(
     let mut custom_input: Signal<String> = use_signal(String::new);
     let mut filter: Signal<String> = use_signal(String::new);
     let mut show_selected: Signal<bool> = use_signal(|| false);
-    let mut expanded: Signal<HashSet<String>> = use_signal(HashSet::new);
+    let expanded: Signal<HashSet<String>> = use_signal(HashSet::new);
 
     // Fetch model source.
     let source_kind = req.source_kind.clone();

@@ -27,7 +27,7 @@ impl WebUserExt for WebUser {
 #[cfg(feature = "server")]
 pub async fn current_user() -> Result<WebUser, dioxus::prelude::ServerFnError> {
     use dioxus::fullstack::axum::extract::Extension;
-    let Extension(user): Extension<WebUser> = dioxus::fullstack::extract()
+    let Extension(user): Extension<WebUser> = dioxus::fullstack::FullstackContext::extract()
         .await
         .map_err(|_| dioxus::prelude::ServerFnError::new("not authenticated"))?;
     Ok(user)

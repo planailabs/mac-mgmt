@@ -1920,7 +1920,6 @@ pub async fn run_sim(
             mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
         });
 
-    let metrics_port = cfg.metrics.port;
     let server_url = cfg.server.url.clone();
     let server_token = cfg.server.token.as_ref().map(|s| s.expose().to_string());
     let skills_dir = std::path::PathBuf::from("/tmp/sim-skills");
@@ -2188,7 +2187,6 @@ pub async fn run_sim_with_services(
             mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
         });
 
-    let metrics_port = cfg.metrics.port;
     let server_url = cfg.server.url.clone();
     let server_token = cfg.server.token.as_ref().map(|s| s.expose().to_string());
     let skills_dir = std::path::PathBuf::from("/tmp/sim-skills");

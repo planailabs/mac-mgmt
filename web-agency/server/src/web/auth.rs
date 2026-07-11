@@ -8,10 +8,6 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-pub use plan_ai_auth::{
-    build_auth_layers, login_page, logout_handler, require_auth, set_user_resolver,
-};
-
 /// Web-agency-specific user resolver backed by PostgreSQL.
 pub struct PgUserResolver {
     pool: PgPool,

@@ -6,7 +6,7 @@ use crate::config;
 
 // Re-export items used by main.rs router setup.
 pub use plan_ai_auth::{
-    AuthLayer, IMPERSONATE_COOKIE, build_auth_layers, login_page, logout_handler, require_auth,
+    IMPERSONATE_COOKIE, build_auth_layers, login_page, logout_handler, require_auth,
     set_user_resolver,
 };
 

@@ -643,7 +643,7 @@ Use the `approve` or `reject` tool to record your verdict."#,
         let tools = validator_tool_specs();
         let request = ChatCompletionRequest::builder()
             .messages(messages)
-            .tools_spec(tools)
+            .tool_specs(tools)
             .build()
             .map_err(|e| anyhow::anyhow!("failed to build validation request: {e}"))?;
 

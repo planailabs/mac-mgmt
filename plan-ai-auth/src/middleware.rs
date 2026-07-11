@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
 use crate::config::AuthConfig;
-use crate::types::{OrgMembership, WebUser};
+use crate::types::WebUser;
 
 /// Provider metadata stored at startup for use by `require_auth` and the login page.
 pub struct ProviderMeta {
