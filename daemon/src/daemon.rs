@@ -1928,7 +1928,7 @@ pub async fn run_sim(
 
     // Services: create a minimal ServiceManager with zero services.
     #[cfg(feature = "services")]
-    let mut svc_mgr = crate::service_mgmt::ServiceManager::sim_init(
+    let svc_mgr = crate::service_mgmt::ServiceManager::sim_init(
         Arc::clone(&dispatcher),
         crate::log_buffer::LogBuffer::new(),
     );

@@ -1187,7 +1187,7 @@ pub async fn get_nixpkgs_pin(
 }
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
-struct NixCachesResponse {
+pub struct NixCachesResponse {
     caches: Vec<NixCacheEntry>,
 }
 
@@ -4872,11 +4872,6 @@ pub async fn org_remove_client_ca(
 }
 
 // ── Relay certificate auth (fingerprint lookup + CA validation) ─────
-
-#[derive(Deserialize)]
-pub struct CertAuthQuery {
-    fingerprint: String,
-}
 
 #[derive(Deserialize, ToSchema)]
 pub struct CertAuthBody {

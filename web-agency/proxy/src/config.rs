@@ -11,8 +11,6 @@ struct ConfigFile {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProxyConfig {
     pub agency_domain: String,
-    #[serde(default = "default_agency_upstream")]
-    pub agency_upstream: String,
     #[serde(default = "default_http_addr")]
     pub http_addr: String,
     #[serde(default = "default_https_addr")]
@@ -23,9 +21,6 @@ pub struct ProxyConfig {
     pub server_url: String,
 }
 
-fn default_agency_upstream() -> String {
-    "127.0.0.1:7380".to_string()
-}
 fn default_http_addr() -> String {
     "[::]:80".to_string()
 }

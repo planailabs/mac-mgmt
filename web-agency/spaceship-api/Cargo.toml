@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 license = "SPECIFY A LICENSE BEFORE PUBLISHING"
 
+# lib.rs is progenitor-generated; its schema range checks emit
+# `x < 0usize` comparisons. Allow here so regeneration stays warning-free.
+[lints.rust]
+unused_comparisons = "allow"
+
 [dependencies]
 bytes = "1.9"
 chrono = { version = "0.4", default-features=false, features = ["serde"] }

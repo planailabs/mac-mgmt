@@ -64,7 +64,6 @@ struct SessionContext {
     file_tunnels: Vec<String>,
     shell_commands: Vec<String>,
     other_instances: Vec<mac_mgmt_healer::agent::InstanceInfo>,
-    metrics_url: Option<String>,
 }
 
 impl HealerMcpServer {
@@ -798,7 +797,6 @@ impl HealerMcpServer {
             file_tunnels: file_tunnel_names,
             shell_commands: shell_command_names,
             other_instances: peer_instances,
-            metrics_url: Some(format!("{}/metrics", relay_url)),
         });
         *self.tools.write().await = all_tools;
         *self.tool_descriptors.write().await = descriptors;

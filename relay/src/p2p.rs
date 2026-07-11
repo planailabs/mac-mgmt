@@ -314,7 +314,6 @@ impl RelaySwarm {
     pub fn set_ssh_bridge(&self, bridge: Arc<SshBridge>) {
         let _ = self.ssh_bridge.set(bridge);
     }
-
 }
 
 use futures_util::StreamExt;
@@ -498,21 +497,20 @@ async fn handle_daemon_rpc(
                             let cid = info.cluster_id;
                             let cname = info.cluster_name;
                             let ssh_enabled = frame["ssh_enabled"].as_bool().unwrap_or(false);
-                            let accepted =
-                                registry.register(crate::daemon_registry::DaemonConn {
-                                    instance_id: iid.clone(),
-                                    cluster_id: cid,
-                                    cluster_name: cname.clone(),
-                                    agent_name,
-                                    hostname,
-                                    connected_at: now,
-                                    tunnels: Vec::new(),
-                                    file_tunnels: serde_json::Value::Array(vec![]),
-                                    shell_tunnels: serde_json::Value::Array(vec![]),
-                                    peer_id: Some(peer_id),
-                                    ssh_enabled,
-                                    ssh_port: None,
-                                });
+                            let accepted = registry.register(crate::daemon_registry::DaemonConn {
+                                instance_id: iid.clone(),
+                                cluster_id: cid,
+                                cluster_name: cname.clone(),
+                                agent_name,
+                                hostname,
+                                connected_at: now,
+                                tunnels: Vec::new(),
+                                file_tunnels: serde_json::Value::Array(vec![]),
+                                shell_tunnels: serde_json::Value::Array(vec![]),
+                                peer_id: Some(peer_id),
+                                ssh_enabled,
+                                ssh_port: None,
+                            });
                             if !accepted {
                                 serde_json::json!({ "type": "error", "error": "relay at capacity", "id": req_id })
                             } else {

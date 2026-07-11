@@ -258,10 +258,5 @@ pub async fn view_session_sse(
 }
 
 /// SSE endpoint path (must not collide with Dioxus client-side routes).
+/// Mounted in main.rs alongside the other web routes.
 pub const SSE_PATH: &str = "/_sse/healer/{session_id}";
-
-/// Build the axum router for healer SSE endpoints.
-pub fn router() -> axum::Router {
-    use axum::routing::get;
-    axum::Router::new().route(SSE_PATH, get(view_session_sse))
-}

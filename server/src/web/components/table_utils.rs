@@ -1,28 +1,9 @@
-#[cfg(feature = "server")]
-use crate::web::user::WebUserExt;
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 use dioxus_tabular::*;
 
 use crate::models::{Bundle, Cluster, McpServer, McpServerBundle, Skill};
 use crate::web::app::Route;
-
-// ── Admin list helper ──────────────────────────────────────────────
-
-/// Load a list of admin-only rows with auth + pool boilerplate.
-#[cfg(feature = "server")]
-pub async fn load_admin_list<T>(query: &str) -> Result<Vec<T>, ServerFnError>
-where
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
-{
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    sqlx::query_as::<_, T>(query)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
 
 // ── Searchable trait ────────────────────────────────────────────────
 
@@ -148,18 +129,6 @@ impl GetRowData<LinkData> for Cluster {
 impl GetRowData<CreatedAtData> for Cluster {
     fn get(&self) -> CreatedAtData {
         CreatedAtData(self.created_at.format("%Y-%m-%d %H:%M").to_string())
-    }
-}
-
-impl GetRowData<VersionData> for Cluster {
-    fn get(&self) -> VersionData {
-        VersionData(self.pinned_version.clone())
-    }
-}
-
-impl GetRowData<NixpkgsCommitData> for Cluster {
-    fn get(&self) -> NixpkgsCommitData {
-        NixpkgsCommitData(self.nixpkgs_commit.clone())
     }
 }
 
@@ -502,107 +471,6 @@ impl<R: Row + GetRowData<CreatedAtData>> TableColumn<R> for CreatedAtColumn {
     fn compare(&self, a: &R, b: &R) -> std::cmp::Ordering {
         let a: CreatedAtData = a.get();
         let b: CreatedAtData = b.get();
-        a.0.cmp(&b.0)
-    }
-}
-
-// ── Version column ──────────────────────────────────────────────────
-
-#[derive(Clone, PartialEq)]
-pub struct VersionData(pub Option<String>);
-
-#[derive(Clone, PartialEq)]
-pub struct VersionColumn;
-
-impl<R: Row + GetRowData<VersionData>> TableColumn<R> for VersionColumn {
-    fn column_name(&self) -> String {
-        "version".into()
-    }
-
-    fn render_header(&self, context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
-        let indicator = sort_indicator(context);
-        rsx! {
-            th { class: "th-sortable",
-                onclick: move |_| toggle_sort(context),
-                "Version {indicator}"
-            }
-        }
-    }
-
-    fn render_cell(
-        &self,
-        _context: ColumnContext,
-        row: &R,
-        _attributes: Vec<Attribute>,
-    ) -> Element {
-        let data: VersionData = row.get();
-        match data.0 {
-            Some(ver) => rsx! {
-                td { class: "td",
-                    span { class: "font-mono text-sm", {t!("table-version-prefix", version: ver)} }
-                }
-            },
-            None => rsx! {
-                td { class: "td-muted text-sm", {t!("dash")} }
-            },
-        }
-    }
-
-    fn compare(&self, a: &R, b: &R) -> std::cmp::Ordering {
-        let a: VersionData = a.get();
-        let b: VersionData = b.get();
-        a.0.cmp(&b.0)
-    }
-}
-
-// ── Nixpkgs commit column ───────────────────────────────────────────
-
-#[derive(Clone, PartialEq)]
-pub struct NixpkgsCommitData(pub Option<String>);
-
-#[derive(Clone, PartialEq)]
-pub struct NixpkgsCommitColumn;
-
-impl<R: Row + GetRowData<NixpkgsCommitData>> TableColumn<R> for NixpkgsCommitColumn {
-    fn column_name(&self) -> String {
-        "nixpkgs".into()
-    }
-
-    fn render_header(&self, context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
-        let indicator = sort_indicator(context);
-        rsx! {
-            th { class: "th-sortable",
-                onclick: move |_| toggle_sort(context),
-                "Nixpkgs {indicator}"
-            }
-        }
-    }
-
-    fn render_cell(
-        &self,
-        _context: ColumnContext,
-        row: &R,
-        _attributes: Vec<Attribute>,
-    ) -> Element {
-        let data: NixpkgsCommitData = row.get();
-        match data.0 {
-            Some(commit) => {
-                let short = commit.chars().take(7).collect::<String>();
-                rsx! {
-                    td { class: "td",
-                        span { class: "font-mono text-sm", "{short}" }
-                    }
-                }
-            }
-            None => rsx! {
-                td { class: "td-muted text-sm", {t!("dash")} }
-            },
-        }
-    }
-
-    fn compare(&self, a: &R, b: &R) -> std::cmp::Ordering {
-        let a: NixpkgsCommitData = a.get();
-        let b: NixpkgsCommitData = b.get();
         a.0.cmp(&b.0)
     }
 }

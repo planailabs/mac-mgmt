@@ -69,23 +69,12 @@ pub struct JobRow {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Deserialize)]
-pub struct SearchQuery {
-    pub q: String,
-}
-
 #[derive(Serialize)]
 pub struct SearchHit {
     pub slug: String,
     pub display_name: String,
     pub summary: String,
     pub version: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct DeleteQuery {
-    #[serde(default)]
-    pub remove_skills: bool,
 }
 
 // ── Routes ─────────────────────────────────────────────────────────────

@@ -644,7 +644,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut state = use_signal(|| "idle".to_string());
     let mut state_reason = use_signal::<Option<String>>(|| None);
     let mut user_input = use_signal(String::new);
-    let mut running = use_signal(|| false);
+    let running = use_signal(|| false);
     // Encodes "provider:model" or empty for first entry
     let mut selected_model_key = use_signal(String::new);
     let mut selected_fix_model_key = use_signal(|| "none".to_string());

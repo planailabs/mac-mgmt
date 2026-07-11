@@ -30,21 +30,6 @@ pub struct SearchResult {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillDetail {
-    pub slug: String,
-    pub display_name: String,
-    #[serde(default)]
-    pub summary: String,
-    pub latest_version: Option<LatestVersion>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct LatestVersion {
-    pub version: String,
-}
-
 // ── Client implementation ──────────────────────────────────────────────
 
 impl ClawHubClient {
@@ -80,26 +65,6 @@ impl ClawHubClient {
             .map_err(|e| format!("failed to parse clawhub search response: {e}"))?;
 
         Ok(body.results)
-    }
-
-    /// Get skill details.
-    ///
-    /// Calls `GET /api/v1/skills/{slug}`.
-    pub async fn get_skill(&self, slug: &str) -> Result<SkillDetail, String> {
-        let resp = self
-            .http
-            .get(format!("{}/api/v1/skills/{slug}", self.base_url))
-            .send()
-            .await
-            .map_err(|e| format!("clawhub get_skill failed: {e}"))?;
-
-        if !resp.status().is_success() {
-            return Err(format!("clawhub returned {}", resp.status()));
-        }
-
-        resp.json()
-            .await
-            .map_err(|e| format!("failed to parse clawhub skill response: {e}"))
     }
 
     /// Download a skill archive as raw bytes (zip).
