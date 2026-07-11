@@ -79,7 +79,10 @@ fn envelope_schema(raw: &JsonObject) -> JsonObject {
     let defs = inner.remove("$defs");
     let mut out = JsonObject::new();
     out.insert("type".into(), json!("object"));
-    out.insert("properties".into(), json!({ "result": Value::Object(inner) }));
+    out.insert(
+        "properties".into(),
+        json!({ "result": Value::Object(inner) }),
+    );
     out.insert("required".into(), json!(["result"]));
     if let Some(defs) = defs {
         out.insert("$defs".into(), defs);

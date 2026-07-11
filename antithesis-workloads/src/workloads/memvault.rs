@@ -76,18 +76,30 @@ impl Workload for MemvaultGraph {
 
         let a = ctx
             .relay()
-            .shell_exec(&prefix, "memctl", Some(&format!("graph add note --prop name=a{n:x}")))
+            .shell_exec(
+                &prefix,
+                "memctl",
+                Some(&format!("graph add note --prop name=a{n:x}")),
+            )
             .await?;
         let b = ctx
             .relay()
-            .shell_exec(&prefix, "memctl", Some(&format!("graph add note --prop name=b{n:x}")))
+            .shell_exec(
+                &prefix,
+                "memctl",
+                Some(&format!("graph add note --prop name=b{n:x}")),
+            )
             .await?;
         let (Some(sa), Some(sb)) = (first_hex_id(&a.stdout()), first_hex_id(&b.stdout())) else {
             return Ok(Outcome::Skipped("graph add returned no entity ids"));
         };
         let link = ctx
             .relay()
-            .shell_exec(&prefix, "memctl", Some(&format!("graph link {sa} {sb} relates-to")))
+            .shell_exec(
+                &prefix,
+                "memctl",
+                Some(&format!("graph link {sa} {sb} relates-to")),
+            )
             .await?;
         if link.exit_code.unwrap_or(-1) != 0 {
             bail!("graph link failed: {:?}", link.error);

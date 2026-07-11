@@ -454,8 +454,10 @@ fn configure_nix(opts: &StackOpts) {
     }
 
     // Substituters: on-stick .nar cache first, then xzar online.
-    let mut caches: Vec<(String, String)> =
-        vec![(store_image::nar_cache_substituter(&opts.home), String::new())];
+    let mut caches: Vec<(String, String)> = vec![(
+        store_image::nar_cache_substituter(&opts.home),
+        String::new(),
+    )];
     if !offline {
         caches.push((
             "https://xzar.plan.ai".to_string(),

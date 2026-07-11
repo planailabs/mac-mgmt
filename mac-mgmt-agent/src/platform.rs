@@ -41,9 +41,7 @@ pub fn current_uid() -> u32 {
 /// are never raised on a non-Unix local process — so the Linux numbers are the
 /// semantically correct fallback.
 #[cfg(unix)]
-pub use libc::{
-    SIGCONT, SIGHUP, SIGINT, SIGKILL, SIGQUIT, SIGSTOP, SIGTERM, SIGUSR1, SIGUSR2,
-};
+pub use libc::{SIGCONT, SIGHUP, SIGINT, SIGKILL, SIGQUIT, SIGSTOP, SIGTERM, SIGUSR1, SIGUSR2};
 #[cfg(not(unix))]
 mod sig_consts {
     pub const SIGHUP: i32 = 1;
@@ -110,8 +108,7 @@ impl ShutdownSignal {
     pub fn terminate() -> std::io::Result<Self> {
         #[cfg(unix)]
         {
-            let inner =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+            let inner = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
             Ok(Self { inner })
         }
         #[cfg(not(unix))]
@@ -124,8 +121,7 @@ impl ShutdownSignal {
     pub fn interrupt() -> std::io::Result<Self> {
         #[cfg(unix)]
         {
-            let inner =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+            let inner = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
             Ok(Self { inner })
         }
         #[cfg(not(unix))]

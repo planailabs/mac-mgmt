@@ -8,8 +8,8 @@ use tokio::net::UnixStream;
 
 use crate::backend::IncusBackend;
 use crate::incus_common::{
-    Envelope, append_project, exec_via_cli, extract_status, image_list_via_cli, is_not_found,
-    OP_WAIT_SECS, launch_body, launch_body_ext, stop_body, wait_for_running,
+    Envelope, OP_WAIT_SECS, append_project, exec_via_cli, extract_status, image_list_via_cli,
+    is_not_found, launch_body, launch_body_ext, stop_body, wait_for_running,
 };
 use crate::types::{ExecOutput, LaunchSpec, OsImage};
 

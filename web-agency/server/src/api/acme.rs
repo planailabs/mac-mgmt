@@ -171,9 +171,7 @@ async fn run_acme_flow(
     cred_id: Uuid,
     zone_id: &str,
 ) -> anyhow::Result<(String, String)> {
-    use instant_acme::{
-        AuthorizationStatus, ChallengeType, Identifier, NewOrder, OrderStatus,
-    };
+    use instant_acme::{AuthorizationStatus, ChallengeType, Identifier, NewOrder, OrderStatus};
 
     let cfg = crate::config::config();
     let contact_email = cfg

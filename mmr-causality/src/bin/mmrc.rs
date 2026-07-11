@@ -3,11 +3,11 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
 use antithesis_workloads::env::{Ctx, Env, NodeKind};
 use antithesis_workloads::rng::Rng;
 use antithesis_workloads::workloads::cluster::{ClusterServices, ensure_cluster, ensure_nodes};
 use antithesis_workloads::{goals, registry};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use mmr_causality::api::{CreateRunRequest, ServerSpec};
 use mmr_causality::config::Config;
@@ -163,14 +163,15 @@ async fn main() -> Result<()> {
         Command::Up { nodes, git_ref } => up(&cfg, *nodes, git_ref.clone()).await,
         Command::Down { run_id } => down(&cfg, run_id.clone()).await,
         Command::Emulator {
-            cmd: EmulatorCmd::Run {
-                rounds,
-                seed,
-                workloads_per_round,
-                nodes,
-                keep_on_failure,
-                git_ref,
-            },
+            cmd:
+                EmulatorCmd::Run {
+                    rounds,
+                    seed,
+                    workloads_per_round,
+                    nodes,
+                    keep_on_failure,
+                    git_ref,
+                },
         } => {
             let acfg = cfg
                 .env
@@ -180,7 +181,8 @@ async fn main() -> Result<()> {
             let opts = EmulatorOptions {
                 seed: seed.unwrap_or_else(default_seed),
                 rounds: rounds.unwrap_or(cfg.emulator.rounds),
-                workloads_per_round: workloads_per_round.unwrap_or(cfg.emulator.workloads_per_round),
+                workloads_per_round: workloads_per_round
+                    .unwrap_or(cfg.emulator.workloads_per_round),
                 nodes: nodes.unwrap_or(cfg.emulator.nodes),
                 keep_on_failure: *keep_on_failure,
                 git_ref: git_ref.clone(),
@@ -259,12 +261,13 @@ async fn run_cluster_command(
     let mut rng = Rng::new(default_seed());
     match cmd {
         Command::Cluster {
-            cmd: ClusterCmd::Ensure {
-                name,
-                ollama,
-                openclaw,
-                memvault,
-            },
+            cmd:
+                ClusterCmd::Ensure {
+                    name,
+                    ollama,
+                    openclaw,
+                    memvault,
+                },
         } => {
             let cname = name.clone().unwrap_or(cluster_name);
             let id = ensure_cluster(
@@ -283,25 +286,37 @@ async fn run_cluster_command(
             cmd: NodeCmd::Ensure { count, chaos },
         } => {
             let mut ctx = build_ctx(env, &cluster_name, cli).await?;
-            let kind = if *chaos { NodeKind::Chaos } else { NodeKind::Fleet };
+            let kind = if *chaos {
+                NodeKind::Chaos
+            } else {
+                NodeKind::Fleet
+            };
             let ids = ensure_nodes(&mut ctx, *count, kind).await?;
             println!("{} node(s) up: {ids:?}", ids.len());
             Ok(())
         }
-        Command::Node { cmd: NodeCmd::Heartbeat } => {
+        Command::Node {
+            cmd: NodeCmd::Heartbeat,
+        } => {
             let ctx = build_ctx(env, &cluster_name, cli).await?;
             goals::heartbeats_fresh(&ctx, &ctx.instances).await?;
             println!("heartbeats fresh for {} instance(s)", ctx.instances.len());
             Ok(())
         }
-        Command::Node { cmd: NodeCmd::Probes } => {
+        Command::Node {
+            cmd: NodeCmd::Probes,
+        } => {
             let ctx = build_ctx(env, &cluster_name, cli).await?;
-            ctx.mgmt().push_event(ctx.cluster_id, "request_assessment", None).await?;
+            ctx.mgmt()
+                .push_event(ctx.cluster_id, "request_assessment", None)
+                .await?;
             goals::all_probes_healthy(&ctx).await?;
             println!("all probes healthy");
             Ok(())
         }
-        Command::Sse { cmd: SseCmd::Push { event, instance } } => {
+        Command::Sse {
+            cmd: SseCmd::Push { event, instance },
+        } => {
             let ctx = build_ctx(env, &cluster_name, cli).await?;
             let r = ctx
                 .mgmt()
@@ -314,7 +329,16 @@ async fn run_cluster_command(
             let ctx = build_ctx(env, &cluster_name, cli).await?;
             check_goal(&ctx, goal).await
         }
-        Command::Relay { action } => run_named(env, &cluster_name, cli, &mut rng, &format!("relay-{action}")).await,
+        Command::Relay { action } => {
+            run_named(
+                env,
+                &cluster_name,
+                cli,
+                &mut rng,
+                &format!("relay-{action}"),
+            )
+            .await
+        }
         Command::Skills { action } => {
             let name = match action.as_str() {
                 "assign" | "assert" => "skills-assign-assert",
@@ -370,7 +394,11 @@ async fn run_named(
 }
 
 async fn images(cfg: &Config, git_ref: Option<String>) -> Result<()> {
-    let ac = cfg.env.antithesis.clone().context("[env.antithesis] config required")?;
+    let ac = cfg
+        .env
+        .antithesis
+        .clone()
+        .context("[env.antithesis] config required")?;
     let client = reqwest::Client::new();
     let mut req = client
         .get(format!("{}/images", ac.mmrcd_url.trim_end_matches('/')))
@@ -389,7 +417,11 @@ async fn images(cfg: &Config, git_ref: Option<String>) -> Result<()> {
 }
 
 async fn up(cfg: &Config, nodes: usize, git_ref: Option<String>) -> Result<()> {
-    let ac = cfg.env.antithesis.clone().context("[env.antithesis] config required")?;
+    let ac = cfg
+        .env
+        .antithesis
+        .clone()
+        .context("[env.antithesis] config required")?;
     let client = MmrcdClient::new(&ac.mmrcd_url, &ac.mmrcd_token);
     let run = client
         .create_run(&CreateRunRequest {
@@ -428,7 +460,11 @@ async fn up(cfg: &Config, nodes: usize, git_ref: Option<String>) -> Result<()> {
 }
 
 async fn down(cfg: &Config, run_id: Option<String>) -> Result<()> {
-    let ac = cfg.env.antithesis.clone().context("[env.antithesis] config required")?;
+    let ac = cfg
+        .env
+        .antithesis
+        .clone()
+        .context("[env.antithesis] config required")?;
     let client = MmrcdClient::new(&ac.mmrcd_url, &ac.mmrcd_token);
     let run_id = run_id.context("--run-id required")?;
     client.delete_run(&run_id).await?;

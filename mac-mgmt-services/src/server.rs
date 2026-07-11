@@ -188,11 +188,17 @@ async fn wait_for_shutdown_signal() {
     use tokio::signal::unix::{SignalKind, signal};
     let mut term = match signal(SignalKind::terminate()) {
         Ok(s) => s,
-        Err(e) => { tracing::warn!("SIGTERM handler: {e}"); return std::future::pending().await; }
+        Err(e) => {
+            tracing::warn!("SIGTERM handler: {e}");
+            return std::future::pending().await;
+        }
     };
     let mut int = match signal(SignalKind::interrupt()) {
         Ok(s) => s,
-        Err(e) => { tracing::warn!("SIGINT handler: {e}"); return std::future::pending().await; }
+        Err(e) => {
+            tracing::warn!("SIGINT handler: {e}");
+            return std::future::pending().await;
+        }
     };
     tokio::select! {
         _ = term.recv() => {}
@@ -1156,7 +1162,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // SIGTERM — supervisor will respawn.
-        c.kill_service("test-svc", crate::procutil::SIGTERM).await.unwrap();
+        c.kill_service("test-svc", crate::procutil::SIGTERM)
+            .await
+            .unwrap();
         // Give supervisor time to detect exit and respawn.
         tokio::time::sleep(Duration::from_secs(3)).await;
 

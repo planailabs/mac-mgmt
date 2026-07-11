@@ -313,6 +313,13 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
     tracing::info!("relay listening on {} (HTTPS)", cfg.listen_addr);
 
-    mtls::serve_tls(listener, tls_main, tls_quiet, cfg.proxy_hostname.clone(), app).await?;
+    mtls::serve_tls(
+        listener,
+        tls_main,
+        tls_quiet,
+        cfg.proxy_hostname.clone(),
+        app,
+    )
+    .await?;
     Ok(())
 }

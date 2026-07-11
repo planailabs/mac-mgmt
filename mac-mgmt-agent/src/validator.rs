@@ -425,9 +425,8 @@ fn validate_env_object(value: &serde_json::Value) -> Result<(), String> {
             ));
         }
         match val {
-            serde_json::Value::Null
-            | serde_json::Value::Bool(_)
-            | serde_json::Value::Number(_) => {}
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            }
             serde_json::Value::String(s) if !s.contains('\n') => {}
             serde_json::Value::String(_) => {
                 return Err(format!("env value for '{key}' contains a newline"));
@@ -658,7 +657,9 @@ mod env_format_tests {
     #[test]
     fn parse_env_handles_comments_export_and_values() {
         let v = Validator::env(".env");
-        let parsed = v.parse("# comment\nexport FOO=1\nBAR=hello world\n\n").unwrap();
+        let parsed = v
+            .parse("# comment\nexport FOO=1\nBAR=hello world\n\n")
+            .unwrap();
         assert_eq!(parsed["FOO"], "1");
         assert_eq!(parsed["BAR"], "hello world");
         assert_eq!(parsed.as_object().unwrap().len(), 2);
@@ -684,8 +685,14 @@ mod env_format_tests {
     #[test]
     fn validate_value_enforces_env_rules() {
         let v = Validator::env(".env");
-        assert!(v.validate_value(&serde_json::json!({ "OK_KEY": "v" })).is_ok());
-        assert!(v.validate_value(&serde_json::json!({ "bad-key": "v" })).is_err());
+        assert!(
+            v.validate_value(&serde_json::json!({ "OK_KEY": "v" }))
+                .is_ok()
+        );
+        assert!(
+            v.validate_value(&serde_json::json!({ "bad-key": "v" }))
+                .is_err()
+        );
         assert!(
             v.validate_value(&serde_json::json!({ "K": "l1\nl2" }))
                 .is_err()

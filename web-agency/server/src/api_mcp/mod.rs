@@ -102,8 +102,8 @@ pub async fn init_action_runtime(pool: sqlx::PgPool) {
         Arc::new(move |principal: &serde_json::Value| {
             let principal: plan_ai_api_mcp::Principal = serde_json::from_value(principal.clone())
                 .map_err(|e| {
-                    plan_ai_actions::engine::EngineError::Store(format!("bad principal: {e}"))
-                })?;
+                plan_ai_actions::engine::EngineError::Store(format!("bad principal: {e}"))
+            })?;
             Ok(Arc::new(endpoints::action_templates::RegistryDispatcher {
                 pool: factory_pool.clone(),
                 principal: Arc::new(principal),
@@ -575,7 +575,9 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             Risk::Mutating,
             OnItem::Yes,
             "Set or clear the host's ChangeDetection credential (requires org write).",
-            |pool: sqlx::PgPool, p, input: endpoints::webspace_hosts::HostSetChangedetectionInput| async move {
+            |pool: sqlx::PgPool,
+             p,
+             input: endpoints::webspace_hosts::HostSetChangedetectionInput| async move {
                 endpoints::webspace_hosts::host_set_changedetection(&pool, &p, input).await
             },
         );
@@ -584,7 +586,9 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             Risk::Mutating,
             OnItem::No,
             "Assign a ChangeDetection credential to many hosts (admin only).",
-            |pool: sqlx::PgPool, p, input: endpoints::webspace_hosts::HostBulkSetChangedetectionInput| async move {
+            |pool: sqlx::PgPool,
+             p,
+             input: endpoints::webspace_hosts::HostBulkSetChangedetectionInput| async move {
                 endpoints::webspace_hosts::host_bulk_set_changedetection(&pool, &p, input).await
             },
         );
@@ -593,7 +597,9 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             Risk::Mutating,
             OnItem::No,
             "Clear the ChangeDetection credential on many hosts (admin only).",
-            |pool: sqlx::PgPool, p, input: endpoints::webspace_hosts::HostBulkClearChangedetectionInput| async move {
+            |pool: sqlx::PgPool,
+             p,
+             input: endpoints::webspace_hosts::HostBulkClearChangedetectionInput| async move {
                 endpoints::webspace_hosts::host_bulk_clear_changedetection(&pool, &p, input).await
             },
         );
@@ -704,7 +710,9 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             Risk::Destructive,
             OnItem::Yes,
             "Remove a credential from a basic-auth list (requires org write).",
-            |pool: sqlx::PgPool, p, input: endpoints::basic_auth::BasicAuthRemoveCredentialInput| async move {
+            |pool: sqlx::PgPool,
+             p,
+             input: endpoints::basic_auth::BasicAuthRemoveCredentialInput| async move {
                 endpoints::basic_auth::basic_auth_remove_credential(&pool, &p, input).await
             },
         );
@@ -955,11 +963,19 @@ mod tests {
             for (action, reply) in script {
                 replies.entry(action).or_default().push_back(reply);
             }
-            Self { replies: Mutex::new(replies), calls: Mutex::new(Vec::new()) }
+            Self {
+                replies: Mutex::new(replies),
+                calls: Mutex::new(Vec::new()),
+            }
         }
 
         fn called(&self, action: &str) -> usize {
-            self.calls.lock().unwrap().iter().filter(|(a, _)| a == action).count()
+            self.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(a, _)| a == action)
+                .count()
         }
     }
 
@@ -997,8 +1013,14 @@ mod tests {
 
     fn fleet_script() -> Vec<(&'static str, Value)> {
         vec![
-            ("domain_list", json!([{ "id": "dom-1", "name": "example.com" }])),
-            ("mac_mgmt_clusters", json!([{ "id": "clu-1", "name": "example.com" }])),
+            (
+                "domain_list",
+                json!([{ "id": "dom-1", "name": "example.com" }]),
+            ),
+            (
+                "mac_mgmt_clusters",
+                json!([{ "id": "clu-1", "name": "example.com" }]),
+            ),
             (
                 "mac_mgmt_machines",
                 json!([{ "instance_id": "abcdef123456xyz", "hostname": "m1", "version": "1" }]),
@@ -1018,8 +1040,14 @@ mod tests {
                 json!({ "hosting_type": "relay", "auth_mode": "basic",
                         "relay_url": "https://abcdef123456-astro.plan-ai-relay.com" }),
             ),
-            ("webspace_host_get", json!({ "id": "h-chat", "kind": "proxy" })),
-            ("webspace_host_get", json!({ "id": "h-dev", "kind": "proxy" })),
+            (
+                "webspace_host_get",
+                json!({ "id": "h-chat", "kind": "proxy" }),
+            ),
+            (
+                "webspace_host_get",
+                json!({ "id": "h-dev", "kind": "proxy" }),
+            ),
         ]
     }
 
@@ -1044,7 +1072,10 @@ mod tests {
         let mut script = fleet_script();
         script.extend([
             ("credential_list", json!([])),
-            ("mac_mgmt_token_create", json!({ "token": "super-secret-token" })),
+            (
+                "mac_mgmt_token_create",
+                json!({ "token": "super-secret-token" }),
+            ),
             ("credential_create", json!("cred-1")),
             ("basic_auth_list_list", json!([])),
             ("basic_auth_list_create", json!("ba-1")),
@@ -1074,7 +1105,10 @@ mod tests {
             .find(|(a, args)| a == "webspace_create" && args["name"] == json!("chat.example.com"))
             .map(|(_, args)| args.clone())
             .expect("chat webspace created");
-        assert_eq!(create["relay_url"], json!("https://abcdef123456-openclaw.plan-ai-relay.com"));
+        assert_eq!(
+            create["relay_url"],
+            json!("https://abcdef123456-openclaw.plan-ai-relay.com")
+        );
         assert_eq!(create["relay_credential_id"], json!("cred-1"));
         assert_eq!(create["auth_basic_list_id"], json!("ba-1"));
         assert_eq!(create["auth_mode"], json!("basic"));
@@ -1104,8 +1138,14 @@ mod tests {
     async fn provision_template_is_idempotent() {
         let mut script = fleet_script();
         script.extend([
-            ("credential_list", json!([{ "id": "cred-1", "name": "example_relay" }])),
-            ("basic_auth_list_list", json!([{ "id": "ba-1", "name": "example" }])),
+            (
+                "credential_list",
+                json!([{ "id": "cred-1", "name": "example_relay" }]),
+            ),
+            (
+                "basic_auth_list_list",
+                json!([{ "id": "ba-1", "name": "example" }]),
+            ),
             (
                 "webspace_host_list",
                 json!([
@@ -1137,9 +1177,17 @@ mod tests {
             "webspace_create",
             "webspace_host_bind_domain",
         ] {
-            assert_eq!(dispatcher.called(action), 0, "{action} must be skipped on re-run");
+            assert_eq!(
+                dispatcher.called(action),
+                0,
+                "{action} must be skipped on re-run"
+            );
         }
-        assert_eq!(dispatcher.called("subdomain_create"), 2, "subdomain upserts always run");
+        assert_eq!(
+            dispatcher.called("subdomain_create"),
+            2,
+            "subdomain upserts always run"
+        );
         assert_eq!(report.variables["chat_webspace_id"], json!("w-chat"));
         assert_eq!(report.variables["relay_credential_id"], json!("cred-1"));
     }
@@ -1177,7 +1225,10 @@ mod tests {
 
         for (name, spec) in endpoints::action_templates::baked_templates() {
             if let Err(errors) = validate_template(spec, Some(&tools), &builtins) {
-                panic!("action template '{name}' is invalid:\n  {}", errors.join("\n  "));
+                panic!(
+                    "action template '{name}' is invalid:\n  {}",
+                    errors.join("\n  ")
+                );
             }
             for (input, ispec) in &spec.inputs {
                 if let Some(resource) = &ispec.reference {

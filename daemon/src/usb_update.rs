@@ -176,8 +176,7 @@ async fn apply(client: &reqwest::Client, asset: &ReleaseAsset) -> Result<()> {
     }
 
     let new_bin = extract_binary(&bytes).context("failed to extract bin/mac-mgmt from release")?;
-    self_replace::self_replace(&new_bin)
-        .context("failed to self-replace the running binary")?;
+    self_replace::self_replace(&new_bin).context("failed to self-replace the running binary")?;
     let _ = std::fs::remove_file(&new_bin);
     tracing::info!("usb updater: binary replaced — re-exec to apply");
     Ok(())
@@ -241,7 +240,10 @@ mod tests {
 
     #[test]
     fn asset_name_matches_ci_convention() {
-        assert_eq!(asset_name("x86_64-linux"), "mac-mgmt-usb-x86_64-linux.tar.gz");
+        assert_eq!(
+            asset_name("x86_64-linux"),
+            "mac-mgmt-usb-x86_64-linux.tar.gz"
+        );
     }
 
     #[test]

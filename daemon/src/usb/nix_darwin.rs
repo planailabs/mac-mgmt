@@ -163,8 +163,8 @@ fn install_from_tarball(tarball: &Path) -> Result<()> {
 
     // Register the copied closure in the nix database.
     let reginfo = root.join(".reginfo");
-    let regfile = std::fs::File::open(&reginfo)
-        .with_context(|| format!("missing {}", reginfo.display()))?;
+    let regfile =
+        std::fs::File::open(&reginfo).with_context(|| format!("missing {}", reginfo.display()))?;
     let st = Command::new(bin_dir.join("nix-store"))
         .arg("--load-db")
         .env("NIX_STORE_DIR", "/nix/store")
@@ -223,6 +223,9 @@ mod tests {
         // The host arch under test is whatever CI runs on; just assert the
         // mapping shape is one of the known systems or None.
         let s = darwin_system();
-        assert!(matches!(s, Some("x86_64-darwin") | Some("aarch64-darwin") | None));
+        assert!(matches!(
+            s,
+            Some("x86_64-darwin") | Some("aarch64-darwin") | None
+        ));
     }
 }

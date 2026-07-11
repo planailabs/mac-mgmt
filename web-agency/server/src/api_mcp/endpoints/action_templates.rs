@@ -308,7 +308,10 @@ fn display_params(
     let mut params = vars.clone();
     for (name, input) in &spec.inputs {
         if input.secret && params.contains_key(name) {
-            params.insert(name.clone(), serde_json::json!(plan_ai_actions::engine::REDACTED));
+            params.insert(
+                name.clone(),
+                serde_json::json!(plan_ai_actions::engine::REDACTED),
+            );
         }
     }
     params
@@ -321,14 +324,13 @@ async fn require_run_access(
     p: &Principal,
     run_id: Uuid,
 ) -> Result<(), ApiError> {
-    let subject = sqlx::query_scalar::<_, String>(
-        "SELECT subject FROM action_template_runs WHERE id = $1",
-    )
-    .bind(run_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(super::internal)?
-    .ok_or_else(|| ApiError::not_found("run not found"))?;
+    let subject =
+        sqlx::query_scalar::<_, String>("SELECT subject FROM action_template_runs WHERE id = $1")
+            .bind(run_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(super::internal)?
+            .ok_or_else(|| ApiError::not_found("run not found"))?;
     if p.admin || subject == p.subject {
         Ok(())
     } else {
@@ -380,7 +382,14 @@ pub async fn action_template_start(
     let principal = serde_json::to_value(p).map_err(super::internal)?;
     let display = display_params(spec, &vars);
     let run_id = crate::api_mcp::run_manager()?
-        .enqueue(&input.id, vars, display, principal, &p.subject, spec.actions.len() as u32)
+        .enqueue(
+            &input.id,
+            vars,
+            display,
+            principal,
+            &p.subject,
+            spec.actions.len() as u32,
+        )
         .await
         .map_err(super::internal)?;
     Ok(ActionTemplateStartResult { run_id })
@@ -396,7 +405,11 @@ pub async fn action_template_run_status(
     // Long-poll: the server holds the request until there are new events (or
     // ~20 s pass), so the client needs no timer between polls.
     crate::api_mcp::run_manager()?
-        .wait_status(input.run_id, input.after_seq, std::time::Duration::from_secs(20))
+        .wait_status(
+            input.run_id,
+            input.after_seq,
+            std::time::Duration::from_secs(20),
+        )
         .await
         .map_err(super::internal)?
         .ok_or_else(|| ApiError::not_found("run not found"))
@@ -415,7 +428,14 @@ pub async fn action_template_execute(
     let display = display_params(spec, &vars);
     let manager = crate::api_mcp::run_manager()?;
     let run_id = manager
-        .enqueue(&input.id, vars, display, principal, &p.subject, spec.actions.len() as u32)
+        .enqueue(
+            &input.id,
+            vars,
+            display,
+            principal,
+            &p.subject,
+            spec.actions.len() as u32,
+        )
         .await
         .map_err(super::internal)?;
     manager
@@ -489,12 +509,19 @@ pub async fn action_template_input_options(
         if ispec.ty != InputType::Id {
             continue;
         }
-        let Some(resource) = &ispec.reference else { continue };
+        let Some(resource) = &ispec.reference else {
+            continue;
+        };
         let Some(tool) = registry.list_tool_for_resource(resource) else {
             continue; // startup validation guarantees this; stay lenient here
         };
         let rows = registry
-            .call_by_name(pool.clone(), principal.clone(), &tool, serde_json::json!({}))
+            .call_by_name(
+                pool.clone(),
+                principal.clone(),
+                &tool,
+                serde_json::json!({}),
+            )
             .await?;
         let opts: Vec<IdOption> = rows
             .as_array()

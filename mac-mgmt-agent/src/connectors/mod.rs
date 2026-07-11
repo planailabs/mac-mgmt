@@ -26,9 +26,9 @@ pub mod unsloth_opencode;
 
 use std::sync::Arc;
 
-use anyhow::Result;
 #[cfg(feature = "memvault")]
 use anyhow::Context as _;
+use anyhow::Result;
 
 use crate::managed_service::ManagedService;
 #[cfg(feature = "memvault")]
@@ -534,7 +534,13 @@ pub(crate) fn model_id(model: &str) -> &str {
 pub(crate) fn custom_key_env(name: &str) -> String {
     let sanitized: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!("{sanitized}_API_KEY")
 }
@@ -551,7 +557,10 @@ mod helper_tests {
         assert_eq!(model_id("moonshot/kimi-k2.6"), "kimi-k2.6");
         assert_eq!(model_id("kimi-k2.6"), "kimi-k2.6");
         // Only the first slash is the provider separator.
-        assert_eq!(model_id("together/meta-llama/Llama-4"), "meta-llama/Llama-4");
+        assert_eq!(
+            model_id("together/meta-llama/Llama-4"),
+            "meta-llama/Llama-4"
+        );
     }
 
     #[test]

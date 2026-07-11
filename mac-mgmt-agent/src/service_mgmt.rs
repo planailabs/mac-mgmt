@@ -2141,8 +2141,8 @@ fn daemon_system_shell_tunnels() -> Vec<ShellTunnel> {
                 name: "sync-state".into(),
                 command: String::new(), // virtual — not spawned
                 args: Vec::new(),
-                description: "JSON snapshot of synced skills + MCP servers (chaos-test observation)"
-                    .into(),
+                description:
+                    "JSON snapshot of synced skills + MCP servers (chaos-test observation)".into(),
                 arg_template: None,
                 timeout_secs: None,
             },

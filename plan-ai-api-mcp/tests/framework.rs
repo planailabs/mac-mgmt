@@ -78,13 +78,16 @@ fn build_registry() -> Registry<()> {
                 name: "found".into(),
             })
         });
-        w.create("Create widget", |_s, p: Arc<Principal>, i: CreateInput| async move {
-            p.require_write(&i.org)?;
-            Ok(Widget {
-                id: "new".into(),
-                name: i.name,
-            })
-        });
+        w.create(
+            "Create widget",
+            |_s, p: Arc<Principal>, i: CreateInput| async move {
+                p.require_write(&i.org)?;
+                Ok(Widget {
+                    id: "new".into(),
+                    name: i.name,
+                })
+            },
+        );
         w.custom(
             "wipe",
             Risk::Destructive,

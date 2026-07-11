@@ -95,9 +95,11 @@ fn default_run_dir() -> PathBuf {
 
 impl MmrcdConfig {
     pub fn load(path: Option<&std::path::Path>) -> Result<Self> {
-        let path = path
-            .map(PathBuf::from)
-            .unwrap_or_else(|| dirs::config_dir().unwrap_or_else(std::env::temp_dir).join("mmrcd/config.toml"));
+        let path = path.map(PathBuf::from).unwrap_or_else(|| {
+            dirs::config_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join("mmrcd/config.toml")
+        });
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading mmrcd config {}", path.display()))?;
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
@@ -282,7 +284,10 @@ impl Orchestrator {
         req: &CreateRunRequest,
         project: String,
     ) -> Result<RunInfo> {
-        let git_ref = req.git_ref.clone().unwrap_or_else(|| self.cfg.default_ref.clone());
+        let git_ref = req
+            .git_ref
+            .clone()
+            .unwrap_or_else(|| self.cfg.default_ref.clone());
         let images = resolve_images(&self.cfg, &git_ref).await?;
 
         // Ephemeral per-run project (deleted with the run).
@@ -416,15 +421,27 @@ impl Orchestrator {
             // Inject the sync token + pre-generated host key, then (re)start the
             // daemon so it enrolls with the known instance_id.
             backend
-                .file_push(&name, "/etc/mac-mgmt.env", format!("MAC_MGMT_TOKEN={}\n", req.sync_token).as_bytes())
+                .file_push(
+                    &name,
+                    "/etc/mac-mgmt.env",
+                    format!("MAC_MGMT_TOKEN={}\n", req.sync_token).as_bytes(),
+                )
                 .await
                 .ok();
             backend
-                .file_push(&name, "/root/.config/mac-mgmt/host_ed25519_key", hk.private_pem.as_bytes())
+                .file_push(
+                    &name,
+                    "/root/.config/mac-mgmt/host_ed25519_key",
+                    hk.private_pem.as_bytes(),
+                )
                 .await
                 .ok();
             let _ = backend
-                .exec(&name, "systemctl restart mac-mgmt", std::time::Duration::from_secs(30))
+                .exec(
+                    &name,
+                    "systemctl restart mac-mgmt",
+                    std::time::Duration::from_secs(30),
+                )
                 .await;
 
             names.push(name);
@@ -491,10 +508,7 @@ impl Orchestrator {
 
 /// Extract the `namespace/image:tag` part of a registry ref (drop the host).
 fn image_ref(full: &str) -> String {
-    full.splitn(2, '/')
-        .nth(1)
-        .unwrap_or(full)
-        .to_string()
+    full.splitn(2, '/').nth(1).unwrap_or(full).to_string()
 }
 
 /// Extract the `https://host` server part of a registry ref.

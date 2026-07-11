@@ -3,7 +3,7 @@
 
 use dioxus::prelude::*;
 
-use super::ui::{Badge, BadgeVariant, ButtonVariant, Button, Card, PageHeader, Td, TdMuted, Th};
+use super::ui::{Badge, BadgeVariant, Button, ButtonVariant, Card, PageHeader, Td, TdMuted, Th};
 
 // WebspaceRow + the list endpoint now live in the shared api_mcp layer.
 use crate::api_mcp::endpoints::webspaces::{WebspaceListInput, WebspaceRow, list_webspaces};
@@ -18,10 +18,22 @@ pub fn WebspaceList() -> Element {
 
     let mut filter = use_signal(|| "all".to_string());
     let filtered_rows: Vec<&WebspaceRow> = match filter.read().as_str() {
-        "pages" => all_rows.iter().filter(|r| r.hosting_type == "cloudflare_pages").collect(),
-        "local" => all_rows.iter().filter(|r| r.hosting_type == "local").collect(),
-        "relay" => all_rows.iter().filter(|r| r.hosting_type == "relay").collect(),
-        "tunnel" => all_rows.iter().filter(|r| r.hosting_type == "tunnel").collect(),
+        "pages" => all_rows
+            .iter()
+            .filter(|r| r.hosting_type == "cloudflare_pages")
+            .collect(),
+        "local" => all_rows
+            .iter()
+            .filter(|r| r.hosting_type == "local")
+            .collect(),
+        "relay" => all_rows
+            .iter()
+            .filter(|r| r.hosting_type == "relay")
+            .collect(),
+        "tunnel" => all_rows
+            .iter()
+            .filter(|r| r.hosting_type == "tunnel")
+            .collect(),
         _ => all_rows.iter().collect(),
     };
 

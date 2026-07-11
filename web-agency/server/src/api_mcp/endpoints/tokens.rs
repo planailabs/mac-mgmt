@@ -112,7 +112,16 @@ pub async fn token_list(
         let org_id = super::owning_org(pool, "webspaces", wid, "webspace").await?;
         require_org_admin(pool, principal, &org_id).await?;
 
-        let rows = sqlx::query_as::<_, (Uuid, String, bool, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                bool,
+                chrono::DateTime<chrono::Utc>,
+                Option<chrono::DateTime<chrono::Utc>>,
+            ),
+        >(
             "SELECT id, label, revoked, created_at, expires_at FROM tokens \
              WHERE kind = 'deploy' AND organization_id = $1 \
                AND (scopes->>'webspace_id')::uuid = $2 \
@@ -142,7 +151,21 @@ pub async fn token_list(
 
     principal.require_admin()?;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, String, bool, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<Uuid>, Option<String>, Option<Uuid>, Option<String>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            bool,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<Uuid>,
+            Option<String>,
+            Option<Uuid>,
+            Option<String>,
+        ),
+    >(
         "SELECT t.id, t.label, t.kind, t.revoked, t.created_at, t.expires_at, \
                 w.id AS ws_id, w.name AS ws_name, t.organization_id AS org_id, o.name AS org_name \
          FROM tokens t \
@@ -157,7 +180,18 @@ pub async fn token_list(
     Ok(rows
         .into_iter()
         .map(
-            |(id, label, kind, revoked, created_at, expires_at, ws_id, ws_name, org_id, org_name)| {
+            |(
+                id,
+                label,
+                kind,
+                revoked,
+                created_at,
+                expires_at,
+                ws_id,
+                ws_name,
+                org_id,
+                org_name,
+            )| {
                 TokenInfo {
                     id,
                     label,

@@ -84,11 +84,11 @@ pub async fn serve_tls(
                 }
             };
 
-            let is_proxy_subdomain = match (proxy_suffix.as_deref(), start.client_hello().server_name())
-            {
-                (Some(suffix), Some(sni)) => sni.ends_with(suffix),
-                _ => false,
-            };
+            let is_proxy_subdomain =
+                match (proxy_suffix.as_deref(), start.client_hello().server_name()) {
+                    (Some(suffix), Some(sni)) => sni.ends_with(suffix),
+                    _ => false,
+                };
             let config = if is_proxy_subdomain {
                 quiet_config
             } else {
@@ -132,9 +132,8 @@ pub async fn serve_tls(
                         if let Some(info) = info {
                             req.extensions_mut().insert(info);
                         }
-                        req.extensions_mut().insert(TlsSniClass {
-                            is_proxy_subdomain,
-                        });
+                        req.extensions_mut()
+                            .insert(TlsSniClass { is_proxy_subdomain });
                         req.extensions_mut()
                             .insert(axum::extract::ConnectInfo(peer_addr));
 

@@ -57,7 +57,10 @@ impl Workload for ChaosServiceCrash {
         };
         let prefix = ctx.env.relay_prefix(&id);
         // Restart the daemon itself — the service manager brings it back.
-        let out = ctx.relay().shell_exec(&prefix, "restart-daemon", None).await?;
+        let out = ctx
+            .relay()
+            .shell_exec(&prefix, "restart-daemon", None)
+            .await?;
         if out.exit_code.unwrap_or(0) != 0 {
             bail!("restart-daemon failed: {:?}", out.error);
         }

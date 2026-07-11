@@ -10,7 +10,8 @@ use crate::api_mcp::endpoints::action_templates::{
 
 #[component]
 pub fn ActionTemplateList() -> Element {
-    let templates = use_server_future(move || list_action_templates(ActionTemplateListInput::default()))?;
+    let templates =
+        use_server_future(move || list_action_templates(ActionTemplateListInput::default()))?;
     let rows: Vec<ActionTemplateRow> = match &*templates.read() {
         Some(Ok(r)) => r.clone(),
         _ => vec![],

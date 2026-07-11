@@ -126,10 +126,7 @@ fn load_cached_remote_config() -> Option<serde_json::Value> {
     }
 }
 
-pub async fn fetch_remote_config(
-    url: &str,
-    token: &str,
-) -> Result<Option<serde_json::Value>> {
+pub async fn fetch_remote_config(url: &str, token: &str) -> Result<Option<serde_json::Value>> {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/api/config"))
@@ -154,10 +151,7 @@ pub async fn fetch_remote_config(
 
 /// Fetch all secrets for this cluster from the server vault.
 /// Returns an empty map on failure (secrets are optional).
-pub async fn fetch_secrets(
-    url: &str,
-    token: &str,
-) -> std::collections::HashMap<String, String> {
+pub async fn fetch_secrets(url: &str, token: &str) -> std::collections::HashMap<String, String> {
     let client = reqwest::Client::new();
     let resp = match client
         .get(format!("{url}/api/secrets"))

@@ -141,7 +141,10 @@ async fn reload_routes(
                         route_count += 1;
                         let route_desc = match route {
                             Route::Direct(upstream) => format!("direct → {upstream}"),
-                            Route::StaticOrigin { upstream, webspace_id } => {
+                            Route::StaticOrigin {
+                                upstream,
+                                webspace_id,
+                            } => {
                                 format!("static → {upstream} (webspace {webspace_id})")
                             }
                             Route::Relay { upstream, tls, .. } => {
@@ -157,7 +160,12 @@ async fn reload_routes(
                         tracing::info!(host, path = %path_prefix, route = %route_desc, auth = auth_desc, "route");
                     }
                 }
-                tracing::info!(hosts = map.len(), routes = route_count, ?token_lifetime_secs, "loaded routes");
+                tracing::info!(
+                    hosts = map.len(),
+                    routes = route_count,
+                    ?token_lifetime_secs,
+                    "loaded routes"
+                );
                 routes.store(Arc::new(map));
                 Some(token_lifetime_secs)
             }

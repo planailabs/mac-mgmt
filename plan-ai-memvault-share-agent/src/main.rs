@@ -42,9 +42,10 @@ async fn main() -> Result<()> {
     let identity = memvault_api::agent_identity::AgentIdentity::load(&identity_dir)
         .map_err(|e| anyhow::anyhow!("load agent identity from {}: {e}", identity_dir.display()))?;
 
-    let client: Arc<dyn memvault_api::MemvaultClient> = Arc::new(
-        memvault_api::HttpApiClient::new(&cli.url, Some(Arc::new(identity)))?,
-    );
+    let client: Arc<dyn memvault_api::MemvaultClient> = Arc::new(memvault_api::HttpApiClient::new(
+        &cli.url,
+        Some(Arc::new(identity)),
+    )?);
 
     let server = ShareAgentServer::new(client);
     let transport = rmcp::transport::io::stdio();

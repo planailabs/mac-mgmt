@@ -53,9 +53,11 @@ pub fn ConfigEditor(
     /// The current saved config as JSON.
     initial: serde_json::Value,
     /// Show the save controls as busy.
-    #[props(default)] saving: bool,
+    #[props(default)]
+    saving: bool,
     /// Error from the last save attempt (shown to the user).
-    #[props(default)] save_error: Option<String>,
+    #[props(default)]
+    save_error: Option<String>,
     /// Called with the edited config JSON when the user saves; the consumer
     /// persists it (server fn / HTTP) and reports failures via `save_error`.
     on_save: EventHandler<String>,

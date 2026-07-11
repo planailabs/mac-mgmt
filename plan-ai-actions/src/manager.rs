@@ -11,9 +11,7 @@ use serde_json::{Map, Value};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use crate::engine::{
-    ActionDispatcher, BuiltinRegistry, EngineError, RunEvent, execute_from,
-};
+use crate::engine::{ActionDispatcher, BuiltinRegistry, EngineError, RunEvent, execute_from};
 use crate::report::{RunLogEvent, RunReport, RunStatus, StepReport};
 use crate::spec::TemplateSpec;
 
@@ -280,7 +278,8 @@ impl RunManager {
         let dispatcher = match (self.dispatcher_factory)(&run.principal) {
             Ok(d) => d,
             Err(e) => {
-                self.fail_immediately(&run, format!("cannot restore principal: {e}")).await;
+                self.fail_immediately(&run, format!("cannot restore principal: {e}"))
+                    .await;
                 return;
             }
         };
@@ -311,14 +310,25 @@ impl RunManager {
                         drop(status);
                         live_for_task.changed.notify_waiters();
                     }
-                    RunEvent::Log { step_index, message } => {
-                        let event = RunLogEvent { seq: next_seq, step_index, message };
+                    RunEvent::Log {
+                        step_index,
+                        message,
+                    } => {
+                        let event = RunLogEvent {
+                            seq: next_seq,
+                            step_index,
+                            message,
+                        };
                         next_seq += 1;
                         log.push(event.clone());
                         live_for_task.status.lock().unwrap().events.push(event);
                         live_for_task.changed.notify_waiters();
                     }
-                    RunEvent::StepFinished { index, report, variables } => {
+                    RunEvent::StepFinished {
+                        index,
+                        report,
+                        variables,
+                    } => {
                         steps.push(report);
                         if let Err(e) = store
                             .checkpoint(run_id, index + 1, &variables, &steps, &log)
@@ -387,7 +397,11 @@ impl RunManager {
 
     async fn fail_immediately(self: &Arc<Self>, run: &StoredRun, error: String) {
         tracing::error!("run {}: {error}", run.id);
-        let report = RunReport { ok: false, steps: run.steps.clone(), variables: run.variables.clone() };
+        let report = RunReport {
+            ok: false,
+            steps: run.steps.clone(),
+            variables: run.variables.clone(),
+        };
         let mut log = run.log.clone();
         log.push(RunLogEvent {
             seq: log.last().map(|e| e.seq + 1).unwrap_or(0),
@@ -549,7 +563,11 @@ mod tests {
         ) -> Result<(), EngineError> {
             let mut rows = self.rows.lock().unwrap();
             let run = rows.get_mut(&id).and_then(|r| r.run.as_mut()).unwrap();
-            run.status = if ok { StoreStatus::Ok } else { StoreStatus::Failed };
+            run.status = if ok {
+                StoreStatus::Ok
+            } else {
+                StoreStatus::Failed
+            };
             run.report = Some(report.clone());
             run.log = log.to_vec();
             run.variables = Map::new(); // scrubbed on finish, like PgRunStore
@@ -557,7 +575,13 @@ mod tests {
         }
 
         async fn load(&self, id: Uuid) -> Result<Option<StoredRun>, EngineError> {
-            Ok(self.rows.lock().unwrap().get(&id).and_then(|r| r.run.as_ref()).map(clone_run))
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .get(&id)
+                .and_then(|r| r.run.as_ref())
+                .map(clone_run))
         }
     }
 
@@ -590,8 +614,9 @@ actions:
 "#;
 
     fn manager(store: Arc<MemStore>, replies: Vec<Result<Value, String>>) -> Arc<RunManager> {
-        let dispatcher: Arc<dyn ActionDispatcher> =
-            Arc::new(ScriptedDispatcher { replies: Mutex::new(replies) });
+        let dispatcher: Arc<dyn ActionDispatcher> = Arc::new(ScriptedDispatcher {
+            replies: Mutex::new(replies),
+        });
         RunManager::new(
             store,
             Arc::new(move |_principal| Ok(dispatcher.clone())),
@@ -610,7 +635,10 @@ actions:
         let mgr = manager(store.clone(), vec![Ok(json!("r1")), Ok(json!("r2"))]);
         mgr.spawn_workers(1);
 
-        let id = mgr.enqueue("t", params(), params(), json!({}), "tester", 2).await.unwrap();
+        let id = mgr
+            .enqueue("t", params(), params(), json!({}), "tester", 2)
+            .await
+            .unwrap();
         let report = mgr.wait_finished(id, Duration::from_secs(5)).await.unwrap();
         assert!(report.ok);
         assert_eq!(report.steps.len(), 2);
@@ -622,7 +650,11 @@ actions:
         assert_eq!(stored.next_step, 2, "checkpointed through the last step");
 
         // Live status (or store fallback) reports done with a report.
-        let status = mgr.wait_status(id, None, Duration::from_millis(10)).await.unwrap().unwrap();
+        let status = mgr
+            .wait_status(id, None, Duration::from_millis(10))
+            .await
+            .unwrap()
+            .unwrap();
         assert!(status.done);
         assert_eq!(status.ok, Some(true));
     }
@@ -633,13 +665,24 @@ actions:
         let mgr = manager(store, vec![Ok(json!("r1")), Ok(json!("r2"))]);
         mgr.spawn_workers(1);
 
-        let id = mgr.enqueue("t", params(), params(), json!({}), "tester", 2).await.unwrap();
+        let id = mgr
+            .enqueue("t", params(), params(), json!({}), "tester", 2)
+            .await
+            .unwrap();
         mgr.wait_finished(id, Duration::from_secs(5)).await.unwrap();
 
-        let all = mgr.wait_status(id, None, Duration::from_millis(10)).await.unwrap().unwrap();
+        let all = mgr
+            .wait_status(id, None, Duration::from_millis(10))
+            .await
+            .unwrap()
+            .unwrap();
         assert!(all.events.len() >= 2);
         let cut = all.events[all.events.len() - 2].seq;
-        let tail = mgr.wait_status(id, Some(cut), Duration::from_millis(10)).await.unwrap().unwrap();
+        let tail = mgr
+            .wait_status(id, Some(cut), Duration::from_millis(10))
+            .await
+            .unwrap()
+            .unwrap();
         assert!(tail.events.iter().all(|e| e.seq > cut));
         assert!(tail.events.len() < all.events.len());
     }
@@ -669,13 +712,19 @@ actions:
         }];
         let mut vars = params();
         vars.insert("first".into(), json!("r1"));
-        store.checkpoint(run.id, 1, &vars, &steps, &[]).await.unwrap();
+        store
+            .checkpoint(run.id, 1, &vars, &steps, &[])
+            .await
+            .unwrap();
 
         // Only step two's reply is scripted: re-executing step one would fail.
         let mgr = manager(store.clone(), vec![Ok(json!("r2"))]);
         mgr.spawn_workers(1);
 
-        let report = mgr.wait_finished(run.id, Duration::from_secs(5)).await.unwrap();
+        let report = mgr
+            .wait_finished(run.id, Duration::from_secs(5))
+            .await
+            .unwrap();
         assert!(report.ok, "{:?}", report.steps);
         assert_eq!(report.steps.len(), 2);
         assert_eq!(report.steps[0].output, Some(json!("r1")), "prior step kept");
@@ -686,7 +735,10 @@ actions:
         let store = Arc::new(MemStore::default());
         let mgr = manager(store, vec![]);
         mgr.spawn_workers(1);
-        let id = mgr.enqueue("missing", Map::new(), Map::new(), json!({}), "tester", 0).await.unwrap();
+        let id = mgr
+            .enqueue("missing", Map::new(), Map::new(), json!({}), "tester", 0)
+            .await
+            .unwrap();
         let err = mgr.wait_finished(id, Duration::from_secs(5)).await;
         // Run finishes as failed (report present, ok = false).
         match err {

@@ -79,9 +79,7 @@ pub(crate) fn authenticate(headers: &HeaderMap) -> Result<(), (StatusCode, Strin
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
 
-    if provided.is_empty()
-        || !crate::api::basic_auth::constant_time_eq(provided, expected_token)
-    {
+    if provided.is_empty() || !crate::api::basic_auth::constant_time_eq(provided, expected_token) {
         return Err((StatusCode::UNAUTHORIZED, "invalid token".into()));
     }
 
@@ -281,7 +279,9 @@ async fn get_routes(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, path_prefix, runtime, port, ws_id, org_id, auth_mode, basic_list_id) in rows {
+    for (domain, subdomain, path_prefix, runtime, port, ws_id, org_id, auth_mode, basic_list_id) in
+        rows
+    {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
@@ -324,7 +324,9 @@ async fn get_routes(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, path_prefix, relay_url, cred_id, org_id, auth_mode, basic_list_id) in relay_rows {
+    for (domain, subdomain, path_prefix, relay_url, cred_id, org_id, auth_mode, basic_list_id) in
+        relay_rows
+    {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
@@ -416,7 +418,9 @@ async fn get_routes(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    for (domain, subdomain, path_prefix, tunnel_url, org_id, auth_mode, basic_list_id) in tunnel_rows {
+    for (domain, subdomain, path_prefix, tunnel_url, org_id, auth_mode, basic_list_id) in
+        tunnel_rows
+    {
         let host = match subdomain.as_deref() {
             Some(sub) if sub != "@" => format!("{sub}.{domain}"),
             _ => domain,
@@ -686,7 +690,13 @@ pub async fn proxy_gate(
     .await
     {
         Ok(Some(id)) => id,
-        Ok(None) => return err(StatusCode::NOT_FOUND, "unknown-host-title", "unknown-host-body"),
+        Ok(None) => {
+            return err(
+                StatusCode::NOT_FOUND,
+                "unknown-host-title",
+                "unknown-host-body",
+            );
+        }
         Err(_) => {
             return err(
                 StatusCode::INTERNAL_SERVER_ERROR,

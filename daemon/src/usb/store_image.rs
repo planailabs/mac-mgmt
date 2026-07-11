@@ -86,8 +86,11 @@ pub fn ensure_nar_cache(home: &Path) -> Result<PathBuf> {
         .with_context(|| format!("failed to create {}", dir.display()))?;
     let info = dir.join("nix-cache-info");
     if !info.exists() {
-        std::fs::write(&info, "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 10\n")
-            .with_context(|| format!("failed to write {}", info.display()))?;
+        std::fs::write(
+            &info,
+            "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 10\n",
+        )
+        .with_context(|| format!("failed to write {}", info.display()))?;
     }
     Ok(dir)
 }
@@ -254,11 +257,9 @@ fn ensure_nix_synthetic() -> Result<()> {
     }
     if !Path::new("/nix").exists() {
         // Apply synthetic.conf without a reboot.
-        let _ = Command::new(
-            "/System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util",
-        )
-        .arg("-B")
-        .status();
+        let _ = Command::new("/System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util")
+            .arg("-B")
+            .status();
     }
     if !Path::new("/nix").exists() {
         anyhow::bail!(

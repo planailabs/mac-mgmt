@@ -12,8 +12,8 @@
 use dioxus::prelude::*;
 use mac_mgmt_config_ui::ConfigEditor;
 use plan_ai_design::{
-    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, LanguagePicker, ThemeToggle,
-    THEME_INIT_SCRIPT,
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, LanguagePicker,
+    THEME_INIT_SCRIPT, ThemeToggle,
 };
 use serde::Deserialize;
 
@@ -151,9 +151,10 @@ fn App() -> Element {
     // in the header changes + persists it.
     use_effect(move || {
         spawn(async move {
-            if let Ok(val) =
-                document::eval("try { return localStorage.getItem('lang') || ''; } catch(e) { return ''; }")
-                    .await
+            if let Ok(val) = document::eval(
+                "try { return localStorage.getItem('lang') || ''; } catch(e) { return ''; }",
+            )
+            .await
             {
                 if val.as_str() == Some("de-DE") {
                     let _ = i18n.set_language(langid!("de-DE"));
@@ -249,7 +250,11 @@ fn App() -> Element {
 fn ServiceRow(svc: Svc, offline: bool, on_changed: EventHandler<()>) -> Element {
     let _ = offline; // start/stop/restart are local-only and work offline.
     let name_for = |n: &str| n.to_string();
-    let (n1, n2, n3) = (name_for(&svc.name), name_for(&svc.name), name_for(&svc.name));
+    let (n1, n2, n3) = (
+        name_for(&svc.name),
+        name_for(&svc.name),
+        name_for(&svc.name),
+    );
 
     rsx! {
         tr {
@@ -357,5 +362,8 @@ fn open_url(url: &str) -> std::io::Result<()> {
     } else {
         "xdg-open"
     };
-    std::process::Command::new(opener).arg(url).spawn().map(|_| ())
+    std::process::Command::new(opener)
+        .arg(url)
+        .spawn()
+        .map(|_| ())
 }

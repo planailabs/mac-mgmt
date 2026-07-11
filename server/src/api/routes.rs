@@ -3704,10 +3704,12 @@ pub async fn list_relay_urls(
          FROM daemon_heartbeats WHERE relay_proxy_url IS NOT NULL AND relay_proxy_url <> ''";
 
     let rows: Vec<Row> = if let Some(cid) = auth.cluster_id {
-        sqlx::query_as(&format!("{BASE} AND cluster_id = $1 ORDER BY reported_at DESC"))
-            .bind(cid)
-            .fetch_all(pool.inner())
-            .await
+        sqlx::query_as(&format!(
+            "{BASE} AND cluster_id = $1 ORDER BY reported_at DESC"
+        ))
+        .bind(cid)
+        .fetch_all(pool.inner())
+        .await
     } else if let Some(org_id) = auth.organization_id {
         sqlx::query_as(&format!(
             "{BASE} AND cluster_id IN \

@@ -12,7 +12,10 @@ pub enum Route {
     /// Static folder served by the agency origin: proxy to `upstream` (the
     /// agency server), passing the Host through and injecting the internal token
     /// + webspace id so the server serves the folder's files.
-    StaticOrigin { upstream: String, webspace_id: String },
+    StaticOrigin {
+        upstream: String,
+        webspace_id: String,
+    },
     /// Relay tunnel — proxy via HTTPS to relay server with token auth.
     Relay {
         /// host:port to connect to
@@ -34,11 +37,15 @@ pub enum Route {
 #[derive(Debug, Clone)]
 pub enum AuthMode {
     None,
-    Oidc { org_id: uuid::Uuid },
+    Oidc {
+        org_id: uuid::Uuid,
+    },
     /// Cookie-based basic-auth gate. The proxy holds only the credential list
     /// id; credentials are validated on the agency login form, and sessions are
     /// verified per-request via the internal API.
-    Basic { list_id: uuid::Uuid },
+    Basic {
+        list_id: uuid::Uuid,
+    },
 }
 
 /// Per-request context — carries relay info from upstream_peer to upstream_request_filter.
@@ -93,7 +100,9 @@ fn path_matches(prefix: &str, path: &str) -> bool {
 /// Pick the folder whose path prefix best matches `path`. `folders` must be
 /// sorted by descending prefix length so the first match is the longest.
 fn match_folder<'a>(folders: &'a [Folder], path: &str) -> Option<&'a Folder> {
-    folders.iter().find(|(prefix, _, _)| path_matches(prefix, path))
+    folders
+        .iter()
+        .find(|(prefix, _, _)| path_matches(prefix, path))
 }
 
 /// Reverse the request-path rewrite for a root-relative redirect Location:
@@ -117,7 +126,11 @@ fn rewrite_redirect_location(loc: &str, relay_prefix: &str, mount_prefix: &str) 
 /// ""), otherwise the prefix without a trailing slash (e.g. "/customer").
 fn mount_prefix_clean(mount: &str) -> String {
     let m = mount.trim_end_matches('/');
-    if m.is_empty() { String::new() } else { m.to_string() }
+    if m.is_empty() {
+        String::new()
+    } else {
+        m.to_string()
+    }
 }
 
 /// Get a raw (still percent-encoded) query parameter value by name.
@@ -190,7 +203,10 @@ impl WebAgencyProxy {
         }
 
         // Unauthorized → start the login dance at the folder's cgi entrypoint.
-        let full = format!("https://{host}{}", safe_path_and_query(&session.req_header().uri));
+        let full = format!(
+            "https://{host}{}",
+            safe_path_and_query(&session.req_header().uri)
+        );
         let loc = format!(
             "https://{host}{mp}/cgi-webagency/basic/login?back={}",
             urlencoding::encode(&full)
@@ -241,10 +257,8 @@ impl WebAgencyProxy {
                         }
                         None => {
                             // Handoff invalid/expired — restart the login.
-                            let loc = format!(
-                                "{cgi_base}/login?back={}",
-                                urlencoding::encode(&back)
-                            );
+                            let loc =
+                                format!("{cgi_base}/login?back={}", urlencoding::encode(&back));
                             self.send_redirect(session, &loc, None).await?;
                         }
                     }
@@ -387,11 +401,18 @@ impl WebAgencyProxy {
                 })
                 .to_string(),
             ),
-            None => (401u16, serde_json::json!({ "error": "not signed in" }).to_string()),
+            None => (
+                401u16,
+                serde_json::json!({ "error": "not signed in" }).to_string(),
+            ),
         };
         let bytes = bytes::Bytes::from(body);
         let mut resp = pingora::http::ResponseHeader::build(status, None).map_err(|e| {
-            pingora::Error::because(pingora::ErrorType::InternalError, "build whoami response", e)
+            pingora::Error::because(
+                pingora::ErrorType::InternalError,
+                "build whoami response",
+                e,
+            )
         })?;
         let _ = resp.insert_header("Content-Type", "application/json");
         let _ = resp.insert_header("Content-Length", &bytes.len().to_string());
@@ -617,7 +638,8 @@ impl ProxyHttp for WebAgencyProxy {
             }
             HostState::Unknown => {
                 let lang = accept_lang(session);
-                let html = plan_ai_html::error_page(lang, "unknown-host-title", "unknown-host-body");
+                let html =
+                    plan_ai_html::error_page(lang, "unknown-host-title", "unknown-host-body");
                 write_html(session, 404, html).await?;
                 return Ok(true);
             }
@@ -656,7 +678,11 @@ impl ProxyHttp for WebAgencyProxy {
         match routes.get(&host).and_then(|f| match_folder(f, &req_path)) {
             Some((mount, Route::Direct(upstream), _)) => {
                 ctx.mount_prefix = mount.clone();
-                Ok(Box::new(HttpPeer::new(upstream.as_str(), false, String::new())))
+                Ok(Box::new(HttpPeer::new(
+                    upstream.as_str(),
+                    false,
+                    String::new(),
+                )))
             }
             Some((
                 mount,
@@ -704,7 +730,11 @@ impl ProxyHttp for WebAgencyProxy {
             )) => {
                 ctx.mount_prefix = mount.clone();
                 ctx.origin_static = Some(webspace_id.clone());
-                Ok(Box::new(HttpPeer::new(upstream.as_str(), false, String::new())))
+                Ok(Box::new(HttpPeer::new(
+                    upstream.as_str(),
+                    false,
+                    String::new(),
+                )))
             }
             None => {
                 tracing::debug!(host = %host, "no route found");
@@ -748,8 +778,8 @@ impl ProxyHttp for WebAgencyProxy {
         // the internal token.
         if let Some(webspace_id) = &ctx.origin_static {
             let _ = upstream_request.insert_header("x-web-agency-webspace", webspace_id);
-            let _ = upstream_request
-                .insert_header("x-web-agency-internal-token", &self.internal_token);
+            let _ =
+                upstream_request.insert_header("x-web-agency-internal-token", &self.internal_token);
         }
 
         if let Some(relay) = &ctx.relay {
@@ -821,7 +851,11 @@ impl ProxyHttp for WebAgencyProxy {
             return Ok(());
         }
 
-        let relay_prefix = ctx.relay.as_ref().map(|r| r.path_prefix.as_str()).unwrap_or("");
+        let relay_prefix = ctx
+            .relay
+            .as_ref()
+            .map(|r| r.path_prefix.as_str())
+            .unwrap_or("");
         let rewritten = rewrite_redirect_location(&loc, relay_prefix, &ctx.mount_prefix);
 
         if rewritten != loc {
@@ -848,9 +882,7 @@ impl ProxyHttp for WebAgencyProxy {
             _ => match e.esource() {
                 ErrorSource::Upstream => 502,
                 ErrorSource::Downstream => match e.etype() {
-                    ErrorType::WriteError
-                    | ErrorType::ReadError
-                    | ErrorType::ConnectionClosed => 0, // downstream already gone
+                    ErrorType::WriteError | ErrorType::ReadError | ErrorType::ConnectionClosed => 0, // downstream already gone
                     _ => 400,
                 },
                 ErrorSource::Internal | ErrorSource::Unset => 500,
@@ -928,7 +960,6 @@ fn extract_host(session: &Session) -> String {
         .unwrap_or("");
     raw.split(':').next().unwrap_or(raw).to_lowercase()
 }
-
 
 fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
@@ -1037,14 +1068,29 @@ mod tests {
     #[test]
     fn redirect_location_rewrite() {
         // Mount at /customer, no relay path prefix: re-add the mount.
-        assert_eq!(rewrite_redirect_location("/chat/login", "", "/customer"), "/customer/chat/login");
+        assert_eq!(
+            rewrite_redirect_location("/chat/login", "", "/customer"),
+            "/customer/chat/login"
+        );
         // Relay URL has a /v1 path prefix: strip it, then add the mount.
-        assert_eq!(rewrite_redirect_location("/v1/chat/login", "/v1", "/customer"), "/customer/chat/login");
+        assert_eq!(
+            rewrite_redirect_location("/v1/chat/login", "/v1", "/customer"),
+            "/customer/chat/login"
+        );
         // Relay prefix maps to root.
-        assert_eq!(rewrite_redirect_location("/v1", "/v1", "/customer"), "/customer/");
+        assert_eq!(
+            rewrite_redirect_location("/v1", "/v1", "/customer"),
+            "/customer/"
+        );
         // Root mount: unchanged.
-        assert_eq!(rewrite_redirect_location("/chat/login", "", "/"), "/chat/login");
+        assert_eq!(
+            rewrite_redirect_location("/chat/login", "", "/"),
+            "/chat/login"
+        );
         // Redirect outside the relay prefix: best-effort, just add the mount.
-        assert_eq!(rewrite_redirect_location("/other", "/v1", "/customer"), "/customer/other");
+        assert_eq!(
+            rewrite_redirect_location("/other", "/v1", "/customer"),
+            "/customer/other"
+        );
     }
 }

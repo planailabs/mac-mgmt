@@ -85,7 +85,10 @@ async fn api_status(orch: &State<Arc<Orchestrator>>) -> Json<StatusSnapshot> {
 }
 
 #[rocket::post("/provision")]
-async fn api_provision(_auth: ApiAuth, orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
+async fn api_provision(
+    _auth: ApiAuth,
+    orch: &State<Arc<Orchestrator>>,
+) -> Result<Json<Ack>, Status> {
     // Explicit operator action — resume from a prior teardown pause.
     if let Err(e) = orch.inner().resume().await {
         tracing::error!("resume before provision: {e:#}");
@@ -102,7 +105,10 @@ async fn api_provision(_auth: ApiAuth, orch: &State<Arc<Orchestrator>>) -> Resul
 }
 
 #[rocket::post("/teardown")]
-async fn api_teardown(_auth: ApiAuth, orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
+async fn api_teardown(
+    _auth: ApiAuth,
+    orch: &State<Arc<Orchestrator>>,
+) -> Result<Json<Ack>, Status> {
     orch.inner().teardown().await.map_err(|e| {
         tracing::error!("teardown failed: {e:#}");
         Status::InternalServerError
@@ -114,7 +120,10 @@ async fn api_teardown(_auth: ApiAuth, orch: &State<Arc<Orchestrator>>) -> Result
 }
 
 #[rocket::post("/redeploy")]
-async fn api_redeploy(_auth: ApiAuth, orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
+async fn api_redeploy(
+    _auth: ApiAuth,
+    orch: &State<Arc<Orchestrator>>,
+) -> Result<Json<Ack>, Status> {
     orch.inner().redeploy().await.map_err(|e| {
         tracing::error!("redeploy failed: {e:#}");
         Status::InternalServerError
@@ -147,7 +156,10 @@ async fn api_chaos(_auth: ApiAuth, orch: &State<Arc<Orchestrator>>) -> Result<Js
 }
 
 #[rocket::post("/reprovision")]
-async fn api_reprovision_random(_auth: ApiAuth, orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
+async fn api_reprovision_random(
+    _auth: ApiAuth,
+    orch: &State<Arc<Orchestrator>>,
+) -> Result<Json<Ack>, Status> {
     let k = orch.inner().reprovision_random().await.map_err(|e| {
         tracing::error!("reprovision_random: {e:#}");
         Status::InternalServerError

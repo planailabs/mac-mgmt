@@ -218,11 +218,25 @@ mod tests {
 
     #[test]
     fn session_id_validation_blocks_traversal() {
-        for bad in ["../key", "../../etc/passwd", "a/b", "", "id with space", "..", "/abs"] {
-            assert!(SessionStore::validate_id(bad).is_err(), "{bad:?} must be rejected");
+        for bad in [
+            "../key",
+            "../../etc/passwd",
+            "a/b",
+            "",
+            "id with space",
+            "..",
+            "/abs",
+        ] {
+            assert!(
+                SessionStore::validate_id(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
         }
         for ok in ["abc123", "a1b2c3d4-e5f6", &"x".repeat(128)] {
-            assert!(SessionStore::validate_id(ok).is_ok(), "{ok} should be allowed");
+            assert!(
+                SessionStore::validate_id(ok).is_ok(),
+                "{ok} should be allowed"
+            );
         }
         assert!(SessionStore::validate_id(&"x".repeat(129)).is_err());
     }

@@ -7,13 +7,13 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
-use interprocess::local_socket::ListenerOptions;
-use interprocess::local_socket::tokio::prelude::*;
-use interprocess::local_socket::tokio::{Listener, Stream};
 #[cfg(unix)]
 use interprocess::local_socket::GenericFilePath;
 #[cfg(windows)]
 use interprocess::local_socket::GenericNamespaced;
+use interprocess::local_socket::ListenerOptions;
+use interprocess::local_socket::tokio::prelude::*;
+use interprocess::local_socket::tokio::{Listener, Stream};
 
 /// The per-connection stream (tokio AsyncRead + AsyncWrite).
 pub type IpcStream = Stream;

@@ -31,10 +31,9 @@ fn main() {
 
     // Build shared state
     let cert_store = std::sync::Arc::new(cert_store::CertStore::new(fallback));
-    let routes = std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(std::collections::HashMap::<
-        String,
-        Vec<proxy::Folder>,
-    >::new()));
+    let routes = std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
+        std::collections::HashMap::<String, Vec<proxy::Folder>>::new(),
+    ));
 
     // Note: we deliberately do NOT block on an initial route/cert fetch here.
     // Pingora starts immediately so it can accept connections and serve the

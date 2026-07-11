@@ -275,7 +275,10 @@ pub mod components {
 
     /// Error/danger message (`.err`).
     pub fn error(msg: &str) -> String {
-        format!("<div class=\"err\" style=\"margin-top:.6rem\">{}</div>", escape(msg))
+        format!(
+            "<div class=\"err\" style=\"margin-top:.6rem\">{}</div>",
+            escape(msg)
+        )
     }
 
     /// Muted helper text (`.help`).
@@ -325,7 +328,10 @@ mod tests {
 
     #[test]
     fn accept_language_detection() {
-        assert_eq!(Lang::from_accept_language("de-DE,de;q=0.9,en;q=0.8"), Lang::De);
+        assert_eq!(
+            Lang::from_accept_language("de-DE,de;q=0.9,en;q=0.8"),
+            Lang::De
+        );
         assert_eq!(Lang::from_accept_language("en-US,en;q=0.9"), Lang::En);
         assert_eq!(Lang::from_accept_language("en;q=0.7, de;q=0.9"), Lang::De);
         assert_eq!(Lang::from_accept_language("fr-FR"), Lang::En); // unsupported → fallback
@@ -336,7 +342,10 @@ mod tests {
     fn translation_and_fallback() {
         assert_eq!(tr(Lang::En, "sign-in"), "Sign in");
         assert_eq!(tr(Lang::De, "sign-in"), "Anmelden");
-        assert_eq!(tr_args(Lang::De, "signed-in-as", &[("user", "alice")]), "Angemeldet als alice");
+        assert_eq!(
+            tr_args(Lang::De, "signed-in-as", &[("user", "alice")]),
+            "Angemeldet als alice"
+        );
         assert_eq!(tr(Lang::De, "no-such-key"), "no-such-key"); // falls back to key
     }
 }

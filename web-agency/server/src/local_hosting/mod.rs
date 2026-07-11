@@ -28,9 +28,10 @@ pub async fn ensure_webspace_dirs(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     let root = webroot();
     tokio::fs::create_dir_all(&root).await?;
 
-    let ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM webspaces WHERE hosting_type = 'local'")
-        .fetch_all(pool)
-        .await?;
+    let ids =
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM webspaces WHERE hosting_type = 'local'")
+            .fetch_all(pool)
+            .await?;
     for id in &ids {
         if let Err(e) = tokio::fs::create_dir_all(webspace_dir(*id)).await {
             tracing::warn!(webspace_id = %id, "failed to create webspace dir: {e}");

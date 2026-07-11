@@ -3,10 +3,10 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
 use antithesis_workloads::env::{Env, NodeKind, Timeouts};
 use antithesis_workloads::mgmt::MgmtApi;
 use antithesis_workloads::relay::{HostMode, RelayApi};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -43,7 +43,11 @@ impl MmrcdClient {
         json_or_bail("create_run", resp).await
     }
 
-    pub async fn spawn_nodes(&self, run_id: &str, req: &SpawnNodesRequest) -> Result<SpawnNodesResponse> {
+    pub async fn spawn_nodes(
+        &self,
+        run_id: &str,
+        req: &SpawnNodesRequest,
+    ) -> Result<SpawnNodesResponse> {
         let resp = self
             .req(self.http.post(format!("{}/runs/{run_id}/nodes", self.base)))
             .json(req)
@@ -62,7 +66,10 @@ impl MmrcdClient {
     }
 }
 
-async fn json_or_bail<T: serde::de::DeserializeOwned>(op: &str, resp: reqwest::Response) -> Result<T> {
+async fn json_or_bail<T: serde::de::DeserializeOwned>(
+    op: &str,
+    resp: reqwest::Response,
+) -> Result<T> {
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     if !status.is_success() {
@@ -122,7 +129,12 @@ impl Env for ProdEnv {
         &self.cluster_name
     }
 
-    async fn spawn_nodes(&self, _cluster_id: Uuid, _n: usize, _kind: NodeKind) -> Result<Vec<String>> {
+    async fn spawn_nodes(
+        &self,
+        _cluster_id: Uuid,
+        _n: usize,
+        _kind: NodeKind,
+    ) -> Result<Vec<String>> {
         bail!(
             "prod env does not spawn nodes: fleet nodes are provisioned by the mmr \
              runner and the chaos API is disabled in production. Target existing \
@@ -277,14 +289,20 @@ impl Env for AntithesisEnv {
                 return Ok(new);
             }
             if tokio::time::Instant::now() >= deadline {
-                bail!("only {} of {n} spawned nodes enrolled before timeout", new.len());
+                bail!(
+                    "only {} of {n} spawned nodes enrolled before timeout",
+                    new.len()
+                );
             }
             tokio::time::sleep(self.timeouts.poll).await;
         }
     }
 
     async fn remove_node(&self, cluster_id: Uuid, instance_id: &str) -> Result<()> {
-        self.mgmt.delete_chaos_node(cluster_id, instance_id).await.ok();
+        self.mgmt
+            .delete_chaos_node(cluster_id, instance_id)
+            .await
+            .ok();
         Ok(())
     }
 

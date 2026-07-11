@@ -393,7 +393,10 @@ async fn upload_deploy(
                         }
                     }
                     file.write_all(&chunk).await.map_err(|e| {
-                        (StatusCode::INTERNAL_SERVER_ERROR, format!("write upload: {e}"))
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("write upload: {e}"),
+                        )
                     })?;
                 }
                 Some(Err(e)) => {
@@ -402,9 +405,12 @@ async fn upload_deploy(
                 None => break,
             }
         }
-        file.flush()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("flush upload: {e}")))?;
+        file.flush().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("flush upload: {e}"),
+            )
+        })?;
     }
     // Close the write handle so the background deploy can re-open the file.
     drop(file);
@@ -704,7 +710,6 @@ async fn run_wrangler_deploy(
     // tmp_dir dropped here, auto-cleaned
 }
 
-
 /// Extract a gzipped tarball file into `dest` (created if missing). The archive
 /// is read and decompressed straight from disk so it is never buffered in RAM.
 ///
@@ -726,8 +731,8 @@ async fn extract_tarball(src: std::path::PathBuf, dest: std::path::PathBuf) -> R
         .map_err(|e| format!("stat tarball: {e}"))?
         .len();
     let needed = gzip_isize(&src).await.unwrap_or(0).max(compressed_size);
-    let avail = fs4::available_space(&dest)
-        .map_err(|e| format!("statvfs {}: {e}", dest.display()))?;
+    let avail =
+        fs4::available_space(&dest).map_err(|e| format!("statvfs {}: {e}", dest.display()))?;
     // Require the estimate plus the same headroom floor we enforce mid-extraction.
     if needed.saturating_add(DISK_MIN_FREE_BYTES) > avail {
         return Err(format!(
@@ -803,10 +808,12 @@ async fn run_static_deploy(
     tarball_path: std::path::PathBuf,
 ) {
     tracing::info!(deployment_id = %deployment_id, webspace_id = %webspace_id, "starting static deploy");
-    let _ = sqlx::query("UPDATE deployments SET status = 'deploying', updated_at = now() WHERE id = $1")
-        .bind(deployment_id)
-        .execute(&pool)
-        .await;
+    let _ = sqlx::query(
+        "UPDATE deployments SET status = 'deploying', updated_at = now() WHERE id = $1",
+    )
+    .bind(deployment_id)
+    .execute(&pool)
+    .await;
 
     let dest = crate::local_hosting::webspace_dir(webspace_id);
     let parent = crate::local_hosting::webroot();
@@ -852,10 +859,12 @@ async fn run_static_deploy(
     match swap {
         Ok(Ok(())) => {
             tracing::info!(deployment_id = %deployment_id, dir = %dest.display(), "static deploy succeeded");
-            let _ = sqlx::query("UPDATE deployments SET status = 'success', updated_at = now() WHERE id = $1")
-                .bind(deployment_id)
-                .execute(&pool)
-                .await;
+            let _ = sqlx::query(
+                "UPDATE deployments SET status = 'success', updated_at = now() WHERE id = $1",
+            )
+            .bind(deployment_id)
+            .execute(&pool)
+            .await;
             super::counters::COUNTERS
                 .deploy_success
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

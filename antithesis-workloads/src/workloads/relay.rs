@@ -60,7 +60,10 @@ impl Workload for RelayShellTunnel {
         let Some(prefix) = pick_prefix(ctx, rng) else {
             return Ok(Outcome::Skipped("no instances"));
         };
-        let out = ctx.relay().shell_exec(&prefix, "daemon-status", None).await?;
+        let out = ctx
+            .relay()
+            .shell_exec(&prefix, "daemon-status", None)
+            .await?;
         // systemctl status exits non-zero for some states; just assert it ran.
         if out.exit_code.is_none() {
             bail!("daemon-status produced no exit code");

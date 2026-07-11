@@ -25,8 +25,12 @@ async fn read_json<T: DeserializeOwned>(op: &str, resp: reqwest::Response) -> Re
     if body.trim().is_empty() {
         bail!("{op}: empty response body");
     }
-    serde_json::from_str::<T>(&body)
-        .with_context(|| format!("{op}: response was not JSON: {:?}", body.chars().take(400).collect::<String>()))
+    serde_json::from_str::<T>(&body).with_context(|| {
+        format!(
+            "{op}: response was not JSON: {:?}",
+            body.chars().take(400).collect::<String>()
+        )
+    })
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -137,7 +141,10 @@ impl MgmtApi {
                 .context("admin token has invalid characters")?,
         );
         if let Some(cid) = cluster_id {
-            h.insert("X-Cluster-Id", HeaderValue::from_str(&cid.to_string()).unwrap());
+            h.insert(
+                "X-Cluster-Id",
+                HeaderValue::from_str(&cid.to_string()).unwrap(),
+            );
         }
         if let Some(host) = &self.host_override {
             if let Ok(v) = HeaderValue::from_str(host) {
@@ -199,7 +206,12 @@ impl MgmtApi {
 
     /// Find a cluster by name, or create it.
     pub async fn ensure_cluster(&self, name: &str) -> Result<Uuid> {
-        if let Some(c) = self.list_clusters().await?.into_iter().find(|c| c.name == name) {
+        if let Some(c) = self
+            .list_clusters()
+            .await?
+            .into_iter()
+            .find(|c| c.name == name)
+        {
             return Ok(c.id);
         }
         Ok(self.create_cluster(name).await?.id)
@@ -232,7 +244,10 @@ impl MgmtApi {
         }
         let resp = self
             .http
-            .post(format!("{}/api/admin/clusters/{cluster_id}/tokens", self.base))
+            .post(format!(
+                "{}/api/admin/clusters/{cluster_id}/tokens",
+                self.base
+            ))
             .headers(self.headers(None)?)
             .json(&Body { label, kind })
             .send()
@@ -264,7 +279,10 @@ impl MgmtApi {
     pub async fn list_cluster_machines(&self, cluster_id: Uuid) -> Result<Vec<MachineRow>> {
         let resp = self
             .http
-            .get(format!("{}/api/admin/clusters/{cluster_id}/machines", self.base))
+            .get(format!(
+                "{}/api/admin/clusters/{cluster_id}/machines",
+                self.base
+            ))
             .headers(self.headers(None)?)
             .send()
             .await
@@ -275,7 +293,10 @@ impl MgmtApi {
     pub async fn list_probes(&self, cluster_id: Uuid) -> Result<Vec<ProbeRow>> {
         let resp = self
             .http
-            .get(format!("{}/api/admin/clusters/{cluster_id}/probes", self.base))
+            .get(format!(
+                "{}/api/admin/clusters/{cluster_id}/probes",
+                self.base
+            ))
             .headers(self.headers(None)?)
             .send()
             .await
@@ -299,7 +320,10 @@ impl MgmtApi {
         }
         let resp = self
             .http
-            .post(format!("{}/api/admin/clusters/{cluster_id}/push", self.base))
+            .post(format!(
+                "{}/api/admin/clusters/{cluster_id}/push",
+                self.base
+            ))
             .headers(self.headers(None)?)
             .json(&Body { event, instance_id })
             .send()
@@ -323,7 +347,10 @@ impl MgmtApi {
         }
         let resp = self
             .http
-            .post(format!("{}/api/admin/clusters/{cluster_id}/chaos-nodes", self.base))
+            .post(format!(
+                "{}/api/admin/clusters/{cluster_id}/chaos-nodes",
+                self.base
+            ))
             .headers(self.headers(None)?)
             .json(&Body { instance_id, label })
             .send()
@@ -359,7 +386,10 @@ impl MgmtApi {
     ) -> Result<Vec<SkillChannelRow>> {
         let resp = self
             .http
-            .get(format!("{}/api/setting/available/skill-channels", self.base))
+            .get(format!(
+                "{}/api/setting/available/skill-channels",
+                self.base
+            ))
             .headers(self.headers(Some(cluster_id))?)
             .send()
             .await
@@ -387,7 +417,10 @@ impl MgmtApi {
     pub async fn remove_skill(&self, cluster_id: Uuid, cluster_skill_id: Uuid) -> Result<()> {
         let resp = self
             .http
-            .delete(format!("{}/api/setting/skills/{cluster_skill_id}", self.base))
+            .delete(format!(
+                "{}/api/setting/skills/{cluster_skill_id}",
+                self.base
+            ))
             .headers(self.headers(Some(cluster_id))?)
             .send()
             .await

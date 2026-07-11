@@ -43,8 +43,8 @@ fn sha256_hex(input: &str) -> String {
 /// bare hash. Returns the PHC-encoded string (`$argon2id$...`) which embeds the
 /// salt and parameters.
 pub fn hash_password(password: &str) -> Result<String, String> {
-    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
     use argon2::Argon2;
+    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
@@ -59,8 +59,8 @@ pub fn hash_password(password: &str) -> Result<String, String> {
 fn verify_password(stored: &str, password: &str) -> (bool, bool) {
     if let Some(rest) = stored.strip_prefix("$argon2") {
         let _ = rest;
-        use argon2::password_hash::{PasswordHash, PasswordVerifier};
         use argon2::Argon2;
+        use argon2::password_hash::{PasswordHash, PasswordVerifier};
         let ok = PasswordHash::new(stored)
             .map(|parsed| {
                 Argon2::default()
@@ -86,7 +86,6 @@ pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
         .fold(0u8, |acc, (x, y)| acc | (x ^ y))
         == 0
 }
-
 
 /// Percent-encode a value for use in a query string.
 fn enc(s: &str) -> String {
@@ -236,7 +235,9 @@ fn b64(bytes: &[u8]) -> String {
 }
 fn unb64(s: &str) -> Option<Vec<u8>> {
     use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(s).ok()
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(s)
+        .ok()
 }
 
 fn hmac_hex(key: &str, msg: &str) -> String {
@@ -298,7 +299,11 @@ async fn verify_session(pool: &PgPool, token: &str, list_id: Uuid) -> Option<(St
 }
 
 /// Create a cookie session for an existing identity. Returns (raw token, max_age).
-async fn create_session(pool: &PgPool, sso_id: Uuid, keep: bool) -> Result<(String, Option<i64>), String> {
+async fn create_session(
+    pool: &PgPool,
+    sso_id: Uuid,
+    keep: bool,
+) -> Result<(String, Option<i64>), String> {
     let token = random_token();
     let ttl = if keep { KEEP_SECS } else { SESSION_SECS };
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl);
@@ -559,11 +564,13 @@ async fn ensure_sso(
     let new_exp = chrono::Utc::now() + chrono::Duration::seconds(ttl);
     if let Some(sso_id) = sso_from_cookie(pool, jar).await {
         // Extend the identity's life; reuse the existing agency cookie.
-        let _ = sqlx::query("UPDATE basic_auth_sso SET expires_at = GREATEST(expires_at, $2) WHERE id = $1")
-            .bind(sso_id)
-            .bind(new_exp)
-            .execute(pool)
-            .await;
+        let _ = sqlx::query(
+            "UPDATE basic_auth_sso SET expires_at = GREATEST(expires_at, $2) WHERE id = $1",
+        )
+        .bind(sso_id)
+        .bind(new_exp)
+        .execute(pool)
+        .await;
         return Ok((sso_id, None));
     }
     let sso_id = sqlx::query_scalar::<_, Uuid>(
@@ -657,7 +664,13 @@ const LOGIN_TPL: &str = r#"<h1 class="h-page">{{l_title}}</h1>
 <button class="btn btn-primary btn-lg" type="submit" style="width:100%;margin-top:1rem">{{l_title}}</button>
 </form>"#;
 
-fn login_form_html(lang: Lang, list_id: Uuid, cb: &str, back: &str, error: Option<&str>) -> Html<String> {
+fn login_form_html(
+    lang: Lang,
+    list_id: Uuid,
+    cb: &str,
+    back: &str,
+    error: Option<&str>,
+) -> Html<String> {
     let data = plan_ai_html::mustache::MapBuilder::new()
         .insert_str("list_id", list_id.to_string())
         .insert_str("cb", cb)
@@ -669,7 +682,11 @@ fn login_form_html(lang: Lang, list_id: Uuid, cb: &str, back: &str, error: Optio
         .insert_bool("has_error", error.is_some())
         .insert_str("error", error.unwrap_or(""))
         .build();
-    page(lang, &tr(lang, "sign-in"), &plan_ai_html::render_data(LOGIN_TPL, &data))
+    page(
+        lang,
+        &tr(lang, "sign-in"),
+        &plan_ai_html::render_data(LOGIN_TPL, &data),
+    )
 }
 
 // The `<meta http-equiv="refresh">` reloads the GET login page (carrying cb/back)
@@ -687,10 +704,17 @@ fn locked_form_html(lang: Lang, list_id: Uuid, cb: &str, back: &str, secs: u64) 
         .insert_str("back", enc(back))
         .insert_str("secs", secs.to_string())
         .insert_str("l_title", tr(lang, "sign-in"))
-        .insert_str("l_msg", tr_args(lang, "too-many-attempts", &[("secs", &secs.to_string())]))
+        .insert_str(
+            "l_msg",
+            tr_args(lang, "too-many-attempts", &[("secs", &secs.to_string())]),
+        )
         .insert_str("l_retry", tr(lang, "locked-retry"))
         .build();
-    page(lang, &tr(lang, "sign-in"), &plan_ai_html::render_data(LOCKED_TPL, &data))
+    page(
+        lang,
+        &tr(lang, "sign-in"),
+        &plan_ai_html::render_data(LOCKED_TPL, &data),
+    )
 }
 
 // -- handlers --
@@ -706,12 +730,18 @@ async fn login_page(
     let back = q.get("back").cloned().unwrap_or_default();
     let cb = q.get("cb").cloned().unwrap_or_default();
     if !cb_host_ok(&pool, list_id, &cb).await {
-        return (jar, (StatusCode::BAD_REQUEST, "invalid callback").into_response());
+        return (
+            jar,
+            (StatusCode::BAD_REQUEST, "invalid callback").into_response(),
+        );
     }
     // Brute-force gate: a locked-out subnet only sees the countdown (which the
     // meta refresh reloads here when it expires).
     if let Some(secs) = locked_for(client_ip(&headers)) {
-        return (jar, locked_form_html(lang, list_id, &cb, &back, secs).into_response());
+        return (
+            jar,
+            locked_form_html(lang, list_id, &cb, &back, secs).into_response(),
+        );
     }
     // Silent SSO: already proved this list on this browser → hand off, no form.
     // One-shot: guarded by a short-lived marker so that if the handed-off
@@ -746,19 +776,31 @@ async fn login_submit(
     let cb = form.get("cb").cloned().unwrap_or_default();
 
     if !cb_host_ok(&pool, list_id, &cb).await {
-        return (jar, (StatusCode::BAD_REQUEST, "invalid callback").into_response());
+        return (
+            jar,
+            (StatusCode::BAD_REQUEST, "invalid callback").into_response(),
+        );
     }
     let ip = client_ip(&headers);
     // Refuse before touching credentials while the subnet is locked.
     if let Some(secs) = locked_for(ip) {
-        return (jar, locked_form_html(lang, list_id, &cb, &back, secs).into_response());
+        return (
+            jar,
+            locked_form_html(lang, list_id, &cb, &back, secs).into_response(),
+        );
     }
     if !creds_ok(&pool, list_id, &username, &password).await {
         let secs = record_failure(ip);
         let resp = if secs > 0 {
             locked_form_html(lang, list_id, &cb, &back, secs)
         } else {
-            login_form_html(lang, list_id, &cb, &back, Some(&tr(lang, "invalid-credentials")))
+            login_form_html(
+                lang,
+                list_id,
+                &cb,
+                &back,
+                Some(&tr(lang, "invalid-credentials")),
+            )
         };
         return (jar, resp.into_response());
     }
@@ -883,7 +925,11 @@ async fn profile_page(
             for (name, user) in rows {
                 others.push_str(&format!(
                     "<li>{}</li>",
-                    tr_args(lang, "item-as", &[("name", &esc(&name)), ("user", &esc(&user))])
+                    tr_args(
+                        lang,
+                        "item-as",
+                        &[("name", &esc(&name)), ("user", &esc(&user))]
+                    )
                 ));
             }
             others.push_str("</ul>");
@@ -993,13 +1039,11 @@ async fn global_logout(
     }
 
     if let Some(list_id) = form.get("list_id").and_then(|s| Uuid::parse_str(s).ok()) {
-        let _ = sqlx::query(
-            "DELETE FROM basic_auth_sso_lists WHERE sso_id = $1 AND list_id = $2",
-        )
-        .bind(sso_id)
-        .bind(list_id)
-        .execute(&pool)
-        .await;
+        let _ = sqlx::query("DELETE FROM basic_auth_sso_lists WHERE sso_id = $1 AND list_id = $2")
+            .bind(sso_id)
+            .bind(list_id)
+            .execute(&pool)
+            .await;
     }
     (jar, Redirect::to("/agency/basic/profile").into_response())
 }

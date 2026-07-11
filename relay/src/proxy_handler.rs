@@ -528,12 +528,7 @@ fn error_page(
             .unwrap_or(""),
     );
     let html = plan_ai_html::error_page(lang, title_key, body_key);
-    (
-        code,
-        [("content-type", "text/html; charset=utf-8")],
-        html,
-    )
-        .into_response()
+    (code, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
 /// True when the client prefers an HTML error page (browser navigation).
@@ -566,12 +561,7 @@ fn error_page_with_detail(
         + &plan_ai_html::components::muted(&plan_ai_html::tr(lang, body_key))
         + &plan_ai_html::components::error(detail);
     let html = plan_ai_html::Page::new(&title, body).lang(lang).render();
-    (
-        code,
-        [("content-type", "text/html; charset=utf-8")],
-        html,
-    )
-        .into_response()
+    (code, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
 /// Build the styled sign-in page for a tunnel, resolving the server web URL
@@ -589,15 +579,21 @@ async fn unauthorized_response(
         .ok();
     let prefix = &instance_id[..std::cmp::min(12, instance_id.len())];
     let login_url = web_url.map(|url| format!("{url}/easy-access/direct/{prefix}/{tunnel_name}"));
-    let cert_login_url = state
-        .relay_url
-        .as_deref()
-        .map(|url| format!("{}/cert-login/{prefix}/{tunnel_name}", url.trim_end_matches('/')));
+    let cert_login_url = state.relay_url.as_deref().map(|url| {
+        format!(
+            "{}/cert-login/{prefix}/{tunnel_name}",
+            url.trim_end_matches('/')
+        )
+    });
     let accept_language = headers
         .get("accept-language")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    unauthorized_html(login_url.as_deref(), cert_login_url.as_deref(), accept_language)
+    unauthorized_html(
+        login_url.as_deref(),
+        cert_login_url.as_deref(),
+        accept_language,
+    )
 }
 
 // ── Catch-all: reverse proxy ───────────────────────────────────────────
@@ -650,19 +646,34 @@ async fn proxy_catchall(
     };
     let required_scope = format!("tcp:{tunnel_name}");
     if !has_scope(&self_info.scopes, &required_scope) {
-        return error_page(&headers, StatusCode::FORBIDDEN, "forbidden-title", "forbidden-body");
+        return error_page(
+            &headers,
+            StatusCode::FORBIDDEN,
+            "forbidden-title",
+            "forbidden-body",
+        );
     }
 
     let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
         Ok(v) => v,
         // Daemon offline or p2p down — either way the service is unreachable.
         Err(resp) => {
-            return error_page(&headers, resp.status(), "unreachable-title", "unreachable-body");
+            return error_page(
+                &headers,
+                resp.status(),
+                "unreachable-title",
+                "unreachable-body",
+            );
         }
     };
 
     if !state.registry.has_tunnel(&instance_id, &tunnel_name) {
-        return error_page(&headers, StatusCode::NOT_FOUND, "not-found-title", "not-found-body");
+        return error_page(
+            &headers,
+            StatusCode::NOT_FOUND,
+            "not-found-title",
+            "not-found-body",
+        );
     }
 
     // Collect request headers to forward.

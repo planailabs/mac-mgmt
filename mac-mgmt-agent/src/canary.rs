@@ -106,7 +106,10 @@ mod tests {
             format!("lms/{LMS_CANARY}")
         );
         assert_eq!(
-            openclaw_canary(&cfg_with(LlmProvider::Cloud, vec![cloud("anthropic", true)])),
+            openclaw_canary(&cfg_with(
+                LlmProvider::Cloud,
+                vec![cloud("anthropic", true)]
+            )),
             "anthropic/claude-haiku-4-5"
         );
         // Provider without a cheap tier → fallback.
@@ -133,7 +136,10 @@ mod tests {
         );
         // Else the provider's default model.
         assert_eq!(
-            hermes_canary(&cfg_with(LlmProvider::Cloud, vec![cloud("anthropic", true)])),
+            hermes_canary(&cfg_with(
+                LlmProvider::Cloud,
+                vec![cloud("anthropic", true)]
+            )),
             "anthropic/claude-sonnet-4-6"
         );
     }

@@ -568,7 +568,21 @@ pub async fn webspace_update(
     principal: &Principal,
     input: WebspaceUpdateInput,
 ) -> Result<(), ApiError> {
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, String, String, Option<String>, Option<Uuid>, String, Option<Uuid>)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<Uuid>,
+            String,
+            String,
+            Option<String>,
+            Option<Uuid>,
+            String,
+            Option<Uuid>,
+        ),
+    >(
         "SELECT organization_id, hosting_type, cloudflare_pages_project, cloudflare_credential_id, \
          name, path_prefix, relay_url, relay_credential_id, auth_mode, auth_basic_list_id \
          FROM webspaces WHERE id = $1",
@@ -750,7 +764,11 @@ pub async fn webspace_deploy_pages(
     .await
     .map_err(super::internal)?;
 
-    let verb = if created { "created" } else { "linked existing" };
+    let verb = if created {
+        "created"
+    } else {
+        "linked existing"
+    };
     Ok(match project.subdomain {
         Some(sub) => format!("{verb} Pages project '{ws_name}' (subdomain: {sub})"),
         None => format!("{verb} Pages project '{ws_name}'"),

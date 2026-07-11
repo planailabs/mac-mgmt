@@ -341,7 +341,9 @@ pub async fn resolve_llm(
 
     if let Some(fp) = forced_provider {
         if !matches!(fp, "ollama" | "anthropic" | "openrouter") {
-            anyhow::bail!("unknown provider '{fp}': not a built-in provider or configured OpenAI-compatible source");
+            anyhow::bail!(
+                "unknown provider '{fp}': not a built-in provider or configured OpenAI-compatible source"
+            );
         }
     }
 

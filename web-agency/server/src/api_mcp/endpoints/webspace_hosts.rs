@@ -285,9 +285,7 @@ pub async fn host_create(
             Err(_) => client
                 .create_pages_project(&account_id, &input.name, "main")
                 .await
-                .map_err(|e| {
-                    ApiError::internal(format!("failed to create Pages project: {e}"))
-                })?,
+                .map_err(|e| ApiError::internal(format!("failed to create Pages project: {e}")))?,
         };
         sqlx::query(
             "INSERT INTO webspaces (organization_id, webspace_host_id, name, path_prefix, hosting_type, cloudflare_pages_project, cloudflare_pages_project_id, cloudflare_credential_id) \
@@ -693,7 +691,9 @@ pub async fn host_move(
     principal.require_write(&input.target_org_id)?;
 
     if org_id == input.target_org_id {
-        return Err(ApiError::bad_request("host is already in that organization"));
+        return Err(ApiError::bad_request(
+            "host is already in that organization",
+        ));
     }
 
     // Host and its child folders both carry organization_id; move them together.

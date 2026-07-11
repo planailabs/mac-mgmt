@@ -37,7 +37,10 @@ mod ftl_tests {
     /// builds its bundle, which is invisible at compile time.
     fn assert_parses(name: &str, src: &str) {
         if let Err((_ast, errors)) = fluent_syntax::parser::parse(src) {
-            panic!("{name} has {} Fluent parse error(s): {errors:?}", errors.len());
+            panic!(
+                "{name} has {} Fluent parse error(s): {errors:?}",
+                errors.len()
+            );
         }
     }
 

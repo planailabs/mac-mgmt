@@ -4,11 +4,11 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
 use antithesis_workloads::env::{Ctx, Env, NodeKind};
 use antithesis_workloads::rng::Rng;
 use antithesis_workloads::workloads::cluster::{ClusterServices, ensure_cluster, ensure_nodes};
 use antithesis_workloads::{assert, goals, registry};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{CreateRunRequest, ServerSpec};
@@ -45,7 +45,10 @@ pub async fn run(
 ) -> Result<usize> {
     println!("╔══════════════════════════════════════════════╗");
     println!("║  mmrc emulator — seed={:016x}          ", opts.seed);
-    println!("║  Reproduce: mmrc emulator run --seed {} --rounds 1", opts.seed);
+    println!(
+        "║  Reproduce: mmrc emulator run --seed {} --rounds 1",
+        opts.seed
+    );
     println!("╚══════════════════════════════════════════════╝");
 
     assert::init(Some(&ecfg.run_dir.join("assertions.jsonl")));
@@ -62,7 +65,11 @@ pub async fn run(
             }
         }
     }
-    println!("── summary: {}/{} rounds passed ──", opts.rounds - failures, opts.rounds);
+    println!(
+        "── summary: {}/{} rounds passed ──",
+        opts.rounds - failures,
+        opts.rounds
+    );
     Ok(failures)
 }
 
@@ -89,7 +96,13 @@ async fn run_round(
         .await
         .context("creating mmrcd run")?;
     let run_id = run.run_id.clone();
-    persist_stage(ecfg, &run_id, &RoundStage::RunCreated { run_id: run_id.clone() });
+    persist_stage(
+        ecfg,
+        &run_id,
+        &RoundStage::RunCreated {
+            run_id: run_id.clone(),
+        },
+    );
 
     // Tear down at the end unless we're keeping a failed run.
     let result = run_round_inner(acfg, ecfg, opts, &mut rng, &run).await;
@@ -200,7 +213,9 @@ async fn run_round_inner(
     persist_stage(ecfg, &run.run_id, &RoundStage::Running { executed });
 
     // 5. Final EC sweep.
-    goals::all_services_healthy(&ctx).await.context("final: services")?;
+    goals::all_services_healthy(&ctx)
+        .await
+        .context("final: services")?;
     goals::heartbeats_fresh(&ctx, &ctx.instances)
         .await
         .context("final: heartbeats")?;

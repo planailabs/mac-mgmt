@@ -28,9 +28,7 @@ pub fn ActionTemplateDetail(id: String) -> Element {
         let id = id.clone();
         move || {
             let id = id.clone();
-            async move {
-                action_template_id_options(ActionTemplateInputOptionsInput { id }).await
-            }
+            async move { action_template_id_options(ActionTemplateInputOptionsInput { id }).await }
         }
     })?;
 
@@ -74,9 +72,11 @@ pub fn ActionTemplateDetail(id: String) -> Element {
             error.set(None);
             run.set(None);
             spawn(async move {
-                let started =
-                    start_action_template(ActionTemplateStartInput { id: id.clone(), params })
-                        .await;
+                let started = start_action_template(ActionTemplateStartInput {
+                    id: id.clone(),
+                    params,
+                })
+                .await;
                 let run_id = match started {
                     Ok(res) => res.run_id,
                     Err(e) => {

@@ -70,9 +70,11 @@ pub fn RelayUrlPicker(
             }
             let cred_id =
                 Uuid::parse_str(&cred).map_err(|_| "invalid credential id".to_string())?;
-            list_mac_mgmt_relay_urls(MacMgmtRelayUrlsInput { credential_id: cred_id })
-                .await
-                .map_err(|e| e.to_string())
+            list_mac_mgmt_relay_urls(MacMgmtRelayUrlsInput {
+                credential_id: cred_id,
+            })
+            .await
+            .map_err(|e| e.to_string())
         }
     });
 

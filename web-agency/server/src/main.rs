@@ -250,8 +250,8 @@ fn main() {
         dioxus::serve(move || async move {
             // Debug builds only: the dev auth bypass can never be compiled
             // into a release binary, so a stray env var in prod is inert.
-            let dev_no_auth = cfg!(debug_assertions)
-                && std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1");
+            let dev_no_auth =
+                cfg!(debug_assertions) && std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1");
             let auth_layers = if let Some(layers) = INIT.get() {
                 layers.clone()
             } else {

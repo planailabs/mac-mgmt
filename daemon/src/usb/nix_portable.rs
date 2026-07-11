@@ -234,8 +234,7 @@ fn write_executable_atomic(dest: &Path, bytes: &[u8]) -> Result<()> {
     std::fs::write(&tmp, bytes).with_context(|| format!("failed to write {}", tmp.display()))?;
     std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
         .with_context(|| format!("failed to chmod {}", tmp.display()))?;
-    std::fs::rename(&tmp, dest)
-        .with_context(|| format!("failed to install {}", dest.display()))?;
+    std::fs::rename(&tmp, dest).with_context(|| format!("failed to install {}", dest.display()))?;
     Ok(())
 }
 

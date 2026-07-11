@@ -231,7 +231,11 @@ async fn status(State(state): State<ControlState>) -> impl IntoResponse {
 }
 
 /// Map a `Result<(), String>` to an HTTP response.
-fn svc_result(action: &str, name: &str, r: Result<(), String>) -> (StatusCode, Json<serde_json::Value>) {
+fn svc_result(
+    action: &str,
+    name: &str,
+    r: Result<(), String>,
+) -> (StatusCode, Json<serde_json::Value>) {
     match r {
         Ok(()) => (
             StatusCode::OK,
@@ -244,7 +248,10 @@ fn svc_result(action: &str, name: &str, r: Result<(), String>) -> (StatusCode, J
     }
 }
 
-async fn start(State(state): State<ControlState>, Json(req): Json<ServiceReq>) -> impl IntoResponse {
+async fn start(
+    State(state): State<ControlState>,
+    Json(req): Json<ServiceReq>,
+) -> impl IntoResponse {
     let r = match client(&state).await {
         Ok(mut c) => c.start_service(&req.name).await.map_err(|e| e.to_string()),
         Err(e) => Err(e),
@@ -265,7 +272,10 @@ async fn restart(
     Json(req): Json<ServiceReq>,
 ) -> impl IntoResponse {
     let r = match client(&state).await {
-        Ok(mut c) => c.restart_service(&req.name).await.map_err(|e| e.to_string()),
+        Ok(mut c) => c
+            .restart_service(&req.name)
+            .await
+            .map_err(|e| e.to_string()),
         Err(e) => Err(e),
     };
     svc_result("restart", &req.name, r)

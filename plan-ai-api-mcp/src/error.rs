@@ -1,7 +1,7 @@
 //! The framework error type, mappable to both HTTP responses and MCP errors.
 
-use axum::response::{IntoResponse, Response};
 use axum::Json;
+use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 
 /// An endpoint failure. Handlers return `Result<Output, ApiError>`; the

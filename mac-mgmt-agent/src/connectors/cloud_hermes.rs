@@ -261,8 +261,14 @@ mod tests {
         configs.insert("cloud".into(), serde_json::to_value(&cfgs).unwrap());
 
         let env = CloudHermes { set_default: true }.service_env("hermes", &configs);
-        assert_eq!(env.get("ANTHROPIC_API_KEY").map(String::as_str), Some("sk-ant"));
-        assert_eq!(env.get("MOONSHOT_API_KEY").map(String::as_str), Some("sk-moon"));
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY").map(String::as_str),
+            Some("sk-ant")
+        );
+        assert_eq!(
+            env.get("MOONSHOT_API_KEY").map(String::as_str),
+            Some("sk-moon")
+        );
         assert!(
             !env.contains_key("AWS_ACCESS_KEY_ID"),
             "bedrock authenticates via AWS creds, not a key env"

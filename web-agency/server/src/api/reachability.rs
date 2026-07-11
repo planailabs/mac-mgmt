@@ -50,18 +50,20 @@ async fn run_checks(pool: &PgPool) -> anyhow::Result<()> {
 
     let webspace_hosts: Vec<WebspaceHost> = hosts
         .into_iter()
-        .map(|(webspace_host_id, organization_id, domain, subdomain, kind)| {
-            let hostname = match subdomain.as_deref() {
-                Some(sub) if sub != "@" => format!("{sub}.{domain}"),
-                _ => domain,
-            };
-            WebspaceHost {
-                webspace_host_id,
-                organization_id,
-                hostname,
-                kind,
-            }
-        })
+        .map(
+            |(webspace_host_id, organization_id, domain, subdomain, kind)| {
+                let hostname = match subdomain.as_deref() {
+                    Some(sub) if sub != "@" => format!("{sub}.{domain}"),
+                    _ => domain,
+                };
+                WebspaceHost {
+                    webspace_host_id,
+                    organization_id,
+                    hostname,
+                    kind,
+                }
+            },
+        )
         .collect();
 
     let current_hostnames: HashSet<String> =

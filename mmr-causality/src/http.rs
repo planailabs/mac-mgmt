@@ -91,7 +91,9 @@ async fn create_run(
     if !authed(&headers, &st.token) {
         return Err(err(StatusCode::UNAUTHORIZED, "bad token"));
     }
-    let n = st.counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let n = st
+        .counter
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let run_id = format!("r{n:04}");
     st.orch
         .create_run(&run_id, &req)

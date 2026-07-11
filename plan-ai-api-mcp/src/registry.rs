@@ -100,8 +100,9 @@ impl Action {
     }
 }
 
-type CallFn<S> =
-    Box<dyn Fn(S, Arc<Principal>, Value) -> BoxFuture<'static, Result<Value, ApiError>> + Send + Sync>;
+type CallFn<S> = Box<
+    dyn Fn(S, Arc<Principal>, Value) -> BoxFuture<'static, Result<Value, ApiError>> + Send + Sync,
+>;
 
 /// A single registered endpoint, erased to JSON in/out.
 pub struct ErasedEndpoint<S> {
@@ -259,8 +260,7 @@ impl<S: Clone + Send + Sync + 'static> Registry<S> {
         let openapi: utoipa::openapi::OpenApi = serde_json::from_value(self.openapi_json())
             .expect("generated OpenAPI must parse into utoipa::openapi::OpenApi");
         router.merge(
-            utoipa_swagger_ui::SwaggerUi::new("/api/v1/docs")
-                .url("/api/v1/openapi.json", openapi),
+            utoipa_swagger_ui::SwaggerUi::new("/api/v1/docs").url("/api/v1/openapi.json", openapi),
         )
     }
 
@@ -581,12 +581,10 @@ fn objectify_bool_schemas(value: &mut Value) {
                         }
                     }
                     // Single nested schemas.
-                    "items" | "additionalItems" | "not" | "contains" | "propertyNames"
-                    | "if" | "then" | "else" => objectify_bool_schemas(child),
+                    "items" | "additionalItems" | "not" | "contains" | "propertyNames" | "if"
+                    | "then" | "else" => objectify_bool_schemas(child),
                     // Bool is fine here (utoipa models it as "free-form").
-                    "additionalProperties" if !child.is_boolean() => {
-                        objectify_bool_schemas(child)
-                    }
+                    "additionalProperties" if !child.is_boolean() => objectify_bool_schemas(child),
                     // Arrays of schemas.
                     "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
                         if let Value::Array(schemas) = child {
@@ -645,9 +643,10 @@ mod tests {
         let mut reg = Registry::new(Arc::new(NoAuth));
         {
             let mut r = reg.resource("things", "thing", "Things");
-            r.create("Create a thing.", |_state: (), _p, input: FreeFormInput| async move {
-                Ok(input.any)
-            });
+            r.create(
+                "Create a thing.",
+                |_state: (), _p, input: FreeFormInput| async move { Ok(input.any) },
+            );
         }
         let doc = reg.openapi_json();
         let parsed: Result<utoipa::openapi::OpenApi, _> = serde_json::from_value(doc.clone());
@@ -724,9 +723,7 @@ where
         (true, false) => mr.on(filter, {
             move |headers: HeaderMap, Path(id): Path<String>| {
                 let (ep, auth, state) = (ep.clone(), auth.clone(), state.clone());
-                async move {
-                    dispatch(ep, auth, state, headers, json!({ "id": id })).await
-                }
+                async move { dispatch(ep, auth, state, headers, json!({ "id": id })).await }
             }
         }),
         // Item write (PATCH/custom with {id}): input = body merged with { id }.
@@ -735,9 +732,7 @@ where
                 let (ep, auth, state) = (ep.clone(), auth.clone(), state.clone());
                 async move {
                     match json_body(&body) {
-                        Ok(input) => {
-                            dispatch(ep, auth, state, headers, with_id(input, id)).await
-                        }
+                        Ok(input) => dispatch(ep, auth, state, headers, with_id(input, id)).await,
                         Err(e) => e.into_response(),
                     }
                 }
@@ -750,7 +745,8 @@ fn json_body(bytes: &Bytes) -> Result<Value, ApiError> {
     if bytes.is_empty() {
         return Ok(json!({}));
     }
-    serde_json::from_slice(bytes).map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))
+    serde_json::from_slice(bytes)
+        .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))
 }
 
 fn with_id(value: Value, id: String) -> Value {
@@ -848,4 +844,3 @@ fn rewrite_refs(v: &mut Value) {
         _ => {}
     }
 }
-

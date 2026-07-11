@@ -51,8 +51,6 @@ pub use mac_mgmt_agent::remote_ssh;
 pub mod scripts;
 #[cfg(feature = "self-update")]
 pub mod self_update;
-/// Re-export common sentry helpers for backwards compatibility.
-pub use mac_mgmt_common::sentry_ext;
 pub use mac_mgmt_agent::secrets_cache;
 pub use mac_mgmt_agent::server_push;
 pub use mac_mgmt_agent::service;
@@ -62,6 +60,8 @@ pub use mac_mgmt_agent::service_mgmt;
 pub use mac_mgmt_agent::services;
 #[cfg(feature = "relay")]
 pub use mac_mgmt_agent::shell_tunnels;
+/// Re-export common sentry helpers for backwards compatibility.
+pub use mac_mgmt_common::sentry_ext;
 pub mod skills;
 pub mod status;
 pub mod systemctl;

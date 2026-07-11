@@ -51,8 +51,11 @@ impl CloudOpenClaw {
             // to — and always include — the resolved default model. For a
             // custom provider with no model catalog, the configured
             // default_model is the only model info available.
-            let mut model_ids: Vec<String> =
-                config.models.iter().map(|m| model_id(m).to_string()).collect();
+            let mut model_ids: Vec<String> = config
+                .models
+                .iter()
+                .map(|m| model_id(m).to_string())
+                .collect();
             let default_id = model_id(&resolve_model(config)).to_string();
             if !default_id.is_empty() && !model_ids.iter().any(|id| *id == default_id) {
                 model_ids.push(default_id);
@@ -294,8 +297,14 @@ mod tests {
             CloudOpenClaw::key_env_vars(&cfgs).into_iter().collect();
         // Built-in uses its canonical env var; custom uses the generated name
         // matching the `${MOONSHOT_API_KEY}` reference written into the config.
-        assert_eq!(map.get("ANTHROPIC_API_KEY").map(String::as_str), Some("sk-ant"));
-        assert_eq!(map.get("MOONSHOT_API_KEY").map(String::as_str), Some("sk-moon"));
+        assert_eq!(
+            map.get("ANTHROPIC_API_KEY").map(String::as_str),
+            Some("sk-ant")
+        );
+        assert_eq!(
+            map.get("MOONSHOT_API_KEY").map(String::as_str),
+            Some("sk-moon")
+        );
         assert_eq!(map.len(), 2, "providers without a key are skipped");
     }
 }

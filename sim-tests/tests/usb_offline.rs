@@ -134,7 +134,11 @@ async fn control_api_offline_lists_and_controls_services() {
     assert_eq!(svc["running"], serde_json::json!(true), "running initially");
 
     // Stop → not running.
-    let r = http_post(&format!("{base}/usb/stop"), serde_json::json!({"name":"test-svc"})).await;
+    let r = http_post(
+        &format!("{base}/usb/stop"),
+        serde_json::json!({"name":"test-svc"}),
+    )
+    .await;
     assert!(r.status().is_success());
     tokio::time::sleep(Duration::from_millis(300)).await;
     let status = http_get_json(&format!("{base}/status")).await;
@@ -147,7 +151,11 @@ async fn control_api_offline_lists_and_controls_services() {
     assert_eq!(svc["running"], serde_json::json!(false), "stopped");
 
     // Start → running again.
-    let r = http_post(&format!("{base}/usb/start"), serde_json::json!({"name":"test-svc"})).await;
+    let r = http_post(
+        &format!("{base}/usb/start"),
+        serde_json::json!({"name":"test-svc"}),
+    )
+    .await;
     assert!(r.status().is_success());
     tokio::time::sleep(Duration::from_millis(300)).await;
     let status = http_get_json(&format!("{base}/status")).await;
@@ -160,11 +168,19 @@ async fn control_api_offline_lists_and_controls_services() {
     assert_eq!(svc["running"], serde_json::json!(true), "restarted");
 
     // Restart → still running.
-    let r = http_post(&format!("{base}/usb/restart"), serde_json::json!({"name":"test-svc"})).await;
+    let r = http_post(
+        &format!("{base}/usb/restart"),
+        serde_json::json!({"name":"test-svc"}),
+    )
+    .await;
     assert!(r.status().is_success());
 
     // Install is refused offline (409, no network).
-    let r = http_post(&format!("{base}/usb/install"), serde_json::json!({"name":"test-svc"})).await;
+    let r = http_post(
+        &format!("{base}/usb/install"),
+        serde_json::json!({"name":"test-svc"}),
+    )
+    .await;
     assert_eq!(
         r.status().as_u16(),
         409,
@@ -175,7 +191,11 @@ async fn control_api_offline_lists_and_controls_services() {
     // GET /config returns ONLY what's stored — empty object when none on disk,
     // not a full defaults dump.
     let cfg = http_get_json(&format!("{base}/config")).await;
-    assert_eq!(cfg, serde_json::json!({}), "empty config when nothing stored");
+    assert_eq!(
+        cfg,
+        serde_json::json!({}),
+        "empty config when nothing stored"
+    );
 
     // GET /config/schema returns a JSON Schema.
     let schema = http_get_json(&format!("{base}/config/schema")).await;
@@ -193,16 +213,26 @@ async fn control_api_offline_lists_and_controls_services() {
         serde_json::from_str(&std::fs::read_to_string(&cfg_write).unwrap()).unwrap();
     assert_eq!(saved["daemon"]["health_interval"], serde_json::json!("45s"));
     // Sparse: no default sections like `global`/`ollama` were written.
-    assert_eq!(saved.as_object().unwrap().len(), 1, "only the daemon section saved");
+    assert_eq!(
+        saved.as_object().unwrap().len(),
+        1,
+        "only the daemon section saved"
+    );
     assert!(saved.get("global").is_none(), "defaults not persisted");
 
     // GET now reflects exactly what was saved (still sparse).
     let cfg2 = http_get_json(&format!("{base}/config")).await;
-    assert_eq!(cfg2, serde_json::json!({ "daemon": { "health_interval": "45s" } }));
+    assert_eq!(
+        cfg2,
+        serde_json::json!({ "daemon": { "health_interval": "45s" } })
+    );
 
     // PUT garbage is rejected with 422.
-    let r = http_post_put(&format!("{base}/config"), serde_json::json!({"daemon": "not-an-object"}))
-        .await;
+    let r = http_post_put(
+        &format!("{base}/config"),
+        serde_json::json!({"daemon": "not-an-object"}),
+    )
+    .await;
     assert_eq!(r.status().as_u16(), 422, "invalid config rejected");
 
     // Tidy up the supervisor child so the test leaves no orphan `sleep`.

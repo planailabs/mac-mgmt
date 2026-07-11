@@ -90,14 +90,20 @@ impl RelayApi {
             }
             HostMode::Override { proxy_hostname } => {
                 let host = format!("{prefix}.{proxy_hostname}");
-                (format!("{}{path}", self.base), HeaderValue::from_str(&host).ok())
+                (
+                    format!("{}{path}", self.base),
+                    HeaderValue::from_str(&host).ok(),
+                )
             }
         }
     }
 
     fn get(&self, prefix: &str, path: &str) -> reqwest::RequestBuilder {
         let (url, host) = self.target(prefix, path);
-        let mut rb = self.http.get(url).header("x-proxy-token", &self.proxy_token);
+        let mut rb = self
+            .http
+            .get(url)
+            .header("x-proxy-token", &self.proxy_token);
         if let Some(h) = host {
             rb = rb.header(reqwest::header::HOST, h);
         }
@@ -106,7 +112,10 @@ impl RelayApi {
 
     fn post(&self, prefix: &str, path: &str) -> reqwest::RequestBuilder {
         let (url, host) = self.target(prefix, path);
-        let mut rb = self.http.post(url).header("x-proxy-token", &self.proxy_token);
+        let mut rb = self
+            .http
+            .post(url)
+            .header("x-proxy-token", &self.proxy_token);
         if let Some(h) = host {
             rb = rb.header(reqwest::header::HOST, h);
         }
@@ -204,7 +213,11 @@ impl RelayApi {
 
     /// List the daemon's advertised TCP tunnels.
     pub async fn tunnels(&self, prefix: &str) -> Result<serde_json::Value> {
-        let resp = self.get(prefix, "/api/tunnels").send().await.context("tunnels")?;
+        let resp = self
+            .get(prefix, "/api/tunnels")
+            .send()
+            .await
+            .context("tunnels")?;
         let status = resp.status();
         if !status.is_success() {
             anyhow::bail!("tunnels returned {status}");

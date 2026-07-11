@@ -96,7 +96,10 @@ impl MemvaultHandle {
         client.migrate_legacy_identity_files(&identity_dir);
         let migrated = client.migrate_tokens_to_keystore();
         if migrated > 0 {
-            info!(count = migrated, "migrated legacy redb tokens into keystore");
+            info!(
+                count = migrated,
+                "migrated legacy redb tokens into keystore"
+            );
         }
 
         // Load the admin signing key (genesis admin) from the keystore so the
@@ -255,8 +258,7 @@ impl MemvaultHandle {
         {
             let ks = Arc::clone(client.keystore());
             tokio::spawn(async move {
-                let mut tick =
-                    tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
                 loop {
                     tick.tick().await;
                     let now_ns = std::time::SystemTime::now()
@@ -293,10 +295,7 @@ impl MemvaultHandle {
     /// bootstrap peers, and spawns the EventBus→head bridge so local writes are
     /// announced over gossip. Returns `None` if no usable identity is available.
     #[cfg(feature = "memvault")]
-    pub fn p2p_sync(
-        &self,
-        host_key: &russh::keys::PrivateKey,
-    ) -> Option<crate::p2p::MemvaultP2p> {
+    pub fn p2p_sync(&self, host_key: &russh::keys::PrivateKey) -> Option<crate::p2p::MemvaultP2p> {
         // node pubkey = ed25519 verifying key of the daemon host key, matching
         // the libp2p identity the swarm serves with.
         let node_pubkey = match crate::p2p::identity::ed25519_dalek_signing_key_from_russh(host_key)
@@ -457,7 +456,6 @@ fn default_data_dir() -> PathBuf {
         .join("memvault")
 }
 
-
 /// Read the cluster_id sidecar file (legacy daemon location). Returns
 /// `vec![0u8; 32]` if the file is absent or malformed — same sentinel
 /// `LocalClient::open` already treats as "no cluster yet".
@@ -487,4 +485,3 @@ fn resolve_cluster_id(store: &memvault_store::MemvaultStore, data_dir: &PathBuf)
     }
     from_file
 }
-

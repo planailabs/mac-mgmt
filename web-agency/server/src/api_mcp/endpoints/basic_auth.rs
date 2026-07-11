@@ -101,12 +101,14 @@ pub async fn basic_auth_list(
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, organization_name, credential_count)| BasicAuthListRow {
-            id,
-            name,
-            organization_name,
-            credential_count,
-        })
+        .map(
+            |(id, name, organization_name, credential_count)| BasicAuthListRow {
+                id,
+                name,
+                organization_name,
+                credential_count,
+            },
+        )
         .collect())
 }
 

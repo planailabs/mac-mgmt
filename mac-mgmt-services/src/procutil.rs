@@ -62,7 +62,9 @@ mod windows_imp {
     }
 
     pub fn is_alive(pid: u32) -> bool {
-        let Some(h) = open(pid, PROCESS_QUERY_LIMITED_INFORMATION) else { return false };
+        let Some(h) = open(pid, PROCESS_QUERY_LIMITED_INFORMATION) else {
+            return false;
+        };
         let mut code: u32 = 0;
         let alive = unsafe { GetExitCodeProcess(h, &mut code) != 0 } && code == STILL_ACTIVE;
         unsafe { CloseHandle(h) };
@@ -76,7 +78,11 @@ mod windows_imp {
         };
         let ok = unsafe { TerminateProcess(h, 1) != 0 };
         unsafe { CloseHandle(h) };
-        if ok { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+        if ok {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
     }
 
     /// Windows has no zombies; "reaped" == no longer alive.

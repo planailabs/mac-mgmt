@@ -33,7 +33,10 @@ pub async fn all_services_healthy(ctx: &Ctx) -> Result<()> {
     let t = &ctx.timeouts;
     eventually("all_services_healthy", t.ec, t.poll, || async {
         let machines = ctx.mgmt().list_cluster_machines(ctx.cluster_id).await?;
-        let live: Vec<_> = machines.iter().filter(|m| is_fresh(m.reported_at)).collect();
+        let live: Vec<_> = machines
+            .iter()
+            .filter(|m| is_fresh(m.reported_at))
+            .collect();
         if live.is_empty() {
             bail!("no live machines");
         }
@@ -85,7 +88,11 @@ pub async fn skills_synced(ctx: &Ctx, prefix: &str, expected: &[String]) -> Resu
         let synced: Vec<String> = json
             .get("skills")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         for want in expected {
             if !synced.iter().any(|s| s.contains(want)) {
@@ -121,11 +128,17 @@ pub async fn mcp_servers_present(ctx: &Ctx, prefix: &str, min: usize) -> Result<
 pub async fn memvault_synced(ctx: &Ctx, prefix: &str, key: &str) -> Result<()> {
     let t = &ctx.timeouts;
     eventually("memvault_synced", t.ec, t.poll, || async {
-        let out = ctx.relay().shell_exec(prefix, "memctl", Some(&format!("get {key}"))).await?;
+        let out = ctx
+            .relay()
+            .shell_exec(prefix, "memctl", Some(&format!("get {key}")))
+            .await?;
         if out.exit_code == Some(0) && !out.stdout().trim().is_empty() {
             Ok(())
         } else {
-            bail!("memvault key {key} not present on {prefix}: {:?}", out.error)
+            bail!(
+                "memvault key {key} not present on {prefix}: {:?}",
+                out.error
+            )
         }
     })
     .await

@@ -19,9 +19,10 @@ use super::ui::{
 // live in the shared api_mcp layer.
 use crate::api_mcp::endpoints::webspace_hosts::{
     DomainBinding, HostBindDomainInput, HostDeleteInput, HostFixCnameInput, HostGetInput,
-    HostMoveInput, HostRecheckCustomDomainInput, HostSetChangedetectionInput, HostUnbindDomainInput,
-    HostUpdateInput, bind_domain, delete_host, fix_cname, get_host, move_host,
-    recheck_custom_domain, set_host_changedetection, unbind_domain, update_host_settings,
+    HostMoveInput, HostRecheckCustomDomainInput, HostSetChangedetectionInput,
+    HostUnbindDomainInput, HostUpdateInput, bind_domain, delete_host, fix_cname, get_host,
+    move_host, recheck_custom_domain, set_host_changedetection, unbind_domain,
+    update_host_settings,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -79,7 +80,10 @@ async fn list_domains_for_binding(host_id: Uuid) -> Result<Vec<DomainOption>, Se
             cloudflare_zone_id,
             subdomains: subs
                 .into_iter()
-                .map(|(sid, sname)| SubdomainOption { id: sid, name: sname })
+                .map(|(sid, sname)| SubdomainOption {
+                    id: sid,
+                    name: sname,
+                })
                 .collect(),
         });
     }
@@ -96,7 +100,10 @@ async fn list_cd_creds() -> Result<Vec<CredOption>, ServerFnError> {
     .fetch_all(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(rows.into_iter().map(|(id, name)| CredOption { id, name }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| CredOption { id, name })
+        .collect())
 }
 
 #[server]
@@ -301,7 +308,11 @@ fn MoveHostSection(host_id: Uuid, current_org_id: Uuid) -> Element {
     let mut error = use_signal(|| None::<String>);
 
     let targets: Vec<_> = match &*orgs.read() {
-        Some(Ok(list)) => list.iter().filter(|o| o.id != current_org_id).cloned().collect(),
+        Some(Ok(list)) => list
+            .iter()
+            .filter(|o| o.id != current_org_id)
+            .cloned()
+            .collect(),
         _ => vec![],
     };
     if targets.is_empty() {
@@ -400,8 +411,11 @@ fn ChangeDetectionSection(
         _ => vec![],
     };
 
-    let mut selected_cred =
-        use_signal(move || current_credential_id.map(|id| id.to_string()).unwrap_or_default());
+    let mut selected_cred = use_signal(move || {
+        current_credential_id
+            .map(|id| id.to_string())
+            .unwrap_or_default()
+    });
     let mut saving = use_signal(|| false);
     let mut result_msg = use_signal(|| None::<String>);
 
@@ -468,7 +482,8 @@ fn ChangeDetectionSection(
 fn DomainBindingsSection(host_id: Uuid, kind: String, bindings: Vec<DomainBinding>) -> Element {
     let mut refresh: Signal<u32> = use_context();
     let is_cloudflare = kind == "cloudflare";
-    let domains = use_server_future(move || async move { list_domains_for_binding(host_id).await })?;
+    let domains =
+        use_server_future(move || async move { list_domains_for_binding(host_id).await })?;
     let domain_list = match &*domains.read() {
         Some(Ok(d)) => d.clone(),
         _ => vec![],

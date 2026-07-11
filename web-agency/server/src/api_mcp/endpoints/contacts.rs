@@ -82,7 +82,16 @@ pub async fn contact_list(
     Ok(rows
         .into_iter()
         .map(
-            |(id, label, first_name, last_name, email, country, spaceship_id, organization_name)| {
+            |(
+                id,
+                label,
+                first_name,
+                last_name,
+                email,
+                country,
+                spaceship_id,
+                organization_name,
+            )| {
                 ContactRow {
                     id,
                     label,

@@ -45,10 +45,14 @@ pub fn reached(what: &str) {
 /// Record an always-property outcome (the property must always hold).
 fn always(cond: bool, what: &str, details: &serde_json::Value) {
     #[cfg(feature = "antithesis")]
-    antithesis_sdk::assert_always!(cond, "workload eventual-consistency property", &json!({
-        "what": what,
-        "details": details,
-    }));
+    antithesis_sdk::assert_always!(
+        cond,
+        "workload eventual-consistency property",
+        &json!({
+            "what": what,
+            "details": details,
+        })
+    );
     #[cfg(not(feature = "antithesis"))]
     {
         let _ = (cond, what, details);
@@ -59,10 +63,14 @@ fn always(cond: bool, what: &str, details: &serde_json::Value) {
 /// across the whole test — good for "this state is reachable").
 fn sometimes(cond: bool, what: &str, details: &serde_json::Value) {
     #[cfg(feature = "antithesis")]
-    antithesis_sdk::assert_sometimes!(cond, "workload sometimes property", &json!({
-        "what": what,
-        "details": details,
-    }));
+    antithesis_sdk::assert_sometimes!(
+        cond,
+        "workload sometimes property",
+        &json!({
+            "what": what,
+            "details": details,
+        })
+    );
     #[cfg(not(feature = "antithesis"))]
     {
         let _ = (cond, what, details);

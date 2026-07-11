@@ -70,9 +70,18 @@ pub fn WebspaceHostForm() -> Element {
 
     let mut name = use_signal(String::new);
     let mut kind = use_signal(|| "proxy".to_string());
-    let mut org_id = use_signal(|| org_list.first().map(|o| o.id.to_string()).unwrap_or_default());
-    let mut cf_cred_id =
-        use_signal(|| cf_creds.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let mut org_id = use_signal(|| {
+        org_list
+            .first()
+            .map(|o| o.id.to_string())
+            .unwrap_or_default()
+    });
+    let mut cf_cred_id = use_signal(|| {
+        cf_creds
+            .first()
+            .map(|c| c.id.to_string())
+            .unwrap_or_default()
+    });
     let mut error = use_signal(|| None::<String>);
     let mut saving = use_signal(|| false);
     let nav = use_navigator();

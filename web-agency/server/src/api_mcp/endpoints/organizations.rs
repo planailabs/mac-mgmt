@@ -220,12 +220,14 @@ pub async fn organization_member_add(
 
     let user_id = match (input.user_id, input.email) {
         (Some(user_id), None) => user_id,
-        (None, Some(email)) => sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE email = $1")
-            .bind(&email)
-            .fetch_optional(pool)
-            .await
-            .map_err(super::internal)?
-            .ok_or_else(|| ApiError::not_found(format!("user {email} not found")))?,
+        (None, Some(email)) => {
+            sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE email = $1")
+                .bind(&email)
+                .fetch_optional(pool)
+                .await
+                .map_err(super::internal)?
+                .ok_or_else(|| ApiError::not_found(format!("user {email} not found")))?
+        }
         _ => {
             return Err(ApiError::bad_request(
                 "exactly one of user_id or email must be set",

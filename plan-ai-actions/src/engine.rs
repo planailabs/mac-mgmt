@@ -108,7 +108,11 @@ fn builtin_coalesce(inputs: &Map<String, Value>) -> Result<Value, EngineError> {
         .get("values")
         .and_then(Value::as_array)
         .ok_or_else(|| EngineError::Invalid("_coalesce: 'values' must be an array".into()))?;
-    let value = values.iter().find(|v| !v.is_null()).cloned().unwrap_or(Value::Null);
+    let value = values
+        .iter()
+        .find(|v| !v.is_null())
+        .cloned()
+        .unwrap_or(Value::Null);
     Ok(json!({ "value": value }))
 }
 
@@ -174,7 +178,10 @@ const RESERVED_VARS: &[&str] = &["item", "item_index"];
 
 fn valid_var_name(name: &str) -> bool {
     !name.is_empty()
-        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
@@ -191,7 +198,10 @@ pub fn validate_template(
         errors.push("template has no actions".into());
     }
     if spec.actions.len() > MAX_STEPS {
-        errors.push(format!("template has {} steps (max {MAX_STEPS})", spec.actions.len()));
+        errors.push(format!(
+            "template has {} steps (max {MAX_STEPS})",
+            spec.actions.len()
+        ));
     }
 
     for (name, input) in &spec.inputs {
@@ -200,7 +210,9 @@ pub fn validate_template(
         }
         match input.ty {
             InputType::List if input.options.as_ref().is_none_or(|o| o.is_empty()) => {
-                errors.push(format!("input '{name}': list type requires non-empty 'options'"));
+                errors.push(format!(
+                    "input '{name}': list type requires non-empty 'options'"
+                ));
             }
             InputType::Id if input.reference.is_none() => {
                 errors.push(format!("input '{name}': id type requires 'ref'"));
@@ -225,12 +237,18 @@ pub fn validate_template(
         }
         for var in step.outputs.values() {
             if !valid_var_name(var) || RESERVED_VARS.contains(&var.as_str()) {
-                errors.push(format!("{at}: output variable '{var}' is not a usable name"));
+                errors.push(format!(
+                    "{at}: output variable '{var}' is not a usable name"
+                ));
             }
         }
     }
 
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 /// Check the caller-supplied params against the declared inputs, applying
@@ -250,7 +268,9 @@ pub fn validate_params(
         let value = params.get(name).cloned().or_else(|| input.default.clone());
         let Some(value) = value else {
             if input.required {
-                return Err(EngineError::Invalid(format!("missing required parameter '{name}'")));
+                return Err(EngineError::Invalid(format!(
+                    "missing required parameter '{name}'"
+                )));
             }
             continue;
         };
@@ -258,27 +278,45 @@ pub fn validate_params(
             InputType::String => match value {
                 Value::String(_) => value,
                 Value::Number(n) => Value::String(n.to_string()),
-                _ => return Err(EngineError::Invalid(format!("parameter '{name}' must be a string"))),
+                _ => {
+                    return Err(EngineError::Invalid(format!(
+                        "parameter '{name}' must be a string"
+                    )));
+                }
             },
             InputType::Int => match &value {
                 Value::Number(n) if n.is_i64() || n.is_u64() => value,
-                Value::String(s) => s
-                    .parse::<i64>()
-                    .map(|n| json!(n))
-                    .map_err(|_| EngineError::Invalid(format!("parameter '{name}' must be an integer")))?,
-                _ => return Err(EngineError::Invalid(format!("parameter '{name}' must be an integer"))),
+                Value::String(s) => s.parse::<i64>().map(|n| json!(n)).map_err(|_| {
+                    EngineError::Invalid(format!("parameter '{name}' must be an integer"))
+                })?,
+                _ => {
+                    return Err(EngineError::Invalid(format!(
+                        "parameter '{name}' must be an integer"
+                    )));
+                }
             },
             InputType::Bool => match value {
                 Value::Bool(_) => value,
-                _ => return Err(EngineError::Invalid(format!("parameter '{name}' must be a boolean"))),
+                _ => {
+                    return Err(EngineError::Invalid(format!(
+                        "parameter '{name}' must be a boolean"
+                    )));
+                }
             },
             InputType::Id => match &value {
                 Value::String(s) if !s.is_empty() => value,
-                _ => return Err(EngineError::Invalid(format!("parameter '{name}' must be a non-empty id"))),
+                _ => {
+                    return Err(EngineError::Invalid(format!(
+                        "parameter '{name}' must be a non-empty id"
+                    )));
+                }
             },
             InputType::List => match &value {
                 Value::String(s)
-                    if input.options.as_ref().is_some_and(|opts| opts.iter().any(|o| o == s)) =>
+                    if input
+                        .options
+                        .as_ref()
+                        .is_some_and(|opts| opts.iter().any(|o| o == s)) =>
                 {
                     value
                 }
@@ -470,14 +508,25 @@ pub async fn execute_from(
 
     let mut steps = prior_steps;
 
-    for (index, step) in spec.actions.iter().enumerate().skip(start_step).take(MAX_STEPS) {
+    for (index, step) in spec
+        .actions
+        .iter()
+        .enumerate()
+        .skip(start_step)
+        .take(MAX_STEPS)
+    {
         let idx = index as u32;
         on_event(RunEvent::StepStarted {
             index: idx,
             name: step.name.clone(),
             action: step.action.clone(),
         });
-        let log = |message: String| on_event(RunEvent::Log { step_index: idx, message });
+        let log = |message: String| {
+            on_event(RunEvent::Log {
+                step_index: idx,
+                message,
+            })
+        };
 
         let mut report = run_step(step, &mut variables, &env, dispatcher, builtins, &log).await;
         if step.no_log {
@@ -485,7 +534,9 @@ pub async fn execute_from(
             // redacted at emission time inside run_step.
             report.inputs = report.inputs.map(|_| json!(REDACTED));
             report.output = report.output.map(|_| json!(REDACTED));
-            report.error = report.error.map(|_| format!("step failed ({REDACTED} by no_log)"));
+            report.error = report
+                .error
+                .map(|_| format!("step failed ({REDACTED} by no_log)"));
         }
         let failed = report.status == StepStatus::Failed;
 
@@ -497,14 +548,26 @@ pub async fn execute_from(
         });
 
         if failed {
-            let report = RunReport { ok: false, steps, variables: redact_vars(variables) };
-            on_event(RunEvent::RunFinished { report: report.clone() });
+            let report = RunReport {
+                ok: false,
+                steps,
+                variables: redact_vars(variables),
+            };
+            on_event(RunEvent::RunFinished {
+                report: report.clone(),
+            });
             return report;
         }
     }
 
-    let report = RunReport { ok: true, steps, variables: redact_vars(variables) };
-    on_event(RunEvent::RunFinished { report: report.clone() });
+    let report = RunReport {
+        ok: true,
+        steps,
+        variables: redact_vars(variables),
+    };
+    on_event(RunEvent::RunFinished {
+        report: report.clone(),
+    });
     report
 }
 
@@ -543,7 +606,11 @@ async fn run_step(
         } else {
             log(format!("failed: {error}"));
         }
-        StepReport { status: StepStatus::Failed, error: Some(error.to_string()), ..report }
+        StepReport {
+            status: StepStatus::Failed,
+            error: Some(error.to_string()),
+            ..report
+        }
     };
 
     // Resolve the loop items (a single implicit iteration when absent).
@@ -554,7 +621,10 @@ async fn run_step(
             Ok(Value::Array(items)) => {
                 return fail(
                     base(StepStatus::Ok),
-                    EngineError::Invalid(format!("loop has {} items (max {MAX_LOOP_ITEMS})", items.len())),
+                    EngineError::Invalid(format!(
+                        "loop has {} items (max {MAX_LOOP_ITEMS})",
+                        items.len()
+                    )),
                 );
             }
             Ok(other) => {
@@ -615,10 +685,14 @@ async fn run_step(
             let result = if step.action.starts_with('_') {
                 builtins
                     .get(&step.action)
-                    .ok_or_else(|| EngineError::Invalid(format!("unknown builtin '{}'", step.action)))
+                    .ok_or_else(|| {
+                        EngineError::Invalid(format!("unknown builtin '{}'", step.action))
+                    })
                     .and_then(|f| f(&resolved))
             } else {
-                dispatcher.call(&step.action, Value::Object(resolved.clone())).await
+                dispatcher
+                    .call(&step.action, Value::Object(resolved.clone()))
+                    .await
             };
             match result {
                 Ok(value) => {
@@ -626,14 +700,26 @@ async fn run_step(
                     break;
                 }
                 Err(e) if attempt < attempts => {
-                    let detail = if step.no_log { REDACTED.to_string() } else { e.to_string() };
-                    log(format!("attempt {attempt}/{attempts} failed: {detail}; retrying in {}s", step.delay));
+                    let detail = if step.no_log {
+                        REDACTED.to_string()
+                    } else {
+                        e.to_string()
+                    };
+                    log(format!(
+                        "attempt {attempt}/{attempts} failed: {detail}; retrying in {}s",
+                        step.delay
+                    ));
                     tokio::time::sleep(std::time::Duration::from_secs(step.delay)).await;
                 }
                 Err(e) => {
-                    let detail = if step.no_log { REDACTED.to_string() } else { e.to_string() };
+                    let detail = if step.no_log {
+                        REDACTED.to_string()
+                    } else {
+                        e.to_string()
+                    };
                     log(format!("attempt {attempt}/{attempts} failed: {detail}"));
-                    let inputs = collect_iter(items.is_some(), iter_inputs, Value::Object(resolved));
+                    let inputs =
+                        collect_iter(items.is_some(), iter_inputs, Value::Object(resolved));
                     return StepReport {
                         inputs: Some(inputs),
                         error: Some(e.to_string()),
@@ -693,7 +779,11 @@ async fn run_step(
         variables.insert(var.clone(), value);
     }
 
-    let status = if any_ran { StepStatus::Ok } else { StepStatus::Skipped };
+    let status = if any_ran {
+        StepStatus::Ok
+    } else {
+        StepStatus::Skipped
+    };
     StepReport {
         inputs: Some(collect_all(items.is_some(), iter_inputs)),
         output: Some(collect_all(items.is_some(), iter_outputs)),
@@ -732,7 +822,10 @@ mod tests {
 
     impl MockDispatcher {
         fn new(replies: Vec<Result<Value, String>>) -> Self {
-            Self { calls: Mutex::new(Vec::new()), replies: Mutex::new(replies) }
+            Self {
+                calls: Mutex::new(Vec::new()),
+                replies: Mutex::new(replies),
+            }
         }
     }
 
@@ -762,8 +855,14 @@ mod tests {
         let template = spec(yaml);
         let vars = validate_params(&template, params.as_object().cloned().unwrap_or_default())
             .expect("params validate");
-        let report =
-            execute(&template, vars, dispatcher, &BuiltinRegistry::standard(), &sink).await;
+        let report = execute(
+            &template,
+            vars,
+            dispatcher,
+            &BuiltinRegistry::standard(),
+            &sink,
+        )
+        .await;
         (report, events.into_inner().unwrap())
     }
 
@@ -806,12 +905,15 @@ actions:
 
     #[tokio::test]
     async fn skips_create_when_present() {
-        let dispatcher =
-            MockDispatcher::new(vec![Ok(json!([{ "name": "mine", "id": "1" }]))]);
+        let dispatcher = MockDispatcher::new(vec![Ok(json!([{ "name": "mine", "id": "1" }]))]);
         let (report, _) = run(CREATE_IF_MISSING, json!({ "bla": "mine" }), &dispatcher).await;
         assert!(report.ok);
         assert_eq!(report.steps[2].status, StepStatus::Skipped);
-        assert_eq!(dispatcher.calls.lock().unwrap().len(), 1, "create not dispatched");
+        assert_eq!(
+            dispatcher.calls.lock().unwrap().len(),
+            1,
+            "create not dispatched"
+        );
         assert_eq!(report.variables["should_skip"], json!(true));
     }
 
@@ -837,7 +939,10 @@ actions:
         let (report, _) = run(yaml, json!({}), &dispatcher).await;
         assert!(report.ok, "{:?}", report.steps);
         let calls = dispatcher.calls.lock().unwrap();
-        assert_eq!(calls[1].1, json!({ "first_id": 7, "count": 2, "literal": "$data" }));
+        assert_eq!(
+            calls[1].1,
+            json!({ "first_id": 7, "count": 2, "literal": "$data" })
+        );
     }
 
     #[tokio::test]
@@ -853,7 +958,13 @@ actions:
         let (report, _) = run(yaml, json!({}), &dispatcher).await;
         assert!(!report.ok);
         assert_eq!(report.steps[0].status, StepStatus::Failed);
-        assert!(report.steps[0].error.as_deref().unwrap_or("").contains("nope"));
+        assert!(
+            report.steps[0]
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("nope")
+        );
         assert!(dispatcher.calls.lock().unwrap().is_empty());
     }
 
@@ -868,11 +979,8 @@ actions:
     inputs: { name: "{{ item }}-{{ item_index }}" }
     outputs: { ".": touched }
 "#;
-        let dispatcher = MockDispatcher::new(vec![
-            Ok(json!("ra")),
-            Ok(json!("rb")),
-            Ok(json!("rc")),
-        ]);
+        let dispatcher =
+            MockDispatcher::new(vec![Ok(json!("ra")), Ok(json!("rb")), Ok(json!("rc"))]);
         let (report, _) = run(yaml, json!({}), &dispatcher).await;
         assert!(report.ok);
         assert_eq!(report.variables["touched"], json!(["ra", "rb", "rc"]));
@@ -927,7 +1035,10 @@ actions:
                 _ => None,
             })
             .collect();
-        assert!(logs.iter().any(|m| m.contains("attempt 1/3 failed")), "{logs:?}");
+        assert!(
+            logs.iter().any(|m| m.contains("attempt 1/3 failed")),
+            "{logs:?}"
+        );
     }
 
     #[tokio::test]
@@ -942,13 +1053,18 @@ actions:
   - name: never
     action: never
 "#;
-        let dispatcher =
-            MockDispatcher::new(vec![Err("down".into()), Err("still down".into())]);
+        let dispatcher = MockDispatcher::new(vec![Err("down".into()), Err("still down".into())]);
         let (report, _) = run(yaml, json!({}), &dispatcher).await;
         assert!(!report.ok);
         assert_eq!(report.steps.len(), 1, "run stops at the failed step");
         assert_eq!(report.steps[0].status, StepStatus::Failed);
-        assert!(report.steps[0].error.as_deref().unwrap().contains("still down"));
+        assert!(
+            report.steps[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("still down")
+        );
     }
 
     #[test]
@@ -997,7 +1113,10 @@ actions:
         );
         let vars = validate_params(
             &template,
-            json!({ "name": "n", "count": "42", "mode": "fast" }).as_object().cloned().unwrap(),
+            json!({ "name": "n", "count": "42", "mode": "fast" })
+                .as_object()
+                .cloned()
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(vars["count"], json!(42));
@@ -1005,7 +1124,10 @@ actions:
 
         let err = validate_params(
             &template,
-            json!({ "name": "n", "count": 1, "mode": "warp" }).as_object().cloned().unwrap(),
+            json!({ "name": "n", "count": 1, "mode": "warp" })
+                .as_object()
+                .cloned()
+                .unwrap(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("mode"));
@@ -1039,7 +1161,9 @@ actions:
         );
 
         let out = builtin_filter(
-            json!({ "list": ["x"], "contains": "y" }).as_object().unwrap(),
+            json!({ "list": ["x"], "contains": "y" })
+                .as_object()
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(out["found"], json!(false));
@@ -1049,7 +1173,9 @@ actions:
     #[test]
     fn coalesce_and_assert_builtins() {
         let out = builtin_coalesce(
-            json!({ "values": [null, null, "id-2", "id-3"] }).as_object().unwrap(),
+            json!({ "values": [null, null, "id-2", "id-3"] })
+                .as_object()
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(out, json!({ "value": "id-2" }));
@@ -1062,7 +1188,9 @@ actions:
         // Jinja comparisons render as "true"/"false" strings.
         assert!(builtin_assert(json!({ "that": "true" }).as_object().unwrap()).is_ok());
         let err = builtin_assert(
-            json!({ "that": "false", "message": "domain not found" }).as_object().unwrap(),
+            json!({ "that": "false", "message": "domain not found" })
+                .as_object()
+                .unwrap(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("domain not found"));
@@ -1136,8 +1264,14 @@ actions:
 
         for event in &events {
             if let RunEvent::Log { message, .. } = event {
-                assert!(!message.contains("super-secret"), "log leaks token: {message}");
-                assert!(!message.contains("hunter2"), "log leaks password: {message}");
+                assert!(
+                    !message.contains("super-secret"),
+                    "log leaks token: {message}"
+                );
+                assert!(
+                    !message.contains("hunter2"),
+                    "log leaks password: {message}"
+                );
             }
         }
         // The dispatcher still received the real values.

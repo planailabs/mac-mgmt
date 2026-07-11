@@ -215,7 +215,10 @@ mod ssrf_tests {
             "ftp://example.com/",
             "file:///etc/passwd",
         ] {
-            assert!(validate_outbound_url(bad).is_err(), "{bad} should be blocked");
+            assert!(
+                validate_outbound_url(bad).is_err(),
+                "{bad} should be blocked"
+            );
         }
     }
 

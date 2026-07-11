@@ -8,9 +8,9 @@
 //! re-executed when the daemon upgrades.
 
 pub mod client;
+mod procutil;
 pub mod protocol;
 pub mod server;
-mod procutil;
 mod transport;
 
 pub use client::Client;

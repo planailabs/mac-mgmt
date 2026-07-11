@@ -1654,10 +1654,7 @@ async fn set_ns_single(
     cred_id: Uuid,
 ) -> Result<(), ApiError> {
     let cf_client = build_cf_client(pool, cred_id).await?;
-    let zone = cf_client
-        .get_zone(zone_id)
-        .await
-        .map_err(super::internal)?;
+    let zone = cf_client.get_zone(zone_id).await.map_err(super::internal)?;
     let nameservers = zone.name_servers.unwrap_or_default();
     if nameservers.is_empty() {
         return Err(ApiError::internal("zone has no nameservers"));

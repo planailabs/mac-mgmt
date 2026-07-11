@@ -231,8 +231,7 @@ async fn certificate_info(
 
 /// CSP for the HTML pages below: the plan-ai-html layout uses an inline
 /// theme script and inline styles.
-const CERT_LOGIN_CSP: &str =
-    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'";
+const CERT_LOGIN_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'";
 
 fn cert_login_page(
     status: StatusCode,

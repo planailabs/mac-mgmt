@@ -124,10 +124,7 @@ pub fn validate_args(tunnel: &ShellTunnel, user_arg: Option<&str>) -> Result<(),
 /// Build a tokio Command from a tunnel definition + optional user arg.
 /// Stdout/stderr are piped, stdin is null.
 #[cfg(feature = "services")]
-pub fn build_command(
-    tunnel: &ShellTunnel,
-    user_arg: Option<&str>,
-) -> tokio::process::Command {
+pub fn build_command(tunnel: &ShellTunnel, user_arg: Option<&str>) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(&tunnel.def.command);
     cmd.args(&tunnel.def.args);
     if let Some(arg) = user_arg {

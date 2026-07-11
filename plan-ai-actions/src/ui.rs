@@ -81,7 +81,11 @@ fn param_field(
     let key = key.to_string();
     match spec.ty {
         InputType::String => {
-            let text = current.as_ref().and_then(Value::as_str).unwrap_or("").to_string();
+            let text = current
+                .as_ref()
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let kind = if spec.secret { "password" } else { "text" };
             rsx! {
                 input {
@@ -130,7 +134,11 @@ fn param_field(
             }
         }
         InputType::List => {
-            let selected = current.as_ref().and_then(Value::as_str).unwrap_or("").to_string();
+            let selected = current
+                .as_ref()
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let options = spec.options.clone().unwrap_or_default();
             rsx! {
                 select {
@@ -147,7 +155,11 @@ fn param_field(
             }
         }
         InputType::Id => {
-            let selected = current.as_ref().and_then(Value::as_str).unwrap_or("").to_string();
+            let selected = current
+                .as_ref()
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let options = id_options.get(&key).cloned().unwrap_or_default();
             rsx! {
                 select {

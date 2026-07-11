@@ -49,18 +49,18 @@ pub async fn billing_list(
     principal: &Principal,
     _input: BillingListInput,
 ) -> Result<Vec<BillingRow>, ApiError> {
-    let rows = match principal.read_filter() {
-        None => {
-            sqlx::query_as::<_, BillingSqlRow>(
-                "SELECT id, entry_type, description, amount_cents, currency, provider, \
+    let rows =
+        match principal.read_filter() {
+            None => {
+                sqlx::query_as::<_, BillingSqlRow>(
+                    "SELECT id, entry_type, description, amount_cents, currency, provider, \
                  period_start, period_end, created_at \
                  FROM billing_entries ORDER BY created_at DESC LIMIT 100",
-            )
-            .fetch_all(pool)
-            .await
-        }
-        Some(org_ids) => {
-            sqlx::query_as::<_, BillingSqlRow>(
+                )
+                .fetch_all(pool)
+                .await
+            }
+            Some(org_ids) => sqlx::query_as::<_, BillingSqlRow>(
                 "SELECT b.id, b.entry_type, b.description, b.amount_cents, b.currency, b.provider, \
                  b.period_start, b.period_end, b.created_at \
                  FROM billing_entries b \
@@ -70,10 +70,9 @@ pub async fn billing_list(
             )
             .bind(org_ids)
             .fetch_all(pool)
-            .await
+            .await,
         }
-    }
-    .map_err(super::internal)?;
+        .map_err(super::internal)?;
 
     Ok(rows
         .into_iter()

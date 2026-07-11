@@ -39,15 +39,14 @@ async fn load_folder_form_data(host_id: Uuid) -> Result<FolderFormData, ServerFn
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let (host_name, host_kind, org_id) =
-        sqlx::query_as::<_, (String, String, Uuid)>(
-            "SELECT name, kind, organization_id FROM webspace_hosts WHERE id = $1",
-        )
-        .bind(host_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .ok_or_else(|| ServerFnError::new("host not found"))?;
+    let (host_name, host_kind, org_id) = sqlx::query_as::<_, (String, String, Uuid)>(
+        "SELECT name, kind, organization_id FROM webspace_hosts WHERE id = $1",
+    )
+    .bind(host_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("host not found"))?;
 
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
@@ -123,7 +122,9 @@ pub fn WebspaceForm(host_id: String) -> Element {
     };
 
     let host_list_route = crate::web::app::Route::WebspaceHostList {};
-    let detail_route = crate::web::app::Route::WebspaceHostDetail { id: host_id.clone() };
+    let detail_route = crate::web::app::Route::WebspaceHostDetail {
+        id: host_id.clone(),
+    };
 
     if host_kind == "cloudflare" {
         return rsx! {
@@ -140,11 +141,19 @@ pub fn WebspaceForm(host_id: String) -> Element {
     let mut hosting_type = use_signal(|| "local".to_string());
     let mut runtime = use_signal(|| "static".to_string());
     let mut relay_url = use_signal(String::new);
-    let relay_cred_id =
-        use_signal(|| mac_mgmt_creds.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let relay_cred_id = use_signal(|| {
+        mac_mgmt_creds
+            .first()
+            .map(|c| c.id.to_string())
+            .unwrap_or_default()
+    });
     let mut auth_mode = use_signal(|| "none".to_string());
-    let mut auth_basic_list_id =
-        use_signal(|| basic_auth_lists.first().map(|b| b.id.to_string()).unwrap_or_default());
+    let mut auth_basic_list_id = use_signal(|| {
+        basic_auth_lists
+            .first()
+            .map(|b| b.id.to_string())
+            .unwrap_or_default()
+    });
     let mut error = use_signal(|| None::<String>);
     let mut saving = use_signal(|| false);
     let nav = use_navigator();

@@ -120,13 +120,11 @@ async fn credential_org_opt(
     pool: &sqlx::PgPool,
     credential_id: Uuid,
 ) -> Result<Option<Option<Uuid>>, ApiError> {
-    sqlx::query_scalar::<_, Option<Uuid>>(
-        "SELECT organization_id FROM credentials WHERE id = $1",
-    )
-    .bind(credential_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(super::internal)
+    sqlx::query_scalar::<_, Option<Uuid>>("SELECT organization_id FROM credentials WHERE id = $1")
+        .bind(credential_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(super::internal)
 }
 
 /// Fetch a credential's (nullable) owning org, or 404.

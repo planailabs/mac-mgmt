@@ -114,13 +114,11 @@ pub async fn chaos_delete_node(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    let _ = sqlx::query(
-        "DELETE FROM daemon_heartbeats WHERE cluster_id = $1 AND instance_id = $2",
-    )
-    .bind(cid)
-    .bind(instance_id)
-    .execute(pool.inner())
-    .await;
+    let _ = sqlx::query("DELETE FROM daemon_heartbeats WHERE cluster_id = $1 AND instance_id = $2")
+        .bind(cid)
+        .bind(instance_id)
+        .execute(pool.inner())
+        .await;
     Ok(Status::NoContent)
 }
 

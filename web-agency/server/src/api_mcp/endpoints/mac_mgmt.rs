@@ -179,7 +179,10 @@ pub async fn mac_mgmt_machines(
     p.require_admin()?;
     let (client, base) = admin_client(pool, input.credential_id).await?;
     let resp = client
-        .get(format!("{base}/api/admin/clusters/{}/machines", input.cluster_id))
+        .get(format!(
+            "{base}/api/admin/clusters/{}/machines",
+            input.cluster_id
+        ))
         .send()
         .await
         .map_err(super::internal)?;
@@ -220,7 +223,10 @@ pub async fn mac_mgmt_token_create(
     }
     let (client, base) = admin_client(pool, input.credential_id).await?;
     let resp = client
-        .post(format!("{base}/api/admin/clusters/{}/tokens", input.cluster_id))
+        .post(format!(
+            "{base}/api/admin/clusters/{}/tokens",
+            input.cluster_id
+        ))
         .json(&serde_json::json!({ "label": input.label, "kind": input.kind }))
         .send()
         .await

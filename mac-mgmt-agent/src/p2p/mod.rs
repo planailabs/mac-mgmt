@@ -145,12 +145,7 @@ impl memvault_swarm::MemvaultHost for DaemonHost<'_> {
             .send_response(channel, resp);
     }
     fn send_join_request(&mut self, peer: &PeerId, req: memvault_net::JoinRequest) {
-        let _ = self
-            .0
-            .behaviour_mut()
-            .memvault
-            .join
-            .send_request(peer, req);
+        let _ = self.0.behaviour_mut().memvault.join.send_request(peer, req);
     }
     fn send_join_response(
         &mut self,
@@ -183,7 +178,9 @@ fn dispatch_memvault_event(
     match ev {
         MvEv::BlockExchange(RrEvent::Message {
             peer,
-            message: RrMessage::Request { channel, request, .. },
+            message: RrMessage::Request {
+                channel, request, ..
+            },
             ..
         }) => driver.on_block_request(peer, channel, request, &mut host),
         MvEv::BlockExchange(RrEvent::Message {
@@ -201,7 +198,9 @@ fn dispatch_memvault_event(
         }
         MvEv::Join(RrEvent::Message {
             peer,
-            message: RrMessage::Request { channel, request, .. },
+            message: RrMessage::Request {
+                channel, request, ..
+            },
             ..
         }) => driver.on_join_request(peer, channel, request, &mut host),
         MvEv::Join(RrEvent::Message {
@@ -1917,7 +1916,10 @@ async fn handle_ssh_session(stream: libp2p::Stream, handler_state: &Arc<handler:
 
 /// Non-Unix stub: interactive relay-SSH needs a PTY, unavailable on Windows.
 #[cfg(not(unix))]
-async fn handle_ssh_session(mut stream: libp2p::Stream, _handler_state: &Arc<handler::HandlerState>) {
+async fn handle_ssh_session(
+    mut stream: libp2p::Stream,
+    _handler_state: &Arc<handler::HandlerState>,
+) {
     use mac_mgmt_common::framing as stream_framing;
     tracing::warn!("SSH session rejected: interactive shell unsupported on this platform");
     let err = serde_json::json!({ "exit_code": -1, "error": "ssh unsupported on this platform" });

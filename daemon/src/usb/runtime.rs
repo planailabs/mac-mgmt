@@ -71,7 +71,10 @@ impl std::fmt::Display for RuntimeError {
         match self {
             RuntimeError::NeedsPortable => write!(f, "no host nix; portable runtime required"),
             RuntimeError::NeedsMacImage => {
-                write!(f, "no host nix; macOS APFS store image + native nix required")
+                write!(
+                    f,
+                    "no host nix; macOS APFS store image + native nix required"
+                )
             }
             RuntimeError::UnsupportedOs(os) => write!(f, "unsupported OS for usb runtime: {os}"),
         }
@@ -116,8 +119,7 @@ fn prepare_portable(home: &Path, offline: bool) -> Result<Runtime> {
     let static_nix =
         nix_portable::extract_static_nix(home, &np).context("failed to extract static nix")?;
 
-    store_image::enter_namespace_and_mount(home)
-        .context("failed to mount store image at /nix")?;
+    store_image::enter_namespace_and_mount(home).context("failed to mount store image at /nix")?;
 
     // Put the static nix's directory first on PATH so `nix_command("nix")`
     // (daemon/src/nix.rs) resolves to it, operating on the real mounted /nix.

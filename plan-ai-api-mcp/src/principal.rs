@@ -68,11 +68,7 @@ impl Principal {
     }
 
     /// A principal scoped to a fixed set of orgs.
-    pub fn scoped(
-        subject: impl Into<String>,
-        read: HashSet<Uuid>,
-        write: HashSet<Uuid>,
-    ) -> Self {
+    pub fn scoped(subject: impl Into<String>, read: HashSet<Uuid>, write: HashSet<Uuid>) -> Self {
         Self {
             admin: false,
             read_orgs: OrgSet::Only(read),

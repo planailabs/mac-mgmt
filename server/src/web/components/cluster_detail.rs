@@ -271,14 +271,11 @@ async fn get_cloud_init(cluster_id: String) -> Result<String, ServerFnError> {
     .fetch_optional(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let version = rollout_version
-        .or(pinned)
-        .or(latest)
-        .ok_or_else(|| {
-            ServerFnError::new(
-                "no daemon version available (no rollout, no pinned_version, no daemon_versions rows)",
-            )
-        })?;
+    let version = rollout_version.or(pinned).or(latest).ok_or_else(|| {
+        ServerFnError::new(
+            "no daemon version available (no rollout, no pinned_version, no daemon_versions rows)",
+        )
+    })?;
 
     let server_url = crate::config::config()
         .api
