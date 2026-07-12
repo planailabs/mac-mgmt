@@ -1,11 +1,13 @@
 [workspace]
-members = ["antithesis-workloads", "common", "common/plan-ai-actions", "common/plan-ai-api-mcp", "common/plan-ai-api-mcp-macros", "common/plan-ai-auth", "common/plan-ai-html", "daemon", "mac-mgmt-agent", "mac-mgmt-executor", "mac-mgmt-healer", "mac-mgmt-services", "mac-mgmt-ws", "mmr-causality", "nix-driver-sync", "plan-ai-cleaner", "plan-ai-cloud", "plan-ai-memvault-share-agent", "runner", "server", "relay", "relay-ssh", "sim-tests", "trainer"]
+members = ["antithesis-workloads", "common", "common/plan-ai-api-mcp", "common/plan-ai-api-mcp-macros", "common/plan-ai-auth", "common/plan-ai-html", "daemon", "mac-mgmt-agent", "mac-mgmt-executor", "mac-mgmt-healer", "mac-mgmt-services", "mac-mgmt-ws", "mmr-causality", "nix-driver-sync", "plan-ai-cleaner", "plan-ai-cloud", "plan-ai-memvault-share-agent", "runner", "server", "relay", "relay-ssh", "sim-tests", "trainer"]
 # memvault is an independent submodule with its own workspace root and is NOT a
 # member here (Cargo workspaces cannot nest). Crates that need its crates — or
 # the plan-ai-design submodule vendored inside it — depend on them by path,
 # resolving against memvault's own workspace. Excluded so member scanning never
 # tries to absorb the subtree.
-exclude = ["design", "memvault", "mac-mgmt-overview", "config-ui"]
+# common/plan-ai-actions is not a member: web-agency is its only consumer and
+# its plan-ai-design path dep only resolves in the web-agency layout.
+exclude = ["common/plan-ai-actions", "memvault", "mac-mgmt-overview", "config-ui"]
 resolver = "3"
 
 [workspace.dependencies]
