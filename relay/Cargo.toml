@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
-plan-ai-html = { path = "../plan-ai-html" }
+plan-ai-html = { path = "../common/plan-ai-html" }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 futures-util = "0.3"
 reqwest = { workspace = true }

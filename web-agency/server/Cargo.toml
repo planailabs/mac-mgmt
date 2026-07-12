@@ -12,7 +12,7 @@ server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "d
 [dependencies]
 dioxus = { version = "0.8.0-alpha.0", features = ["fullstack", "router"], optional = true }
 plan-ai-design = { path = "../../memvault/plan-ai-design", optional = true }
-plan-ai-html = { path = "../../plan-ai-html", optional = true }
+plan-ai-html = { path = "../../common/plan-ai-html", optional = true }
 time = { version = "0.3", optional = true }
 wasm-bindgen = { version = "=0.2.121", optional = true }
 web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
@@ -46,9 +46,9 @@ pulldown-cmark = { version = "0.12", optional = true }
 rust-embed = { version = "8", features = ["include-exclude"], optional = true }
 thiserror = { version = "2", optional = true }
 plan-ai-auth = { path = "../../plan-ai-auth" }
-plan-ai-api-mcp = { path = "../../plan-ai-api-mcp", optional = true }
+plan-ai-api-mcp = { path = "../../common/plan-ai-api-mcp", optional = true }
 plan-ai-actions = { path = "../../plan-ai-actions", optional = true }
-plan-ai-api-mcp-macros = { path = "../../plan-ai-api-mcp-macros" }
+plan-ai-api-mcp-macros = { path = "../../common/plan-ai-api-mcp-macros" }
 schemars = { version = "1.2", features = ["derive", "uuid1"] }
 cloudflare-api = { path = "../cloudflare-api", optional = true }
 spaceship-api = { path = "../spaceship-api", optional = true }

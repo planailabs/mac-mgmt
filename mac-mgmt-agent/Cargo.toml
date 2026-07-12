@@ -65,7 +65,7 @@ sysinfo = { version = "0.33", default-features = false, features = ["system", "d
 regex = "1"
 which = "7"
 memvault-api = { path = "../memvault/crates/memvault-api" }
-plan-ai-html = { path = "../plan-ai-html" }
+plan-ai-html = { path = "../common/plan-ai-html" }
 memctl = { path = "../memvault/crates/memctl", default-features = false }
 aes-gcm = "0.10"
 tokio-tungstenite = "0.26"

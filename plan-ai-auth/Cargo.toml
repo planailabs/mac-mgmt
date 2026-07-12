@@ -24,7 +24,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Server-only dependencies
 axum = { version = "0.8", optional = true }
-plan-ai-html = { path = "../plan-ai-html", optional = true }
+plan-ai-html = { path = "../common/plan-ai-html", optional = true }
 axum-oidc-client = { version = "0.5", features = ["sql-cache-postgres", "redis"], optional = true }
 axum-extra = { version = "0.10", features = ["cookie-private"], optional = true }
 percent-encoding = { version = "2", optional = true }
