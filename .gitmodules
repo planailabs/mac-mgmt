@@ -1,3 +1,6 @@
 [submodule "memvault"]
 	path = memvault
 	url = ../memvault
+[submodule "common"]
+	path = common
+	url = ../common
