@@ -157,9 +157,6 @@ in
     description = "Mac management server (skill importer only)";
   };
 
-  web-agency-server = prev.callPackage ./web-agency/server/package.nix { inherit gitSha; };
-  web-agency-proxy = prev.callPackage ./web-agency/proxy/package.nix { };
-
   mac-mgmt-relay = prev.callPackage ./relay/package.nix { };
   mac-mgmt-runner = prev.callPackage ./runner/package.nix { inherit gitSha; };
   mmr-causality = prev.callPackage ./mmr-causality/package.nix { inherit gitSha; };

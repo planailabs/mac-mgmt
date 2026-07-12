@@ -21,8 +21,6 @@
     {
       overlays.default = import ./overlay.nix { gitSha = self.rev or self.dirtyRev or "unknown"; };
       nixosModules.default = import ./server/module.nix;
-      nixosModules.web-agency = import ./web-agency/server/module.nix;
-      nixosModules.web-agency-proxy = import ./web-agency/proxy/module.nix;
       nixosModules.daemon = import ./daemon/module.nix;
       nixosModules.relay = import ./relay/module.nix;
       nixosModules.runner = import ./runner/module.nix;
@@ -284,7 +282,7 @@
           pkgs.libiconv
         ];
 
-        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-server-mgmt mac-mgmt-server-skill-center mac-mgmt-server-skill-importer mac-mgmt-relay mac-mgmt-runner mmr-causality mac-mgmt-relay-ssh web-agency-server web-agency-proxy nix-driver-sync;
+        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-server-mgmt mac-mgmt-server-skill-center mac-mgmt-server-skill-importer mac-mgmt-relay mac-mgmt-runner mmr-causality mac-mgmt-relay-ssh nix-driver-sync;
         relay-ssh = mac-mgmt-relay-ssh;
 
         # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy
@@ -324,9 +322,6 @@
             xz  # for nixpkgs archive generation
             xzar-client  # binary cache client
 
-            # web-agency (cargo-progenitor installed via: cargo install cargo-progenitor)
-            wrangler
-
             # Trainer fine-tuning (Python + CUDA/Vulkan). Keep this on 3.13
             # until torchao supports nixpkgs' default Python 3.14.
             (python313.withPackages (ps: with ps; [
@@ -344,7 +339,8 @@
               unsloth
             ]))
 
-            # web-agency-proxy (BoringSSL build via boring-sys)
+            # native C/C++ build deps (aws-lc-rs and friends need cmake/clang;
+            # libclang backs bindgen via LIBCLANG_PATH below)
             cmake
             clang
             libclang.lib
@@ -387,8 +383,6 @@
           runner = mac-mgmt-runner;
           mmr-causality = mmr-causality;
           relay-ssh = relay-ssh;
-          web-agency = web-agency-server;
-          web-agency-proxy = web-agency-proxy;
           macosx-sdk = macosx-sdk;
           nix-driver-sync = nix-driver-sync;
           dioxus-cli-patched = pkgs.dioxus-cli-patched;
