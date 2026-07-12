@@ -7,7 +7,7 @@ use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     DataTable, ErrorText, HelpText, PageHeader, SectionHeading, SortState, SortableTh, Td, TdMono,
-    TdMuted, Th,
+    TdMuted, Th, page_window,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -289,6 +289,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
 fn PathsTable(list: Vec<DaemonStorePath>, api_base_url: String, version: String) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
     let sort = use_signal::<SortState>(|| ("system".to_string(), true));
 
     let list_clone = list.clone();
@@ -319,18 +320,18 @@ fn PathsTable(list: Vec<DaemonStorePath>, api_base_url: String, version: String)
     let total = list.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 SortableTh { label: t!("daemon-version-detail-col-system"), sort_key: "system".to_string(), sort }
                 SortableTh { label: t!("daemon-version-detail-col-store-path"), sort_key: "store_path".to_string(), sort }
                 Th { "" }
             },
             body: rsx! {
-                for p in filtered.read().iter().take(limit_val) {
+                for p in filtered.read().iter().skip(start).take(limit_val) {
                     {
                         let dl_url = format!("{}/api/daemon-download/{}/{}", api_base_url, version, p.system);
                         rsx! {
@@ -355,6 +356,7 @@ fn PathsTable(list: Vec<DaemonStorePath>, api_base_url: String, version: String)
 fn ClustersTable(list: Vec<VersionCluster>) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
     let sort = use_signal::<SortState>(|| ("cluster".to_string(), true));
 
     let list_clone = list.clone();
@@ -383,17 +385,17 @@ fn ClustersTable(list: Vec<VersionCluster>) -> Element {
     let total = list.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 SortableTh { label: t!("daemon-version-detail-col-cluster"), sort_key: "cluster".to_string(), sort }
                 SortableTh { label: t!("daemon-version-detail-col-instances"), sort_key: "instances".to_string(), sort }
             },
             body: rsx! {
-                for c in filtered.read().iter().take(limit_val) {
+                for c in filtered.read().iter().skip(start).take(limit_val) {
                     tr { key: "{c.id}",
                         Td { class: "text-sm",
                             Link { to: Route::ClusterDetail { id: c.id.to_string() }, class: "link",
@@ -412,6 +414,7 @@ fn ClustersTable(list: Vec<VersionCluster>) -> Element {
 fn RolloutsTable(list: Vec<VersionRollout>) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
     let sort = use_signal::<SortState>(|| ("created".to_string(), false));
 
     let list_clone = list.clone();
@@ -444,18 +447,18 @@ fn RolloutsTable(list: Vec<VersionRollout>) -> Element {
     let total = list.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 SortableTh { label: t!("daemon-version-detail-col-rollout"), sort_key: "rollout".to_string(), sort }
                 SortableTh { label: t!("status"), sort_key: "status".to_string(), sort }
                 SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
             },
             body: rsx! {
-                for r in filtered.read().iter().take(limit_val) {
+                for r in filtered.read().iter().skip(start).take(limit_val) {
                     {
                         let ts = r.created_at.format("%Y-%m-%d %H:%M").to_string();
                         let short = r.id.to_string()[..8].to_string();

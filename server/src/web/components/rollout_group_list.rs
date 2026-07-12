@@ -8,7 +8,7 @@ use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonVariant, Card, DataTable, ErrorText, HelpText, PageHeader, SectionHeading,
-    SortState, SortableTh, Td, TdMuted,
+    SortState, SortableTh, Td, TdMuted, page_window,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -138,6 +138,7 @@ fn CreateGroupForm(on_created: EventHandler<()>) -> Element {
 fn GroupTable(list: Vec<GroupEntry>) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
     let sort = use_signal::<SortState>(|| ("name".to_string(), true));
 
     let list_clone = list.clone();
@@ -170,18 +171,18 @@ fn GroupTable(list: Vec<GroupEntry>) -> Element {
     let total = list.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
                 SortableTh { label: t!("description"), sort_key: "description".to_string(), sort }
                 SortableTh { label: t!("rollout-group-list-col-members"), sort_key: "members".to_string(), sort }
             },
             body: rsx! {
-                for g in filtered.read().iter().take(limit_val) {
+                for g in filtered.read().iter().skip(start).take(limit_val) {
                     GroupRowView { key: "{g.id}", group: g.clone() }
                 }
             },

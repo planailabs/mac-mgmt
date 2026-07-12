@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
-use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th};
+use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th, page_window};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct OrgRow {
@@ -86,6 +86,7 @@ pub fn OrganizationList() -> Element {
 fn OrgTable(list: Vec<OrgRow>) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
 
     let list_clone = list.clone();
     let filtered = use_memo(move || {
@@ -104,11 +105,11 @@ fn OrgTable(list: Vec<OrgRow>) -> Element {
     let total = list.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 Th { {t!("name")} }
                 Th { {t!("org-list-col-members")} }
@@ -116,7 +117,7 @@ fn OrgTable(list: Vec<OrgRow>) -> Element {
                 Th { {t!("created")} }
             },
             body: rsx! {
-                for org in filtered.read().iter().take(limit_val) {
+                for org in filtered.read().iter().skip(start).take(limit_val) {
                     OrgRowView { key: "{org.id}", org: org.clone() }
                 }
             },

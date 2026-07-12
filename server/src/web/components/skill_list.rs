@@ -8,7 +8,7 @@ use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    Button, ButtonVariant, DataTable, ErrorText, HelpText, PageHeader, SuccessText,
+    Button, ButtonVariant, DataTable, ErrorText, HelpText, PageHeader, SuccessText, page_window,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -181,6 +181,7 @@ pub fn SkillList() -> Element {
 fn CatalogTable(list: Vec<CatalogEntry>) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
 
     let list_clone = list.clone();
     let filtered = use_memo(move || {
@@ -209,14 +210,14 @@ fn CatalogTable(list: Vec<CatalogEntry>) -> Element {
     let all_rows: Vec<_> = data.rows().collect();
     let filtered_count = all_rows.len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! { TableHeaders { data } },
             body: rsx! {
-                for row in all_rows.into_iter().take(limit_val) {
+                for row in all_rows.into_iter().skip(start).take(limit_val) {
                     tr { key: "{row.key()}", TableCells { row } }
                 }
             },

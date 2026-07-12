@@ -31,7 +31,7 @@ pub use plan_ai_design::{
     ErrorText, FormField, HelpText, Kicker, Mono, PageHeader, PageHero, Pill, PillVariant,
     SectionHeading, SortState, SortableTh, Sparkline, StageItem, StageStatus, StageTimeline,
     StatBlock, SuccessText, TableToolbar, Td, TdMono, TdMuted, Th, TokenCreateForm,
-    TokenCreateInput, TokenReveal, TokenRow, TokenTable, TraceStatus, TraceStep,
+    TokenCreateInput, TokenReveal, TokenRow, TokenTable, TraceStatus, TraceStep, page_window,
 };
 
 pub use breadcrumbs::Breadcrumbs;
@@ -42,5 +42,6 @@ pub mod data_table {
     //! `crate::web::components::ui::data_table::SortableTh` etc.
     pub use plan_ai_design::{
         Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted, Th,
+        page_window,
     };
 }

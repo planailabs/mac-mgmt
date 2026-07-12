@@ -7,7 +7,7 @@ use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    ChartColor, Dot, ErrorText, HelpText, KpiCard, Mono, PageHero, Pill, PillVariant,
+    ChartColor, Dot, ErrorText, HelpText, KpiCard, Mono, PageHero, Pill, PillVariant, page_window,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -367,6 +367,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
     let mut last_refreshed = use_signal(|| None::<DateTime<Utc>>);
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
     let sort = use_signal(|| ("last_seen".to_string(), false));
     let mut unhealthy_only = use_signal(|| false);
     let filter_stage = stage_id.clone();
@@ -580,7 +581,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
             let total = entries.len();
             let filtered_count = filtered.len();
             let limit_val = *limit.read();
-            let shown = filtered_count.min(limit_val);
+            let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
             // ── KPI summary computed from the current heartbeat snapshot.
             // We deliberately compute these synchronously from `entries`
@@ -700,7 +701,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                 if entries.is_empty() {
                     HelpText { {t!("fleet-no-daemons")} }
                 } else {
-                    TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                    TableToolbar { search, limit, page, total, filtered: filtered_count, shown }
                     div { class: "flex items-center gap-2 mb-3",
                         {
                             let active = *unhealthy_only.read();
@@ -737,7 +738,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                 }
                             }
                             tbody { class: "tbody",
-                                for entry in filtered.into_iter().take(limit_val) {
+                                for entry in filtered.into_iter().skip(start).take(limit_val) {
                                     {
                                         let now = Utc::now();
                                         let age = now.signed_duration_since(entry.reported_at);

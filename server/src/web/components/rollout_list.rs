@@ -9,7 +9,7 @@ use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Badge, BadgeVariant, DataTable, ErrorText, HelpText, PageHeader, SortState, SortableTh, Td,
-    TdMuted, Th,
+    TdMuted, Th, page_window,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -246,6 +246,7 @@ fn RolloutsTable(
 ) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
     let sort = use_signal::<SortState>(|| ("created".to_string(), false));
 
     let list_clone = list.clone();
@@ -280,11 +281,11 @@ fn RolloutsTable(
     let total = list.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
                 SortableTh { label: t!("status"), sort_key: "status".to_string(), sort }
@@ -294,7 +295,7 @@ fn RolloutsTable(
                 Th { "" }
             },
             body: rsx! {
-                for r in filtered.read().iter().take(limit_val) {
+                for r in filtered.read().iter().skip(start).take(limit_val) {
                     RolloutRow { key: "{r.id}", entry: r.clone(), rollouts }
                 }
             },

@@ -7,7 +7,7 @@ use dioxus_i18n::t;
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
-use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th};
+use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th, page_window};
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
 
@@ -130,6 +130,7 @@ fn UserTable(
 ) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
 
     let list_clone = list.clone();
     let filtered = use_memo(move || {
@@ -148,11 +149,11 @@ fn UserTable(
     let total = list.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 Th { {t!("email")} }
                 Th { {t!("name")} }
@@ -161,7 +162,7 @@ fn UserTable(
                 Th { {t!("created")} }
             },
             body: rsx! {
-                for user in filtered.read().iter().take(limit_val) {
+                for user in filtered.read().iter().skip(start).take(limit_val) {
                     UserRowView { key: "{user.id}", user: user.clone(), users_future }
                 }
             },

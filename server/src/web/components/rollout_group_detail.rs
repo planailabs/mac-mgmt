@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonSize, ButtonVariant, DataTable, ErrorText, HelpText, SectionHeading, SortState,
-    SortableTh, Td, Th,
+    SortableTh, Td, Th, page_window,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -392,6 +392,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
 fn MembersTable(members: Vec<MemberEntry>, on_remove: EventHandler<()>) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
     let sort = use_signal::<SortState>(|| ("cluster".to_string(), true));
 
     let members_clone = members.clone();
@@ -420,17 +421,17 @@ fn MembersTable(members: Vec<MemberEntry>, on_remove: EventHandler<()>) -> Eleme
     let total = members.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 SortableTh { label: t!("rollout-group-col-cluster"), sort_key: "cluster".to_string(), sort }
                 Th { "" }
             },
             body: rsx! {
-                for m in filtered.read().iter().take(limit_val) {
+                for m in filtered.read().iter().skip(start).take(limit_val) {
                     {
                         let mid = m.member_id.to_string();
                         let cluster_name = m.cluster_name.clone();

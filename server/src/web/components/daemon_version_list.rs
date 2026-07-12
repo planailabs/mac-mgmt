@@ -8,7 +8,7 @@ use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonVariant, DataTable, ErrorText, HelpText, PageHeader, SortState, SortableTh,
-    TdMono, TdMuted,
+    TdMono, TdMuted, page_window,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -188,6 +188,7 @@ pub fn DaemonVersionList() -> Element {
 fn VersionsTable(list: Vec<DaemonVersionRow>) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
     let sort = use_signal::<SortState>(|| ("version".to_string(), false));
 
     let list_clone = list.clone();
@@ -216,17 +217,17 @@ fn VersionsTable(list: Vec<DaemonVersionRow>) -> Element {
     let total = list.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 SortableTh { label: t!("version"), sort_key: "version".to_string(), sort }
                 SortableTh { label: t!("daemon-version-list-col-added"), sort_key: "added".to_string(), sort }
             },
             body: rsx! {
-                for v in filtered.read().iter().take(limit_val) {
+                for v in filtered.read().iter().skip(start).take(limit_val) {
                     VersionRow { key: "{v.version}", row: v.clone() }
                 }
             },

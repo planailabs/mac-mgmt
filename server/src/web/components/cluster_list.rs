@@ -7,7 +7,7 @@ use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    Dash, DataTable, ErrorText, PageHeader, SortState, SortableTh, Td, TdMuted,
+    Dash, DataTable, ErrorText, PageHeader, SortState, SortableTh, Td, TdMuted, page_window,
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
@@ -140,6 +140,7 @@ pub fn ClusterList() -> Element {
 fn ClusterTable(list: Vec<ClusterRow>) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
+    let page = use_signal(|| 0usize);
     let sort = use_signal::<SortState>(|| ("name".to_string(), true));
 
     let list_for_counts = list.clone();
@@ -193,11 +194,11 @@ fn ClusterTable(list: Vec<ClusterRow>) -> Element {
     let total = list.len();
     let filtered_count = filtered.read().len();
     let limit_val = *limit.read();
-    let shown = filtered_count.min(limit_val);
+    let (start, shown) = page_window(*page.read(), limit_val, filtered_count);
 
     rsx! {
         DataTable {
-            search, limit, total, filtered: filtered_count, shown,
+            search, limit, page, total, filtered: filtered_count, shown,
             headers: rsx! {
                 SortableTh { label: t!("cluster-list-col-org"), sort_key: "organization".to_string(), sort }
                 SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
@@ -206,7 +207,7 @@ fn ClusterTable(list: Vec<ClusterRow>) -> Element {
                 SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
             },
             body: rsx! {
-                for cluster in filtered.read().iter().take(limit_val) {
+                for cluster in filtered.read().iter().skip(start).take(limit_val) {
                     ClusterRowView {
                         key: "{cluster.id}",
                         cluster: cluster.clone(),
