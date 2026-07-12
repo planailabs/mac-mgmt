@@ -45,9 +45,9 @@ tempfile = { version = "3", optional = true }
 pulldown-cmark = { version = "0.12", optional = true }
 rust-embed = { version = "8", features = ["include-exclude"], optional = true }
 thiserror = { version = "2", optional = true }
-plan-ai-auth = { path = "../../plan-ai-auth" }
+plan-ai-auth = { path = "../../common/plan-ai-auth" }
 plan-ai-api-mcp = { path = "../../common/plan-ai-api-mcp", optional = true }
-plan-ai-actions = { path = "../../plan-ai-actions", optional = true }
+plan-ai-actions = { path = "../../common/plan-ai-actions", optional = true }
 plan-ai-api-mcp-macros = { path = "../../common/plan-ai-api-mcp-macros" }
 schemars = { version = "1.2", features = ["derive", "uuid1"] }
 cloudflare-api = { path = "../cloudflare-api", optional = true }
@@ -68,4 +68,4 @@ prometheus = { version = "0.13", optional = true }
 getrandom = { version = "0.2", features = ["js"] }
 
 [build-dependencies]
-plan-ai-actions = { path = "../../plan-ai-actions", features = ["engine"] }
+plan-ai-actions = { path = "../../common/plan-ai-actions", features = ["engine"] }
