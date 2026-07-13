@@ -4,6 +4,10 @@
     self.submodules = true;
 
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    # nixos2docker's systemd-in-container patch set currently fails against
+    # systemd 261 in nixpkgs-unstable. Keep only the Docker test images on a
+    # compatible NixOS release until nixos2docker updates its patches.
+    nixpkgs-docker-image.url = "github:NixOS/nixpkgs/nixos-25.11";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -17,7 +21,7 @@
     xzar.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, nixos2docker, gitlab-incus-image, xzar, ... }:
+  outputs = { self, nixpkgs, nixpkgs-docker-image, rust-overlay, flake-utils, nixos2docker, gitlab-incus-image, xzar, ... }:
     {
       overlays.default = import ./overlay.nix { gitSha = self.rev or self.dirtyRev or "unknown"; };
       nixosModules.default = import ./server/module.nix;
@@ -36,7 +40,12 @@
       # Run:  docker compose -f docker-compose.test.yml up
 
       nixosConfigurations = let
-        x86Pkgs = import nixpkgs { system = "x86_64-linux"; };
+        dockerImageNixpkgs = nixpkgs-docker-image;
+        x86Pkgs = import nixpkgs {
+          system = "x86_64-linux";
+          overlays = [ (import rust-overlay) self.overlays.default xzar.overlays.default ];
+        };
+        dockerImageLib = dockerImageNixpkgs.lib;
 
         # Shared self-signed CA for all test containers
         sharedCA = x86Pkgs.runCommand "mac-mgmt-test-ca" {
@@ -86,7 +95,7 @@
           locations."/" = {
             proxyPass = "http://127.0.0.1:${toString upstreamPort}";
             proxyWebsockets = true;
-          } // nixpkgs.lib.optionalAttrs (locationExtraConfig != "") {
+          } // dockerImageLib.optionalAttrs (locationExtraConfig != "") {
             extraConfig = locationExtraConfig;
           };
         };
@@ -95,7 +104,7 @@
         mkTlsModule = vhosts: { ... }: {
           services.nginx = {
             enable = true;
-            virtualHosts = nixpkgs.lib.listToAttrs (map (v: {
+            virtualHosts = dockerImageLib.listToAttrs (map (v: {
               name = v.name;
               value = mkTlsVhost v;
             }) vhosts);
@@ -112,7 +121,7 @@
           system.stateVersion = "26.11";
         };
 
-        mkTestSystem = { name, modules }: nixpkgs.lib.nixosSystem {
+        mkTestSystem = { name, modules }: dockerImageLib.nixosSystem {
           system = "x86_64-linux";
           modules = [
             nixos2docker.nixosModules.default
@@ -132,6 +141,7 @@
 
               services.mac-mgmt-relay = {
                 enable = true;
+                package = x86Pkgs.mac-mgmt-relay;
                 settings = {
                   listen_addr = "0.0.0.0:7380";
                   server_api_url = "https://test-mac-mgmt-server";
@@ -167,6 +177,7 @@
 
               services.mac-mgmt-server = {
                 enable = true;
+                package = x86Pkgs.mac-mgmt-server;
                 settings = {
                   api.external_url = "https://test-mac-mgmt-server/";
                   git.state_dir = "/var/lib/mac-mgmt-server";
