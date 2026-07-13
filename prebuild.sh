@@ -27,7 +27,7 @@ rm -f result-image
 
 # ── Build all exposed packages & push to xzar cache ────────────────
 for pkg in default server server-mgmt server-skill-center server-skill-importer \
-           relay runner relay-ssh web-agency web-agency-proxy nix-driver-sync; do
+           relay runner relay-ssh nix-driver-sync; do
   nix build ".#${pkg}" -o "result-${pkg}" -L
   upload "mac-mgmt/${pkg}" "result-${pkg}"
   rm -f "result-${pkg}"
