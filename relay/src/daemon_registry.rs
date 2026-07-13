@@ -111,10 +111,27 @@ impl DaemonRegistry {
             Ok(contents) => {
                 let file: ReservationsFile = serde_json::from_str(&contents).unwrap_or_default();
                 let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
-                let valid: HashMap<String, PortReservation> = file
+                let mut entries: Vec<(String, PortReservation)> = file
                     .reservations
                     .into_iter()
                     .filter(|(_, r)| r.reserved_at >= cutoff)
+                    .collect();
+                // Two instances must never reserve the same port (files written
+                // by older relays could contain duplicates); keep the newest.
+                entries.sort_by(|a, b| b.1.reserved_at.cmp(&a.1.reserved_at));
+                let mut seen_ports = HashSet::new();
+                let valid: HashMap<String, PortReservation> = entries
+                    .into_iter()
+                    .filter(|(id, r)| {
+                        let fresh = seen_ports.insert(r.port);
+                        if !fresh {
+                            tracing::warn!(
+                                "dropping duplicate reservation for {id} port {}",
+                                r.port
+                            );
+                        }
+                        fresh
+                    })
                     .collect();
                 let ports: HashSet<u16> = valid.values().map(|r| r.port).collect();
                 tracing::info!(
@@ -149,45 +166,35 @@ impl DaemonRegistry {
             return Some(reserved);
         }
 
-        let port = {
-            let used = self.used_ports.read().unwrap();
-            (self.port_min..=self.port_max).find(|p| !used.contains(p))
-        };
-        match port {
+        if let Some(p) = self.take_free_port() {
+            tracing::debug!("allocated port {p} for {instance_id}");
+            return Some(p);
+        }
+        // Try reclaiming an expired reservation.
+        self.expire_reservations();
+        match self.take_free_port() {
             Some(p) => {
-                self.used_ports.write().unwrap().insert(p);
-                tracing::debug!("allocated port {p} for {instance_id}");
+                tracing::info!("allocated port {p} after expiring reservations");
                 Some(p)
             }
             None => {
-                // Try reclaiming an expired reservation.
-                self.expire_reservations();
-                let port = {
-                    let used = self.used_ports.read().unwrap();
-                    (self.port_min..=self.port_max).find(|p| !used.contains(p))
-                };
-                match port {
-                    Some(p) => {
-                        self.used_ports.write().unwrap().insert(p);
-                        tracing::info!("allocated port {p} after expiring reservations");
-                        Some(p)
-                    }
-                    None => {
-                        tracing::error!(
-                            "no free ports in range {}-{}",
-                            self.port_min,
-                            self.port_max
-                        );
-                        None
-                    }
-                }
+                tracing::error!(
+                    "no free ports in range {}-{}",
+                    self.port_min,
+                    self.port_max
+                );
+                None
             }
         }
     }
 
-    fn release_port(&self, port: u16) {
-        self.used_ports.write().unwrap().remove(&port);
-        tracing::debug!("released port {port}");
+    /// Find and claim the next free port in one step. The write lock is held
+    /// across find+insert so concurrent callers can never get the same port.
+    fn take_free_port(&self) -> Option<u16> {
+        let mut used = self.used_ports.write().unwrap();
+        let p = (self.port_min..=self.port_max).find(|p| !used.contains(p))?;
+        used.insert(p);
+        Some(p)
     }
 
     /// Claim a reserved port: refresh its timestamp and return it.
@@ -343,14 +350,13 @@ impl DaemonRegistry {
     pub fn register(&self, conn: DaemonConn) -> bool {
         let id = conn.instance_id.clone();
         let mut daemons = self.daemons.write().unwrap();
-        if let Some(old) = daemons.get(&id) {
+        if daemons.contains_key(&id) {
             tracing::info!("replacing existing registration for {id}");
-            // Release old SSH port if it differs from what the new conn will get.
-            if let Some(old_port) = old.ssh_port {
-                if conn.ssh_port != Some(old_port) {
-                    self.release_port(old_port);
-                }
-            }
+            // Do NOT release the old SSH port here: the listener for it may
+            // still be running (rapid reconnect) and a reservation still maps
+            // this instance to it. Freeing it would let another daemon get
+            // the same port. SshBridge::on_ssh_enabled re-syncs ssh_port
+            // into the new conn; reservation expiry frees it eventually.
         } else if daemons.len() >= self.max_daemons {
             tracing::warn!(
                 "daemon {id} registration rejected: relay full ({} daemons)",
@@ -508,5 +514,88 @@ impl DaemonRegistry {
     /// Check if a daemon is connected (by prefix).
     pub fn is_connected(&self, prefix: &str) -> bool {
         self.resolve_prefix(prefix).is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn conn(id: &str, ssh_port: Option<u16>) -> DaemonConn {
+        DaemonConn {
+            instance_id: id.to_string(),
+            cluster_id: None,
+            cluster_name: None,
+            agent_name: None,
+            hostname: None,
+            connected_at: Utc::now(),
+            tunnels: Vec::new(),
+            file_tunnels: serde_json::Value::Array(vec![]),
+            shell_tunnels: serde_json::Value::Array(vec![]),
+            peer_id: None,
+            ssh_enabled: true,
+            ssh_port,
+        }
+    }
+
+    #[test]
+    fn concurrent_allocations_never_collide() {
+        let dir = std::env::temp_dir().join(format!("relay-test-{}", std::process::id()));
+        let registry = std::sync::Arc::new(DaemonRegistry::new(100, 10000, 10063, &dir));
+        let handles: Vec<_> = (0..64)
+            .map(|i| {
+                let r = std::sync::Arc::clone(&registry);
+                std::thread::spawn(move || r.allocate_port(&format!("daemon-{i}")).unwrap())
+            })
+            .collect();
+        let ports: HashSet<u16> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(ports.len(), 64, "duplicate ports were allocated");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reregistration_keeps_port_allocated() {
+        let dir = std::env::temp_dir().join(format!("relay-test-rereg-{}", std::process::id()));
+        let registry = DaemonRegistry::new(100, 10000, 10010, &dir);
+
+        registry.register(conn("a", None));
+        let port = registry.allocate_port("a").unwrap();
+        registry.set_ssh_port("a", port);
+        registry.reserve_port("a", port);
+
+        // Rapid reconnect: daemon re-registers with ssh_port: None while the
+        // old listener still holds the port.
+        registry.register(conn("a", None));
+
+        // Another daemon must not get the same port.
+        let other = registry.allocate_port("b").unwrap();
+        assert_ne!(other, port, "re-registration freed a port still in use");
+        // Daemon "a" still gets its reserved port back.
+        assert_eq!(registry.allocate_port("a").unwrap(), port);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn duplicate_reservations_deduped_on_load() {
+        let dir = std::env::temp_dir().join(format!("relay-test-dedup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = Utc::now() - ChronoDuration::days(1);
+        let json = serde_json::json!({
+            "reservations": {
+                "newer": { "port": 10000, "reserved_at": Utc::now() },
+                "older": { "port": 10000, "reserved_at": old },
+            }
+        });
+        std::fs::write(
+            dir.join("port_reservations.json"),
+            serde_json::to_string(&json).unwrap(),
+        )
+        .unwrap();
+
+        let registry = DaemonRegistry::new(100, 10000, 10010, &dir);
+        // The newer reservation wins; the older instance gets a fresh port.
+        assert_eq!(registry.allocate_port("newer").unwrap(), 10000);
+        assert_ne!(registry.allocate_port("older").unwrap(), 10000);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
