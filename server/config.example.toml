@@ -92,7 +92,9 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # Models shown in the UI model picker. If omitted, built-in defaults are used.
 # Each entry has: name (display label), model (provider identifier),
 # provider ("ollama", "anthropic", "openrouter", or a [[healer.openai]] source name),
-# and optional token_budget override.
+# an optional token_budget override, and optional input_cost_per_mtok /
+# output_cost_per_mtok (USD per 1M tokens; when both are set, the healer spend
+# dashboard shows estimated dollar spend for the model).
 # [[healer.models]]
 # name = "Gemma 4"
 # model = "gemma4"
@@ -102,6 +104,8 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # model = "claude-sonnet-4-6"
 # provider = "anthropic"
 # token_budget = 200000
+# input_cost_per_mtok = 3.0
+# output_cost_per_mtok = 15.0
 # [[healer.models]]
 # name = "GPT-4.1"
 # model = "openai/gpt-4.1"

@@ -105,6 +105,7 @@ fn chain_keys(route: &Route) -> Vec<Entry> {
             cur("breadcrumb-packages"),
         ],
         FleetDashboard { .. } => vec![cat("nav-overview"), cur("nav-fleet")],
+        HealerSpend {} => vec![cat("nav-overview"), cur("nav-healer-spend")],
         FleetDetail { .. }
         | FleetFiles { .. }
         | FleetShell { .. }

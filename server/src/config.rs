@@ -325,6 +325,14 @@ pub struct HealerModelEntry {
     /// when this model is selected. 0 = unlimited.
     #[serde(default)]
     pub token_budget: Option<u64>,
+    /// USD per 1M input tokens. When set (together with
+    /// `output_cost_per_mtok`), the healer spend dashboard shows estimated
+    /// dollar spend for this model; token counts are shown either way.
+    #[serde(default)]
+    pub input_cost_per_mtok: Option<f64>,
+    /// USD per 1M output tokens. See `input_cost_per_mtok`.
+    #[serde(default)]
+    pub output_cost_per_mtok: Option<f64>,
 }
 
 /// Built-in default model list used when `[healer] models` is empty.
@@ -335,60 +343,80 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             model: "gemma4".into(),
             provider: "ollama".into(),
             token_budget: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Qwen 3".into(),
             model: "qwen3".into(),
             provider: "ollama".into(),
             token_budget: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Llama 3.3".into(),
             model: "llama3.3".into(),
             provider: "ollama".into(),
             token_budget: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Devstral".into(),
             model: "devstral".into(),
             provider: "ollama".into(),
             token_budget: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Claude Sonnet 4.6".into(),
             model: "claude-sonnet-4-6".into(),
             provider: "anthropic".into(),
             token_budget: Some(200_000),
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Claude Haiku 4.5".into(),
             model: "claude-haiku-4-5-20251001".into(),
             provider: "anthropic".into(),
             token_budget: Some(400_000),
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Claude Sonnet 4".into(),
             model: "anthropic/claude-sonnet-4".into(),
             provider: "openrouter".into(),
             token_budget: Some(200_000),
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "GPT-4.1".into(),
             model: "openai/gpt-4.1".into(),
             provider: "openrouter".into(),
             token_budget: Some(200_000),
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Gemini 2.5 Pro".into(),
             model: "google/gemini-2.5-pro-preview".into(),
             provider: "openrouter".into(),
             token_budget: Some(200_000),
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Kimi K2.6".into(),
             model: "moonshotai/kimi-k2.6".into(),
             provider: "openrouter".into(),
             token_budget: Some(200_000),
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
     ]
 }
@@ -403,18 +431,24 @@ pub fn default_validator_models() -> Vec<HealerModelEntry> {
             model: "gemma4".into(),
             provider: "ollama".into(),
             token_budget: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Qwen 3".into(),
             model: "qwen3".into(),
             provider: "ollama".into(),
             token_budget: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
         HealerModelEntry {
             name: "Claude Haiku 4.5".into(),
             model: "claude-haiku-4-5-20251001".into(),
             provider: "anthropic".into(),
             token_budget: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
         },
     ]
 }

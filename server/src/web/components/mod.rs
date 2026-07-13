@@ -33,6 +33,7 @@ pub mod fleet_detail;
 pub mod generate_all_button;
 pub mod generate_button;
 pub mod healer_page;
+pub mod healer_spend_page;
 pub mod hidden_badge;
 pub mod import_sources;
 pub mod layout;

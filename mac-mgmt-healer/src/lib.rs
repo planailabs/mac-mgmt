@@ -252,18 +252,12 @@ impl HealerState {
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
 
-        // Set initial token budget on the session row.
-        // OpenAI-compatible sources have no token tracking, so skip budget entirely.
-        let is_openai_source = req
-            .provider
-            .as_deref()
-            .is_some_and(|p| self.inner.connector_config.openai_source(p).is_some());
-        let effective_budget = if is_openai_source {
-            0
-        } else {
-            req.token_budget
-                .unwrap_or(self.inner.connector_config.token_budget)
-        };
+        // Set initial token budget on the session row. All cloud providers
+        // (including OpenAI-compatible sources) report usage via
+        // on_usage_async, so budgets are enforceable everywhere.
+        let effective_budget = req
+            .token_budget
+            .unwrap_or(self.inner.connector_config.token_budget);
         if effective_budget > 0 {
             self.inner
                 .store

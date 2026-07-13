@@ -20,6 +20,7 @@ use super::components::file_editor::FleetFiles;
 use super::components::fleet_dashboard::FleetDashboard;
 use super::components::fleet_detail::FleetDetail;
 use super::components::healer_page::{FleetHealer, FleetHealerSession};
+use super::components::healer_spend_page::HealerSpend;
 use super::components::import_sources::{
     ImportSourceDetail, ImportSourceEdit, ImportSources, ImportSourcesSearch,
 };
@@ -121,6 +122,8 @@ pub enum Route {
         instance_id: String,
         session_id: String,
     },
+    #[route("/healer-spend")]
+    HealerSpend {},
     #[route("/staff-pings")]
     StaffPings {},
     #[route("/rollout-groups")]

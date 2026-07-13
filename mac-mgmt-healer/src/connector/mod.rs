@@ -324,16 +324,43 @@ pub async fn resolve_llm(
 
         let client = async_openai::Client::with_config(openai_config);
 
-        // No on_usage_async callback — token tracking is intentionally skipped.
-        let oai = swiftide::integrations::openai::OpenAI::builder()
-            .client(client)
-            .default_prompt_model(&model)
+        let mut builder = swiftide::integrations::openai::OpenAI::builder();
+        builder.client(client).default_prompt_model(&model);
+
+        if let Some(ref ctx) = token_ctx {
+            let store = ctx.store.clone();
+            let sid = ctx.session_id;
+            let notify = ctx.budget_notify.clone();
+            let provider_name = source.name.clone();
+            let model_name = model.clone();
+            builder.on_usage_async(move |usage| {
+                let store = store.clone();
+                let provider = provider_name.clone();
+                let model = model_name.clone();
+                let notify = notify.clone();
+                let input = usage.prompt_tokens;
+                let output = usage.completion_tokens;
+                Box::pin(async move {
+                    let new_total = store
+                        .append_token_event(sid, &provider, &model, input, output)
+                        .await
+                        .unwrap_or(0);
+                    let budget = store.get_token_budget(sid).await.unwrap_or(0);
+                    if budget > 0 && new_total >= budget {
+                        notify.notify_one();
+                    }
+                    Ok(())
+                })
+            });
+        }
+
+        let oai = builder
             .build()
             .context("failed to build OpenAI-compatible integration")?;
 
         return Ok(LlmHandle {
             provider: LlmProvider::OpenAICompat(oai),
-            is_cloud: false,
+            is_cloud: true,
             resolved_provider: source.name.clone(),
             resolved_model: model,
         });
