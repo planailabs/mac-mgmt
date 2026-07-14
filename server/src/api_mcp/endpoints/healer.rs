@@ -380,36 +380,3 @@ pub async fn healer_spend(
 }
 
 // ── Registration ────────────────────────────────────────────────────────
-
-#[cfg(feature = "server")]
-pub fn register(reg: &mut plan_ai_api_mcp::Registry<sqlx::PgPool>) {
-    use plan_ai_api_mcp::{OnItem, Risk};
-    let mut h = reg.resource("healer", "healer", "Healer");
-    h.custom(
-        "pings_list",
-        Risk::ReadOnly,
-        OnItem::No,
-        "List healer staff pings across clusters visible to the caller (unresolved first, newest first, max 200).",
-        |pool: sqlx::PgPool, p, input: StaffPingsListInput| async move {
-            healer_pings_list(&pool, &p, input).await
-        },
-    );
-    h.custom(
-        "ping_resolve",
-        Risk::Mutating,
-        OnItem::No,
-        "Mark a healer staff ping as resolved by the caller.",
-        |pool: sqlx::PgPool, p, input: PingResolveInput| async move {
-            healer_ping_resolve(&pool, &p, input).await
-        },
-    );
-    h.custom(
-        "spend",
-        Risk::ReadOnly,
-        OnItem::No,
-        "Aggregate healer token usage over the last 30 days into a per-model breakdown (tokens in/out, sessions, daily trend, estimated USD for priced models), scoped to clusters visible to the caller.",
-        |pool: sqlx::PgPool, p, input: HealerSpendInput| async move {
-            healer_spend(&pool, &p, input).await
-        },
-    );
-}

@@ -791,17 +791,978 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
         );
     }
 
-    // Per-module registrations (each converted domain wires itself here so
-    // domain modules stay self-contained).
-    endpoints::daemon_versions::register(&mut reg);
-    endpoints::skills::register(&mut reg);
-    endpoints::mcp_servers::register(&mut reg);
-    endpoints::rollouts::register(&mut reg);
-    endpoints::skill_centers::register(&mut reg);
-    endpoints::imports::register(&mut reg);
-    endpoints::fleet::register(&mut reg);
-    endpoints::healer::register(&mut reg);
-    endpoints::ai::register(&mut reg);
+    {
+        use endpoints::daemon_versions::*;
+
+    let mut d = reg.resource("daemon_versions", "daemon_version", "Daemon versions");
+    d.list(
+        "List all daemon versions known to the server (version string and when it was first seen), newest version first. Admin only.",
+        |pool: sqlx::PgPool, p, input: DaemonVersionsListInput| async move {
+            daemon_version_list(&pool, &p, input).await
+        },
+    );
+    d.custom(
+        "sync_from_xzar",
+        Risk::Mutating,
+        OnItem::No,
+        "Sync the daemon-version catalog from the xzar binary cache: fetch all daemon/{version}/{system} pins, add newly published versions and remove versions that no longer have a pin. Returns created/removed counts. Admin only.",
+        |pool: sqlx::PgPool, p, input: DaemonVersionsSyncInput| async move {
+            daemon_version_sync_from_xzar(&pool, &p, input).await
+        },
+    );
+    d.custom(
+        "store_paths",
+        Risk::ReadOnly,
+        OnItem::No,
+        "Resolve the per-system Nix store paths for one daemon version, live from xzar (system + /nix/store path per supported platform). Admin only.",
+        |pool: sqlx::PgPool, p, input: DaemonStorePathsInput| async move {
+            daemon_version_store_paths(&pool, &p, input).await
+        },
+    );
+    d.custom(
+        "clusters_on",
+        Risk::ReadOnly,
+        OnItem::No,
+        "List clusters that have daemon instances currently heartbeating the given version, with instance counts. Admin only.",
+        |pool: sqlx::PgPool, p, input: ClustersOnVersionInput| async move {
+            daemon_version_clusters_on(&pool, &p, input).await
+        },
+    );
+    d.custom(
+        "clusters_pinned",
+        Risk::ReadOnly,
+        OnItem::No,
+        "List clusters whose daemon version is pinned to the given version. Admin only.",
+        |pool: sqlx::PgPool, p, input: ClustersPinnedToInput| async move {
+            daemon_version_clusters_pinned(&pool, &p, input).await
+        },
+    );
+    d.custom(
+        "rollouts",
+        Risk::ReadOnly,
+        OnItem::No,
+        "List rollouts targeting the given daemon version (id, status, created_at), newest first. Admin only.",
+        |pool: sqlx::PgPool, p, input: RolloutsForVersionInput| async move {
+            daemon_version_rollouts(&pool, &p, input).await
+        },
+    );
+    }
+    {
+        use endpoints::skills::*;
+
+    {
+        let mut s = reg.resource("skills", "skill", "Skills");
+        s.list(
+            "List the skill catalog: local skills plus remote skills from enabled skill centers (admin only).",
+            |pool: sqlx::PgPool, p, input: SkillListInput| async move {
+                skill_list(&pool, &p, input).await
+            },
+        );
+        s.get(
+            "Get a local skill (slug, name, description, hidden flag, created_at); admin only.",
+            |pool: sqlx::PgPool, p, input: SkillGetInput| async move {
+                skill_get(&pool, &p, input).await
+            },
+        );
+        s.update(
+            "Update a skill's name, description and public-catalog visibility, then push a federation sync (admin only).",
+            |pool: sqlx::PgPool, p, input: SkillUpdateInput| async move {
+                skill_update(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "sync_from_xzar",
+            Risk::Mutating,
+            OnItem::No,
+            "Sync skills and channels from xzar pins: upsert skill/{slug}/{channel} pins, remove vanished channels/skills (admin only).",
+            |pool: sqlx::PgPool, p, input: SkillSyncInput| async move {
+                skill_sync_from_xzar(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "channels",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List a skill's channels (synced from xzar), including their nix packages; admin only.",
+            |pool: sqlx::PgPool, p, input: SkillChannelsInput| async move {
+                skill_channels(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "channel_paths",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "Resolve per-channel nix store paths (by architecture) for a skill from xzar pins; admin only.",
+            |pool: sqlx::PgPool, p, input: ChannelPathsInput| async move {
+                skill_channel_paths(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "channel_mcp_deps",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a skill channel's MCP server dependencies (dep row id, MCP server id + slug); admin only.",
+            |pool: sqlx::PgPool, p, input: ChannelMcpDepsInput| async move {
+                skill_channel_mcp_deps(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "mcp_server_options",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List all MCP servers (picker for channel_mcp_dep_add); admin only.",
+            |pool: sqlx::PgPool, p, input: McpServerOptionsInput| async move {
+                skill_mcp_server_options(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "channel_mcp_dep_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add an MCP server dependency to a skill channel (idempotent) and push a federation sync; admin only.",
+            |pool: sqlx::PgPool, p, input: ChannelMcpDepAddInput| async move {
+                skill_channel_mcp_dep_add(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "channel_mcp_dep_remove",
+            Risk::Mutating,
+            OnItem::No,
+            "Remove an MCP server dependency (by its skill_mcp_dependencies row id) and push a federation sync; admin only.",
+            |pool: sqlx::PgPool, p, input: ChannelMcpDepRemoveInput| async move {
+                skill_channel_mcp_dep_remove(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "channel_nix_packages",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List the nix packages attached to a skill channel; admin only.",
+            |pool: sqlx::PgPool, p, input: ChannelNixPackagesInput| async move {
+                skill_channel_nix_packages(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "channel_nix_package_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add a nix package to a skill channel (idempotent) and push federation + skill-channel syncs; admin only.",
+            |pool: sqlx::PgPool, p, input: ChannelNixPackageAddInput| async move {
+                skill_channel_nix_package_add(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "channel_nix_package_remove",
+            Risk::Mutating,
+            OnItem::No,
+            "Remove a nix package from a skill channel and push federation + skill-channel syncs; admin only.",
+            |pool: sqlx::PgPool, p, input: ChannelNixPackageRemoveInput| async move {
+                skill_channel_nix_package_remove(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "cluster_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a cluster's directly assigned skills (local and remote, with skill-center source); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: ClusterSkillsListInput| async move {
+                cluster_skill_list(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "cluster_bundle_skills",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List the skills a cluster gets via its assigned bundles, flagging those overwritten by direct assignments; requires cluster read.",
+            |pool: sqlx::PgPool, p, input: ClusterBundleSkillsInput| async move {
+                cluster_bundle_skills(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "cluster_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Assign a skill to a cluster — local (skill_channel_id) or remote (skill_center_id + remote_id + slug + channel) — and push a skill sync; requires cluster write.",
+            |pool: sqlx::PgPool, p, input: ClusterSkillAddInput| async move {
+                cluster_skill_add(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "cluster_remove",
+            Risk::Mutating,
+            OnItem::No,
+            "Remove a skill assignment from its cluster (by cluster_skills row id) and push a skill sync; requires write access to the owning cluster.",
+            |pool: sqlx::PgPool, p, input: ClusterSkillRemoveInput| async move {
+                cluster_skill_remove(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "channel_options",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List all local skill channels (picker for cluster_add / bundle item_add); any authenticated caller.",
+            |pool: sqlx::PgPool, p, input: SkillChannelOptionsInput| async move {
+                skill_channel_options(&pool, &p, input).await
+            },
+        );
+        s.custom(
+            "remote_options",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List remote skill channels from enabled skill centers (picker for cluster_add); any authenticated caller.",
+            |pool: sqlx::PgPool, p, input: RemoteSkillOptionsInput| async move {
+                remote_skill_options(&pool, &p, input).await
+            },
+        );
+    }
+
+    {
+        let mut b = reg.resource("bundles", "bundle", "Skill bundles");
+        b.list(
+            "List the bundle catalog: local bundles plus remote bundles from enabled skill centers (admin only).",
+            |pool: sqlx::PgPool, p, input: BundleListInput| async move {
+                bundle_list(&pool, &p, input).await
+            },
+        );
+        b.get(
+            "Get a local bundle (slug, name, description, hidden flag, created_at); admin only.",
+            |pool: sqlx::PgPool, p, input: BundleGetInput| async move {
+                bundle_get(&pool, &p, input).await
+            },
+        );
+        b.create(
+            "Create a bundle with slug, name and description, then push a federation sync (admin only).",
+            |pool: sqlx::PgPool, p, input: BundleCreateInput| async move {
+                bundle_create(&pool, &p, input).await
+            },
+        );
+        b.update(
+            "Update a bundle's name, description and public-catalog visibility, then push federation + bundle syncs (admin only).",
+            |pool: sqlx::PgPool, p, input: BundleUpdateInput| async move {
+                bundle_update(&pool, &p, input).await
+            },
+        );
+        b.delete(
+            "Delete a bundle and its items, pushing federation + bundle syncs (admin only).",
+            |pool: sqlx::PgPool, p, input: BundleDeleteInput| async move {
+                bundle_delete(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "items",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List a bundle's items (skill slug + channel per item); admin only.",
+            |pool: sqlx::PgPool, p, input: BundleItemsInput| async move {
+                bundle_items(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "available_channels",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List all local skill channels (picker for item_add); admin only.",
+            |pool: sqlx::PgPool, p, input: AvailableChannelsInput| async move {
+                bundle_available_channels(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "item_add",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Add a skill channel to a bundle and push federation + bundle syncs; admin only.",
+            |pool: sqlx::PgPool, p, input: BundleItemAddInput| async move {
+                bundle_item_add(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "item_remove",
+            Risk::Mutating,
+            OnItem::No,
+            "Remove a bundle item (by its bundle_items row id) and push federation + bundle syncs; admin only.",
+            |pool: sqlx::PgPool, p, input: BundleItemRemoveInput| async move {
+                bundle_item_remove(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "cluster_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a cluster's assigned bundles (local and remote, with skill-center source); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: ClusterBundlesListInput| async move {
+                cluster_bundle_list(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "cluster_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Assign a bundle to a cluster — local (bundle_id, rejecting skill-channel overlaps with already-assigned bundles) or remote (skill_center_id + remote_id + slug) — and push a skill sync; requires cluster write.",
+            |pool: sqlx::PgPool, p, input: ClusterBundleAddInput| async move {
+                cluster_bundle_add(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "cluster_remove",
+            Risk::Mutating,
+            OnItem::No,
+            "Remove a bundle assignment from its cluster (by cluster_bundles row id) and push a skill sync; requires write access to the owning cluster.",
+            |pool: sqlx::PgPool, p, input: ClusterBundleRemoveInput| async move {
+                cluster_bundle_remove(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "options",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List all local bundles (picker for cluster_add); any authenticated caller.",
+            |pool: sqlx::PgPool, p, input: BundleOptionsInput| async move {
+                bundle_options(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "remote_options",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List remote bundles from enabled skill centers (picker for cluster_add); any authenticated caller.",
+            |pool: sqlx::PgPool, p, input: RemoteBundleOptionsInput| async move {
+                remote_bundle_options(&pool, &p, input).await
+            },
+        );
+    }
+    }
+    {
+        use endpoints::mcp_servers::*;
+
+    {
+        let mut m = reg.resource("mcp_servers", "mcp_server", "MCP servers");
+        m.list(
+            "List the MCP server catalog: local servers plus remote servers from enabled skill centers (remote ones carry skill_center_name); admin only.",
+            |pool: sqlx::PgPool, p, input: McpServersListInput| async move {
+                mcp_server_list(&pool, &p, input).await
+            },
+        );
+        m.get(
+            "Get a local MCP server (slug, name, description, launch config, nix packages); admin only.",
+            |pool: sqlx::PgPool, p, input: McpServerGetInput| async move {
+                mcp_server_get(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "upsert",
+            Risk::Mutating,
+            OnItem::No,
+            "Create (id omitted) or update (id set) an MCP server; config_json is a JSON string validated against the MCP server config schema. Pushes a federation sync. Admin only.",
+            |pool: sqlx::PgPool, p, input: McpServerUpsertInput| async move {
+                mcp_server_upsert(&pool, &p, input).await
+            },
+        );
+        m.delete(
+            "Delete an MCP server from the catalog and push federation + per-cluster MCP syncs; admin only.",
+            |pool: sqlx::PgPool, p, input: McpServerDeleteInput| async move {
+                mcp_server_delete(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "nix_package_add",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Add a nix package to the MCP server's dependency list (idempotent) and push a federation sync; admin only.",
+            |pool: sqlx::PgPool, p, input: NixPackageAddInput| async move {
+                mcp_server_nix_package_add(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "nix_package_remove",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Remove a nix package from the MCP server's dependency list and push a federation sync; admin only.",
+            |pool: sqlx::PgPool, p, input: NixPackageRemoveInput| async move {
+                mcp_server_nix_package_remove(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "dependent_skills",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List skill channels that declare a dependency on the MCP server; admin only.",
+            |pool: sqlx::PgPool, p, input: DependentSkillsInput| async move {
+                mcp_server_dependent_skills(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "options",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List local MCP servers as id/slug/name options (for bundle item selection); admin only.",
+            |pool: sqlx::PgPool, p, input: McpServerOptionsInput| async move {
+                mcp_server_options(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "options_all",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List local MCP servers as id/slug/name options (for cluster assignment); any authenticated caller.",
+            |pool: sqlx::PgPool, p, input: McpServerOptionsAllInput| async move {
+                mcp_server_options_all(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "remote_options",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List non-hidden MCP servers from enabled skill centers' cached catalogs; any authenticated caller.",
+            |pool: sqlx::PgPool, p, input: RemoteMcpServerOptionsInput| async move {
+                mcp_server_remote_options(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "cluster_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a cluster's direct MCP server assignments (local and remote); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: ClusterMcpServersInput| async move {
+                mcp_server_cluster_list(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "cluster_from_bundles",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List MCP servers a cluster gets via its assigned bundles, flagging ones shadowed by a direct assignment; requires cluster read.",
+            |pool: sqlx::PgPool, p, input: ClusterMcpServersInput| async move {
+                mcp_server_cluster_from_bundles(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "cluster_transitive",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List MCP servers a cluster gets transitively via skill dependencies (direct skill assignments win over bundles), flagging ones shadowed by a direct or bundle assignment; requires cluster read.",
+            |pool: sqlx::PgPool, p, input: ClusterMcpServersInput| async move {
+                mcp_server_cluster_transitive(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "cluster_attach",
+            Risk::Mutating,
+            OnItem::No,
+            "Attach an MCP server to a cluster: local (mcp_server_id) or remote (skill_center_id + remote_id + slug). Pushes a per-cluster MCP sync. Requires cluster write.",
+            |pool: sqlx::PgPool, p, input: ClusterMcpServerAttachInput| async move {
+                mcp_server_cluster_attach(&pool, &p, input).await
+            },
+        );
+        m.custom(
+            "cluster_detach",
+            Risk::Mutating,
+            OnItem::No,
+            "Detach an MCP server assignment from its cluster (by assignment row id) and push a per-cluster MCP sync; requires write access to the owning cluster.",
+            |pool: sqlx::PgPool, p, input: ClusterMcpServerDetachInput| async move {
+                mcp_server_cluster_detach(&pool, &p, input).await
+            },
+        );
+    }
+
+    {
+        let mut b = reg.resource("mcp_bundles", "mcp_bundle", "MCP bundles");
+        b.list(
+            "List the MCP bundle catalog: local bundles plus remote bundles from enabled skill centers (remote ones carry skill_center_name); admin only.",
+            |pool: sqlx::PgPool, p, input: McpBundlesListInput| async move {
+                mcp_bundle_list(&pool, &p, input).await
+            },
+        );
+        b.get(
+            "Get a local MCP bundle (slug, name, description); admin only.",
+            |pool: sqlx::PgPool, p, input: McpBundleGetInput| async move {
+                mcp_bundle_get(&pool, &p, input).await
+            },
+        );
+        b.create(
+            "Create an MCP bundle with slug, name and description, and push a federation sync; admin only.",
+            |pool: sqlx::PgPool, p, input: McpBundleCreateInput| async move {
+                mcp_bundle_create(&pool, &p, input).await
+            },
+        );
+        b.update(
+            "Update an MCP bundle's name, description and catalog visibility, and push federation + per-cluster MCP syncs; admin only.",
+            |pool: sqlx::PgPool, p, input: McpBundleUpdateInput| async move {
+                mcp_bundle_update(&pool, &p, input).await
+            },
+        );
+        b.delete(
+            "Delete an MCP bundle and push federation + per-cluster MCP syncs; admin only.",
+            |pool: sqlx::PgPool, p, input: McpBundleDeleteInput| async move {
+                mcp_bundle_delete(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "items",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List the MCP servers contained in a bundle; admin only.",
+            |pool: sqlx::PgPool, p, input: McpBundleItemsInput| async move {
+                mcp_bundle_items(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "item_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add an MCP server to a bundle and push federation + per-cluster MCP syncs; admin only.",
+            |pool: sqlx::PgPool, p, input: McpBundleItemAddInput| async move {
+                mcp_bundle_item_add(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "item_remove",
+            Risk::Mutating,
+            OnItem::No,
+            "Remove an MCP server from a bundle (by bundle item row id) and push federation + per-cluster MCP syncs; admin only.",
+            |pool: sqlx::PgPool, p, input: McpBundleItemRemoveInput| async move {
+                mcp_bundle_item_remove(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "options_all",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List local MCP bundles as id/slug/name options (for cluster assignment); any authenticated caller.",
+            |pool: sqlx::PgPool, p, input: McpBundleOptionsAllInput| async move {
+                mcp_bundle_options_all(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "remote_options",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List non-hidden MCP bundles from enabled skill centers' cached catalogs; any authenticated caller.",
+            |pool: sqlx::PgPool, p, input: RemoteMcpBundleOptionsInput| async move {
+                mcp_bundle_remote_options(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "cluster_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a cluster's MCP bundle assignments (local and remote); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: ClusterMcpBundlesInput| async move {
+                mcp_bundle_cluster_list(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "cluster_attach",
+            Risk::Mutating,
+            OnItem::No,
+            "Attach an MCP bundle to a cluster: local (bundle_id, rejected if it overlaps an already-assigned bundle) or remote (skill_center_id + remote_id + slug). Pushes a per-cluster MCP sync. Requires cluster write.",
+            |pool: sqlx::PgPool, p, input: ClusterMcpBundleAttachInput| async move {
+                mcp_bundle_cluster_attach(&pool, &p, input).await
+            },
+        );
+        b.custom(
+            "cluster_detach",
+            Risk::Mutating,
+            OnItem::No,
+            "Detach an MCP bundle assignment from its cluster (by assignment row id) and push a per-cluster MCP sync; requires write access to the owning cluster.",
+            |pool: sqlx::PgPool, p, input: ClusterMcpBundleDetachInput| async move {
+                mcp_bundle_cluster_detach(&pool, &p, input).await
+            },
+        );
+    }
+    }
+    {
+        use endpoints::rollouts::*;
+
+    {
+        let mut r = reg.resource("rollouts", "rollout", "Rollouts");
+        r.list(
+            "List all rollouts with stage counts and, for rolling rollouts, a health rollup from the latest per-stage gate evaluations (admin only).",
+            |pool: sqlx::PgPool, p, input: RolloutListInput| async move {
+                rollout_list(&pool, &p, input).await
+            },
+        );
+        r.get(
+            "Get full rollout detail: target/baseline versions, ordered stages with per-stage heartbeat progress and latest gate evaluation, health rollup, and delivered clusters (admin only).",
+            |pool: sqlx::PgPool, p, input: RolloutGetInput| async move {
+                rollout_get(&pool, &p, input).await
+            },
+        );
+        r.create(
+            "Create a staged rollout of a daemon version and/or nixpkgs commit. stage_ids is an ordered list of rollout-group UUIDs (or the \"__all__\" sentinel for all clusters); rejects version/nixpkgs downgrades. Returns the new rollout id (admin only).",
+            |pool: sqlx::PgPool, p, input: RolloutCreateInput| async move {
+                rollout_create(&pool, &p, input).await
+            },
+        );
+        r.delete(
+            "Delete a rollout and its stages (admin only).",
+            |pool: sqlx::PgPool, p, input: RolloutDeleteInput| async move {
+                rollout_delete(&pool, &p, input).await
+            },
+        );
+        r.custom(
+            "action",
+            Risk::Destructive,
+            OnItem::Yes,
+            "Apply a lifecycle action to a rollout (admin only). `action` values: \"start\" (capture baseline, begin stage 0), \"advance\" (complete the rolling stage and start the next; completes the rollout after the last), \"pause\", \"resume\", \"complete\" (mark all stages completed and pin the target on every cohort cluster), \"rollback\" (mark shipped stages rolled_back and rewind cluster pins to the start-time baseline — hard to reverse), \"delete\" (remove the rollout).",
+            |pool: sqlx::PgPool, p, input: RolloutActionInput| async move {
+                rollout_action_apply(&pool, &p, input).await
+            },
+        );
+        r.custom(
+            "available_versions",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List the daemon versions known to the server (picker for rollout create); admin only.",
+            |pool: sqlx::PgPool, p, input: AvailableVersionsInput| async move {
+                rollout_available_versions(&pool, &p, input).await
+            },
+        );
+        r.custom(
+            "stage_gate_get",
+            Risk::ReadOnly,
+            OnItem::No,
+            "Get a rollout stage's health-gate config, or null when the stage has no gate; admin only.",
+            |pool: sqlx::PgPool, p, input: StageGateGetInput| async move {
+                rollout_stage_gate_get(&pool, &p, input).await
+            },
+        );
+        r.custom(
+            "stage_gate_update",
+            Risk::Mutating,
+            OnItem::No,
+            "Set or remove a rollout stage's health gate (omit gate or set enabled=false to remove); apply_to_all writes the same gate to every stage of the rollout. Admin only.",
+            |pool: sqlx::PgPool, p, input: StageGateUpdateInput| async move {
+                rollout_stage_gate_update(&pool, &p, input).await
+            },
+        );
+        r.custom(
+            "stage_reevaluate",
+            Risk::Mutating,
+            OnItem::No,
+            "Re-run the health-gate evaluation for every rolling stage of the stage's rollout and store the results; admin only.",
+            |pool: sqlx::PgPool, p, input: StageReevaluateInput| async move {
+                rollout_stage_reevaluate(&pool, &p, input).await
+            },
+        );
+        r.custom(
+            "stage_request_assessment",
+            Risk::Mutating,
+            OnItem::No,
+            "Push a request-assessment message to every connected daemon in the stage's cohort; returns cohort size and how many daemons received it. Admin only.",
+            |pool: sqlx::PgPool, p, input: StagePushInput| async move {
+                rollout_stage_request_assessment(&pool, &p, input).await
+            },
+        );
+        r.custom(
+            "stage_self_update",
+            Risk::Mutating,
+            OnItem::No,
+            "Push a self-update trigger to every connected daemon in the stage's cohort; returns cohort size and how many daemons received it. Admin only.",
+            |pool: sqlx::PgPool, p, input: StagePushInput| async move {
+                rollout_stage_self_update(&pool, &p, input).await
+            },
+        );
+        r.custom(
+            "stage_sync_nixpkgs",
+            Risk::Mutating,
+            OnItem::No,
+            "Push a nixpkgs-sync trigger to every connected daemon in the stage's cohort; returns cohort size and how many daemons received it. Admin only.",
+            |pool: sqlx::PgPool, p, input: StagePushInput| async move {
+                rollout_stage_sync_nixpkgs(&pool, &p, input).await
+            },
+        );
+    }
+
+    {
+        let mut g = reg.resource("rollout_groups", "rollout_group", "Rollout groups");
+        g.list(
+            "List rollout groups with member counts (excludes the implicit all-clusters group); admin only.",
+            |pool: sqlx::PgPool, p, input: GroupListInput| async move {
+                group_list(&pool, &p, input).await
+            },
+        );
+        g.get(
+            "Get a rollout group with its member clusters; admin only.",
+            |pool: sqlx::PgPool, p, input: GroupGetInput| async move {
+                group_get(&pool, &p, input).await
+            },
+        );
+        g.create(
+            "Create a rollout group with a name and description (admin only).",
+            |pool: sqlx::PgPool, p, input: GroupCreateInput| async move {
+                group_create(&pool, &p, input).await
+            },
+        );
+        g.delete(
+            "Delete a rollout group and its memberships (the implicit All Clusters group cannot be deleted); admin only.",
+            |pool: sqlx::PgPool, p, input: GroupDeleteInput| async move {
+                group_delete(&pool, &p, input).await
+            },
+        );
+        g.custom(
+            "options",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List rollout groups as id+name picker options (excludes the implicit all-clusters group); admin only.",
+            |pool: sqlx::PgPool, p, input: GroupOptionsInput| async move {
+                group_options(&pool, &p, input).await
+            },
+        );
+        g.custom(
+            "available_clusters",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List clusters not yet in the rollout group (picker for member_add); admin only.",
+            |pool: sqlx::PgPool, p, input: GroupAvailableClustersInput| async move {
+                group_available_clusters(&pool, &p, input).await
+            },
+        );
+        g.custom(
+            "member_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add a cluster to a rollout group; admin only.",
+            |pool: sqlx::PgPool, p, input: MemberAddInput| async move {
+                group_member_add(&pool, &p, input).await
+            },
+        );
+        g.custom(
+            "member_add_all",
+            Risk::Mutating,
+            OnItem::No,
+            "Add every cluster not yet in the rollout group; returns the number of clusters added. Admin only.",
+            |pool: sqlx::PgPool, p, input: MemberAddAllInput| async move {
+                group_member_add_all(&pool, &p, input).await
+            },
+        );
+        g.custom(
+            "member_remove",
+            Risk::Mutating,
+            OnItem::No,
+            "Remove a member (by its rollout_group_members row id) from its rollout group; admin only.",
+            |pool: sqlx::PgPool, p, input: MemberRemoveInput| async move {
+                group_member_remove(&pool, &p, input).await
+            },
+        );
+        g.custom(
+            "set_description",
+            Risk::Mutating,
+            OnItem::No,
+            "Update a rollout group's description; admin only.",
+            |pool: sqlx::PgPool, p, input: GroupSetDescriptionInput| async move {
+                group_set_description(&pool, &p, input).await
+            },
+        );
+    }
+    }
+    {
+        use endpoints::skill_centers::*;
+
+    let mut s = reg.resource("skill_centers", "skill_center", "Skill centers");
+    s.list(
+        "List configured skill centers, highest priority first (admin only).",
+        |pool: sqlx::PgPool, p, input: SkillCentersListInput| async move {
+            skill_center_list(&pool, &p, input).await
+        },
+    );
+    s.get(
+        "Get a skill center by id (admin only). The federation token is never returned.",
+        |pool: sqlx::PgPool, p, input: SkillCenterGetInput| async move {
+            skill_center_get(&pool, &p, input).await
+        },
+    );
+    s.create(
+        "Add a skill center (name, url, federation token, priority, enabled); returns its id (admin only).",
+        |pool: sqlx::PgPool, p, input: SkillCenterCreateInput| async move {
+            skill_center_create(&pool, &p, input).await
+        },
+    );
+    s.update(
+        "Update a skill center; an empty federation_token keeps the stored one. The built-in center cannot be edited (admin only).",
+        |pool: sqlx::PgPool, p, input: SkillCenterUpdateInput| async move {
+            skill_center_update(&pool, &p, input).await
+        },
+    );
+    s.delete(
+        "Delete a skill center; the built-in center cannot be deleted (admin only).",
+        |pool: sqlx::PgPool, p, input: SkillCenterDeleteInput| async move {
+            skill_center_delete(&pool, &p, input).await
+        },
+    );
+    s.custom(
+        "catalog_summary",
+        Risk::ReadOnly,
+        OnItem::Yes,
+        "Summarize the skill center's cached catalog (channel/bundle/MCP counts and last fetch time); zeros if never synced (admin only).",
+        |pool: sqlx::PgPool, p, input: CatalogSummaryInput| async move {
+            skill_center_catalog_summary(&pool, &p, input).await
+        },
+    );
+    s.custom(
+        "sync_now",
+        Risk::Mutating,
+        OnItem::Yes,
+        "Fetch the skill center's catalog from its remote URL now, update the cache, and return the fresh summary (admin only).",
+        |pool: sqlx::PgPool, p, input: SkillCenterSyncInput| async move {
+            skill_center_sync_now(&pool, &p, input).await
+        },
+    );
+    }
+    {
+        use endpoints::imports::*;
+
+    let mut s = reg.resource("import_sources", "import_source", "Import sources");
+    s.list(
+        "List skill import sources, newest first (admin only).",
+        |pool: sqlx::PgPool, p, input: ImportSourcesListInput| async move {
+            import_source_list(&pool, &p, input).await
+        },
+    );
+    s.get(
+        "Get an import source by id (admin only).",
+        |pool: sqlx::PgPool, p, input: ImportSourceGetInput| async move {
+            import_source_get(&pool, &p, input).await
+        },
+    );
+    s.create(
+        "Add an import source (git repo or ClawHub package); returns its id (admin only).",
+        |pool: sqlx::PgPool, p, input: ImportSourceCreateInput| async move {
+            import_source_create(&pool, &p, input).await
+        },
+    );
+    s.update(
+        "Update an import source's name, config, channel and auto-sync flag (admin only).",
+        |pool: sqlx::PgPool, p, input: ImportSourceUpdateInput| async move {
+            import_source_update(&pool, &p, input).await
+        },
+    );
+    s.delete(
+        "Delete an import source; with remove_skills=true also delete the skills it imported (admin only).",
+        |pool: sqlx::PgPool, p, input: ImportSourceDeleteInput| async move {
+            import_source_delete(&pool, &p, input).await
+        },
+    );
+    s.custom(
+        "trigger_sync",
+        Risk::Mutating,
+        OnItem::Yes,
+        "Start a background import sync for the source; creates an import job and returns immediately (admin only).",
+        |pool: sqlx::PgPool, p, input: TriggerSyncInput| async move {
+            import_source_trigger_sync(&pool, &p, input).await
+        },
+    );
+    s.custom(
+        "jobs",
+        Risk::ReadOnly,
+        OnItem::Yes,
+        "List the source's 20 most recent import jobs with status and log (admin only).",
+        |pool: sqlx::PgPool, p, input: ImportJobsListInput| async move {
+            import_source_jobs(&pool, &p, input).await
+        },
+    );
+    s.custom(
+        "search_clawhub",
+        Risk::ReadOnly,
+        OnItem::No,
+        "Search the configured ClawHub registry for importable skill packages (admin only).",
+        |pool: sqlx::PgPool, p, input: ClawHubSearchInput| async move {
+            import_source_search_clawhub(&pool, &p, input).await
+        },
+    );
+    }
+    {
+        use endpoints::fleet::*;
+    let mut f = reg.resource("fleet", "fleet", "Fleet");
+    f.custom(
+        "status",
+        Risk::ReadOnly,
+        OnItem::No,
+        "Live fleet status: every daemon heartbeat visible to the caller (cluster, hostname, version, services, tunnels, sample), optionally filtered to a rollout stage's cohort.",
+        |pool: sqlx::PgPool, p, input: FleetStatusInput| async move {
+            fleet_status(&pool, &p, input).await
+        },
+    );
+    f.custom(
+        "detail",
+        Risk::ReadOnly,
+        OnItem::No,
+        "Per-instance detail: latest heartbeat, inventory, security posture, dynamic sample and per-service probe results; requires read access to the instance's cluster.",
+        |pool: sqlx::PgPool, p, input: FleetDetailInput| async move {
+            fleet_detail(&pool, &p, input).await
+        },
+    );
+    f.custom(
+        "overview",
+        Risk::ReadOnly,
+        OnItem::No,
+        "Command-center snapshot: online/total instances, service health, rollout counts, open staff pings, failure signals and a recent-activity feed, scoped to the caller's accessible clusters.",
+        |pool: sqlx::PgPool, p, input: OverviewInput| async move {
+            fleet_overview(&pool, &p, input).await
+        },
+    );
+    f.custom(
+        "delete_stale_instance",
+        Risk::Destructive,
+        OnItem::No,
+        "Delete a stale daemon heartbeat (only if it last reported more than 24h ago); cascades to its assessments and probes. Requires write access to the owning cluster.",
+        |pool: sqlx::PgPool, p, input: DeleteStaleInstanceInput| async move {
+            fleet_delete_stale_instance(&pool, &p, input).await
+        },
+    );
+    }
+    {
+        use endpoints::healer::*;
+    let mut h = reg.resource("healer", "healer", "Healer");
+    h.custom(
+        "pings_list",
+        Risk::ReadOnly,
+        OnItem::No,
+        "List healer staff pings across clusters visible to the caller (unresolved first, newest first, max 200).",
+        |pool: sqlx::PgPool, p, input: StaffPingsListInput| async move {
+            healer_pings_list(&pool, &p, input).await
+        },
+    );
+    h.custom(
+        "ping_resolve",
+        Risk::Mutating,
+        OnItem::No,
+        "Mark a healer staff ping as resolved by the caller.",
+        |pool: sqlx::PgPool, p, input: PingResolveInput| async move {
+            healer_ping_resolve(&pool, &p, input).await
+        },
+    );
+    h.custom(
+        "spend",
+        Risk::ReadOnly,
+        OnItem::No,
+        "Aggregate healer token usage over the last 30 days into a per-model breakdown (tokens in/out, sessions, daily trend, estimated USD for priced models), scoped to clusters visible to the caller.",
+        |pool: sqlx::PgPool, p, input: HealerSpendInput| async move {
+            healer_spend(&pool, &p, input).await
+        },
+    );
+    }
+    {
+        use endpoints::ai::*;
+    let mut a = reg.resource("ai", "ai", "AI");
+    a.custom(
+        "generate_name_desc",
+        Risk::Mutating,
+        OnItem::No,
+        "Generate a concise name + description for a skill, bundle, MCP server, or MCP bundle via the Anthropic API (external call that costs money; nothing is persisted).",
+        |pool: sqlx::PgPool, p, input: GenerateNameDescInput| async move {
+            ai_generate_name_desc(&pool, &p, input).await
+        },
+    );
+    a.custom(
+        "save_generated_name_desc",
+        Risk::Mutating,
+        OnItem::No,
+        "Save a generated name + description onto the given entity (skill, bundle, MCP server, or MCP bundle); bundle updates are pushed to connected daemons.",
+        |pool: sqlx::PgPool, p, input: SaveGeneratedNameDescInput| async move {
+            ai_save_generated_name_desc(&pool, &p, input).await
+        },
+    );
+    }
 
     reg
 }

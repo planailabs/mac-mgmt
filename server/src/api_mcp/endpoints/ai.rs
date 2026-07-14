@@ -94,27 +94,3 @@ pub async fn ai_save_generated_name_desc(
 }
 
 // ── Registration ────────────────────────────────────────────────────────
-
-#[cfg(feature = "server")]
-pub fn register(reg: &mut plan_ai_api_mcp::Registry<sqlx::PgPool>) {
-    use plan_ai_api_mcp::{OnItem, Risk};
-    let mut a = reg.resource("ai", "ai", "AI");
-    a.custom(
-        "generate_name_desc",
-        Risk::Mutating,
-        OnItem::No,
-        "Generate a concise name + description for a skill, bundle, MCP server, or MCP bundle via the Anthropic API (external call that costs money; nothing is persisted).",
-        |pool: sqlx::PgPool, p, input: GenerateNameDescInput| async move {
-            ai_generate_name_desc(&pool, &p, input).await
-        },
-    );
-    a.custom(
-        "save_generated_name_desc",
-        Risk::Mutating,
-        OnItem::No,
-        "Save a generated name + description onto the given entity (skill, bundle, MCP server, or MCP bundle); bundle updates are pushed to connected daemons.",
-        |pool: sqlx::PgPool, p, input: SaveGeneratedNameDescInput| async move {
-            ai_save_generated_name_desc(&pool, &p, input).await
-        },
-    );
-}

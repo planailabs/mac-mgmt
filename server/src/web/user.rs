@@ -4,9 +4,6 @@ pub use plan_ai_auth::WebUser;
 #[cfg(feature = "server")]
 #[async_trait::async_trait]
 pub trait WebUserExt {
-    fn require_admin(&self) -> Result<(), dioxus::prelude::ServerFnError>;
-    fn require_org_admin(&self, org_id: &uuid::Uuid) -> Result<(), dioxus::prelude::ServerFnError>;
-
     async fn accessible_cluster_ids(
         &self,
         pool: &sqlx::PgPool,
@@ -33,16 +30,6 @@ pub trait WebUserExt {
 #[cfg(feature = "server")]
 #[async_trait::async_trait]
 impl WebUserExt for WebUser {
-    fn require_admin(&self) -> Result<(), dioxus::prelude::ServerFnError> {
-        self.require_admin_str()
-            .map_err(|e| dioxus::prelude::ServerFnError::new(e))
-    }
-
-    fn require_org_admin(&self, org_id: &uuid::Uuid) -> Result<(), dioxus::prelude::ServerFnError> {
-        self.require_org_admin_str(org_id)
-            .map_err(|e| dioxus::prelude::ServerFnError::new(e))
-    }
-
     async fn accessible_cluster_ids(
         &self,
         pool: &sqlx::PgPool,
