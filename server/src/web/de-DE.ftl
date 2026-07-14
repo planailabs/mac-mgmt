@@ -1124,3 +1124,7 @@ chat-approve-all = Alle genehmigen
 chat-deny = Ablehnen
 chat-deny-reason-placeholder = Begründung (optional)
 chat-guard-verdict = Prüfer-Urteil
+chat-state-running = läuft
+chat-state-planning = plant
+chat-state-executing = führt aus
+chat-state-executed = ausgeführt

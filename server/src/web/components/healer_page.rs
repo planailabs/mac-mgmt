@@ -1684,6 +1684,10 @@ pub fn state_badge(st: &str) -> (BadgeVariant, String) {
             (BadgeVariant::Info, t!("healer-state-initializing"))
         }
         "diagnosing" => (BadgeVariant::Warn, t!("healer-state-diagnosing")),
+        "running" => (BadgeVariant::Info, t!("chat-state-running")),
+        "planning" => (BadgeVariant::Info, t!("chat-state-planning")),
+        "executing" => (BadgeVariant::Warn, t!("chat-state-executing")),
+        "executed" => (BadgeVariant::Success, t!("chat-state-executed")),
         "remediating" => (BadgeVariant::Warn, t!("healer-state-remediating")),
         "verifying" => (BadgeVariant::Accent, t!("healer-state-verifying")),
         "completed" | "done" => (BadgeVariant::Success, t!("healer-state-done")),

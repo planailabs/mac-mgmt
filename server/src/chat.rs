@@ -12,10 +12,10 @@ use anyhow::{Context, Result};
 use plan_ai_chat::bridge::api_mcp::{ToolFilter, registry_tools};
 use plan_ai_chat::session_loop::{InitialPrompt, SessionHandles, SessionSpec};
 use plan_ai_chat::store::pg::{PgChatStore, PgTables};
-use plan_ai_chat::tools::{ChatToolContext, NameSessionTool, PinConfig, PinTool};
+use plan_ai_chat::tools::{ChatToolContext, NameSessionTool, PinConfig, PinTool, SetPhaseTool};
 use plan_ai_chat::{
-    ApprovalDecision, ApprovalPolicy, ChatSession, ConnectorConfig, CoreStateModel, DynChatStore,
-    GuardRole, SessionManager, StateModel as _, TimeoutAction, ToolRisk, ValidatedTool,
+    ApprovalDecision, ApprovalPolicy, ChatSession, ConnectorConfig, CoreState, DynChatStore,
+    GuardRole, SessionManager, StateModel, TimeoutAction, ToolRisk, ValidatedTool,
     ValidationConfig,
 };
 use plan_ai_api_mcp::{Principal, Registry};
@@ -51,6 +51,45 @@ fn scope_for(email: &str) -> Uuid {
     Uuid::new_v5(&Uuid::NAMESPACE_OID, email.as_bytes())
 }
 
+/// Agent-drivable phases the chat agent tracks via `set_phase`.
+const CHAT_PHASES: &[&str] = &["planning", "executing", "executed"];
+
+/// Chat session state vocabulary: lifecycle states plus the working phases
+/// created → planning → executing → executed. ("running" stays mapped for
+/// rows created before phases existed.)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ChatStateModel;
+
+impl StateModel for ChatStateModel {
+    fn core(&self, state: &str) -> CoreState {
+        match state {
+            "created" => CoreState::Created,
+            "initializing" => CoreState::Initializing,
+            "planning" | "executing" | "executed" | "running" => CoreState::Running,
+            "awaiting_approval" => CoreState::AwaitingApproval,
+            "awaiting_retry" => CoreState::AwaitingRetry,
+            "paused" => CoreState::Paused,
+            "completed" => CoreState::Completed,
+            "failed" => CoreState::Failed,
+            "cancelled" => CoreState::Cancelled,
+            "needs_attention" => CoreState::NeedsAttention,
+            _ => CoreState::Failed,
+        }
+    }
+
+    fn agent_allowed(&self, name: &str) -> Option<String> {
+        CHAT_PHASES.contains(&name).then(|| name.to_string())
+    }
+
+    fn initial_running_state(&self) -> &str {
+        "planning"
+    }
+
+    fn non_resumable_states(&self) -> &[&str] {
+        &["completed", "failed", "cancelled", "needs_attention"]
+    }
+}
+
 impl ChatState {
     /// Run the chat-table migrations, build the session manager, and park any
     /// sessions interrupted by the previous shutdown.
@@ -65,11 +104,11 @@ impl ChatState {
             .context("chat migrations failed")?;
 
         let store: DynChatStore = Arc::new(PgChatStore::new(pool.clone(), PgTables::chat()));
-        let manager = SessionManager::new(store, Arc::new(CoreStateModel));
+        let manager = SessionManager::new(store, Arc::new(ChatStateModel));
 
         // Sweep sessions interrupted by a previous shutdown: no auto-respawn,
         // they resume lazily on the next user message.
-        let model = CoreStateModel;
+        let model = ChatStateModel;
         if let Ok(interrupted) = manager
             .store()
             .find_resumable(model.non_resumable_states(), &[])
@@ -179,6 +218,7 @@ impl ChatState {
             model,
             InitialPrompt::User(prefix_context(page_context.as_deref(), &first_message)),
             false,
+            "planning".to_string(),
         )?;
         Ok(session_id)
     }
@@ -199,7 +239,7 @@ impl ChatState {
             return Ok(());
         }
         // Not running: resumable (paused/awaiting_retry/idle-parked "completed")?
-        let model = CoreStateModel;
+        let model = ChatStateModel;
         let resumable = !model.is_terminal(&sess.state) || sess.state == "completed";
         if !resumable {
             anyhow::bail!("session is in state '{}' and cannot be resumed", sess.state);
@@ -217,6 +257,13 @@ impl ChatState {
                 );
             }
         }
+        // Resume into the phase the session was in, if it was working;
+        // parked/paused sessions restart their thinking at "planning".
+        let resume_state = if model.is_active(&sess.state) {
+            sess.state.clone()
+        } else {
+            "planning".to_string()
+        };
         if self
             .launch(
                 user.clone(),
@@ -225,6 +272,7 @@ impl ChatState {
                 sess.model.clone(),
                 InitialPrompt::User(msg.clone()),
                 true,
+                resume_state,
             )
             .is_err()
         {
@@ -310,12 +358,14 @@ impl ChatState {
         model: Option<String>,
         initial: InitialPrompt,
         resumed: bool,
+        start_state: String,
     ) -> Result<()> {
         let handles = self.inner.manager.register(session_id)?;
         let state = self.clone();
         tokio::spawn(async move {
             match build_session_spec(
                 &state, &user, session_id, provider, model, &handles, initial, resumed,
+                start_state,
             )
             .await
             {
@@ -372,6 +422,7 @@ async fn build_session_spec(
     handles: &SessionHandles,
     initial: InitialPrompt,
     resumed: bool,
+    start_state: String,
 ) -> Result<SessionSpec> {
     let inner = &state.inner;
     let store = inner.manager.store().clone();
@@ -442,7 +493,18 @@ async fn build_session_spec(
         approval_notify: handles.approval_notify.clone(),
     };
     tools.push(PinTool::new_with_risk(tool_ctx.clone(), PinConfig::chat()));
-    tools.push(NameSessionTool::new_with_risk(tool_ctx));
+    tools.push(NameSessionTool::new_with_risk(tool_ctx.clone()));
+    // Phase tracking. Session-local risk: phase changes are bookkeeping and
+    // must not trip the guard or the approval gate.
+    let (set_phase, _) = SetPhaseTool::new_with_risk(
+        tool_ctx,
+        Arc::new(ChatStateModel),
+        /* auto_approve */ true,
+        /* approval_gated_phase */ None,
+        CHAT_PHASES,
+        "Track your progress. Phases: planning (deciding what to do),          executing (running tools / making changes), executed (the current          request is done). Call this when you move between phases.",
+    );
+    tools.push((set_phase, ToolRisk::SessionLocal));
 
     let wrapped = ValidatedTool::wrap_all(tools, validation_config, validation_history.clone());
 
@@ -454,7 +516,7 @@ async fn build_session_spec(
         initial_prompt: initial,
         tools: wrapped,
         llm,
-        start_state: "running".to_string(),
+        start_state,
         interactive: true,
         idle_timeout: Some(std::time::Duration::from_secs(
             inner.cfg.idle_park_minutes.max(1) * 60,
@@ -528,6 +590,7 @@ Fleet snapshot: {fleet}.
 - Every tool call requires a `_reason` argument — one sentence on why you are calling it.
 - Read before you write: fetch current state before changing anything.
 - Tool calls at or above the "{threshold}" risk level pause and wait for the user to approve them in the chat UI. Explain WHAT you are about to change and WHY before making such calls, so the approval prompt makes sense.
+- Track your progress with `set_phase`: planning (deciding what to do), executing (doing it), executed (current request done).
 - Pin durable findings with the `pin` tool (slots: notes, plan, summary) so they stay visible in long conversations.
 - Name the session early with `name_session` once you understand the topic.
 - Answer in the user's language; be concise and concrete. Render lists/tables in markdown.
