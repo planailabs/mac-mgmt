@@ -413,6 +413,38 @@ fn ChatMenu(session_id: String) -> Element {
     }
 }
 
+/// Up-arrow glyph for the in-box send button.
+#[component]
+fn SendArrowIcon() -> Element {
+    rsx! {
+        svg {
+            width: "16",
+            height: "16",
+            view_box: "0 0 24 24",
+            fill: "none",
+            path {
+                d: "M12 19V5M5 12l7-7 7 7",
+                stroke: "currentColor",
+                "stroke-width": "2.2",
+                "stroke-linecap": "round",
+                "stroke-linejoin": "round",
+            }
+        }
+    }
+}
+
+/// Three bouncing dots shown while the agent is processing a turn.
+#[component]
+fn TypingIndicator() -> Element {
+    rsx! {
+        div { class: "flex items-center gap-1 mt-2 px-3 py-2 rounded-xl bg-surface-2 w-fit",
+            span { class: "w-1.5 h-1.5 rounded-full bg-fg-muted animate-bounce" }
+            span { class: "w-1.5 h-1.5 rounded-full bg-fg-muted animate-bounce [animation-delay:150ms]" }
+            span { class: "w-1.5 h-1.5 rounded-full bg-fg-muted animate-bounce [animation-delay:300ms]" }
+        }
+    }
+}
+
 #[component]
 fn ChatBubbleIcon() -> Element {
     rsx! {
@@ -515,11 +547,21 @@ fn ChatSessionList(models: Vec<ModelEntry>, active: Signal<Option<String>>) -> E
             if let Some(err) = error.read().as_ref() {
                 ErrorText { {t!("error-message", message: err.clone())} }
             }
-            textarea {
-                class: "input w-full min-h-16 text-sm",
-                placeholder: t!("chat-first-message-placeholder").to_string(),
-                value: "{first_message}",
-                oninput: move |e| first_message.set(e.value()),
+            div { class: "relative",
+                textarea {
+                    class: "input w-full min-h-16 text-sm rounded-xl pr-12",
+                    placeholder: t!("chat-first-message-placeholder").to_string(),
+                    value: "{first_message}",
+                    oninput: move |e| first_message.set(e.value()),
+                }
+                button {
+                    r#type: "button",
+                    class: "absolute right-2 bottom-2 w-8 h-8 rounded-full bg-surface-3 text-fg-muted hover:bg-surface-2 hover:text-fg-strong flex items-center justify-center transition-colors disabled:opacity-40",
+                    "aria-label": t!("chat-start"),
+                    disabled: *starting.read(),
+                    onclick: start,
+                    SendArrowIcon {}
+                }
             }
             div { class: "flex items-center gap-2",
                 select {
@@ -528,12 +570,6 @@ fn ChatSessionList(models: Vec<ModelEntry>, active: Signal<Option<String>>) -> E
                     for m in models.iter() {
                         option { value: "{m.name}", "{m.name}" }
                     }
-                }
-                button {
-                    class: "btn btn-sm btn-primary",
-                    disabled: *starting.read(),
-                    onclick: start,
-                    {t!("chat-start")}
                 }
                 button {
                     class: "btn btn-sm btn-ghost",
@@ -557,6 +593,10 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
     let mut state = use_signal(|| "running".to_string());
     let mut state_reason = use_signal::<Option<String>>(|| None);
     let mut idle = use_signal(|| false);
+    // Agent is processing (between a user turn and the next idle/approval).
+    // Set by send() and by live running-tool events, so replaying an old
+    // session never shows the indicator.
+    let mut busy = use_signal(|| false);
     let mut show_pins = use_signal(|| false);
     let mut input = use_signal(String::new);
     let mut send_error = use_signal::<Option<String>>(|| None);
@@ -614,7 +654,11 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                         }
                     }
                     "running_tools" => {
-                        active_tools.set(evt.running_tools.unwrap_or_default());
+                        let tools = evt.running_tools.unwrap_or_default();
+                        if !tools.is_empty() {
+                            busy.set(true);
+                        }
+                        active_tools.set(tools);
                     }
                     "pins" => {
                         pins.set(evt.pins.unwrap_or_default());
@@ -626,6 +670,7 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                         state_reason.set(evt.state_reason);
                     }
                     "approval_request" => {
+                        busy.set(false);
                         if let Some(m) = evt.metadata {
                             let info = ApprovalInfo {
                                 approval_id: m
@@ -664,6 +709,7 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                         }
                     }
                     "approval_resolved" => {
+                        busy.set(true);
                         if let Some(id) = evt
                             .metadata
                             .as_ref()
@@ -675,10 +721,12 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                     }
                     "idle" => {
                         idle.set(true);
+                        busy.set(false);
                         active_tools.set(Vec::new());
                         meta_refresh += 1;
                     }
                     "done" => {
+                        busy.set(false);
                         active_tools.set(Vec::new());
                         approvals.set(Vec::new());
                         if let Some(s) = evt.state {
@@ -727,6 +775,8 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
         let ctx = page_ctx_send.clone();
         input.set(String::new());
         send_error.set(None);
+        idle.set(false);
+        busy.set(true);
         spawn(async move {
             if let Err(e) = send_chat_message(sid, text, Some(ctx)).await {
                 send_error.set(Some(e.to_string()));
@@ -809,6 +859,10 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                 }
             }
 
+            if *busy.read() && approvals.read().is_empty() {
+                TypingIndicator {}
+            }
+
             if !active_tools.read().is_empty() {
                 div { class: "flex flex-wrap gap-1 mt-2",
                     for tool in active_tools.read().iter() {
@@ -832,34 +886,36 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
             if let Some(err) = send_error.read().as_ref() {
                 ErrorText { {t!("error-message", message: err.clone())} }
             }
-            textarea {
-                class: "input w-full min-h-14 text-sm",
-                placeholder: if is_terminal {
-                    t!("chat-session-over").to_string()
-                } else if *idle.read() {
-                    t!("chat-input-placeholder").to_string()
-                } else {
-                    t!("chat-input-queued-placeholder").to_string()
-                },
-                disabled: is_terminal,
-                value: "{input}",
-                oninput: move |e| input.set(e.value()),
-                onkeydown: {
-                    let mut send = send.clone();
-                    move |e: KeyboardEvent| {
-                        if e.key() == Key::Enter && !e.modifiers().shift() {
-                            e.prevent_default();
-                            send(());
+            div { class: "relative",
+                textarea {
+                    class: "input w-full min-h-14 text-sm rounded-xl pr-12",
+                    placeholder: if is_terminal {
+                        t!("chat-session-over").to_string()
+                    } else if *idle.read() {
+                        t!("chat-input-placeholder").to_string()
+                    } else {
+                        t!("chat-input-queued-placeholder").to_string()
+                    },
+                    disabled: is_terminal,
+                    value: "{input}",
+                    oninput: move |e| input.set(e.value()),
+                    onkeydown: {
+                        let mut send = send.clone();
+                        move |e: KeyboardEvent| {
+                            if e.key() == Key::Enter && !e.modifiers().shift() {
+                                e.prevent_default();
+                                send(());
+                            }
                         }
-                    }
-                },
-            }
-            div { class: "flex justify-end",
+                    },
+                }
                 button {
-                    class: "btn btn-sm btn-primary",
+                    r#type: "button",
+                    class: "absolute right-2 bottom-2 w-8 h-8 rounded-full bg-surface-3 text-fg-muted hover:bg-surface-2 hover:text-fg-strong flex items-center justify-center transition-colors disabled:opacity-40",
+                    "aria-label": t!("chat-send"),
                     disabled: is_terminal,
                     onclick: move |_| send(()),
-                    {t!("chat-send")}
+                    SendArrowIcon {}
                 }
             }
         }
