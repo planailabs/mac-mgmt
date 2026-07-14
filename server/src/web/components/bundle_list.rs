@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use dioxus_tabular::*;
 
 use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
+use crate::api_mcp::endpoints::skills::{BundleListInput, CatalogEntryDto, list_bundles};
 use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
@@ -10,72 +11,24 @@ use crate::web::components::table_utils::*;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{DataTable, ErrorText, HelpText, PageHeader, page_window};
 
-#[server]
-async fn list_bundles() -> Result<Vec<CatalogEntry>, ServerFnError> {
-    use crate::web::user::{WebUserExt, current_user};
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let local = sqlx::query_as::<_, crate::models::Bundle>("SELECT * FROM bundles ORDER BY slug")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let mut entries: Vec<CatalogEntry> = local
-        .into_iter()
-        .map(|b| CatalogEntry {
-            id: b.id,
-            slug: b.slug,
-            name: b.name,
-            description: b.description,
-            created_at: Some(b.created_at),
-            hide_from_public_catalog: b.hide_from_public_catalog,
-            skill_center_name: None,
-            route_kind: "bundle".to_string(),
-        })
-        .collect();
-
-    if let Some(cache) = crate::skill_center_cache::SkillCenterCache::global() {
-        let all = cache.get_all().await;
-        let sc_names: std::collections::HashMap<uuid::Uuid, String> =
-            sqlx::query_as::<_, (uuid::Uuid, String)>(
-                "SELECT id, name FROM skill_centers WHERE enabled = true",
-            )
-            .fetch_all(&pool)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-
-        for (sc_id, cached) in &all {
-            let sc_name = sc_names.get(sc_id).cloned().unwrap_or_default();
-            if sc_name.is_empty() {
-                continue;
-            }
-            for bundle in &cached.catalog.bundles {
-                entries.push(CatalogEntry {
-                    id: bundle.id,
-                    slug: bundle.slug.clone(),
-                    name: bundle.name.clone(),
-                    description: bundle.description.clone(),
-                    created_at: None,
-                    hide_from_public_catalog: bundle.hidden,
-                    skill_center_name: Some(sc_name.clone()),
-                    route_kind: "bundle".to_string(),
-                });
-            }
-        }
+/// Map the API DTO to the table row type shared by the catalog pages.
+fn to_catalog_entry(e: &CatalogEntryDto) -> CatalogEntry {
+    CatalogEntry {
+        id: e.id,
+        slug: e.slug.clone(),
+        name: e.name.clone(),
+        description: e.description.clone(),
+        created_at: e.created_at,
+        hide_from_public_catalog: e.hide_from_public_catalog,
+        skill_center_name: e.skill_center_name.clone(),
+        route_kind: e.route_kind.clone(),
     }
-
-    entries.sort_by(|a, b| a.slug.cmp(&b.slug));
-    Ok(entries)
 }
 
 #[component]
 pub fn BundleList() -> Element {
     use_topbar(t!("bundle-list-title"), None);
-    let mut bundles = use_server_future(list_bundles)?;
+    let mut bundles = use_server_future(|| async move { list_bundles(BundleListInput {}).await })?;
 
     rsx! {
         div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
@@ -107,7 +60,7 @@ pub fn BundleList() -> Element {
             }
         }
         {match &*bundles.read() {
-            Some(Ok(list)) => rsx! { CatalogTable { list: list.clone() } },
+            Some(Ok(list)) => rsx! { CatalogTable { list: list.iter().map(to_catalog_entry).collect::<Vec<_>>() } },
             Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
             None => rsx! { HelpText { {t!("loading")} } },
         }}

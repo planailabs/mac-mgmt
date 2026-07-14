@@ -2,260 +2,27 @@ use std::collections::HashMap;
 
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
 
 use crate::anthropic::{GenerateContext, GeneratedNameDesc};
-use crate::models::{Skill, SkillChannel};
+use crate::api_mcp::endpoints::skills::{
+    ChannelMcpDepAddInput, ChannelMcpDepRemoveInput, ChannelMcpDepsInput, ChannelNixPackageAddInput,
+    ChannelNixPackageRemoveInput, ChannelNixPackagesInput, ChannelPathsInput, McpServerOptionsInput,
+    SkillChannelsInput, SkillGetInput, SkillUpdateInput, add_channel_mcp_dep,
+    add_channel_nix_package, get_channel_nix_packages, get_skill, list_all_mcp_servers,
+    list_channel_mcp_deps, list_channels, remove_channel_mcp_dep, remove_channel_nix_package,
+    resolve_channel_paths, update_skill,
+};
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, HelpText, SectionHeading,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
 
-#[server]
-async fn get_skill(id: String) -> Result<Skill, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let skill = sqlx::query_as::<_, Skill>("SELECT * FROM skills WHERE id = $1")
-        .bind(uuid)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(skill)
-}
-
-#[server]
-async fn update_skill(
-    id: String,
-    name: String,
-    description: String,
-    hide_from_public_catalog: bool,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("UPDATE skills SET name = $1, description = $2, hide_from_public_catalog = $3 WHERE id = $4")
-        .bind(&name)
-        .bind(&description)
-        .bind(hide_from_public_catalog)
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_federation_global();
-    Ok(())
-}
-
-#[server]
-async fn list_channels(skill_id: String) -> Result<Vec<SkillChannel>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = skill_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let channels = sqlx::query_as::<_, SkillChannel>(
-        "SELECT * FROM skill_channels WHERE skill_id = $1 ORDER BY channel",
-    )
-    .bind(uuid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(channels)
-}
-
-/// Resolve store paths for all channels of a skill from xzar.
-#[server]
-async fn resolve_channel_paths(
-    skill_id: String,
-) -> Result<HashMap<String, Vec<(String, String)>>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = skill_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    let slug = sqlx::query_scalar::<_, String>("SELECT slug FROM skills WHERE id = $1")
-        .bind(uuid)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let channels =
-        sqlx::query_scalar::<_, String>("SELECT channel FROM skill_channels WHERE skill_id = $1")
-            .bind(uuid)
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if channels.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let cfg = crate::config::config();
-    let xzar = cfg
-        .xzar
-        .as_ref()
-        .ok_or_else(|| ServerFnError::new("xzar not configured".to_string()))?;
-    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
-        .await
-        .map_err(|e| ServerFnError::new(format!("xzar error: {e}")))?;
-
-    let mut result = HashMap::new();
-    let prefix = format!("skill/{slug}/");
-    for pin in &pins {
-        if pin.abandoned || pin.roots.is_empty() {
-            continue;
-        }
-        if let Some(rest) = pin.name.strip_prefix(&prefix) {
-            if let Some((channel, arch)) = rest.split_once('/') {
-                if channels.contains(&channel.to_string()) {
-                    let path = crate::xzar::store_path_for_pin(&pins, &pin.name);
-                    if let Some(path) = path {
-                        let entry: &mut Vec<(String, String)> =
-                            result.entry(channel.to_string()).or_insert_with(Vec::new);
-                        entry.push((arch.to_string(), path));
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(result)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChannelMcpDep {
-    dep_id: String,
-    mcp_server_id: String,
-    mcp_server_slug: String,
-}
-
-#[server]
-async fn list_channel_mcp_deps(
-    skill_channel_id: String,
-) -> Result<Vec<ChannelMcpDep>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = skill_channel_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        dep_id: uuid::Uuid,
-        mcp_server_id: uuid::Uuid,
-        mcp_server_slug: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT smd.id as dep_id, smd.mcp_server_id, ms.slug as mcp_server_slug \
-         FROM skill_mcp_dependencies smd \
-         JOIN mcp_servers ms ON ms.id = smd.mcp_server_id \
-         WHERE smd.skill_channel_id = $1 \
-         ORDER BY ms.slug",
-    )
-    .bind(uuid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| ChannelMcpDep {
-            dep_id: r.dep_id.to_string(),
-            mcp_server_id: r.mcp_server_id.to_string(),
-            mcp_server_slug: r.mcp_server_slug,
-        })
-        .collect())
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct McpServerOption {
-    id: String,
-    slug: String,
-    name: String,
-}
-
-#[server]
-async fn list_all_mcp_servers() -> Result<Vec<McpServerOption>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: uuid::Uuid,
-        slug: String,
-        name: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>("SELECT id, slug, name FROM mcp_servers ORDER BY slug")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| McpServerOption {
-            id: r.id.to_string(),
-            slug: r.slug,
-            name: r.name,
-        })
-        .collect())
-}
-
-#[server]
-async fn add_channel_mcp_dep(
-    skill_channel_id: String,
-    mcp_server_id: String,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let sc_id: uuid::Uuid = skill_channel_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let ms_id: uuid::Uuid = mcp_server_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("INSERT INTO skill_mcp_dependencies (skill_channel_id, mcp_server_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-        .bind(sc_id)
-        .bind(ms_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_federation_global();
-    Ok(())
-}
-
-#[server]
-async fn remove_channel_mcp_dep(dep_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = dep_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM skill_mcp_dependencies WHERE id = $1")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_federation_global();
-    Ok(())
+/// Parse a route-string id into a Uuid, mapping errors for server futures.
+fn parse_id(id: &str) -> Result<uuid::Uuid, ServerFnError> {
+    id.parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))
 }
 
 #[component]
@@ -264,19 +31,19 @@ pub fn SkillDetail(id: String) -> Element {
     let id_clone = id.clone();
     let mut skill = use_server_future(move || {
         let id = id_clone.clone();
-        async move { get_skill(id).await }
+        async move { get_skill(SkillGetInput { id: parse_id(&id)? }).await }
     })?;
 
     let id_channels = id.clone();
     let channels = use_server_future(move || {
         let id = id_channels.clone();
-        async move { list_channels(id).await }
+        async move { list_channels(SkillChannelsInput { id: parse_id(&id)? }).await }
     })?;
 
     let id_paths = id.clone();
     let paths = use_server_future(move || {
         let id = id_paths.clone();
-        async move { resolve_channel_paths(id).await }
+        async move { resolve_channel_paths(ChannelPathsInput { id: parse_id(&id)? }).await }
     })?;
 
     let mut editing = use_signal(|| false);
@@ -288,6 +55,7 @@ pub fn SkillDetail(id: String) -> Element {
         Some(Ok(s)) => {
             let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
             let sid = s.id.to_string();
+            let skill_uuid = s.id;
             let name = s.name.clone();
             let desc = s.description.clone();
             let slug = s.slug.clone();
@@ -299,13 +67,18 @@ pub fn SkillDetail(id: String) -> Element {
                         form { class: "space-y-2",
                             onsubmit: move |evt: FormEvent| {
                                 evt.prevent_default();
-                                let id = sid.clone();
                                 let new_name = draft_name.read().clone();
                                 let new_desc = draft_desc.read().clone();
                                 let new_hide = *draft_hide.read();
                                 spawn(async move {
                                     if !new_name.trim().is_empty() {
-                                        let _ = update_skill(id, new_name, new_desc, new_hide).await;
+                                        let _ = update_skill(SkillUpdateInput {
+                                            id: skill_uuid,
+                                            name: new_name,
+                                            description: new_desc,
+                                            hide_from_public_catalog: new_hide,
+                                        })
+                                        .await;
                                         skill.restart();
                                     }
                                     editing.set(false);
@@ -399,10 +172,10 @@ pub fn SkillDetail(id: String) -> Element {
                                                         span { class: "text-sm font-mono font-medium", "{ch_name}" }
                                                         span { class: "text-xs text-fg-faint ml-2", "{ch_created}" }
                                                     }
-                                                    for (arch, path) in &arch_paths {
+                                                    for ap in &arch_paths {
                                                         p { class: "text-xs text-fg-faint font-mono mt-0.5 truncate",
-                                                            span { class: "text-fg-muted", "{arch}" }
-                                                            " {path}"
+                                                            span { class: "text-fg-muted", "{ap.arch}" }
+                                                            " {ap.path}"
                                                         }
                                                     }
                                                     ChannelNixPackages { channel_id: ch_id.clone() }
@@ -430,11 +203,17 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
     let cid = channel_id.clone();
     let mut deps = use_server_future(move || {
         let id = cid.clone();
-        async move { list_channel_mcp_deps(id).await }
+        async move {
+            list_channel_mcp_deps(ChannelMcpDepsInput {
+                skill_channel_id: parse_id(&id)?,
+            })
+            .await
+        }
     })?;
 
     let cid_add = channel_id.clone();
-    let all_servers = use_server_future(move || async move { list_all_mcp_servers().await })?;
+    let all_servers =
+        use_server_future(move || async move { list_all_mcp_servers(McpServerOptionsInput {}).await })?;
 
     let mut selected_server = use_signal(String::new);
 
@@ -447,8 +226,20 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                     let sid = selected_server.read().clone();
                     let channel = cid_add.clone();
                     spawn(async move {
-                        if !sid.is_empty()
-                            && add_channel_mcp_dep(channel, sid).await.is_ok()
+                        if sid.is_empty() {
+                            return;
+                        }
+                        let (Ok(skill_channel_id), Ok(mcp_server_id)) =
+                            (channel.parse::<uuid::Uuid>(), sid.parse::<uuid::Uuid>())
+                        else {
+                            return;
+                        };
+                        if add_channel_mcp_dep(ChannelMcpDepAddInput {
+                            skill_channel_id,
+                            mcp_server_id,
+                        })
+                        .await
+                        .is_ok()
                         {
                             selected_server.set(String::new());
                             deps.restart();
@@ -480,16 +271,18 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                     ul { class: "divide-y divide-line-soft",
                         for dep in list {
                             {
-                                let dep_id = dep.dep_id.clone();
+                                let dep_id = dep.dep_id;
                                 let slug = dep.mcp_server_slug.clone();
                                 rsx! {
                                     li { class: "py-1 flex justify-between items-center",
                                         span { class: "text-sm font-mono", "{slug}" }
                                         button { class: "link-danger text-xs",
                                             onclick: move |_| {
-                                                let did = dep_id.clone();
                                                 spawn(async move {
-                                                    if remove_channel_mcp_dep(did).await.is_ok() {
+                                                    if remove_channel_mcp_dep(ChannelMcpDepRemoveInput { dep_id })
+                                                        .await
+                                                        .is_ok()
+                                                    {
                                                         deps.restart();
                                                     }
                                                 });
@@ -511,75 +304,17 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
 
 // ── Channel nix packages sub-component ────────────────────────────────
 
-#[server]
-async fn get_channel_nix_packages(channel_id: String) -> Result<Vec<String>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = channel_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let pkgs: Vec<String> =
-        sqlx::query_scalar("SELECT unnest(nix_packages) FROM skill_channels WHERE id = $1")
-            .bind(uuid)
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(pkgs)
-}
-
-#[server]
-async fn add_channel_nix_package(channel_id: String, package: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = channel_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "UPDATE skill_channels SET nix_packages = array_append(nix_packages, $1) \
-         WHERE id = $2 AND NOT ($1 = ANY(nix_packages))",
-    )
-    .bind(&package)
-    .bind(uuid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_federation_global();
-    crate::api::push::notify_skill_channels_global(&[uuid]).await;
-    Ok(())
-}
-
-#[server]
-async fn remove_channel_nix_package(
-    channel_id: String,
-    package: String,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = channel_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "UPDATE skill_channels SET nix_packages = array_remove(nix_packages, $1) WHERE id = $2",
-    )
-    .bind(&package)
-    .bind(uuid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_federation_global();
-    crate::api::push::notify_skill_channels_global(&[uuid]).await;
-    Ok(())
-}
-
 #[component]
 fn ChannelNixPackages(channel_id: String) -> Element {
     let cid = channel_id.clone();
     let mut pkgs = use_server_future(move || {
         let id = cid.clone();
-        async move { get_channel_nix_packages(id).await }
+        async move {
+            get_channel_nix_packages(ChannelNixPackagesInput {
+                channel_id: parse_id(&id)?,
+            })
+            .await
+        }
     })?;
 
     let mut new_pkg = use_signal(String::new);
@@ -593,8 +328,16 @@ fn ChannelNixPackages(channel_id: String) -> Element {
                     let pkg = new_pkg.read().clone();
                     let ch = channel_id.clone();
                     spawn(async move {
+                        let Ok(channel_id) = ch.parse::<uuid::Uuid>() else {
+                            return;
+                        };
                         if !pkg.trim().is_empty()
-                            && add_channel_nix_package(ch, pkg).await.is_ok()
+                            && add_channel_nix_package(ChannelNixPackageAddInput {
+                                channel_id,
+                                package: pkg,
+                            })
+                            .await
+                            .is_ok()
                         {
                             new_pkg.set(String::new());
                             pkgs.restart();
@@ -629,7 +372,16 @@ fn ChannelNixPackages(channel_id: String) -> Element {
                                                 let p = pkg_name.clone();
                                                 let c = ch.clone();
                                                 spawn(async move {
-                                                    if remove_channel_nix_package(c, p).await.is_ok() {
+                                                    let Ok(channel_id) = c.parse::<uuid::Uuid>() else {
+                                                        return;
+                                                    };
+                                                    if remove_channel_nix_package(ChannelNixPackageRemoveInput {
+                                                        channel_id,
+                                                        package: p,
+                                                    })
+                                                    .await
+                                                    .is_ok()
+                                                    {
                                                         pkgs.restart();
                                                     }
                                                 });

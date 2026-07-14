@@ -2,35 +2,11 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::anthropic::{GenerateContext, GeneratedNameDesc};
-use crate::models::Bundle;
+use crate::api_mcp::endpoints::skills::{BundleCreateInput, create_bundle};
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[server]
-async fn create_bundle(
-    slug: String,
-    name: String,
-    description: String,
-) -> Result<Bundle, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let bundle = sqlx::query_as::<_, Bundle>(
-        "INSERT INTO bundles (slug, name, description) VALUES ($1, $2, $3) RETURNING *",
-    )
-    .bind(&slug)
-    .bind(&name)
-    .bind(&description)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_federation_global();
-    Ok(bundle)
-}
 
 #[component]
 pub fn BundleForm() -> Element {
@@ -48,7 +24,13 @@ pub fn BundleForm() -> Element {
         let name_val = name.read().clone();
         let desc_val = description.read().clone();
         spawn(async move {
-            match create_bundle(slug_val, name_val, desc_val).await {
+            match create_bundle(BundleCreateInput {
+                slug: slug_val,
+                name: name_val,
+                description: desc_val,
+            })
+            .await
+            {
                 Ok(bundle) => {
                     nav.push(Route::BundleDetail {
                         id: bundle.id.to_string(),
