@@ -259,7 +259,7 @@ impl HealerState {
         }
 
         // 4. Register control handles + spawn the build/run task.
-        self.launch(session_id, req, /* resumed */ false, "diagnosing".into());
+        self.launch(session_id, req, /* resumed */ false, "diagnosing".into())?;
 
         Ok(session_id)
     }
@@ -267,8 +267,15 @@ impl HealerState {
     /// Build the session spec (LLM resolution, tools, prompt) and hand off to
     /// the generic manager. Heavy work (Ollama probing, metrics fetch) runs in
     /// a spawned task, matching the old behavior of failing asynchronously.
-    fn launch(&self, session_id: Uuid, req: SpawnRequest, resumed: bool, start_state: String) {
-        let handles = self.inner.manager.register(session_id);
+    /// Fails if the session already has a running agent.
+    fn launch(
+        &self,
+        session_id: Uuid,
+        req: SpawnRequest,
+        resumed: bool,
+        start_state: String,
+    ) -> Result<()> {
+        let handles = self.inner.manager.register(session_id)?;
         let state = self.clone();
 
         let mut connector_config = self.inner.connector_config.clone();
@@ -305,6 +312,7 @@ impl HealerState {
                 }
             }
         });
+        Ok(())
     }
 
     /// Resume all interrupted sessions on server startup.
@@ -462,9 +470,7 @@ impl HealerState {
             req,
             /* resumed */ true,
             resume_state.as_str().to_string(),
-        );
-
-        Ok(())
+        )
     }
 
     /// Request a running session to pause immediately.

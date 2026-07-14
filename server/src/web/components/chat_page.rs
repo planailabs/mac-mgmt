@@ -260,6 +260,17 @@ pub async fn get_chat_session_meta(session_id: String) -> Result<ChatSessionMeta
     })
 }
 
+/// User turns are persisted with the page-context prefix the agent sees
+/// ("[context: user is viewing /x]\n\n..."); hide it in the UI.
+fn strip_context_prefix(content: &str) -> &str {
+    if let Some(rest) = content.strip_prefix("[context: ") {
+        if let Some(idx) = rest.find("]\n\n") {
+            return &rest[idx + 3..];
+        }
+    }
+    content
+}
+
 // ── Components ──────────────────────────────────────────────────────────
 //
 // The chat lives in a context-aware sidebar available on every page: a
@@ -657,10 +668,15 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                                 && role != "approval_request"
                                 && role != "approval_decision"
                             {
+                                let content = if role == "user" {
+                                    strip_context_prefix(&content).to_string()
+                                } else {
+                                    content
+                                };
                                 // Server copy of an optimistically echoed send?
                                 if role == "user" {
                                     let mut echoes = pending_echoes.write();
-                                    if echoes.first().is_some_and(|e| content.ends_with(e.as_str())) {
+                                    if echoes.first().is_some_and(|e| *e == content) {
                                         echoes.remove(0);
                                         continue;
                                     }
@@ -966,6 +982,7 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
 fn ApprovalCard(session_id: String, approval: ApprovalInfo) -> Element {
     let mut deny_reason = use_signal(String::new);
     let mut busy = use_signal(|| false);
+    let mut error = use_signal::<Option<String>>(|| None);
 
     let risk_variant = match approval.risk.as_str() {
         "destructive" => BadgeVariant::Danger,
@@ -986,7 +1003,10 @@ fn ApprovalCard(session_id: String, approval: ApprovalInfo) -> Element {
             let aid = approval_id.clone();
             busy.set(true);
             spawn(async move {
-                let _ = chat_approve(sid, aid, decision.to_string(), reason).await;
+                if let Err(e) = chat_approve(sid, aid, decision.to_string(), reason).await {
+                    error.set(Some(e.to_string()));
+                    busy.set(false);
+                }
             });
         }
     };
@@ -1020,6 +1040,9 @@ fn ApprovalCard(session_id: String, approval: ApprovalInfo) -> Element {
             pre { class: "bg-surface-2 rounded p-2 text-[10px] overflow-x-auto mb-1 max-h-32", "{pretty_args}" }
             if let Some(guard) = &approval.guard_reasoning {
                 p { class: "text-[10px] text-fg-muted mb-1", {t!("chat-guard-verdict")} ": {guard}" }
+            }
+            if let Some(err) = error.read().as_ref() {
+                ErrorText { {t!("error-message", message: err.clone())} }
             }
             div { class: "flex flex-wrap items-center gap-1",
                 button {

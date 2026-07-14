@@ -179,7 +179,7 @@ impl ChatState {
             model,
             InitialPrompt::User(prefix_context(page_context.as_deref(), &first_message)),
             false,
-        );
+        )?;
         Ok(session_id)
     }
 
@@ -194,8 +194,9 @@ impl ChatState {
     ) -> Result<()> {
         let sess = self.get_session_checked(user, session_id).await?;
         let msg = prefix_context(page_context.as_deref(), &text);
-        if self.inner.manager.is_running(session_id) {
-            return self.inner.manager.send_user_message(session_id, msg);
+        // Fast path: queue into a running agent.
+        if self.inner.manager.send_user_message(session_id, msg.clone()).is_ok() {
+            return Ok(());
         }
         // Not running: resumable (paused/awaiting_retry/idle-parked "completed")?
         let model = CoreStateModel;
@@ -216,14 +217,20 @@ impl ChatState {
                 );
             }
         }
-        self.launch(
-            user.clone(),
-            session_id,
-            sess.provider.clone(),
-            sess.model.clone(),
-            InitialPrompt::User(msg),
-            true,
-        );
+        if self
+            .launch(
+                user.clone(),
+                session_id,
+                sess.provider.clone(),
+                sess.model.clone(),
+                InitialPrompt::User(msg.clone()),
+                true,
+            )
+            .is_err()
+        {
+            // Lost a race against a concurrent resume — queue instead.
+            return self.inner.manager.send_user_message(session_id, msg);
+        }
         Ok(())
     }
 
@@ -303,8 +310,8 @@ impl ChatState {
         model: Option<String>,
         initial: InitialPrompt,
         resumed: bool,
-    ) {
-        let handles = self.inner.manager.register(session_id);
+    ) -> Result<()> {
+        let handles = self.inner.manager.register(session_id)?;
         let state = self.clone();
         tokio::spawn(async move {
             match build_session_spec(
@@ -328,6 +335,7 @@ impl ChatState {
                 }
             }
         });
+        Ok(())
     }
 }
 
