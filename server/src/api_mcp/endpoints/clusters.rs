@@ -7,7 +7,7 @@ use plan_ai_api_mcp_macros::api_mcp_dioxus_server;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::models::Cluster;
+use crate::models::{Cluster, ClusterConfig};
 
 #[cfg(feature = "server")]
 use super::internal;
@@ -1020,4 +1020,201 @@ pub async fn cluster_healer_settings_set(
     .await
     .map_err(internal)?;
     Ok(())
+}
+
+// ── Cluster config ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfigGetInput {
+    pub id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfigSaveInput {
+    pub id: Uuid,
+    /// The full cluster config document as a JSON string; it is migrated to
+    /// the current schema and validated before being stored.
+    pub config_json: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfigSchemaInput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfigHistoryInput {
+    pub id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfigDiffInput {
+    /// cluster_configs row id of the left (older) revision.
+    pub left_id: Uuid,
+    /// cluster_configs row id of the right (newer) revision.
+    pub right_id: Uuid,
+}
+
+/// A stored cluster config revision (id + creation time).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfigVersion {
+    pub id: Uuid,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// One line of a config diff: tag is "equal", "insert" or "delete".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DiffLine {
+    pub tag: String,
+    pub content: String,
+}
+
+/// was: get_current_config() in web/components/config_editor_panel.rs
+#[api_mcp_dioxus_server(server = "get_current_config")]
+pub async fn cluster_config_get(
+    pool: &sqlx::PgPool,
+    p: &Principal,
+    input: ConfigGetInput,
+) -> Result<Option<ClusterConfig>, ApiError> {
+    access::require_cluster_read(pool, p, input.id).await?;
+    let config = sqlx::query_as::<_, ClusterConfig>(
+        "SELECT * FROM cluster_configs WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(input.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(internal)?;
+    Ok(config.map(|mut c| {
+        mac_mgmt_common::config_migrate::migrate(&mut c.config_json);
+        c
+    }))
+}
+
+/// was: save_config() in web/components/config_editor_panel.rs
+#[api_mcp_dioxus_server(server = "save_config")]
+pub async fn cluster_config_save(
+    pool: &sqlx::PgPool,
+    p: &Principal,
+    input: ConfigSaveInput,
+) -> Result<(), ApiError> {
+    let mut json: serde_json::Value = serde_json::from_str(&input.config_json)
+        .map_err(|e| ApiError::bad_request(format!("invalid JSON: {e}")))?;
+    mac_mgmt_common::config_migrate::migrate(&mut json);
+    // Validate
+    let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(json.clone())
+        .map_err(|e| ApiError::bad_request(format!("invalid config: {e}")))?;
+
+    access::require_cluster_write(pool, p, input.id).await?;
+
+    sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
+        .bind(input.id)
+        .bind(&json)
+        .execute(pool)
+        .await
+        .map_err(internal)?;
+    crate::api::push::notify_global(input.id, crate::api::push::PushMessage::SyncConfig).await;
+    Ok(())
+}
+
+/// was: get_config_schema() in web/components/config_editor_panel.rs
+#[api_mcp_dioxus_server(server = "get_config_schema")]
+pub async fn cluster_config_schema(
+    _pool: &sqlx::PgPool,
+    _p: &Principal,
+    _input: ConfigSchemaInput,
+) -> Result<serde_json::Value, ApiError> {
+    let schema = schemars::schema_for!(mac_mgmt_common::ClusterConfig);
+    serde_json::to_value(&schema).map_err(internal)
+}
+
+/// was: get_config_history() in web/components/config_history.rs
+#[api_mcp_dioxus_server(server = "get_config_history")]
+pub async fn cluster_config_history(
+    pool: &sqlx::PgPool,
+    p: &Principal,
+    input: ConfigHistoryInput,
+) -> Result<Vec<ConfigVersion>, ApiError> {
+    access::require_cluster_read(pool, p, input.id).await?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: Uuid,
+        created_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT id, created_at FROM cluster_configs WHERE cluster_id = $1 \
+         ORDER BY created_at DESC LIMIT 50",
+    )
+    .bind(input.id)
+    .fetch_all(pool)
+    .await
+    .map_err(internal)?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| ConfigVersion {
+            id: r.id,
+            created_at: r.created_at,
+        })
+        .collect())
+}
+
+/// was: get_config_diff() in web/components/config_history.rs
+#[api_mcp_dioxus_server(server = "get_config_diff")]
+pub async fn cluster_config_diff(
+    pool: &sqlx::PgPool,
+    p: &Principal,
+    input: ConfigDiffInput,
+) -> Result<Vec<DiffLine>, ApiError> {
+    use similar::{ChangeTag, TextDiff};
+
+    // Access is checked against the left revision's cluster (both revisions
+    // of a comparison belong to the same cluster in practice).
+    if let Some(ids) = access::accessible_cluster_ids(pool, p).await? {
+        let cluster_id: Uuid =
+            sqlx::query_scalar("SELECT cluster_id FROM cluster_configs WHERE id = $1")
+                .bind(input.left_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(internal)?
+                .ok_or_else(|| ApiError::not_found("config revision not found"))?;
+        if !ids.contains(&cluster_id) {
+            return Err(ApiError::forbidden("access denied"));
+        }
+    }
+
+    let left_json: serde_json::Value =
+        sqlx::query_scalar("SELECT config_json FROM cluster_configs WHERE id = $1")
+            .bind(input.left_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| ApiError::not_found("config revision not found"))?;
+    let left_text = serde_json::to_string_pretty(&left_json).unwrap_or_default();
+
+    let right_json: serde_json::Value =
+        sqlx::query_scalar("SELECT config_json FROM cluster_configs WHERE id = $1")
+            .bind(input.right_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| ApiError::not_found("config revision not found"))?;
+    let right_text = serde_json::to_string_pretty(&right_json).unwrap_or_default();
+
+    let diff = TextDiff::from_lines(&left_text, &right_text);
+    let lines: Vec<DiffLine> = diff
+        .iter_all_changes()
+        .map(|change| {
+            let tag = match change.tag() {
+                ChangeTag::Equal => "equal",
+                ChangeTag::Insert => "insert",
+                ChangeTag::Delete => "delete",
+            };
+            DiffLine {
+                tag: tag.to_string(),
+                content: change.value().to_string(),
+            }
+        })
+        .collect();
+
+    Ok(lines)
 }

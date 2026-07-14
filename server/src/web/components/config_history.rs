@@ -1,137 +1,22 @@
-use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
+use crate::api_mcp::endpoints::clusters::{
+    ConfigDiffInput, ConfigHistoryInput, DiffLine, get_config_diff, get_config_history,
+};
 use crate::web::components::ui::{Button, ButtonSize, ErrorText, HelpText};
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ConfigVersion {
-    id: Uuid,
-    created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiffLine {
-    pub tag: String,
-    pub content: String,
-}
-
-#[server]
-async fn get_config_history(cluster_id: String) -> Result<Vec<ConfigVersion>, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let uuid: Uuid = cluster_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user
-        .accessible_cluster_ids(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    {
-        if !ids.contains(&uuid) {
-            return Err(ServerFnError::new("access denied"));
-        }
-    }
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: Uuid,
-        created_at: DateTime<Utc>,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, created_at FROM cluster_configs WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 50",
-    )
-    .bind(uuid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| ConfigVersion {
-            id: r.id,
-            created_at: r.created_at,
-        })
-        .collect())
-}
-
-#[server]
-async fn get_config_diff(
-    left_id: String,
-    right_id: String,
-) -> Result<Vec<DiffLine>, ServerFnError> {
-    use similar::{ChangeTag, TextDiff};
-
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let left_uuid: Uuid = left_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let right_uuid: Uuid = right_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user
-        .accessible_cluster_ids(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    {
-        let cluster_id: Uuid =
-            sqlx::query_scalar("SELECT cluster_id FROM cluster_configs WHERE id = $1")
-                .bind(left_uuid)
-                .fetch_one(&pool)
-                .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-        if !ids.contains(&cluster_id) {
-            return Err(ServerFnError::new("access denied"));
-        }
-    }
-
-    let left_json: serde_json::Value =
-        sqlx::query_scalar("SELECT config_json FROM cluster_configs WHERE id = $1")
-            .bind(left_uuid)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let left_text = serde_json::to_string_pretty(&left_json).unwrap_or_default();
-
-    let right_json: serde_json::Value =
-        sqlx::query_scalar("SELECT config_json FROM cluster_configs WHERE id = $1")
-            .bind(right_uuid)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let right_text = serde_json::to_string_pretty(&right_json).unwrap_or_default();
-
-    let diff = TextDiff::from_lines(&left_text, &right_text);
-    let lines: Vec<DiffLine> = diff
-        .iter_all_changes()
-        .map(|change| {
-            let tag = match change.tag() {
-                ChangeTag::Equal => "equal",
-                ChangeTag::Insert => "insert",
-                ChangeTag::Delete => "delete",
-            };
-            DiffLine {
-                tag: tag.to_string(),
-                content: change.value().to_string(),
-            }
-        })
-        .collect();
-
-    Ok(lines)
-}
 
 #[component]
 pub fn ConfigHistory(cluster_id: String) -> Element {
     let cid = cluster_id.clone();
     let history = use_server_future(move || {
         let id = cid.clone();
-        async move { get_config_history(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_config_history(ConfigHistoryInput { id }).await
+        }
     })?;
 
     let mut left_id = use_signal(|| Option::<String>::None);
@@ -205,9 +90,19 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                                     if let (Some(l), Some(r)) = (l, r) {
                                         diff_loading.set(true);
                                         diff_error.set(None);
-                                        match get_config_diff(l, r).await {
+                                        let result = async {
+                                            let left_id: uuid::Uuid =
+                                                l.parse().map_err(|e: uuid::Error| e.to_string())?;
+                                            let right_id: uuid::Uuid =
+                                                r.parse().map_err(|e: uuid::Error| e.to_string())?;
+                                            get_config_diff(ConfigDiffInput { left_id, right_id })
+                                                .await
+                                                .map_err(|e| e.to_string())
+                                        }
+                                        .await;
+                                        match result {
                                             Ok(lines) => { diff_lines.set(Some(lines)); }
-                                            Err(e) => { diff_error.set(Some(e.to_string())); }
+                                            Err(e) => { diff_error.set(Some(e)); }
                                         }
                                         diff_loading.set(false);
                                     }

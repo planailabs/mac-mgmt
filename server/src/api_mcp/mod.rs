@@ -247,6 +247,51 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
                 endpoints::clusters::cluster_healer_settings_set(&pool, &p, input).await
             },
         );
+        c.custom(
+            "config_get",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "Get the cluster's current config: the latest saved config revision, migrated to the current schema (null if none saved yet); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: endpoints::clusters::ConfigGetInput| async move {
+                endpoints::clusters::cluster_config_get(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "config_save",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Persist a new cluster config revision from a JSON string (migrated, then validated against the ClusterConfig schema) and push a config sync to the cluster's daemons; requires cluster write.",
+            |pool: sqlx::PgPool, p, input: endpoints::clusters::ConfigSaveInput| async move {
+                endpoints::clusters::cluster_config_save(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "config_schema",
+            Risk::ReadOnly,
+            OnItem::No,
+            "JSON Schema describing the ClusterConfig document (what config_save accepts); any authenticated caller.",
+            |pool: sqlx::PgPool, p, input: endpoints::clusters::ConfigSchemaInput| async move {
+                endpoints::clusters::cluster_config_schema(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "config_history",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List the cluster's 50 most recent config revisions (revision id + created_at), newest first; requires cluster read.",
+            |pool: sqlx::PgPool, p, input: endpoints::clusters::ConfigHistoryInput| async move {
+                endpoints::clusters::cluster_config_history(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "config_diff",
+            Risk::ReadOnly,
+            OnItem::No,
+            "Line-by-line diff between two config revisions (by cluster_configs revision ids, e.g. from config_history), returned as tagged lines (equal/insert/delete); requires read access to the revisions' cluster.",
+            |pool: sqlx::PgPool, p, input: endpoints::clusters::ConfigDiffInput| async move {
+                endpoints::clusters::cluster_config_diff(&pool, &p, input).await
+            },
+        );
     }
 
     {

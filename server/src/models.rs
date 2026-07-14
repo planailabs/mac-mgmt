@@ -12,7 +12,7 @@ pub struct Cluster {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct ClusterConfig {
     pub id: Uuid,
