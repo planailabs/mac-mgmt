@@ -1,8 +1,9 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
+use crate::api_mcp::endpoints::rollouts::{
+    GroupCreateInput, GroupEntry, GroupListInput, create_group, get_rollout_groups,
+};
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
@@ -10,16 +11,6 @@ use crate::web::components::ui::{
     Button, ButtonVariant, Card, DataTable, ErrorText, HelpText, PageHeader, SectionHeading,
     SortState, SortableTh, Td, TdMuted, page_window,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct GroupEntry {
-    id: Uuid,
-    name: String,
-    description: String,
-    member_count: i64,
-}
 
 impl Searchable for GroupEntry {
     fn matches_search(&self, query: &str) -> bool {
@@ -27,59 +18,11 @@ impl Searchable for GroupEntry {
     }
 }
 
-#[server]
-async fn get_rollout_groups() -> Result<Vec<GroupEntry>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: Uuid,
-        name: String,
-        description: String,
-        member_count: i64,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT rg.id, rg.name, rg.description, COUNT(rgm.id) AS member_count \
-         FROM rollout_groups rg LEFT JOIN rollout_group_members rgm ON rgm.group_id = rg.id \
-         WHERE rg.id != '00000000-0000-0000-0000-000000000000'::uuid \
-         GROUP BY rg.id ORDER BY rg.name",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| GroupEntry {
-            id: r.id,
-            name: r.name,
-            description: r.description,
-            member_count: r.member_count,
-        })
-        .collect())
-}
-
-#[server]
-async fn create_group(name: String, description: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    sqlx::query("INSERT INTO rollout_groups (name, description) VALUES ($1, $2)")
-        .bind(&name)
-        .bind(&description)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
 #[component]
 pub fn RolloutGroupList() -> Element {
     use_topbar(t!("nav-rollouts"), None);
-    let groups = use_server_future(move || async move { get_rollout_groups().await })?;
+    let groups =
+        use_server_future(move || async move { get_rollout_groups(GroupListInput {}).await })?;
 
     rsx! {
         PageHeader { {t!("rollout-group-list-title")} }
@@ -120,7 +63,11 @@ fn CreateGroupForm(on_created: EventHandler<()>) -> Element {
                         let d = desc.read().clone();
                         async move {
                             if !n.trim().is_empty() {
-                                let _ = create_group(n, d).await;
+                                let _ = create_group(GroupCreateInput {
+                                    name: n,
+                                    description: d,
+                                })
+                                .await;
                                 name.set(String::new());
                                 desc.set(String::new());
                                 on_created.call(());

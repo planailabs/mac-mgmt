@@ -1,9 +1,10 @@
-use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
+use crate::api_mcp::endpoints::rollouts::{
+    RolloutDeleteInput, RolloutEntry, RolloutListHealth, RolloutListInput, delete_rollout,
+    get_rollouts,
+};
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
@@ -11,167 +12,6 @@ use crate::web::components::ui::{
     Badge, BadgeVariant, DataTable, ErrorText, HelpText, PageHeader, SortState, SortableTh, Td,
     TdMuted, Th, page_window,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct RolloutEntry {
-    id: Uuid,
-    #[serde(default)]
-    name: Option<String>,
-    status: String,
-    created_at: DateTime<Utc>,
-    stage_count: i64,
-    /// Latest aggregated gate state across the rollout's rolling stages.
-    /// `None` when the rollout has no rolling stages or no stage with a
-    /// configured health_gate (legacy rollouts).
-    #[serde(default)]
-    health: Option<RolloutHealthSummary>,
-}
-
-/// Compact health rollup for a single rollout — one row, one badge, one
-/// tooltip. Rendered in the list view's Health column. Reads the most
-/// recent `rollout_stage_health_evaluations` row per rolling stage rather
-/// than re-evaluating live (the auto-pause loop ticks every 60s).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct RolloutHealthSummary {
-    /// "pass" | "grace" | "fail" | "no_data"
-    state: String,
-    /// Stages with a gate that have at least one evaluation.
-    evaluated_stages: u32,
-    /// Stages whose last evaluation failed.
-    failing_stages: u32,
-    /// Top reason text from any failing stage, truncated. Empty when
-    /// no stage failed.
-    summary: String,
-}
-
-#[server]
-async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: Uuid,
-        name: Option<String>,
-        status: String,
-        created_at: DateTime<Utc>,
-        stage_count: i64,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT r.id, r.name, r.status, r.created_at, COUNT(rs.id) AS stage_count \
-         FROM rollouts r LEFT JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         GROUP BY r.id ORDER BY r.created_at DESC",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct EvalRow {
-        rollout_id: Uuid,
-        passed: bool,
-        report: serde_json::Value,
-    }
-    let evals: Vec<EvalRow> = sqlx::query_as(
-        "SELECT DISTINCT ON (rs.id) rs.rollout_id, e.passed, e.report \
-         FROM rollout_stages rs \
-         JOIN rollouts r ON r.id = rs.rollout_id \
-         JOIN rollout_stage_health_evaluations e ON e.stage_id = rs.id \
-         WHERE r.status = 'rolling' AND rs.status = 'rolling' \
-           AND rs.health_gate IS NOT NULL \
-         ORDER BY rs.id, e.evaluated_at DESC",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let mut health_by_rollout: std::collections::HashMap<Uuid, RolloutHealthSummary> =
-        std::collections::HashMap::new();
-    for ev in evals {
-        let in_grace = ev
-            .report
-            .get("in_grace_period")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let reasons_arr = ev.report.get("reasons").and_then(|v| v.as_array());
-        let has_reasons = reasons_arr
-            .map(|arr| arr.iter().any(|r| r.is_string()))
-            .unwrap_or(false);
-        let entry =
-            health_by_rollout
-                .entry(ev.rollout_id)
-                .or_insert_with(|| RolloutHealthSummary {
-                    state: "pass".into(),
-                    evaluated_stages: 0,
-                    failing_stages: 0,
-                    summary: String::new(),
-                });
-        entry.evaluated_stages += 1;
-        if !ev.passed {
-            entry.failing_stages += 1;
-            entry.state = "fail".into();
-            if entry.summary.is_empty() {
-                if let Some(first) =
-                    reasons_arr.and_then(|arr| arr.iter().filter_map(|r| r.as_str()).next())
-                {
-                    entry.summary = truncate(first, 80);
-                }
-            }
-        } else if in_grace && has_reasons && entry.state != "fail" {
-            entry.state = "grace".into();
-        }
-    }
-
-    Ok(rows
-        .into_iter()
-        .map(|r| {
-            let health = if r.status == "rolling" {
-                health_by_rollout.remove(&r.id)
-            } else {
-                None
-            };
-            RolloutEntry {
-                id: r.id,
-                name: r.name,
-                status: r.status,
-                created_at: r.created_at,
-                stage_count: r.stage_count,
-                health,
-            }
-        })
-        .collect())
-}
-
-#[cfg(feature = "server")]
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut out: String = s.chars().take(max).collect();
-        out.push('…');
-        out
-    }
-}
-
-#[server]
-async fn delete_rollout(id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let rid: Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM rollouts WHERE id = $1")
-        .bind(rid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 impl Searchable for RolloutEntry {
     fn matches_search(&self, query: &str) -> bool {
@@ -208,7 +48,8 @@ fn health_variant(state: &str) -> (BadgeVariant, String) {
 #[component]
 pub fn RolloutList() -> Element {
     use_topbar(t!("rollout-list-title"), None);
-    let rollouts = use_server_future(move || async move { get_rollouts().await })?;
+    let rollouts =
+        use_server_future(move || async move { get_rollouts(RolloutListInput {}).await })?;
 
     rsx! {
         // Title row stacks below sm so the two action buttons don't
@@ -337,11 +178,10 @@ fn RolloutRow(
                     button {
                         class: "link-danger text-sm",
                         onclick: {
-                            let rid = rid.clone();
+                            let id = entry.id;
                             move |_| {
-                                let rid = rid.clone();
                                 async move {
-                                    let _ = delete_rollout(rid).await;
+                                    let _ = delete_rollout(RolloutDeleteInput { id }).await;
                                     rollouts.restart();
                                 }
                             }
@@ -355,7 +195,7 @@ fn RolloutRow(
 }
 
 #[component]
-fn HealthCell(health: Option<RolloutHealthSummary>) -> Element {
+fn HealthCell(health: Option<RolloutListHealth>) -> Element {
     let Some(h) = health else {
         return rsx! { span { class: "text-fg-faint", {t!("em-dash")} } };
     };

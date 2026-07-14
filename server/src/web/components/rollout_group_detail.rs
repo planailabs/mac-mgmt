@@ -1,226 +1,18 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::api_mcp::endpoints::rollouts::{
+    GroupAvailableClustersInput, GroupDeleteInput, GroupGetInput, GroupSetDescriptionInput,
+    MemberAddAllInput, MemberAddInput, MemberEntry, MemberRemoveInput, add_all_clusters,
+    add_member, delete_group, get_available_clusters, get_group_detail, remove_member,
+    update_description,
+};
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonSize, ButtonVariant, DataTable, ErrorText, HelpText, SectionHeading, SortState,
     SortableTh, Td, Th, page_window,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct GroupInfo {
-    id: Uuid,
-    name: String,
-    description: String,
-    members: Vec<MemberEntry>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct MemberEntry {
-    member_id: Uuid,
-    cluster_id: Uuid,
-    cluster_name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ClusterOption {
-    id: Uuid,
-    name: String,
-}
-
-#[server]
-async fn get_group_detail(id: String) -> Result<GroupInfo, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let gid: Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if gid == Uuid::nil() {
-        return Err(ServerFnError::new(
-            "the all-clusters group is implicit and has no detail page",
-        ));
-    }
-
-    #[derive(sqlx::FromRow)]
-    struct GRow {
-        id: Uuid,
-        name: String,
-        description: String,
-    }
-
-    let group =
-        sqlx::query_as::<_, GRow>("SELECT id, name, description FROM rollout_groups WHERE id = $1")
-            .bind(gid)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct MRow {
-        member_id: Uuid,
-        cluster_id: Uuid,
-        cluster_name: String,
-    }
-
-    let members = sqlx::query_as::<_, MRow>(
-        "SELECT rgm.id AS member_id, rgm.cluster_id, c.name AS cluster_name \
-         FROM rollout_group_members rgm \
-         JOIN clusters c ON c.id = rgm.cluster_id \
-         WHERE rgm.group_id = $1 ORDER BY c.name",
-    )
-    .bind(gid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(GroupInfo {
-        id: group.id,
-        name: group.name,
-        description: group.description,
-        members: members
-            .into_iter()
-            .map(|m| MemberEntry {
-                member_id: m.member_id,
-                cluster_id: m.cluster_id,
-                cluster_name: m.cluster_name,
-            })
-            .collect(),
-    })
-}
-
-#[server]
-async fn get_available_clusters(group_id: String) -> Result<Vec<ClusterOption>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let gid: Uuid = group_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: Uuid,
-        name: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, name FROM clusters \
-         WHERE id NOT IN (SELECT cluster_id FROM rollout_group_members WHERE group_id = $1) \
-         ORDER BY name",
-    )
-    .bind(gid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| ClusterOption {
-            id: r.id,
-            name: r.name,
-        })
-        .collect())
-}
-
-#[server]
-async fn add_member(group_id: String, cluster_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let gid: Uuid = group_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let cid: Uuid = cluster_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("INSERT INTO rollout_group_members (group_id, cluster_id) VALUES ($1, $2)")
-        .bind(gid)
-        .bind(cid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn add_all_clusters(group_id: String) -> Result<u64, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let gid: Uuid = group_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let result = sqlx::query(
-        "INSERT INTO rollout_group_members (group_id, cluster_id) \
-         SELECT $1, id FROM clusters \
-         WHERE id NOT IN (SELECT cluster_id FROM rollout_group_members WHERE group_id = $1) \
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(gid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(result.rows_affected())
-}
-
-#[server]
-async fn remove_member(member_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let mid: Uuid = member_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM rollout_group_members WHERE id = $1")
-        .bind(mid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn update_description(group_id: String, description: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let gid: Uuid = group_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("UPDATE rollout_groups SET description = $2 WHERE id = $1")
-        .bind(gid)
-        .bind(&description)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn delete_group(id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let gid: Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if gid.is_nil() {
-        return Err(ServerFnError::new(
-            "the All Clusters group cannot be deleted",
-        ));
-    }
-    sqlx::query("DELETE FROM rollout_groups WHERE id = $1")
-        .bind(gid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 #[component]
 pub fn RolloutGroupDetail(id: String) -> Element {
@@ -228,13 +20,23 @@ pub fn RolloutGroupDetail(id: String) -> Element {
     let id_clone = id.clone();
     let mut detail = use_server_future(move || {
         let id = id_clone.clone();
-        async move { get_group_detail(id).await }
+        async move {
+            let id: Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_group_detail(GroupGetInput { id }).await
+        }
     })?;
 
     let id_for_clusters = id.clone();
     let mut available = use_server_future(move || {
         let id = id_for_clusters.clone();
-        async move { get_available_clusters(id).await }
+        async move {
+            let group_id: Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_available_clusters(GroupAvailableClustersInput { group_id }).await
+        }
     })?;
 
     let mut selected_cluster = use_signal(|| Option::<String>::None);
@@ -244,7 +46,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
 
     match &*detail.read() {
         Some(Ok(info)) => {
-            let gid = info.id.to_string();
+            let gid = info.id;
 
             let clusters = match &*available.read() {
                 Some(Ok(list)) => list.clone(),
@@ -258,13 +60,15 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                         if *editing_desc.read() {
                             form { class: "flex items-center gap-2 mt-1",
                                 onsubmit: {
-                                    let gid = gid.clone();
                                     move |evt: FormEvent| {
                                         evt.prevent_default();
-                                        let gid = gid.clone();
                                         let desc = draft_desc.read().clone();
                                         async move {
-                                            let _ = update_description(gid, desc).await;
+                                            let _ = update_description(GroupSetDescriptionInput {
+                                                group_id: gid,
+                                                description: desc,
+                                            })
+                                            .await;
                                             editing_desc.set(false);
                                             detail.restart();
                                         }
@@ -304,11 +108,9 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                     }
                     Button { variant: ButtonVariant::Danger, size: ButtonSize::Sm,
                         onclick: {
-                            let gid = gid.clone();
                             move |_| {
-                                let gid = gid.clone();
                                 async move {
-                                    let _ = delete_group(gid).await;
+                                    let _ = delete_group(GroupDeleteInput { id: gid }).await;
                                     nav.push(crate::web::app::Route::RolloutGroupList {});
                                 }
                             }
@@ -341,13 +143,18 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                     Button { size: ButtonSize::Sm,
                         disabled: selected_cluster.read().is_none(),
                         onclick: {
-                            let gid = gid.clone();
                             move |_| {
-                                let gid = gid.clone();
                                 let cid = selected_cluster.read().clone();
                                 async move {
                                     if let Some(cid) = cid {
-                                        let _ = add_member(gid, cid).await;
+                                        let Ok(cluster_id) = cid.parse::<Uuid>() else {
+                                            return;
+                                        };
+                                        let _ = add_member(MemberAddInput {
+                                            group_id: gid,
+                                            cluster_id,
+                                        })
+                                        .await;
                                         selected_cluster.set(None);
                                         detail.restart();
                                         available.restart();
@@ -360,11 +167,12 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                     if !clusters.is_empty() {
                         Button { variant: ButtonVariant::Secondary, size: ButtonSize::Sm,
                             onclick: {
-                                let gid = gid.clone();
                                 move |_| {
-                                    let gid = gid.clone();
                                     async move {
-                                        let _ = add_all_clusters(gid).await;
+                                        let _ = add_all_clusters(MemberAddAllInput {
+                                            group_id: gid,
+                                        })
+                                        .await;
                                         selected_cluster.set(None);
                                         detail.restart();
                                         available.restart();
@@ -433,7 +241,7 @@ fn MembersTable(members: Vec<MemberEntry>, on_remove: EventHandler<()>) -> Eleme
             body: rsx! {
                 for m in filtered.read().iter().skip(start).take(limit_val) {
                     {
-                        let mid = m.member_id.to_string();
+                        let mid = m.member_id;
                         let cluster_name = m.cluster_name.clone();
                         rsx! {
                             tr { key: "{mid}",
@@ -441,12 +249,15 @@ fn MembersTable(members: Vec<MemberEntry>, on_remove: EventHandler<()>) -> Eleme
                                 td { class: "td text-right",
                                     button { class: "link-danger text-sm",
                                         onclick: {
-                                            let mid = mid.clone();
                                             move |_| {
-                                                let mid = mid.clone();
                                                 let on_remove = on_remove;
                                                 async move {
-                                                    if remove_member(mid).await.is_ok() {
+                                                    if remove_member(MemberRemoveInput {
+                                                        member_id: mid,
+                                                    })
+                                                    .await
+                                                    .is_ok()
+                                                    {
                                                         on_remove.call(());
                                                     }
                                                 }
