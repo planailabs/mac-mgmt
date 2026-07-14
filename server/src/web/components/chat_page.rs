@@ -597,6 +597,9 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
     // session never shows the indicator.
     let mut busy = use_signal(|| false);
     let mut show_pins = use_signal(|| false);
+    // Optimistic local echoes of sent messages, pending their server copy
+    // (the loop persists user turns at pickup, which can lag the submit).
+    let mut pending_echoes = use_signal::<Vec<String>>(Vec::new);
     let mut input = use_signal(String::new);
     let mut send_error = use_signal::<Option<String>>(|| None);
     let mut meta_refresh = use_signal(|| 0u32);
@@ -625,6 +628,7 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
             messages.set(Vec::new());
             approvals.set(Vec::new());
             active_tools.set(Vec::new());
+            pending_echoes.set(Vec::new());
             stream_ended.set(false);
             let mut ev = document::eval(&format!(
                 r#"
@@ -653,6 +657,14 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                                 && role != "approval_request"
                                 && role != "approval_decision"
                             {
+                                // Server copy of an optimistically echoed send?
+                                if role == "user" {
+                                    let mut echoes = pending_echoes.write();
+                                    if echoes.first().is_some_and(|e| content.ends_with(e.as_str())) {
+                                        echoes.remove(0);
+                                        continue;
+                                    }
+                                }
                                 messages.push(ChatMsg {
                                     role,
                                     content,
@@ -784,10 +796,27 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
         input.set(String::new());
         send_error.set(None);
         busy.set(true);
+        // Optimistic echo — the server copy arrives when the loop picks the
+        // turn up and is de-duplicated against this entry.
+        messages.push(ChatMsg {
+            role: "user".to_string(),
+            content: text.clone(),
+            metadata: None,
+        });
+        pending_echoes.push(text.clone());
         spawn(async move {
-            if let Err(e) = send_chat_message(sid, text, Some(ctx)).await {
+            if let Err(e) = send_chat_message(sid, text.clone(), Some(ctx)).await {
                 send_error.set(Some(e.to_string()));
                 busy.set(false);
+                // Roll back the echo.
+                pending_echoes.write().retain(|m| m != &text);
+                let mut msgs = messages.write();
+                if let Some(pos) = msgs
+                    .iter()
+                    .rposition(|m| m.role == "user" && m.content == text)
+                {
+                    msgs.remove(pos);
+                }
             } else if *stream_ended.peek() {
                 // The session was parked — it just respawned; reconnect.
                 stream_epoch += 1;
