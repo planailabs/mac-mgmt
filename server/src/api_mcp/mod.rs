@@ -60,6 +60,17 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
     // Domain endpoints are registered here as they are converted from the
     // legacy dioxus #[server] functions (one module per domain under
     // `endpoints/`).
+    let mut reg = reg;
+
+    {
+        let mut c = reg.resource("clusters", "cluster", "Clusters");
+        c.list(
+            "List clusters visible to the caller (admins: all; else clusters of the caller's orgs).",
+            |pool: sqlx::PgPool, p, input: endpoints::clusters::ClusterListInput| async move {
+                endpoints::clusters::cluster_list(&pool, &p, input).await
+            },
+        );
+    }
 
     reg
 }

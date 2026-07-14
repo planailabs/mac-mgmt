@@ -1,8 +1,7 @@
-use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
 
+use crate::api_mcp::endpoints::clusters::{ClusterListInput, ClusterRow, list_clusters};
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
@@ -10,7 +9,7 @@ use crate::web::components::ui::{
     Dash, DataTable, ErrorText, PageHeader, SortState, SortableTh, Td, TdMuted, page_window,
 };
 #[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
+use crate::web::user::current_user;
 
 #[server]
 async fn get_cluster_nixpkgs_counts(
@@ -18,16 +17,6 @@ async fn get_cluster_nixpkgs_counts(
 ) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
     let set: std::collections::HashSet<String> = shas.into_iter().collect();
     Ok(crate::commit_count::nixpkgs_commit_counts(&set).await)
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ClusterRow {
-    id: String,
-    name: String,
-    org_names: Vec<String>,
-    pinned_version: Option<String>,
-    nixpkgs_commit: Option<String>,
-    created_at: DateTime<Utc>,
 }
 
 impl Searchable for ClusterRow {
@@ -41,70 +30,6 @@ impl Searchable for ClusterRow {
 }
 
 #[server]
-async fn list_clusters() -> Result<Vec<ClusterRow>, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: uuid::Uuid,
-        name: String,
-        org_names: Vec<String>,
-        pinned_version: Option<String>,
-        nixpkgs_commit: Option<String>,
-        created_at: DateTime<Utc>,
-    }
-
-    let rows = if let Some(ids) = user
-        .accessible_cluster_ids(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    {
-        sqlx::query_as::<_, Row>(
-            "SELECT c.id, c.name, \
-             COALESCE(array_agg(DISTINCT o.name) FILTER (WHERE o.name IS NOT NULL), '{}') AS org_names, \
-             c.pinned_version, c.nixpkgs_commit, c.created_at \
-             FROM clusters c \
-             LEFT JOIN organization_clusters oc ON oc.cluster_id = c.id \
-             LEFT JOIN organizations o ON o.id = oc.organization_id \
-             WHERE c.id = ANY($1) \
-             GROUP BY c.id \
-             ORDER BY c.name",
-        )
-        .bind(&ids)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, Row>(
-            "SELECT c.id, c.name, \
-             COALESCE(array_agg(DISTINCT o.name) FILTER (WHERE o.name IS NOT NULL), '{}') AS org_names, \
-             c.pinned_version, c.nixpkgs_commit, c.created_at \
-             FROM clusters c \
-             LEFT JOIN organization_clusters oc ON oc.cluster_id = c.id \
-             LEFT JOIN organizations o ON o.id = oc.organization_id \
-             GROUP BY c.id \
-             ORDER BY c.name",
-        )
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(|r| ClusterRow {
-            id: r.id.to_string(),
-            name: r.name,
-            org_names: r.org_names,
-            pinned_version: r.pinned_version,
-            nixpkgs_commit: r.nixpkgs_commit,
-            created_at: r.created_at,
-        })
-        .collect())
-}
-
-#[server]
 async fn is_current_user_admin() -> Result<bool, ServerFnError> {
     match current_user().await {
         Ok(user) => Ok(user.is_admin),
@@ -115,7 +40,7 @@ async fn is_current_user_admin() -> Result<bool, ServerFnError> {
 #[component]
 pub fn ClusterList() -> Element {
     use_topbar(t!("cluster-list-title"), None);
-    let clusters = use_server_future(list_clusters)?;
+    let clusters = use_server_future(|| list_clusters(ClusterListInput {}))?;
     let admin_check = use_server_future(is_current_user_admin)?;
     let is_admin = matches!(&*admin_check.read(), Some(Ok(true)));
 

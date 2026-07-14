@@ -3,6 +3,8 @@
 //! handlers (`#[api_mcp_dioxus_server]`-annotated), and thereby the generated
 //! Dioxus `#[server]` wrappers the UI calls.
 
+pub mod clusters;
+
 /// Map an internal error to a framework 500.
 #[cfg(feature = "server")]
 pub(crate) fn internal<E: std::fmt::Display>(e: E) -> plan_ai_api_mcp::ApiError {
