@@ -3,25 +3,25 @@ use serde::{Deserialize, Serialize};
 
 // ── Shared types (client + server) ──────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GeneratedNameDesc {
     pub name: String,
     pub description: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BundleItemContext {
     pub skill_slug: String,
     pub channel: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct McpBundleItemContext {
     pub server_slug: String,
     pub server_name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum GenerateContext {
     Skill {
         skill_id: String,
@@ -41,7 +41,7 @@ pub enum GenerateContext {
 }
 
 /// Entity kind for the bulk save server function.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum EntityKind {
     Skill,
     Bundle,
@@ -59,13 +59,57 @@ pub struct GenerateAllItem {
     pub entity_kind: EntityKind,
 }
 
-// ── Server function ─────────────────────────────────────────────────
+// ── UI shims ────────────────────────────────────────────────────────
+//
+// The endpoint logic lives in `crate::api_mcp::endpoints::ai`; these shims
+// keep the original positional-argument signatures for the UI call sites
+// and delegate to the generated `#[server]` wrappers.
 
-#[server]
 pub async fn generate_name_desc(
     context: GenerateContext,
     current_name: String,
     current_desc: String,
+) -> Result<GeneratedNameDesc, ServerFnError> {
+    crate::api_mcp::endpoints::ai::generate_name_desc(
+        crate::api_mcp::endpoints::ai::GenerateNameDescInput {
+            context,
+            current_name,
+            current_desc,
+        },
+    )
+    .await
+}
+
+/// Save a generated name+description for any entity type.
+pub async fn save_generated_name_desc(
+    entity_kind: EntityKind,
+    id: String,
+    name: String,
+    description: String,
+) -> Result<(), ServerFnError> {
+    let id: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    crate::api_mcp::endpoints::ai::save_generated_name_desc(
+        crate::api_mcp::endpoints::ai::SaveGeneratedNameDescInput {
+            entity_kind,
+            id,
+            name,
+            description,
+        },
+    )
+    .await
+}
+
+// ── Server internals ────────────────────────────────────────────────
+
+/// Build the prompt and call the Anthropic API; the endpoint handler in
+/// `api_mcp::endpoints::ai` wraps this.
+#[cfg(feature = "server")]
+pub(crate) async fn generate_name_desc_impl(
+    context: &GenerateContext,
+    current_name: &str,
+    current_desc: &str,
 ) -> Result<GeneratedNameDesc, ServerFnError> {
     let cfg = crate::config::config();
     let anthropic = cfg
@@ -73,7 +117,7 @@ pub async fn generate_name_desc(
         .as_ref()
         .ok_or_else(|| ServerFnError::new("Anthropic API key not configured"))?;
 
-    let (system_msg, user_msg) = build_prompt(&context, &current_name, &current_desc).await?;
+    let (system_msg, user_msg) = build_prompt(context, current_name, current_desc).await?;
 
     let body = serde_json::json!({
         "model": "claude-sonnet-4-6",
@@ -130,48 +174,6 @@ pub async fn generate_name_desc(
     })?;
 
     Ok(result)
-}
-
-/// Save a generated name+description for any entity type.
-#[server]
-pub async fn save_generated_name_desc(
-    entity_kind: EntityKind,
-    id: String,
-    name: String,
-    description: String,
-) -> Result<(), ServerFnError> {
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    let query = match entity_kind {
-        EntityKind::Skill => "UPDATE skills SET name = $1, description = $2 WHERE id = $3",
-        EntityKind::Bundle => "UPDATE bundles SET name = $1, description = $2 WHERE id = $3",
-        EntityKind::McpServer => "UPDATE mcp_servers SET name = $1, description = $2 WHERE id = $3",
-        EntityKind::McpBundle => {
-            "UPDATE mcp_server_bundles SET name = $1, description = $2 WHERE id = $3"
-        }
-    };
-
-    sqlx::query(query)
-        .bind(&name)
-        .bind(&description)
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    match entity_kind {
-        EntityKind::Bundle => {
-            crate::api::push::notify_skill_bundle_global(uuid).await;
-        }
-        EntityKind::McpBundle => {
-            crate::api::push::notify_mcp_bundle_global(uuid).await;
-        }
-        _ => {}
-    }
-    Ok(())
 }
 
 #[cfg(feature = "server")]
