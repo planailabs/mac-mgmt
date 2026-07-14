@@ -1,198 +1,17 @@
-#[cfg(feature = "server")]
-use crate::web::user::WebUserExt;
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use super::skill_center_list::SkillCenterRow;
+use crate::api_mcp::endpoints::skill_centers::{
+    CatalogSummaryInput, SkillCenterDeleteInput, SkillCenterGetInput, SkillCenterSyncInput,
+    SkillCenterUpdateInput, delete_skill_center, get_catalog_summary, get_skill_center,
+    sync_skill_center_now, update_skill_center,
+};
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ButtonVariant, ErrorText, FormField, HelpText, PageHeader,
     SectionHeading,
 };
-
-/// Summary of a skill center's cached catalog.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
-pub struct CatalogSummary {
-    pub skill_channels: usize,
-    pub bundles: usize,
-    pub mcp_servers: usize,
-    pub mcp_bundles: usize,
-    pub fetched_at: Option<String>,
-}
-
-#[server]
-async fn get_catalog_summary(id: String) -> Result<CatalogSummary, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-
-    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
-
-    let cache = crate::skill_center_cache::SkillCenterCache::global()
-        .ok_or_else(|| ServerFnError::new("cache not available"))?;
-
-    if let Some(cached) = cache.get(&uuid).await {
-        Ok(CatalogSummary {
-            skill_channels: cached.catalog.skill_channels.len(),
-            bundles: cached.catalog.bundles.len(),
-            mcp_servers: cached.catalog.mcp_servers.len(),
-            mcp_bundles: cached.catalog.mcp_bundles.len(),
-            fetched_at: Some(cached.fetched_at.to_rfc3339()),
-        })
-    } else {
-        Ok(CatalogSummary::default())
-    }
-}
-
-#[server]
-async fn sync_skill_center_now(id: String) -> Result<CatalogSummary, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
-
-    let cache = crate::skill_center_cache::SkillCenterCache::global()
-        .ok_or_else(|| ServerFnError::new("cache not available"))?;
-
-    #[allow(dead_code)]
-    #[derive(sqlx::FromRow)]
-    struct ScRow {
-        id: uuid::Uuid,
-        url: String,
-        federation_token: String,
-        name: String,
-    }
-
-    let sc: ScRow =
-        sqlx::query_as("SELECT id, url, federation_token, name FROM skill_centers WHERE id = $1")
-            .bind(uuid)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(format!("query failed: {e}")))?
-            .ok_or_else(|| ServerFnError::new("skill center not found"))?;
-
-    let catalog = if sc.url.starts_with(crate::builtin_skill_center::BUILTIN_URL) {
-        crate::builtin_skill_center::builtin_catalog()
-    } else {
-        let client = crate::skill_center_client::SkillCenterClient::new(
-            sc.url.clone(),
-            sc.federation_token.clone(),
-        );
-        client
-            .fetch_catalog()
-            .await
-            .map_err(|e| ServerFnError::new(format!("sync failed: {e}")))?
-    };
-
-    let summary = CatalogSummary {
-        skill_channels: catalog.skill_channels.len(),
-        bundles: catalog.bundles.len(),
-        mcp_servers: catalog.mcp_servers.len(),
-        mcp_bundles: catalog.mcp_bundles.len(),
-        fetched_at: Some(chrono::Utc::now().to_rfc3339()),
-    };
-
-    cache.update(sc.id, catalog).await;
-
-    Ok(summary)
-}
-
-#[server]
-async fn get_skill_center(id: String) -> Result<Option<SkillCenterRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
-
-    let row = sqlx::query_as::<_, SkillCenterRow>(
-        "SELECT id, name, url, priority, enabled, created_at, updated_at \
-         FROM skill_centers WHERE id = $1",
-    )
-    .bind(uuid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("query failed: {e}")))?;
-
-    Ok(row)
-}
-
-#[server]
-async fn update_skill_center(
-    id: String,
-    name: String,
-    url: String,
-    federation_token: String,
-    priority: i32,
-    enabled: bool,
-) -> Result<SkillCenterRow, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
-
-    if crate::builtin_skill_center::is_builtin(&uuid) {
-        return Err(ServerFnError::new("cannot edit the built-in skill center"));
-    }
-
-    let row = if federation_token.trim().is_empty() {
-        sqlx::query_as::<_, SkillCenterRow>(
-            "UPDATE skill_centers SET name = $1, url = $2, \
-             priority = $3, enabled = $4, updated_at = now() \
-             WHERE id = $5 \
-             RETURNING id, name, url, priority, enabled, created_at, updated_at",
-        )
-        .bind(&name)
-        .bind(&url)
-        .bind(priority)
-        .bind(enabled)
-        .bind(uuid)
-        .fetch_one(&pool)
-        .await
-    } else {
-        sqlx::query_as::<_, SkillCenterRow>(
-            "UPDATE skill_centers SET name = $1, url = $2, federation_token = $3, \
-             priority = $4, enabled = $5, updated_at = now() \
-             WHERE id = $6 \
-             RETURNING id, name, url, priority, enabled, created_at, updated_at",
-        )
-        .bind(&name)
-        .bind(&url)
-        .bind(&federation_token)
-        .bind(priority)
-        .bind(enabled)
-        .bind(uuid)
-        .fetch_one(&pool)
-        .await
-    };
-
-    row.map_err(|e| ServerFnError::new(format!("update failed: {e}")))
-}
-
-#[server]
-async fn delete_skill_center(id: String) -> Result<(), ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let uuid: uuid::Uuid = id.parse().map_err(|_| ServerFnError::new("invalid UUID"))?;
-
-    if crate::builtin_skill_center::is_builtin(&uuid) {
-        return Err(ServerFnError::new(
-            "cannot delete the built-in skill center",
-        ));
-    }
-
-    sqlx::query("DELETE FROM skill_centers WHERE id = $1")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(format!("delete failed: {e}")))?;
-
-    Ok(())
-}
 
 #[component]
 pub fn SkillCenterDetail(id: String) -> Element {
@@ -201,12 +20,22 @@ pub fn SkillCenterDetail(id: String) -> Element {
     let id3 = id.clone();
     let mut center_future = use_server_future(move || {
         let id = id.clone();
-        async move { get_skill_center(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_skill_center(SkillCenterGetInput { id }).await
+        }
     })?;
 
     let mut catalog_summary = use_server_future(move || {
         let id = id2.clone();
-        async move { get_catalog_summary(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_catalog_summary(CatalogSummaryInput { id }).await
+        }
     })?;
 
     let mut syncing = use_signal(|| false);
@@ -258,7 +87,11 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                             move |_| {
                                                 let id = id.clone();
                                                 spawn(async move {
-                                                    if let Err(e) = delete_skill_center(id).await {
+                                                    let Ok(id) = id.parse::<uuid::Uuid>() else {
+                                                        tracing::error!("delete failed: invalid UUID");
+                                                        return;
+                                                    };
+                                                    if let Err(e) = delete_skill_center(SkillCenterDeleteInput { id }).await {
                                                         tracing::error!("delete failed: {e}");
                                                     } else {
                                                         nav.push(Route::SkillCenterList {});
@@ -285,7 +118,18 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                         let priority: i32 = draft_priority.read().parse().unwrap_or(0);
                                         let enabled = *draft_enabled.read();
                                         spawn(async move {
-                                            match update_skill_center(id, name, url, token, priority, enabled).await {
+                                            let Ok(id) = id.parse::<uuid::Uuid>() else {
+                                                error.set(Some("invalid UUID".to_string()));
+                                                return;
+                                            };
+                                            match update_skill_center(SkillCenterUpdateInput {
+                                                id,
+                                                name,
+                                                url,
+                                                federation_token: token,
+                                                priority,
+                                                enabled,
+                                            }).await {
                                                 Ok(_) => {
                                                     editing.set(false);
                                                     error.set(None);
@@ -384,8 +228,13 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                                 spawn(async move {
                                                     syncing.set(true);
                                                     sync_error.set(None);
-                                                    match sync_skill_center_now(sid).await {
-                                                        Ok(_) => { catalog_summary.restart(); }
+                                                    match sid.parse::<uuid::Uuid>() {
+                                                        Ok(id) => {
+                                                            match sync_skill_center_now(SkillCenterSyncInput { id }).await {
+                                                                Ok(_) => { catalog_summary.restart(); }
+                                                                Err(e) => { sync_error.set(Some(e.to_string())); }
+                                                            }
+                                                        }
                                                         Err(e) => { sync_error.set(Some(e.to_string())); }
                                                     }
                                                     syncing.set(false);

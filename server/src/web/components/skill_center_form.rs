@@ -1,60 +1,10 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::skill_centers::{SkillCenterCreateInput, create_skill_center};
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, HelpText, PageHeader};
-
-#[server]
-async fn create_skill_center(
-    name: String,
-    url: String,
-    federation_token: String,
-    priority: i32,
-    enabled: bool,
-) -> Result<String, ServerFnError> {
-    use crate::web::user::{WebUserExt, current_user};
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err(ServerFnError::new("name-required"));
-    }
-    let url = url.trim().to_string();
-    if url.is_empty() {
-        return Err(ServerFnError::new("url-required"));
-    }
-    let federation_token = federation_token.trim().to_string();
-    if federation_token.is_empty() {
-        return Err(ServerFnError::new("token-required"));
-    }
-
-    let id: uuid::Uuid = sqlx::query_scalar(
-        "INSERT INTO skill_centers (name, url, federation_token, priority, enabled) \
-         VALUES ($1, $2, $3, $4, $5) RETURNING id",
-    )
-    .bind(&name)
-    .bind(&url)
-    .bind(&federation_token)
-    .bind(priority)
-    .bind(enabled)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| {
-        if let sqlx::Error::Database(db_err) = &e {
-            if db_err.code().as_deref() == Some("23505") {
-                return ServerFnError::new(format!(
-                    "A skill center with URL '{url}' already exists"
-                ));
-            }
-        }
-        ServerFnError::new(e.to_string())
-    })?;
-
-    Ok(id.to_string())
-}
 
 #[component]
 pub fn SkillCenterForm() -> Element {
@@ -89,7 +39,14 @@ pub fn SkillCenterForm() -> Element {
         }
 
         spawn(async move {
-            match create_skill_center(name_val, url_val, token_val, priority_val, enabled_val).await
+            match create_skill_center(SkillCenterCreateInput {
+                name: name_val,
+                url: url_val,
+                federation_token: token_val,
+                priority: priority_val,
+                enabled: enabled_val,
+            })
+            .await
             {
                 Ok(id) => {
                     nav.push(Route::SkillCenterDetail { id });

@@ -1,44 +1,14 @@
-#[cfg(feature = "server")]
-use crate::web::user::WebUserExt;
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::skill_centers::{SkillCentersListInput, list_skill_centers};
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText, HelpText, PageHeader, Th};
-
-#[server]
-async fn list_skill_centers() -> Result<Vec<SkillCenterRow>, ServerFnError> {
-    let user = crate::web::user::current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let rows = sqlx::query_as::<_, SkillCenterRow>(
-        "SELECT id, name, url, priority, enabled, created_at, updated_at \
-         FROM skill_centers ORDER BY priority DESC, name",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("query failed: {e}")))?;
-
-    Ok(rows)
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct SkillCenterRow {
-    pub id: uuid::Uuid,
-    pub name: String,
-    pub url: String,
-    pub priority: i32,
-    pub enabled: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
 
 #[component]
 pub fn SkillCenterList() -> Element {
     use_topbar(t!("skill-center-list-title"), None);
-    let skill_centers = use_server_future(list_skill_centers)?;
+    let skill_centers = use_server_future(|| list_skill_centers(SkillCentersListInput {}))?;
 
     rsx! {
         div { class: "px-6 py-8 max-w-5xl mx-auto",
