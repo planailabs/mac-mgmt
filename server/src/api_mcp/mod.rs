@@ -791,6 +791,18 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
         );
     }
 
+    // Per-module registrations (each converted domain wires itself here so
+    // domain modules stay self-contained).
+    endpoints::daemon_versions::register(&mut reg);
+    endpoints::skills::register(&mut reg);
+    endpoints::mcp_servers::register(&mut reg);
+    endpoints::rollouts::register(&mut reg);
+    endpoints::skill_centers::register(&mut reg);
+    endpoints::imports::register(&mut reg);
+    endpoints::fleet::register(&mut reg);
+    endpoints::healer::register(&mut reg);
+    endpoints::ai::register(&mut reg);
+
     reg
 }
 

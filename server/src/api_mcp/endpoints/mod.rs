@@ -3,9 +3,18 @@
 //! handlers (`#[api_mcp_dioxus_server]`-annotated), and thereby the generated
 //! Dioxus `#[server]` wrappers the UI calls.
 
+pub mod ai;
 pub mod certificates;
 pub mod clusters;
+pub mod daemon_versions;
+pub mod fleet;
+pub mod healer;
+pub mod imports;
+pub mod mcp_servers;
 pub mod organizations;
+pub mod rollouts;
+pub mod skill_centers;
+pub mod skills;
 pub mod tokens;
 pub mod users;
 
