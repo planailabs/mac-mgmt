@@ -9200,6 +9200,7 @@ dependencies = [
  "plan-ai-api-mcp",
  "plan-ai-api-mcp-macros",
  "plan-ai-auth",
+ "plan-ai-chat",
  "plan-ai-design",
  "pulldown-cmark 0.12.2",
  "rand 0.9.4",
@@ -17350,6 +17351,7 @@ dependencies = [
  "md-5",
  "rand 0.9.4",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

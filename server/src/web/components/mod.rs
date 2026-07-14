@@ -6,6 +6,7 @@ pub mod all_tokens_list;
 pub mod bundle_detail;
 pub mod bundle_form;
 pub mod bundle_list;
+pub mod chat_page;
 pub mod cluster_client_cas;
 pub mod cluster_client_certs;
 pub mod cluster_config_page;

@@ -11,7 +11,7 @@ use crate::web::user::{WebUserExt, current_user};
 
 // ── Wire types ─────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
     pub name: String,
     pub model: String,
@@ -1661,14 +1661,14 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
 // ── Helpers ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChatMsg {
-    role: String,
-    content: String,
+pub struct ChatMsg {
+    pub role: String,
+    pub content: String,
     #[serde(default)]
-    metadata: Option<serde_json::Value>,
+    pub metadata: Option<serde_json::Value>,
 }
 
-fn reason_display(reason: &str) -> String {
+pub fn reason_display(reason: &str) -> String {
     match reason {
         "manual_pause" => t!("healer-paused-by-user"),
         "token_budget_exceeded" => t!("healer-token-budget"),
@@ -1678,7 +1678,7 @@ fn reason_display(reason: &str) -> String {
     }
 }
 
-fn state_badge(st: &str) -> (BadgeVariant, String) {
+pub fn state_badge(st: &str) -> (BadgeVariant, String) {
     match st {
         "starting" | "loading" | "created" | "initializing" => {
             (BadgeVariant::Info, t!("healer-state-initializing"))
@@ -1759,7 +1759,7 @@ fn render_state_change(msg: &ChatMsg) -> Element {
 
 /// Render a chat message. Tool calls/results get special UI.
 /// Assistant/system messages are rendered as markdown via dangerous_inner_html.
-fn render_message(msg: &ChatMsg) -> Element {
+pub fn render_message(msg: &ChatMsg) -> Element {
     if msg.role == "tool_result" {
         return render_tool_result(msg);
     }
@@ -1812,7 +1812,7 @@ fn render_message(msg: &ChatMsg) -> Element {
     }
 }
 
-fn render_tool_result(msg: &ChatMsg) -> Element {
+pub fn render_tool_result(msg: &ChatMsg) -> Element {
     let (tool_name, result) = msg
         .content
         .split_once(": ")

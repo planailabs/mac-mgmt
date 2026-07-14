@@ -215,6 +215,10 @@ pub fn Layout() -> Element {
                 display_name,
                 is_open: drawer_open,
             }
+
+            // Context-aware fleet chat: floating bubble + slide-in sidebar,
+            // available on every page (renders nothing when chat is disabled).
+            crate::web::components::chat_page::ChatSidebar {}
         }
     }
 }

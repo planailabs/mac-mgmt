@@ -144,7 +144,7 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
 /// link variants of `Logo`. Always full-size — the brand mark stays
 /// visible whether the sidebar is open or collapsed.
 #[component]
-fn LogoMark() -> Element {
+pub fn LogoMark() -> Element {
     rsx! {
         svg {
             class: "shrink-0",

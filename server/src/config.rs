@@ -15,6 +15,9 @@ pub struct ServerConfig {
     pub anthropic: Option<AnthropicConfig>,
     #[serde(default)]
     pub healer: HealerConfig,
+    /// Interactive fleet chatbot (agent over the api-mcp tool surface).
+    #[serde(default)]
+    pub chat: ChatConfig,
     #[serde(default)]
     pub sentry: SentryConfig,
     #[serde(default)]
@@ -34,6 +37,63 @@ pub struct ServerConfig {
     /// enabled only in the antithesis test cluster's server, never in prod.
     #[serde(default)]
     pub chaos: ChaosConfig,
+}
+
+/// `[chat]` — interactive fleet chatbot. The agent's tools are the api-mcp
+/// registry endpoints, dispatched with the chat user's principal; calls at or
+/// above `risk_threshold` pause for human approval in the chat UI.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ChatConfig {
+    /// Master switch. Default off.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Models offered in the chat model picker. Falls back to
+    /// `[healer].models` (or the built-in defaults) when empty.
+    #[serde(default)]
+    pub models: Vec<HealerModelEntry>,
+    /// Validator LLM for the guard layer (shown alongside approval prompts).
+    #[serde(default)]
+    pub validator_provider: Option<String>,
+    #[serde(default)]
+    pub validator_model: Option<String>,
+    /// Per-session token budget. 0 = unlimited. Default 500k.
+    #[serde(default = "default_chat_token_budget")]
+    pub token_budget: u64,
+    /// Minimum tool risk that requires human approval:
+    /// "mutating" (default), "destructive", or "never" (disable the gate).
+    #[serde(default = "default_chat_risk_threshold")]
+    pub risk_threshold: String,
+    /// Offer/accept "approve all for this session". Default true.
+    #[serde(default = "default_true")]
+    pub allow_approve_all: bool,
+    /// Max concurrently running agent sessions per user. Default 3.
+    #[serde(default = "default_chat_max_sessions")]
+    pub max_active_sessions_per_user: u32,
+    /// Minutes an interactive session idles before parking. Default 30.
+    #[serde(default = "default_chat_idle_park_minutes")]
+    pub idle_park_minutes: u64,
+    /// Tool-name globs to include (empty = all registry tools).
+    #[serde(default)]
+    pub tools_include: Vec<String>,
+    /// Tool-name globs to exclude.
+    #[serde(default)]
+    pub tools_exclude: Vec<String>,
+}
+
+fn default_chat_token_budget() -> u64 {
+    500_000
+}
+fn default_chat_risk_threshold() -> String {
+    "mutating".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_chat_max_sessions() -> u32 {
+    3
+}
+fn default_chat_idle_park_minutes() -> u64 {
+    30
 }
 
 /// Gates the chaos-node registration API. See `server/src/api/chaos.rs`.

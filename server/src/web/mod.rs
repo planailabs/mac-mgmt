@@ -1,6 +1,8 @@
 pub mod app;
 #[cfg(feature = "server")]
 pub mod auth;
+#[cfg(feature = "server")]
+pub mod chat_sse;
 pub mod components;
 pub mod gate_input;
 #[cfg(feature = "server")]

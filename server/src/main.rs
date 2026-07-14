@@ -4,6 +4,8 @@ mod anthropic;
 mod api;
 #[cfg(feature = "webui")]
 mod api_mcp;
+#[cfg(all(feature = "server", feature = "webui"))]
+mod chat;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod builtin_skill_center;
 #[cfg(feature = "server")]
@@ -52,6 +54,7 @@ mod server_state {
     static HEALER: OnceLock<HealerState> = OnceLock::new();
     static PG_HEALER_STORE: OnceLock<Arc<mac_mgmt_healer::store::pg::PgHealerStore>> =
         OnceLock::new();
+    static CHAT: OnceLock<crate::chat::ChatState> = OnceLock::new();
 
     pub fn set_pool(pool: PgPool) {
         POOL.set(pool).expect("pool already initialized");
@@ -74,6 +77,10 @@ mod server_state {
         let _ = PG_HEALER_STORE.set(store);
     }
 
+    pub fn set_chat_state(state: crate::chat::ChatState) {
+        let _ = CHAT.set(state);
+    }
+
     pub fn server_pool() -> Result<PgPool, dioxus::prelude::ServerFnError> {
         POOL.get()
             .cloned()
@@ -94,6 +101,10 @@ mod server_state {
 
     pub fn healer_state() -> Option<HealerState> {
         HEALER.get().cloned()
+    }
+
+    pub fn chat_state() -> Option<crate::chat::ChatState> {
+        CHAT.get().cloned()
     }
 
     pub fn pg_healer_store()
@@ -269,6 +280,8 @@ async fn init_server() -> (
         validator_model: None,
         fine_tuned_model: cfg.healer.fine_tuned_model.clone(),
     };
+    #[cfg(feature = "webui")]
+    let chat_connector = healer_connector.clone();
     let pg_healer_store =
         std::sync::Arc::new(mac_mgmt_healer::store::pg::PgHealerStore::new(pool.clone()));
     let healer_store: mac_mgmt_healer::DynStore = pg_healer_store.clone();
@@ -301,6 +314,23 @@ async fn init_server() -> (
     {
         server_state::set_healer_state(healer_state.clone());
         server_state::set_pg_healer_store(pg_healer_store.clone());
+    }
+
+    // Initialize the fleet chatbot (agent over the api-mcp tool surface).
+    #[cfg(feature = "webui")]
+    if cfg.chat.enabled {
+        let registry = crate::api_mcp::shared_registry(pool.clone());
+        match crate::chat::ChatState::new(
+            pool.clone(),
+            registry,
+            chat_connector,
+            cfg.chat.clone(),
+        )
+        .await
+        {
+            Ok(chat) => server_state::set_chat_state(chat),
+            Err(e) => tracing::error!("failed to initialize chat: {e:#}"),
+        }
     }
 
     // Resume healer sessions interrupted by a previous shutdown
@@ -591,6 +621,10 @@ fn main() {
                     .route(
                         web::healer_sse::SSE_PATH,
                         axum::routing::get(web::healer_sse::view_session_sse),
+                    )
+                    .route(
+                        web::chat_sse::SSE_PATH,
+                        axum::routing::get(web::chat_sse::view_session_sse),
                     );
 
                 // Disable nginx response buffering so streaming server functions
@@ -707,6 +741,14 @@ fn main() {
                         .await;
                     if drained > 0 {
                         tracing::info!("drained {drained} healer sessions");
+                    }
+                    if let Some(chat) = server_state::chat_state() {
+                        let drained = chat
+                            .graceful_shutdown(std::time::Duration::from_secs(15))
+                            .await;
+                        if drained > 0 {
+                            tracing::info!("drained {drained} chat sessions");
+                        }
                     }
 
                     rocket_shutdown.notify();
