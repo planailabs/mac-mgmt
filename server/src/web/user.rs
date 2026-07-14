@@ -122,6 +122,43 @@ impl WebUserExt for WebUser {
     }
 }
 
+// ── plan-ai-api-mcp bridge ──────────────────────────────────────────────
+//
+// Turn a web-session `WebUser` into a framework `Principal`, and map framework
+// `ApiError`s back to `ServerFnError`. These let the macro-generated Dioxus
+// `#[server]` wrappers delegate to shared endpoint handlers.
+
+/// Build a framework `Principal` from the authenticated web user.
+///
+/// Org-admin memberships ride in `scopes.org_admin` (the framework Principal
+/// only models read/write org sets); `api_mcp::access` interprets it.
+#[cfg(feature = "server")]
+pub fn principal_from(user: &WebUser) -> plan_ai_api_mcp::Principal {
+    let mut p = if user.is_admin {
+        plan_ai_api_mcp::Principal::admin(user.email.clone())
+    } else {
+        plan_ai_api_mcp::Principal::scoped(
+            user.email.clone(),
+            user.org_ids().into_iter().collect(),
+            user.write_org_ids().into_iter().collect(),
+        )
+    };
+    let admin_orgs: Vec<uuid::Uuid> = user
+        .org_memberships
+        .iter()
+        .filter(|m| m.role == "admin")
+        .map(|m| m.org_id)
+        .collect();
+    p.scopes = serde_json::json!({ "org_admin": admin_orgs });
+    p
+}
+
+/// Map a framework `ApiError` to a Dioxus `ServerFnError`.
+#[cfg(feature = "server")]
+pub fn to_serverfn(err: plan_ai_api_mcp::ApiError) -> dioxus::prelude::ServerFnError {
+    dioxus::prelude::ServerFnError::new(err.to_string())
+}
+
 /// Extract the current authenticated user from the request extensions.
 /// Call this in `#[server]` functions to get the logged-in user.
 #[cfg(feature = "server")]

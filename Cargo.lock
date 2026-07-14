@@ -9197,6 +9197,8 @@ dependencies = [
  "mac-mgmt-config-ui",
  "mac-mgmt-healer",
  "multihash",
+ "plan-ai-api-mcp",
+ "plan-ai-api-mcp-macros",
  "plan-ai-auth",
  "plan-ai-design",
  "pulldown-cmark 0.12.2",

@@ -2,6 +2,8 @@
 mod anthropic;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod api;
+#[cfg(feature = "webui")]
+mod api_mcp;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod builtin_skill_center;
 #[cfg(feature = "server")]
@@ -651,6 +653,19 @@ fn main() {
                             .route_service("/mcp/healer/", mcp_service);
                         router = router.merge(mcp_router);
                     }
+                }
+
+                // API-MCP surface — merged AFTER the OIDC auth layers, like
+                // /mcp/healer: /api/v1/* (REST + OpenAPI + Swagger UI) and
+                // /mcp (MCP tools) authenticate with Bearer tokens via the
+                // registry's TokenAuthenticator, not the web session.
+                {
+                    let pool = crate::server_state::server_pool().unwrap();
+                    let registry = crate::api_mcp::shared_registry(pool.clone());
+                    router = router
+                        .merge(registry.http_router(pool.clone()))
+                        .route_service("/mcp", registry.mcp_service(pool.clone()))
+                        .route_service("/mcp/", registry.mcp_service(pool));
                 }
 
                 // Dioxus's release-mode `dioxus::serve` calls `axum::serve(...).await`
