@@ -3,6 +3,9 @@ use dioxus_i18n::t;
 use dioxus_tabular::*;
 
 use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
+use crate::api_mcp::endpoints::mcp_servers::{
+    McpCatalogEntry, McpServersListInput, list_mcp_servers,
+};
 use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
@@ -10,73 +13,24 @@ use crate::web::components::table_utils::*;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{DataTable, ErrorText, HelpText, PageHeader, page_window};
 
-#[server]
-async fn list_mcp_servers() -> Result<Vec<CatalogEntry>, ServerFnError> {
-    use crate::web::user::{WebUserExt, current_user};
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let local =
-        sqlx::query_as::<_, crate::models::McpServer>("SELECT * FROM mcp_servers ORDER BY slug")
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let mut entries: Vec<CatalogEntry> = local
-        .into_iter()
-        .map(|s| CatalogEntry {
-            id: s.id,
-            slug: s.slug,
-            name: s.name,
-            description: s.description,
-            created_at: Some(s.created_at),
-            hide_from_public_catalog: s.hide_from_public_catalog,
-            skill_center_name: None,
-            route_kind: "mcp_server".to_string(),
-        })
-        .collect();
-
-    if let Some(cache) = crate::skill_center_cache::SkillCenterCache::global() {
-        let all = cache.get_all().await;
-        let sc_names: std::collections::HashMap<uuid::Uuid, String> =
-            sqlx::query_as::<_, (uuid::Uuid, String)>(
-                "SELECT id, name FROM skill_centers WHERE enabled = true",
-            )
-            .fetch_all(&pool)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-
-        for (sc_id, cached) in &all {
-            let sc_name = sc_names.get(sc_id).cloned().unwrap_or_default();
-            if sc_name.is_empty() {
-                continue;
-            }
-            for srv in &cached.catalog.mcp_servers {
-                entries.push(CatalogEntry {
-                    id: srv.id,
-                    slug: srv.slug.clone(),
-                    name: srv.name.clone(),
-                    description: srv.description.clone(),
-                    created_at: None,
-                    hide_from_public_catalog: srv.hidden,
-                    skill_center_name: Some(sc_name.clone()),
-                    route_kind: "mcp_server".to_string(),
-                });
-            }
-        }
+fn to_catalog_entry(e: &McpCatalogEntry) -> CatalogEntry {
+    CatalogEntry {
+        id: e.id,
+        slug: e.slug.clone(),
+        name: e.name.clone(),
+        description: e.description.clone(),
+        created_at: e.created_at,
+        hide_from_public_catalog: e.hide_from_public_catalog,
+        skill_center_name: e.skill_center_name.clone(),
+        route_kind: e.route_kind.clone(),
     }
-
-    entries.sort_by(|a, b| a.slug.cmp(&b.slug));
-    Ok(entries)
 }
 
 #[component]
 pub fn McpServerList() -> Element {
     use_topbar(t!("mcp-server-list-title"), None);
-    let mut servers = use_server_future(list_mcp_servers)?;
+    let mut servers =
+        use_server_future(|| async move { list_mcp_servers(McpServersListInput {}).await })?;
 
     rsx! {
         div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
@@ -111,7 +65,7 @@ pub fn McpServerList() -> Element {
             }
         }
         {match &*servers.read() {
-            Some(Ok(list)) => rsx! { CatalogTable { list: list.clone() } },
+            Some(Ok(list)) => rsx! { CatalogTable { list: list.iter().map(to_catalog_entry).collect::<Vec<_>>() } },
             Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
             None => rsx! { HelpText { {t!("loading")} } },
         }}

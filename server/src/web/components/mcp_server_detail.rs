@@ -1,9 +1,12 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
 
 use crate::anthropic::{GenerateContext, GeneratedNameDesc};
-use crate::models::McpServer;
+use crate::api_mcp::endpoints::mcp_servers::{
+    DependentSkillsInput, McpServerDeleteInput, McpServerGetInput, McpServerUpsertInput,
+    NixPackageAddInput, NixPackageRemoveInput, add_nix_package, delete_mcp_server, get_mcp_server,
+    list_dependent_skills, remove_nix_package, upsert_mcp_server,
+};
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
@@ -11,183 +14,6 @@ use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, FormField, HelpText, PageHeader, SectionHeading,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-// ── Server functions ─────────────────────────────────────────────────
-
-#[server]
-async fn get_mcp_server(id: String) -> Result<McpServer, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query_as::<_, McpServer>("SELECT * FROM mcp_servers WHERE id = $1")
-        .bind(uuid)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[server]
-async fn upsert_mcp_server(
-    id: Option<String>,
-    slug: String,
-    name: String,
-    description: String,
-    config_json: String,
-    hide_from_public_catalog: bool,
-) -> Result<McpServer, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let parsed: serde_json::Value = serde_json::from_str(&config_json)
-        .map_err(|e| ServerFnError::new(format!("invalid JSON: {e}")))?;
-    crate::mcp_schema::validate_mcp_server_config(&parsed)
-        .map_err(|e| ServerFnError::new(format!("schema validation failed: {e}")))?;
-
-    let result = if let Some(id) = id {
-        let uuid: uuid::Uuid = id
-            .parse()
-            .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-        sqlx::query_as::<_, McpServer>(
-            "UPDATE mcp_servers SET name = $1, description = $2, config_json = $3, hide_from_public_catalog = $4 WHERE id = $5 RETURNING *",
-        )
-        .bind(&name)
-        .bind(&description)
-        .bind(&parsed)
-        .bind(hide_from_public_catalog)
-        .bind(uuid)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, McpServer>(
-            "INSERT INTO mcp_servers (slug, name, description, config_json, hide_from_public_catalog) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-        )
-        .bind(&slug)
-        .bind(&name)
-        .bind(&description)
-        .bind(&parsed)
-        .bind(hide_from_public_catalog)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-    crate::api::push::notify_federation_global();
-    Ok(result)
-}
-
-#[server]
-async fn add_nix_package(id: String, package: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let pkg = package.trim().to_string();
-    if pkg.is_empty() {
-        return Err(ServerFnError::new("package name cannot be empty"));
-    }
-    sqlx::query(
-        "UPDATE mcp_servers SET nix_packages = array_append(nix_packages, $1) \
-         WHERE id = $2 AND NOT ($1 = ANY(nix_packages))",
-    )
-    .bind(&pkg)
-    .bind(uuid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_federation_global();
-    Ok(())
-}
-
-#[server]
-async fn remove_nix_package(id: String, package: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "UPDATE mcp_servers SET nix_packages = array_remove(nix_packages, $1) WHERE id = $2",
-    )
-    .bind(&package)
-    .bind(uuid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_federation_global();
-    Ok(())
-}
-
-#[server]
-async fn delete_mcp_server(id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_federation_global();
-    crate::api::push::notify_mcp_server_global(uuid).await;
-    sqlx::query("DELETE FROM mcp_servers WHERE id = $1")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SkillDepRow {
-    skill_slug: String,
-    channel: String,
-    skill_id: String,
-}
-
-#[server]
-async fn list_dependent_skills(mcp_server_id: String) -> Result<Vec<SkillDepRow>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = mcp_server_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        skill_slug: String,
-        channel: String,
-        skill_id: uuid::Uuid,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT s.slug as skill_slug, sc.channel, s.id as skill_id \
-         FROM skill_mcp_dependencies smd \
-         JOIN skill_channels sc ON sc.id = smd.skill_channel_id \
-         JOIN skills s ON s.id = sc.skill_id \
-         WHERE smd.mcp_server_id = $1 \
-         ORDER BY s.slug, sc.channel",
-    )
-    .bind(uuid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| SkillDepRow {
-            skill_slug: r.skill_slug,
-            channel: r.channel,
-            skill_id: r.skill_id.to_string(),
-        })
-        .collect())
-}
 
 // ── Shared form fields component ─────────────────────────────────────
 
@@ -266,7 +92,12 @@ pub fn McpServerDetail(id: String) -> Element {
     let id_clone = id.clone();
     let mut server = use_server_future(move || {
         let id = id_clone.clone();
-        async move { get_mcp_server(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_mcp_server(McpServerGetInput { id }).await
+        }
     })?;
 
     let mut new_pkg = use_signal(String::new);
@@ -274,15 +105,21 @@ pub fn McpServerDetail(id: String) -> Element {
     let id_deps = id.clone();
     let dep_skills = use_server_future(move || {
         let id = id_deps.clone();
-        async move { list_dependent_skills(id).await }
+        async move {
+            let mcp_server_id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            list_dependent_skills(DependentSkillsInput { mcp_server_id }).await
+        }
     })?;
 
     match &*server.read() {
         Some(Ok(s)) => {
             let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
             let sid = s.id.to_string();
-            let sid_del = sid.clone();
-            let sid_pkg = sid.clone();
+            let sid_del = s.id;
+            let sid_pkg = s.id;
+            let sid_rm = s.id;
             let name = s.name.clone();
             let slug = s.slug.clone();
             let config_str = serde_json::to_string_pretty(&s.config_json).unwrap_or_default();
@@ -299,10 +136,10 @@ pub fn McpServerDetail(id: String) -> Element {
                     }
                     button { class: "link-danger",
                         onclick: move |_| {
-                            let id = sid_del.clone();
+                            let id = sid_del;
                             let nav = navigator;
                             spawn(async move {
-                                if delete_mcp_server(id).await.is_ok() {
+                                if delete_mcp_server(McpServerDeleteInput { id }).await.is_ok() {
                                     nav.push(Route::McpServerList {});
                                 }
                             });
@@ -328,11 +165,13 @@ pub fn McpServerDetail(id: String) -> Element {
                     form { class: "flex gap-2 mb-4",
                         onsubmit: move |evt: FormEvent| {
                             evt.prevent_default();
-                            let id = sid_pkg.clone();
+                            let id = sid_pkg;
                             let pkg = new_pkg.read().clone();
                             spawn(async move {
                                 if !pkg.trim().is_empty()
-                                    && add_nix_package(id, pkg).await.is_ok()
+                                    && add_nix_package(NixPackageAddInput { id, package: pkg })
+                                        .await
+                                        .is_ok()
                                 {
                                     new_pkg.set(String::new());
                                     server.restart();
@@ -357,16 +196,15 @@ pub fn McpServerDetail(id: String) -> Element {
                                 {
                                     let pkg_display = pkg.clone();
                                     let pkg_remove = pkg.clone();
-                                    let id_rm = id.clone();
                                     rsx! {
                                         li { class: "py-2 flex justify-between items-center",
                                             span { class: "text-sm font-mono", "{pkg_display}" }
                                             button { class: "link-danger text-xs",
                                                 onclick: move |_| {
-                                                    let id = id_rm.clone();
+                                                    let id = sid_rm;
                                                     let pkg = pkg_remove.clone();
                                                     spawn(async move {
-                                                        if remove_nix_package(id, pkg).await.is_ok() {
+                                                        if remove_nix_package(NixPackageRemoveInput { id, package: pkg }).await.is_ok() {
                                                             server.restart();
                                                         }
                                                     });
@@ -445,7 +283,15 @@ pub fn McpServerForm() -> Element {
                 let c = config_json.read().clone();
                 let h = *hide_from_public_catalog.read();
                 spawn(async move {
-                    match upsert_mcp_server(None, s, n, d, c, h).await {
+                    let input = McpServerUpsertInput {
+                        id: None,
+                        slug: s,
+                        name: n,
+                        description: d,
+                        config_json: c,
+                        hide_from_public_catalog: h,
+                    };
+                    match upsert_mcp_server(input).await {
                         Ok(server) => { nav.push(Route::McpServerDetail { id: server.id.to_string() }); }
                         Err(e) => error.set(Some(e.to_string())),
                     }
@@ -478,7 +324,12 @@ pub fn McpServerEdit(id: String) -> Element {
     let id_load = id.clone();
     let existing = use_server_future(move || {
         let id = id_load.clone();
-        async move { get_mcp_server(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_mcp_server(McpServerGetInput { id }).await
+        }
     })?;
 
     let navigator = navigator();
@@ -522,7 +373,19 @@ pub fn McpServerEdit(id: String) -> Element {
                         let c = config_json.read().clone();
                         let h = *hide_from_public_catalog.read();
                         spawn(async move {
-                            match upsert_mcp_server(Some(eid), s, n, d, c, h).await {
+                            let Ok(eid) = eid.parse::<uuid::Uuid>() else {
+                                error.set(Some("invalid mcp server id".to_string()));
+                                return;
+                            };
+                            let input = McpServerUpsertInput {
+                                id: Some(eid),
+                                slug: s,
+                                name: n,
+                                description: d,
+                                config_json: c,
+                                hide_from_public_catalog: h,
+                            };
+                            match upsert_mcp_server(input).await {
                                 Ok(_) => { nav.push(Route::McpServerDetail { id: nid }); }
                                 Err(e) => error.set(Some(e.to_string())),
                             }
