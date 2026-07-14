@@ -1,145 +1,23 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::certificates::{
+    SshKeyAddInput, SshKeyRemoveInput, SshKeysListInput, add_ssh_key, list_ssh_keys,
+    remove_ssh_key,
+};
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct SshKeyDisplay {
-    pub id: uuid::Uuid,
-    pub fingerprint: String,
-    pub comment: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[server]
-async fn list_ssh_keys(cluster_id: String) -> Result<Vec<SshKeyDisplay>, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user
-        .accessible_cluster_ids(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    {
-        if !ids.contains(&uuid) {
-            return Err(ServerFnError::new("access denied"));
-        }
-    }
-    let keys = sqlx::query_as::<_, SshKeyDisplay>(
-        "SELECT id, fingerprint, comment, created_at \
-         FROM cluster_ssh_keys WHERE cluster_id = $1 ORDER BY created_at",
-    )
-    .bind(uuid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(keys)
-}
-
-#[server]
-async fn add_ssh_key(cluster_id: String, public_key: String) -> Result<(), ServerFnError> {
-    use base64::Engine;
-    use sha2::{Digest, Sha256};
-
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let org_ids = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT organization_id FROM organization_clusters WHERE cluster_id = $1",
-    )
-    .bind(cid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if org_ids.is_empty() || !org_ids.iter().any(|oid| user.is_org_admin(oid)) {
-        return Err(ServerFnError::new("organization admin access required"));
-    }
-
-    let trimmed = public_key.trim();
-    let parts: Vec<&str> = trimmed.split_whitespace().collect();
-    if parts.len() < 2 {
-        return Err(ServerFnError::new("Invalid SSH public key format"));
-    }
-    let b64_data = base64::engine::general_purpose::STANDARD
-        .decode(parts[1])
-        .map_err(|_| ServerFnError::new("Invalid base64 in SSH key"))?;
-    let fingerprint = format!(
-        "SHA256:{}",
-        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&b64_data))
-    );
-    let comment = if parts.len() > 2 {
-        parts[2..].join(" ")
-    } else {
-        String::new()
-    };
-
-    sqlx::query(
-        "INSERT INTO cluster_ssh_keys (cluster_id, public_key, comment, fingerprint) \
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(cid)
-    .bind(trimmed)
-    .bind(&comment)
-    .bind(&fingerprint)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSshKeys).await;
-    Ok(())
-}
-
-#[server]
-async fn remove_ssh_key(ssh_key_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = ssh_key_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT cluster_id FROM cluster_ssh_keys WHERE id = $1",
-    )
-    .bind(uuid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if let Some(owner_cid) = owner_cid {
-        let org_ids = sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT organization_id FROM organization_clusters WHERE cluster_id = $1",
-        )
-        .bind(owner_cid)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-        if org_ids.is_empty() || !org_ids.iter().any(|oid| user.is_org_admin(oid)) {
-            return Err(ServerFnError::new("organization admin access required"));
-        }
-    }
-    let cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "DELETE FROM cluster_ssh_keys WHERE id = $1 RETURNING cluster_id",
-    )
-    .bind(uuid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if let Some(cid) = cid {
-        crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSshKeys).await;
-    }
-    Ok(())
-}
 
 #[component]
 pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
     let cid_list = cluster_id.clone();
     let mut keys = use_server_future(move || {
         let cid = cid_list.clone();
-        async move { list_ssh_keys(cid).await }
+        async move {
+            let cluster_id: uuid::Uuid = cid
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            list_ssh_keys(SshKeysListInput { cluster_id }).await
+        }
     })?;
 
     let mut key_input = use_signal(String::new);
@@ -158,8 +36,15 @@ pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
                     let cid = cid_add.clone();
                     let pk = key_input.read().clone();
                     spawn(async move {
+                        let cluster_id: uuid::Uuid = match cid.parse() {
+                            Ok(id) => id,
+                            Err(e) => {
+                                error_msg.set(Some(e.to_string()));
+                                return;
+                            }
+                        };
                         if !pk.trim().is_empty() {
-                            match add_ssh_key(cid, pk).await {
+                            match add_ssh_key(SshKeyAddInput { cluster_id, public_key: pk }).await {
                                 Ok(()) => {
                                     error_msg.set(None);
                                     key_input.set(String::new());
@@ -210,7 +95,13 @@ pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
                                             onclick: move |_| {
                                                 let kid = kid.clone();
                                                 spawn(async move {
-                                                    if remove_ssh_key(kid).await.is_ok() {
+                                                    let Ok(id) = kid.parse::<uuid::Uuid>() else {
+                                                        return;
+                                                    };
+                                                    if remove_ssh_key(SshKeyRemoveInput { id })
+                                                        .await
+                                                        .is_ok()
+                                                    {
                                                         keys.restart();
                                                     }
                                                 });

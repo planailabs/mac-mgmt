@@ -473,6 +473,324 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
         );
     }
 
+    {
+        let mut t = reg.resource("tokens", "token", "Tokens");
+        t.custom(
+            "sync_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a cluster's sync tokens (label, revoked, expiry; never the token value); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::SyncTokensListInput| async move {
+                endpoints::tokens::token_sync_list(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "sync_create",
+            Risk::Mutating,
+            OnItem::No,
+            "Create a cluster sync token (daemon enrollment/sync) with a label and optional expiry (seconds from now). Returns the plaintext token, shown only this once — store it securely, it cannot be retrieved again. Requires cluster write.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::SyncTokenCreateInput| async move {
+                endpoints::tokens::token_sync_create(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "sync_revoke",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Revoke a cluster sync token (irreversible); requires write access to the owning cluster.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::SyncTokenRevokeInput| async move {
+                endpoints::tokens::token_sync_revoke(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "setting_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a cluster's setting tokens (label, revoked, expiry; never the token value); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::SettingTokensListInput| async move {
+                endpoints::tokens::token_setting_list(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "setting_create",
+            Risk::Mutating,
+            OnItem::No,
+            "Create a cluster setting token with a label and optional expiry (seconds from now). Returns the plaintext token, shown only this once — store it securely, it cannot be retrieved again. Requires cluster write.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::SettingTokenCreateInput| async move {
+                endpoints::tokens::token_setting_create(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "setting_revoke",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Revoke a cluster setting token (irreversible); requires write access to the owning cluster.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::SettingTokenRevokeInput| async move {
+                endpoints::tokens::token_setting_revoke(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "admin_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List global admin tokens (label, revoked, expiry; never the token value); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::AdminTokensListInput| async move {
+                endpoints::tokens::token_admin_list(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "admin_create",
+            Risk::Mutating,
+            OnItem::No,
+            "Create a global admin token with a label and optional expiry (seconds from now). Returns the plaintext token, shown only this once — store it securely, it cannot be retrieved again. Admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::AdminTokenCreateInput| async move {
+                endpoints::tokens::token_admin_create(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "admin_revoke",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Revoke a global admin token (irreversible); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::AdminTokenRevokeInput| async move {
+                endpoints::tokens::token_admin_revoke(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "federation_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List federation tokens (label, revoked, expiry; never the token value); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::FederationTokensListInput| async move {
+                endpoints::tokens::token_federation_list(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "federation_create",
+            Risk::Mutating,
+            OnItem::No,
+            "Create a federation token (fed_-prefixed) with a label and optional expiry (seconds from now). Returns the plaintext token, shown only this once — store it securely, it cannot be retrieved again. Admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::FederationTokenCreateInput| async move {
+                endpoints::tokens::token_federation_create(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "federation_revoke",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Revoke a federation token (irreversible); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::FederationTokenRevokeInput| async move {
+                endpoints::tokens::token_federation_revoke(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "list_all",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List every token across the system with its kind and resolved org/cluster scope (never the token value); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::AllTokensListInput| async move {
+                endpoints::tokens::token_list_all(&pool, &p, input).await
+            },
+        );
+        t.custom(
+            "revoke_any",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Revoke any token by id, regardless of kind or scope (irreversible); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::tokens::AnyTokenRevokeInput| async move {
+                endpoints::tokens::token_revoke_any(&pool, &p, input).await
+            },
+        );
+    }
+
+    {
+        let mut s = reg.resource("ssh_keys", "ssh_key", "SSH keys");
+        s.list(
+            "List a cluster's authorized SSH public keys (fingerprint + comment); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::SshKeysListInput| async move {
+                endpoints::certificates::ssh_key_list(&pool, &p, input).await
+            },
+        );
+        s.create(
+            "Add an OpenSSH public key to a cluster and push an SSH-key sync; requires org-admin of an owning organization.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::SshKeyAddInput| async move {
+                endpoints::certificates::ssh_key_add(&pool, &p, input).await
+            },
+        );
+        s.delete(
+            "Remove an SSH key from its cluster and push an SSH-key sync; requires org-admin of an owning organization.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::SshKeyRemoveInput| async move {
+                endpoints::certificates::ssh_key_remove(&pool, &p, input).await
+            },
+        );
+    }
+
+    {
+        let mut c = reg.resource("certificates", "certificate", "Client certificates");
+        c.custom(
+            "cluster_certs_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a cluster's client certificates (fingerprint + label); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::ClusterCertsListInput| async move {
+                endpoints::certificates::cert_cluster_list(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "cluster_cert_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add a client certificate to a cluster, by PEM (fingerprint derived) or bare fingerprint; requires org-admin of an owning organization.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::ClusterCertAddInput| async move {
+                endpoints::certificates::cert_cluster_add(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "cluster_cert_remove",
+            Risk::Destructive,
+            OnItem::Yes,
+            "Remove a client certificate from its cluster; requires org-admin of an owning organization.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::ClusterCertRemoveInput| async move {
+                endpoints::certificates::cert_cluster_remove(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "cluster_cas_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List a cluster's client CAs (fingerprint + label); requires cluster read.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::ClusterCasListInput| async move {
+                endpoints::certificates::ca_cluster_list(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "cluster_ca_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add a client CA certificate (PEM) to a cluster; requires org-admin of an owning organization.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::ClusterCaAddInput| async move {
+                endpoints::certificates::ca_cluster_add(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "cluster_ca_remove",
+            Risk::Destructive,
+            OnItem::Yes,
+            "Remove a client CA from its cluster; requires org-admin of an owning organization.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::ClusterCaRemoveInput| async move {
+                endpoints::certificates::ca_cluster_remove(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "org_certs_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List an organization's client certificates (fingerprint + label); requires org membership or admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::OrgCertsListInput| async move {
+                endpoints::certificates::cert_org_list(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "org_cert_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add a client certificate to an organization, by PEM (fingerprint derived) or bare fingerprint; requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::OrgCertAddInput| async move {
+                endpoints::certificates::cert_org_add(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "org_cert_remove",
+            Risk::Destructive,
+            OnItem::Yes,
+            "Remove a client certificate from an organization; requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::OrgCertRemoveInput| async move {
+                endpoints::certificates::cert_org_remove(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "org_cas_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List an organization's client CAs (fingerprint + label); requires org membership or admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::OrgCasListInput| async move {
+                endpoints::certificates::ca_org_list(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "org_ca_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add a client CA certificate (PEM) to an organization; requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::OrgCaAddInput| async move {
+                endpoints::certificates::ca_org_add(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "org_ca_remove",
+            Risk::Destructive,
+            OnItem::Yes,
+            "Remove a client CA from an organization; requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::OrgCaRemoveInput| async move {
+                endpoints::certificates::ca_org_remove(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "admin_certs_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List server-wide (admin-scope) client certificates (fingerprint + label); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCertsListInput| async move {
+                endpoints::certificates::cert_admin_list(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "admin_cert_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add a server-wide (admin-scope) client certificate, by PEM (fingerprint derived) or bare fingerprint; admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCertAddInput| async move {
+                endpoints::certificates::cert_admin_add(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "admin_cert_remove",
+            Risk::Destructive,
+            OnItem::Yes,
+            "Remove a server-wide (admin-scope) client certificate; admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCertRemoveInput| async move {
+                endpoints::certificates::cert_admin_remove(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "admin_cas_list",
+            Risk::ReadOnly,
+            OnItem::No,
+            "List server-wide (admin-scope) client CAs (fingerprint + label); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCasListInput| async move {
+                endpoints::certificates::ca_admin_list(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "admin_ca_add",
+            Risk::Mutating,
+            OnItem::No,
+            "Add a server-wide (admin-scope) client CA certificate (PEM); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCaAddInput| async move {
+                endpoints::certificates::ca_admin_add(&pool, &p, input).await
+            },
+        );
+        c.custom(
+            "admin_ca_remove",
+            Risk::Destructive,
+            OnItem::Yes,
+            "Remove a server-wide (admin-scope) client CA; admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCaRemoveInput| async move {
+                endpoints::certificates::ca_admin_remove(&pool, &p, input).await
+            },
+        );
+    }
+
     reg
 }
 

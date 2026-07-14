@@ -1,84 +1,18 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::certificates::{
+    AdminCaAddInput, AdminCaRemoveInput, AdminCasListInput, add_admin_ca, list_admin_cas,
+    remove_admin_ca,
+};
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
-
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct AdminCaDisplay {
-    pub id: uuid::Uuid,
-    pub fingerprint: String,
-    pub label: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[server]
-async fn list_admin_cas() -> Result<Vec<AdminCaDisplay>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let cas = sqlx::query_as::<_, AdminCaDisplay>(
-        "SELECT id, fingerprint, label, created_at \
-         FROM client_certificates \
-         WHERE scope = 'admin' AND is_ca = true \
-         ORDER BY created_at",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(cas)
-}
-
-#[server]
-async fn add_admin_ca(certificate_pem: String, label: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let fp = crate::api::routes::fingerprint_from_pem_str(&certificate_pem)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let lbl = label.trim().to_string();
-
-    sqlx::query(
-        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
-         VALUES ('admin', NULL, true, $1, $2, $3)",
-    )
-    .bind(&fp)
-    .bind(&certificate_pem)
-    .bind(&lbl)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn remove_admin_ca(ca_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = ca_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = true",
-    )
-    .bind(uuid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 #[component]
 pub fn AdminClientCas() -> Element {
     use_topbar(t!("admin-client-cas-title"), None);
 
-    let mut cas = use_server_future(|| async { list_admin_cas().await })?;
+    let mut cas = use_server_future(|| async { list_admin_cas(AdminCasListInput {}).await })?;
 
     let mut pem_input = use_signal(String::new);
     let mut label_input = use_signal(String::new);
@@ -101,7 +35,12 @@ pub fn AdminClientCas() -> Element {
                 let lbl = label_input.read().clone();
                 spawn(async move {
                     if !pem.trim().is_empty() {
-                        match add_admin_ca(pem, lbl).await {
+                        match add_admin_ca(AdminCaAddInput {
+                            certificate_pem: pem,
+                            label: lbl,
+                        })
+                        .await
+                        {
                             Ok(()) => {
                                 error_msg.set(None);
                                 pem_input.set(String::new());
@@ -156,7 +95,13 @@ pub fn AdminClientCas() -> Element {
                                         onclick: move |_| {
                                             let cid = cid.clone();
                                             spawn(async move {
-                                                if remove_admin_ca(cid).await.is_ok() {
+                                                let Ok(id) = cid.parse::<uuid::Uuid>() else {
+                                                    return;
+                                                };
+                                                if remove_admin_ca(AdminCaRemoveInput { id })
+                                                    .await
+                                                    .is_ok()
+                                                {
                                                     cas.restart();
                                                 }
                                             });

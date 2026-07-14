@@ -1,97 +1,19 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::certificates::{
+    AdminCertAddInput, AdminCertRemoveInput, AdminCertsListInput, add_admin_cert,
+    list_admin_certs, remove_admin_cert,
+};
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
-
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct AdminCertDisplay {
-    pub id: uuid::Uuid,
-    pub fingerprint: String,
-    pub label: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[server]
-async fn list_admin_certs() -> Result<Vec<AdminCertDisplay>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let certs = sqlx::query_as::<_, AdminCertDisplay>(
-        "SELECT id, fingerprint, label, created_at \
-         FROM client_certificates \
-         WHERE scope = 'admin' AND is_ca = false \
-         ORDER BY created_at",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(certs)
-}
-
-#[server]
-async fn add_admin_cert(
-    fingerprint: String,
-    certificate_pem: String,
-    label: String,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let lbl = label.trim().to_string();
-    let (fp, pem) = if !certificate_pem.trim().is_empty() {
-        let fp = crate::api::routes::fingerprint_from_pem_str(&certificate_pem)
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-        (fp, Some(certificate_pem))
-    } else if !fingerprint.trim().is_empty() {
-        (fingerprint.trim().to_lowercase(), None)
-    } else {
-        return Err(ServerFnError::new(
-            "fingerprint or certificate PEM required",
-        ));
-    };
-
-    sqlx::query(
-        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
-         VALUES ('admin', NULL, false, $1, $2, $3)",
-    )
-    .bind(&fp)
-    .bind(&pem)
-    .bind(&lbl)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn remove_admin_cert(cert_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cert_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "DELETE FROM client_certificates WHERE id = $1 AND scope = 'admin' AND is_ca = false",
-    )
-    .bind(uuid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 #[component]
 pub fn AdminClientCerts() -> Element {
     use_topbar(t!("admin-client-certs-title"), None);
 
-    let mut certs = use_server_future(|| async { list_admin_certs().await })?;
+    let mut certs =
+        use_server_future(|| async { list_admin_certs(AdminCertsListInput {}).await })?;
 
     let mut fp_input = use_signal(String::new);
     let mut pem_input = use_signal(String::new);
@@ -116,7 +38,13 @@ pub fn AdminClientCerts() -> Element {
                 let lbl = label_input.read().clone();
                 spawn(async move {
                     if !fp.trim().is_empty() || !pem.trim().is_empty() {
-                        match add_admin_cert(fp, pem, lbl).await {
+                        match add_admin_cert(AdminCertAddInput {
+                            fingerprint: fp,
+                            certificate_pem: pem,
+                            label: lbl,
+                        })
+                        .await
+                        {
                             Ok(()) => {
                                 error_msg.set(None);
                                 fp_input.set(String::new());
@@ -177,7 +105,13 @@ pub fn AdminClientCerts() -> Element {
                                         onclick: move |_| {
                                             let cid = cid.clone();
                                             spawn(async move {
-                                                if remove_admin_cert(cid).await.is_ok() {
+                                                let Ok(id) = cid.parse::<uuid::Uuid>() else {
+                                                    return;
+                                                };
+                                                if remove_admin_cert(AdminCertRemoveInput { id })
+                                                    .await
+                                                    .is_ok()
+                                                {
                                                     certs.restart();
                                                 }
                                             });

@@ -1,80 +1,18 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::models::Token;
+use crate::api_mcp::endpoints::tokens::{
+    AdminTokenCreateInput, AdminTokenRevokeInput, AdminTokensListInput, create_admin_token,
+    list_admin_tokens, revoke_admin_token,
+};
 use crate::web::components::ui::{
     ErrorText, HelpText, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[server]
-async fn list_admin_tokens() -> Result<Vec<Token>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let tokens = sqlx::query_as::<_, Token>(
-        "SELECT * FROM tokens WHERE kind = 'admin' ORDER BY created_at DESC",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(tokens)
-}
-
-#[server]
-async fn create_admin_token(
-    label: String,
-    expires_in_secs: Option<i64>,
-) -> Result<String, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    use rand::Rng;
-    use sha2::{Digest, Sha256};
-
-    let label = label.trim().to_string();
-    if label.is_empty() {
-        return Err(ServerFnError::new("label is required"));
-    }
-
-    let pool = crate::server_pool()?;
-
-    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
-    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
-
-    sqlx::query(
-        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) VALUES (NULL, $1, $2, 'admin', $3)",
-    )
-    .bind(&hash)
-    .bind(&label)
-    .bind(expires_at)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(raw_token)
-}
-
-#[server]
-async fn revoke_admin_token(token_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = token_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 #[component]
 pub fn AdminTokenList() -> Element {
-    let mut tokens = use_server_future(move || async move { list_admin_tokens().await })?;
+    let mut tokens =
+        use_server_future(move || async move { list_admin_tokens(AdminTokensListInput {}).await })?;
     let mut new_token = use_signal(|| None::<String>);
 
     rsx! {
@@ -86,7 +24,12 @@ pub fn AdminTokenList() -> Element {
             submit_label: t!("admin-token-create"),
             on_submit: move |input: TokenCreateInput| {
                 spawn(async move {
-                    match create_admin_token(input.label, input.expires_in_secs).await {
+                    match create_admin_token(AdminTokenCreateInput {
+                        label: input.label,
+                        expires_in_secs: input.expires_in_secs,
+                    })
+                    .await
+                    {
                         Ok(raw) => {
                             new_token.set(Some(raw));
                             tokens.restart();
@@ -100,7 +43,7 @@ pub fn AdminTokenList() -> Element {
         {match &*tokens.read() {
             Some(Ok(list)) => {
                 let rows = list.iter().map(|t| TokenRow {
-                    id: t.id.to_string(),
+                    id: t.id.clone(),
                     label: if t.label.is_empty() { t!("no-label") } else { t.label.clone() },
                     kind: None,
                     scope: None,
@@ -115,7 +58,10 @@ pub fn AdminTokenList() -> Element {
                         rows,
                         on_revoke: move |id: String| {
                             spawn(async move {
-                                if revoke_admin_token(id).await.is_ok() {
+                                let Ok(id) = id.parse::<uuid::Uuid>() else {
+                                    return;
+                                };
+                                if revoke_admin_token(AdminTokenRevokeInput { id }).await.is_ok() {
                                     tokens.restart();
                                 }
                             });

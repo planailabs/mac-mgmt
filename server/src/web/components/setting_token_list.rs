@@ -1,125 +1,25 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::models::Token;
+use crate::api_mcp::endpoints::tokens::{
+    SettingTokenCreateInput, SettingTokenRevokeInput, SettingTokensListInput, TokenEntry,
+    create_setting_token, list_setting_tokens, revoke_setting_token,
+};
 use crate::web::components::ui::{
     ErrorText, HelpText, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[server]
-async fn list_setting_tokens(cluster_id: String) -> Result<Vec<Token>, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user
-        .accessible_cluster_ids(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    {
-        if !ids.contains(&uuid) {
-            return Err(ServerFnError::new("access denied"));
-        }
-    }
-    let tokens = sqlx::query_as::<_, Token>(
-        "SELECT * FROM tokens WHERE cluster_id = $1 AND kind = 'setting' ORDER BY created_at DESC",
-    )
-    .bind(uuid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(tokens)
-}
-
-#[server]
-async fn create_setting_token(
-    cluster_id: String,
-    label: String,
-    expires_in_secs: Option<i64>,
-) -> Result<String, ServerFnError> {
-    use rand::Rng;
-    use sha2::{Digest, Sha256};
-
-    let user = current_user().await?;
-
-    let label = label.trim().to_string();
-    if label.is_empty() {
-        return Err(ServerFnError::new("label is required"));
-    }
-
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user
-        .writable_cluster_ids(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    {
-        if !ids.contains(&uuid) {
-            return Err(ServerFnError::new("access denied"));
-        }
-    }
-
-    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
-    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
-
-    sqlx::query(
-        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) VALUES ($1, $2, $3, 'setting', $4)",
-    )
-    .bind(uuid)
-    .bind(&hash)
-    .bind(&label)
-    .bind(expires_at)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(raw_token)
-}
-
-#[server]
-async fn revoke_setting_token(token_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = token_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let owner_cid =
-        sqlx::query_scalar::<_, uuid::Uuid>("SELECT cluster_id FROM tokens WHERE id = $1")
-            .bind(uuid)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = user
-            .writable_cluster_ids(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-        {
-            if !ids.contains(&owner_cid) {
-                return Err(ServerFnError::new("access denied"));
-            }
-        }
-    }
-    sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 #[component]
 pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
     let cid = cluster_id.clone();
     let mut tokens = use_server_future(move || {
         let cid = cid.clone();
-        async move { list_setting_tokens(cid).await }
+        async move {
+            let cluster_id: uuid::Uuid = cid
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            list_setting_tokens(SettingTokensListInput { cluster_id }).await
+        }
     })?;
 
     let mut new_token = use_signal(|| None::<String>);
@@ -136,7 +36,20 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                 on_submit: move |input: TokenCreateInput| {
                     let cid = cid_create.clone();
                     spawn(async move {
-                        match create_setting_token(cid, input.label, input.expires_in_secs).await {
+                        let cluster_id: uuid::Uuid = match cid.parse() {
+                            Ok(id) => id,
+                            Err(e) => {
+                                tracing::error!("invalid cluster id: {e}");
+                                return;
+                            }
+                        };
+                        match create_setting_token(SettingTokenCreateInput {
+                            cluster_id,
+                            label: input.label,
+                            expires_in_secs: input.expires_in_secs,
+                        })
+                        .await
+                        {
                             Ok(raw) => {
                                 new_token.set(Some(raw));
                                 tokens.restart();
@@ -160,7 +73,13 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                             show_expires: true,
                             on_revoke: move |id: String| {
                                 spawn(async move {
-                                    if revoke_setting_token(id).await.is_ok() {
+                                    let Ok(id) = id.parse::<uuid::Uuid>() else {
+                                        return;
+                                    };
+                                    if revoke_setting_token(SettingTokenRevokeInput { id })
+                                        .await
+                                        .is_ok()
+                                    {
                                         tokens.restart();
                                     }
                                 });
@@ -178,9 +97,9 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
 /// Map an expiring (setting/sync) token into a shared [`TokenRow`]. Computes
 /// the expired flag; the table renders the Expired status and suppresses
 /// revoke. Shared by the setting and sync token lists.
-pub fn token_to_expiring_row(token: &Token) -> TokenRow {
+pub fn token_to_expiring_row(token: &TokenEntry) -> TokenRow {
     TokenRow {
-        id: token.id.to_string(),
+        id: token.id.clone(),
         label: if token.label.is_empty() {
             t!("no-label")
         } else {

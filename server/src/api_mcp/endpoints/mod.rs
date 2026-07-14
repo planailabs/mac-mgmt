@@ -3,8 +3,10 @@
 //! handlers (`#[api_mcp_dioxus_server]`-annotated), and thereby the generated
 //! Dioxus `#[server]` wrappers the UI calls.
 
+pub mod certificates;
 pub mod clusters;
 pub mod organizations;
+pub mod tokens;
 pub mod users;
 
 /// Map an internal error to a framework 500.

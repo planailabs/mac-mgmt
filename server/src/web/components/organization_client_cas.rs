@@ -1,102 +1,22 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::certificates::{
+    OrgCaAddInput, OrgCaRemoveInput, OrgCasListInput, add_org_ca, list_org_cas, remove_org_ca,
+};
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct OrgCaDisplay {
-    pub id: uuid::Uuid,
-    pub fingerprint: String,
-    pub label: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[server]
-async fn list_org_cas(organization_id: String) -> Result<Vec<OrgCaDisplay>, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let oid: uuid::Uuid = organization_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if !user.is_admin && !user.org_ids().contains(&oid) {
-        return Err(ServerFnError::new("access denied"));
-    }
-    let cas = sqlx::query_as::<_, OrgCaDisplay>(
-        "SELECT id, fingerprint, label, created_at \
-         FROM client_certificates \
-         WHERE scope = 'organization' AND scope_id = $1 AND is_ca = true \
-         ORDER BY created_at",
-    )
-    .bind(oid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(cas)
-}
-
-#[server]
-async fn add_org_ca(
-    organization_id: String,
-    certificate_pem: String,
-    label: String,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = organization_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-    let pool = crate::server_pool()?;
-
-    let fp = crate::api::routes::fingerprint_from_pem_str(&certificate_pem)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let lbl = label.trim().to_string();
-
-    sqlx::query(
-        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
-         VALUES ('organization', $1, true, $2, $3, $4)",
-    )
-    .bind(oid)
-    .bind(&fp)
-    .bind(&certificate_pem)
-    .bind(&lbl)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn remove_org_ca(organization_id: String, ca_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = organization_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = ca_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "DELETE FROM client_certificates \
-         WHERE id = $1 AND scope = 'organization' AND scope_id = $2 AND is_ca = true",
-    )
-    .bind(uuid)
-    .bind(oid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 #[component]
 pub fn OrganizationClientCas(organization_id: String, read_only: bool) -> Element {
     let oid_list = organization_id.clone();
     let mut cas = use_server_future(move || {
         let oid = oid_list.clone();
-        async move { list_org_cas(oid).await }
+        async move {
+            let organization_id: uuid::Uuid = oid
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            list_org_cas(OrgCasListInput { organization_id }).await
+        }
     })?;
 
     let mut pem_input = use_signal(String::new);
@@ -117,8 +37,21 @@ pub fn OrganizationClientCas(organization_id: String, read_only: bool) -> Elemen
                     let pem = pem_input.read().clone();
                     let lbl = label_input.read().clone();
                     spawn(async move {
+                        let organization_id: uuid::Uuid = match oid.parse() {
+                            Ok(id) => id,
+                            Err(e) => {
+                                error_msg.set(Some(e.to_string()));
+                                return;
+                            }
+                        };
                         if !pem.trim().is_empty() {
-                            match add_org_ca(oid, pem, lbl).await {
+                            match add_org_ca(OrgCaAddInput {
+                                organization_id,
+                                certificate_pem: pem,
+                                label: lbl,
+                            })
+                            .await
+                            {
                                 Ok(()) => {
                                     error_msg.set(None);
                                     pem_input.set(String::new());
@@ -176,7 +109,19 @@ pub fn OrganizationClientCas(organization_id: String, read_only: bool) -> Elemen
                                                 let cid = cid.clone();
                                                 let oid = oid.clone();
                                                 spawn(async move {
-                                                    if remove_org_ca(oid, cid).await.is_ok() {
+                                                    let (Ok(id), Ok(organization_id)) = (
+                                                        cid.parse::<uuid::Uuid>(),
+                                                        oid.parse::<uuid::Uuid>(),
+                                                    ) else {
+                                                        return;
+                                                    };
+                                                    if remove_org_ca(OrgCaRemoveInput {
+                                                        organization_id,
+                                                        id,
+                                                    })
+                                                    .await
+                                                    .is_ok()
+                                                    {
                                                         cas.restart();
                                                     }
                                                 });

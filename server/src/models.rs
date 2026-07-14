@@ -12,20 +12,6 @@ pub struct Cluster {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct Token {
-    pub id: Uuid,
-    pub cluster_id: Option<Uuid>,
-    pub organization_id: Option<Uuid>,
-    pub token_hash: String,
-    pub label: String,
-    pub kind: String,
-    pub revoked: bool,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct ClusterConfig {

@@ -1,112 +1,23 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::certificates::{
+    OrgCertAddInput, OrgCertRemoveInput, OrgCertsListInput, add_org_cert, list_org_certs,
+    remove_org_cert,
+};
 use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct OrgCertDisplay {
-    pub id: uuid::Uuid,
-    pub fingerprint: String,
-    pub label: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[server]
-async fn list_org_certs(organization_id: String) -> Result<Vec<OrgCertDisplay>, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let oid: uuid::Uuid = organization_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if !user.is_admin && !user.org_ids().contains(&oid) {
-        return Err(ServerFnError::new("access denied"));
-    }
-    let certs = sqlx::query_as::<_, OrgCertDisplay>(
-        "SELECT id, fingerprint, label, created_at \
-         FROM client_certificates \
-         WHERE scope = 'organization' AND scope_id = $1 AND is_ca = false \
-         ORDER BY created_at",
-    )
-    .bind(oid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(certs)
-}
-
-#[server]
-async fn add_org_cert(
-    organization_id: String,
-    fingerprint: String,
-    certificate_pem: String,
-    label: String,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = organization_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-    let pool = crate::server_pool()?;
-
-    let lbl = label.trim().to_string();
-    let (fp, pem) = if !certificate_pem.trim().is_empty() {
-        let fp = crate::api::routes::fingerprint_from_pem_str(&certificate_pem)
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-        (fp, Some(certificate_pem))
-    } else if !fingerprint.trim().is_empty() {
-        (fingerprint.trim().to_lowercase(), None)
-    } else {
-        return Err(ServerFnError::new(
-            "fingerprint or certificate PEM required",
-        ));
-    };
-
-    sqlx::query(
-        "INSERT INTO client_certificates (scope, scope_id, is_ca, fingerprint, certificate_pem, label) \
-         VALUES ('organization', $1, false, $2, $3, $4)",
-    )
-    .bind(oid)
-    .bind(&fp)
-    .bind(&pem)
-    .bind(&lbl)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn remove_org_cert(organization_id: String, cert_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = organization_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cert_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "DELETE FROM client_certificates \
-         WHERE id = $1 AND scope = 'organization' AND scope_id = $2 AND is_ca = false",
-    )
-    .bind(uuid)
-    .bind(oid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 #[component]
 pub fn OrganizationClientCerts(organization_id: String, read_only: bool) -> Element {
     let oid_list = organization_id.clone();
     let mut certs = use_server_future(move || {
         let oid = oid_list.clone();
-        async move { list_org_certs(oid).await }
+        async move {
+            let organization_id: uuid::Uuid = oid
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            list_org_certs(OrgCertsListInput { organization_id }).await
+        }
     })?;
 
     let mut fp_input = use_signal(String::new);
@@ -129,8 +40,22 @@ pub fn OrganizationClientCerts(organization_id: String, read_only: bool) -> Elem
                     let pem = pem_input.read().clone();
                     let lbl = label_input.read().clone();
                     spawn(async move {
+                        let organization_id: uuid::Uuid = match oid.parse() {
+                            Ok(id) => id,
+                            Err(e) => {
+                                error_msg.set(Some(e.to_string()));
+                                return;
+                            }
+                        };
                         if !fp.trim().is_empty() || !pem.trim().is_empty() {
-                            match add_org_cert(oid, fp, pem, lbl).await {
+                            match add_org_cert(OrgCertAddInput {
+                                organization_id,
+                                fingerprint: fp,
+                                certificate_pem: pem,
+                                label: lbl,
+                            })
+                            .await
+                            {
                                 Ok(()) => {
                                     error_msg.set(None);
                                     fp_input.set(String::new());
@@ -194,7 +119,19 @@ pub fn OrganizationClientCerts(organization_id: String, read_only: bool) -> Elem
                                                 let cid = cid.clone();
                                                 let oid = oid.clone();
                                                 spawn(async move {
-                                                    if remove_org_cert(oid, cid).await.is_ok() {
+                                                    let (Ok(id), Ok(organization_id)) = (
+                                                        cid.parse::<uuid::Uuid>(),
+                                                        oid.parse::<uuid::Uuid>(),
+                                                    ) else {
+                                                        return;
+                                                    };
+                                                    if remove_org_cert(OrgCertRemoveInput {
+                                                        organization_id,
+                                                        id,
+                                                    })
+                                                    .await
+                                                    .is_ok()
+                                                    {
                                                         certs.restart();
                                                     }
                                                 });
