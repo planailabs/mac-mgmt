@@ -1,15 +1,13 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
 
+use crate::api_mcp::endpoints::fleet::{FleetDetailData, FleetDetailInput, get_fleet_detail};
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     ChartColor, Dot, ErrorText, HelpText, Kicker, Mono, Pill, PillVariant, SectionHeading,
     StatBlock,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
 
 /// Build a tunnel URL from the proxy URL and subdomain prefix.
 ///
@@ -44,79 +42,7 @@ pub fn open_url_js(url: &str) -> Option<String> {
     Some(format!("window.open({literal}, '_blank')"))
 }
 
-/// Per-instance extended assessment page. Reachable at /fleet/:instance_id
-/// from the fleet dashboard. Surfaces the latest inventory + security posture
-/// + dynamic sample + per-service probe results.
-///
-/// Access is gated via accessible_cluster_ids — the same rule the fleet
-/// dashboard uses — and probe error_detail is only exposed to admins because
-/// it can contain stack traces, response bodies, or URLs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FleetDetailData {
-    instance_id: String,
-    cluster_id: String,
-    cluster_name: String,
-    hostname: String,
-    environment: String,
-    version: String,
-    #[serde(default)]
-    git_sha: Option<String>,
-    nixpkgs_commit: Option<String>,
-    reported_at: DateTime<Utc>,
-    sample: Option<serde_json::Value>,
-    services_extended: Option<serde_json::Value>,
-    /// Raw `services` JSON array from the heartbeat (name, healthy,
-    /// upgrade_pending, busy). Surfaced as badges at the top of the page.
-    #[serde(default)]
-    services: Option<serde_json::Value>,
-    /// Raw `tunnels` JSON array (name, port) for the relay proxy buttons.
-    #[serde(default)]
-    tunnels: Option<serde_json::Value>,
-    /// Relay proxy hostname (e.g. "relay.plan.ai") from the heartbeat.
-    #[serde(default)]
-    relay_proxy_hostname: Option<String>,
-    /// Full relay proxy URL (e.g. "http://localhost:7379") for building tunnel links.
-    #[serde(default)]
-    relay_proxy_url: Option<String>,
-    /// Exposed file tunnels for remote config editing.
-    #[serde(default)]
-    file_tunnels: Option<serde_json::Value>,
-    /// Exposed shell commands for remote execution.
-    #[serde(default)]
-    shell_tunnels: Option<serde_json::Value>,
-    inventory: Option<serde_json::Value>,
-    inventory_collected_at: Option<DateTime<Utc>>,
-    security: Option<serde_json::Value>,
-    /// Per-service dynamic samples from the latest heartbeat.
-    #[serde(default)]
-    service_samples: Option<serde_json::Value>,
-    /// Per-service static inventory from the latest assessment.
-    #[serde(default)]
-    service_inventories: Option<serde_json::Value>,
-    /// Per-service security findings from the latest assessment.
-    #[serde(default)]
-    service_security: Option<serde_json::Value>,
-    probes: Vec<ProbeEntry>,
-    viewer_is_admin: bool,
-}
-
 use super::fleet_dashboard::create_proxy_token;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProbeEntry {
-    service: String,
-    kind: String,
-    ok: bool,
-    duration_ms: i64,
-    tokens_in: Option<i32>,
-    tokens_out: Option<i32>,
-    first_token_ms: Option<i64>,
-    model: Option<String>,
-    canary_digest: Option<String>,
-    error_class: Option<String>,
-    error_detail: Option<String>,
-    collected_at: DateTime<Utc>,
-}
 
 #[server]
 async fn get_mac_mgmt_commit_count(sha: String) -> Result<Option<u64>, ServerFnError> {
@@ -132,152 +58,12 @@ async fn get_nixpkgs_commit_count_detail(sha: String) -> Result<Option<u64>, Ser
     Ok(counts.get(&sha).copied())
 }
 
-#[server]
-async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-
-    // Step 1: resolve the latest heartbeat row for this instance and check
-    // the viewer is allowed to see its cluster.
-    #[derive(sqlx::FromRow)]
-    struct HbRow {
-        cluster_id: uuid::Uuid,
-        cluster_name: String,
-        hostname: String,
-        environment: String,
-        version: String,
-        git_sha: Option<String>,
-        nixpkgs_commit: Option<String>,
-        reported_at: DateTime<Utc>,
-        sample: Option<serde_json::Value>,
-        services_extended: Option<serde_json::Value>,
-        services: serde_json::Value,
-        tunnels: serde_json::Value,
-        relay_proxy_hostname: Option<String>,
-        relay_proxy_url: Option<String>,
-        file_tunnels: serde_json::Value,
-        shell_tunnels: serde_json::Value,
-        service_samples: Option<serde_json::Value>,
-    }
-    let hb: HbRow = sqlx::query_as(
-        "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.hostname, dh.environment, \
-                dh.version, dh.git_sha, dh.nixpkgs_commit, dh.reported_at, dh.sample, dh.services_extended, \
-                dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.file_tunnels, \
-                dh.shell_tunnels, dh.service_samples \
-         FROM daemon_heartbeats dh JOIN clusters c ON c.id = dh.cluster_id \
-         WHERE dh.instance_id = $1 \
-         ORDER BY dh.reported_at DESC LIMIT 1",
-    )
-    .bind(&instance_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("instance not found"))?;
-
-    user.require_cluster_read(&pool, hb.cluster_id).await?;
-
-    // Step 2: latest assessment snapshot (static inventory + security).
-    #[derive(sqlx::FromRow)]
-    struct AssRow {
-        inventory: serde_json::Value,
-        security: serde_json::Value,
-        service_inventories: Option<serde_json::Value>,
-        service_security: Option<serde_json::Value>,
-        collected_at: DateTime<Utc>,
-    }
-    let ass: Option<AssRow> = sqlx::query_as(
-        "SELECT inventory, security, service_inventories, service_security, collected_at \
-         FROM assessments WHERE instance_id = $1 ORDER BY collected_at DESC LIMIT 1",
-    )
-    .bind(&instance_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Step 3: latest probe result per service.
-    #[derive(sqlx::FromRow)]
-    struct ProbeRow {
-        service: String,
-        kind: String,
-        ok: bool,
-        duration_ms: i64,
-        tokens_in: Option<i32>,
-        tokens_out: Option<i32>,
-        first_token_ms: Option<i64>,
-        model: Option<String>,
-        canary_digest: Option<String>,
-        error_class: Option<String>,
-        error_detail: Option<String>,
-        collected_at: DateTime<Utc>,
-    }
-    let probe_rows: Vec<ProbeRow> = sqlx::query_as(
-        "SELECT DISTINCT ON (service, kind) \
-                service, kind, ok, duration_ms, tokens_in, tokens_out, first_token_ms, \
-                model, canary_digest, error_class, error_detail, collected_at \
-         FROM assessment_probes \
-         WHERE instance_id = $1 \
-         ORDER BY service, kind, collected_at DESC",
-    )
-    .bind(&instance_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let is_admin = user.is_admin;
-    let probes = probe_rows
-        .into_iter()
-        .map(|p| ProbeEntry {
-            service: p.service,
-            kind: p.kind,
-            ok: p.ok,
-            duration_ms: p.duration_ms,
-            tokens_in: p.tokens_in,
-            tokens_out: p.tokens_out,
-            first_token_ms: p.first_token_ms,
-            model: p.model,
-            canary_digest: p.canary_digest,
-            error_class: p.error_class,
-            // GDPR: error_detail can carry request bodies / paths — admin only.
-            error_detail: if is_admin { p.error_detail } else { None },
-            collected_at: p.collected_at,
-        })
-        .collect();
-
-    Ok(FleetDetailData {
-        instance_id,
-        cluster_id: hb.cluster_id.to_string(),
-        cluster_name: hb.cluster_name,
-        hostname: hb.hostname,
-        environment: hb.environment,
-        version: hb.version,
-        git_sha: hb.git_sha,
-        nixpkgs_commit: hb.nixpkgs_commit,
-        reported_at: hb.reported_at,
-        sample: hb.sample,
-        services_extended: hb.services_extended,
-        services: Some(hb.services),
-        tunnels: Some(hb.tunnels),
-        relay_proxy_hostname: hb.relay_proxy_hostname,
-        relay_proxy_url: hb.relay_proxy_url,
-        file_tunnels: Some(hb.file_tunnels),
-        shell_tunnels: Some(hb.shell_tunnels),
-        inventory: ass.as_ref().map(|a| a.inventory.clone()),
-        inventory_collected_at: ass.as_ref().map(|a| a.collected_at),
-        security: ass.as_ref().map(|a| a.security.clone()),
-        service_samples: hb.service_samples,
-        service_inventories: ass.as_ref().and_then(|a| a.service_inventories.clone()),
-        service_security: ass.as_ref().and_then(|a| a.service_security.clone()),
-        probes,
-        viewer_is_admin: is_admin,
-    })
-}
-
 #[component]
 pub fn FleetDetail(instance_id: String) -> Element {
     let iid = instance_id.clone();
     let data = use_server_future(move || {
         let iid = iid.clone();
-        async move { get_fleet_detail(iid).await }
+        async move { get_fleet_detail(FleetDetailInput { instance_id: iid }).await }
     })?;
 
     // Topbar shows the hostname (or instance id when hostname is empty).

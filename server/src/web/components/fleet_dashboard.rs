@@ -3,6 +3,10 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::api_mcp::endpoints::fleet::{
+    DeleteStaleInstanceInput, FleetEntry, FleetStatusInput, delete_stale_instance,
+    get_fleet_status,
+};
 use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
 use crate::web::components::topbar::use_topbar;
@@ -11,188 +15,6 @@ use crate::web::components::ui::{
 };
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FleetEntry {
-    cluster_id: String,
-    cluster_name: String,
-    instance_id: String,
-    hostname: String,
-    environment: String,
-    version: String,
-    /// Git commit the daemon binary was built from. `None` on older daemons.
-    #[serde(default)]
-    git_sha: Option<String>,
-    /// Number of commits leading up to git_sha (fetched from GitLab).
-    #[serde(default)]
-    commit_count: Option<u64>,
-    #[serde(default)]
-    nixpkgs_commit: Option<String>,
-    services: serde_json::Value,
-    tunnels: serde_json::Value,
-    relay_proxy_hostname: Option<String>,
-    relay_proxy_url: Option<String>,
-    reported_at: DateTime<Utc>,
-    /// Latest dynamic sample piggybacked on the heartbeat (CPU/mem/thermal).
-    #[serde(default)]
-    sample: Option<serde_json::Value>,
-    /// Rolled-up extended service state from the last probe run.
-    #[serde(default)]
-    services_extended: Option<serde_json::Value>,
-    /// True if the viewer may see probe error_detail (admin only).
-    #[serde(default)]
-    viewer_is_admin: bool,
-}
-
-/// Wrapped response so the UI can render a "Filtered by …" banner with
-/// a human-readable label without a second round-trip per refresh.
-/// `stage_label` is `None` when no stage filter is active.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FleetStatusResult {
-    entries: Vec<FleetEntry>,
-    stage_label: Option<String>,
-}
-
-#[server]
-async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let is_admin = user.is_admin;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        cluster_id: uuid::Uuid,
-        cluster_name: String,
-        instance_id: String,
-        hostname: String,
-        environment: String,
-        version: String,
-        git_sha: Option<String>,
-        nixpkgs_commit: Option<String>,
-        services: serde_json::Value,
-        tunnels: serde_json::Value,
-        relay_proxy_hostname: Option<String>,
-        relay_proxy_url: Option<String>,
-        reported_at: DateTime<Utc>,
-        sample: Option<serde_json::Value>,
-        services_extended: Option<serde_json::Value>,
-    }
-
-    let accessible = user
-        .accessible_cluster_ids(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Optional stage filter — resolves the stage's cohort cluster_ids and
-    // a human label ("Stage 1 · canary"). Intersects with accessible
-    // clusters so org-scoped users can't see hosts they couldn't reach
-    // in an unfiltered view.
-    let (stage_cohort, stage_label) = if let Some(sid) = stage_id.as_deref() {
-        let sid_uuid: uuid::Uuid = sid
-            .parse()
-            .map_err(|e: uuid::Error| ServerFnError::new(format!("invalid stage_id: {e}")))?;
-
-        #[derive(sqlx::FromRow)]
-        struct StageMeta {
-            stage_order: i32,
-            group_name: String,
-            group_id: uuid::Uuid,
-        }
-        let meta: StageMeta = sqlx::query_as(
-            "SELECT rs.stage_order, rg.name AS group_name, rs.group_id \
-             FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
-             WHERE rs.id = $1",
-        )
-        .bind(sid_uuid)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .ok_or_else(|| ServerFnError::new("stage not found"))?;
-
-        let cohort: Vec<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT cluster_id FROM rollout_group_members WHERE group_id = $1 \
-             UNION ALL \
-             SELECT id FROM clusters WHERE $1 = '00000000-0000-0000-0000-000000000000'::uuid",
-        )
-        .bind(meta.group_id)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        (
-            Some(cohort),
-            Some(format!("Stage {} · {}", meta.stage_order, meta.group_name)),
-        )
-    } else {
-        (None, None)
-    };
-
-    // Compose the effective cluster_id filter from accessible ∩ cohort.
-    // None on either side means "no filter from that source".
-    let effective: Option<Vec<uuid::Uuid>> = match (accessible, stage_cohort) {
-        (Some(a), Some(c)) => {
-            let cset: std::collections::HashSet<_> = c.iter().copied().collect();
-            Some(a.into_iter().filter(|id| cset.contains(id)).collect())
-        }
-        (Some(a), None) => Some(a),
-        (None, Some(c)) => Some(c),
-        (None, None) => None,
-    };
-
-    let rows = if let Some(ids) = effective {
-        sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.nixpkgs_commit, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
-             FROM daemon_heartbeats dh \
-             JOIN clusters c ON c.id = dh.cluster_id \
-             WHERE dh.cluster_id = ANY($1) \
-             ORDER BY dh.reported_at DESC",
-        )
-        .bind(&ids)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    } else {
-        sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.nixpkgs_commit, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
-             FROM daemon_heartbeats dh \
-             JOIN clusters c ON c.id = dh.cluster_id \
-             ORDER BY dh.reported_at DESC",
-        )
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-    };
-
-    let entries = rows
-        .into_iter()
-        .map(|r| {
-            FleetEntry {
-                cluster_id: r.cluster_id.to_string(),
-                cluster_name: r.cluster_name,
-                instance_id: r.instance_id,
-                hostname: r.hostname,
-                environment: r.environment,
-                version: r.version,
-                git_sha: r.git_sha,
-                commit_count: None, // fetched async in the component
-                nixpkgs_commit: r.nixpkgs_commit,
-                services: r.services,
-                tunnels: r.tunnels,
-                relay_proxy_hostname: r.relay_proxy_hostname,
-                relay_proxy_url: r.relay_proxy_url,
-                reported_at: r.reported_at,
-                sample: r.sample,
-                services_extended: r.services_extended,
-                viewer_is_admin: is_admin,
-            }
-        })
-        .collect();
-
-    Ok(FleetStatusResult {
-        entries,
-        stage_label,
-    })
-}
 
 #[server]
 async fn get_commit_counts(
@@ -213,58 +35,6 @@ async fn get_nixpkgs_commit_counts(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyTokenResult {
     pub proxy_token: String,
-}
-
-/// Stale-instance delete. Server-side gate is the source of truth — the
-/// UI hides the button when last-seen is recent, but a malicious or
-/// stale browser tab can still call this directly. We:
-///   1. Require write access to the cluster (admins always pass).
-///   2. Re-read `reported_at` and reject if it's within the last 24h
-///      so a delete can't race a fresh heartbeat.
-///   3. Delete the heartbeat row. Migration 031 adds ON DELETE CASCADE
-///      FKs from `assessments` and `assessment_probes` on
-///      `(cluster_id, instance_id)`, so those rows go with it.
-///      `rollout_stage_health_evaluations` references stage_id, not
-///      instance, and cohort queries naturally exclude the missing
-///      daemon.
-#[server]
-async fn delete_stale_instance(instance_id: String) -> Result<(), ServerFnError> {
-    use chrono::Duration;
-
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        cluster_id: uuid::Uuid,
-        reported_at: DateTime<Utc>,
-    }
-    let row: Row = sqlx::query_as(
-        "SELECT cluster_id, reported_at FROM daemon_heartbeats WHERE instance_id = $1",
-    )
-    .bind(&instance_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("instance not found"))?;
-
-    user.require_cluster_write(&pool, row.cluster_id).await?;
-
-    let age = Utc::now().signed_duration_since(row.reported_at);
-    if age < Duration::days(1) {
-        return Err(ServerFnError::new(format!(
-            "instance reported {}h ago — only stale instances (>24h) can be deleted",
-            age.num_hours().max(0)
-        )));
-    }
-
-    sqlx::query("DELETE FROM daemon_heartbeats WHERE instance_id = $1 AND cluster_id = $2")
-        .bind(&instance_id)
-        .bind(row.cluster_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
 }
 
 #[server]
@@ -377,8 +147,22 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
     use_hook(move || {
         let stage_for_loop = filter_stage.clone();
         spawn(async move {
+            // Route-string stage id parsed once, up front — a bad id can
+            // never become valid, so surface the error instead of looping.
+            let stage_uuid: Option<uuid::Uuid> = match stage_for_loop.as_deref().map(str::parse) {
+                Some(Ok(id)) => Some(id),
+                Some(Err(e)) => {
+                    data.set(Some(Err(format!("invalid stage_id: {e}"))));
+                    return;
+                }
+                None => None,
+            };
             loop {
-                match get_fleet_status(stage_for_loop.clone()).await {
+                match get_fleet_status(FleetStatusInput {
+                    stage_id: stage_uuid,
+                })
+                .await
+                {
                     Ok(result) => {
                         stage_label.set(result.stage_label);
                         data.set(Some(Ok(result.entries)));
@@ -1041,7 +825,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                 move |_| {
                                                                     let iid = iid.clone();
                                                                     async move {
-                                                                        match delete_stale_instance(iid).await {
+                                                                        match delete_stale_instance(DeleteStaleInstanceInput { instance_id: iid }).await {
                                                                             Ok(()) => {
                                                                                 // The 5s polling loop will pick up the change.
                                                                             }
