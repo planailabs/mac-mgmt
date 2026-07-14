@@ -144,6 +144,32 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # defaults for: auto_trigger, auto_trigger_provider/model, auto_approve,
 # fix_provider/model. An "Override server defaults" toggle enables/disables them.
 
+# Fleet chat: interactive chatbot in the web UI (floating bubble, bottom right).
+# The agent's tools are the api-mcp endpoints, dispatched with the chat user's
+# permissions; tool calls at or above risk_threshold pause for approval in the
+# chat sidebar. Providers/API keys are shared with the healer ([healer] +
+# [anthropic] sections); off by default.
+# [chat]
+# enabled = true
+# risk_threshold = "mutating"                    # "mutating" (default) | "destructive" | "never" (no approval gate)
+# allow_approve_all = true                       # offer "approve all for this session" (default)
+# token_budget = 500000                          # per-session token budget (0 = unlimited)
+# max_active_sessions_per_user = 3               # concurrently running agents per user
+# idle_park_minutes = 30                         # idle time before a session parks (resumes on next message)
+# validator_provider = "ollama"                  # optional guard LLM checking each risky call
+# validator_model = "gemma4"
+# tools_include = []                             # tool-name globs to offer (empty = all, e.g. ["cluster_*"])
+# tools_exclude = []                             # tool-name globs to hide (e.g. ["*_delete"])
+#
+# Models for the chat model picker. Same entry shape as [[healer.models]];
+# falls back to [[healer.models]] (or built-in defaults) when omitted.
+# [[chat.models]]
+# name = "Claude Sonnet 4.6"
+# model = "claude-sonnet-4-6"
+# provider = "anthropic"
+# input_cost_per_mtok = 3.0
+# output_cost_per_mtok = 15.0
+
 # Secrets vault: encrypted key-value store for daemon secrets (requires "mgmt" feature).
 # Daemons reference secrets in config via secret:NAME syntax.
 # [secrets]
