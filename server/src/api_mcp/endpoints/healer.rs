@@ -255,6 +255,65 @@ pub async fn healer_spend(
             .map_err(internal)?,
     };
 
+    // Chat spend rides in the same dashboard: admins see all chat usage,
+    // everyone else sees their own sessions (owner = principal subject).
+    let mut summaries = summaries;
+    let mut daily_rows = daily_rows;
+    {
+        let chat_owner = if p.admin {
+            None
+        } else {
+            Some(p.subject.clone())
+        };
+        let chat_summary_base = "SELECT e.provider, e.model, \
+             SUM(e.input_tokens)::BIGINT AS input_tokens, \
+             SUM(e.output_tokens)::BIGINT AS output_tokens, \
+             COUNT(DISTINCT e.session_id) AS sessions, \
+             MAX(e.created_at) AS last_used \
+             FROM chat_token_events e \
+             JOIN chat_sessions s ON s.id = e.session_id \
+             WHERE e.created_at > now() - make_interval(days => $1)";
+        let chat_summaries: Vec<SummaryRow> = match chat_owner.as_ref() {
+            Some(owner) => sqlx::query_as(&format!(
+                "{chat_summary_base} AND s.subject = $2 GROUP BY e.provider, e.model"
+            ))
+            .bind(days)
+            .bind(owner)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default(),
+            None => sqlx::query_as(&format!("{chat_summary_base} GROUP BY e.provider, e.model"))
+                .bind(days)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default(),
+        };
+        summaries.extend(chat_summaries);
+
+        let chat_daily_base = "SELECT e.provider, e.model, \
+             date_trunc('day', e.created_at) AS day, \
+             SUM(e.input_tokens + e.output_tokens)::BIGINT AS tokens \
+             FROM chat_token_events e \
+             JOIN chat_sessions s ON s.id = e.session_id \
+             WHERE e.created_at > now() - make_interval(days => $1)";
+        let chat_daily: Vec<DailyRow> = match chat_owner.as_ref() {
+            Some(owner) => sqlx::query_as(&format!(
+                "{chat_daily_base} AND s.subject = $2 GROUP BY 1, 2, 3"
+            ))
+            .bind(days)
+            .bind(owner)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default(),
+            None => sqlx::query_as(&format!("{chat_daily_base} GROUP BY 1, 2, 3"))
+                .bind(days)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default(),
+        };
+        daily_rows.extend(chat_daily);
+    }
+
     // Day axis, oldest first, ending today (UTC).
     let today = chrono::Utc::now().date_naive();
     let axis: Vec<chrono::NaiveDate> = (0..days)
@@ -264,12 +323,15 @@ pub async fn healer_spend(
     let day_index = |d: chrono::NaiveDate| axis.iter().position(|a| *a == d);
 
     // Configured entries: models first, then validators (a model can be both).
-    let healer_cfg = &crate::config::config().healer;
-    let model_entries = if healer_cfg.models.is_empty() {
+    let cfg = crate::config::config();
+    let healer_cfg = &cfg.healer;
+    let mut model_entries = if healer_cfg.models.is_empty() {
         crate::config::default_healer_models()
     } else {
         healer_cfg.models.clone()
     };
+    // Chat-specific model entries (pricing/config) join the same table.
+    model_entries.extend(cfg.chat.models.iter().cloned());
     let validator_entries = if healer_cfg.validator_models.is_empty() {
         crate::config::default_validator_models()
     } else {
