@@ -592,7 +592,6 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
     let mut approvals = use_signal::<Vec<ApprovalInfo>>(Vec::new);
     let mut state = use_signal(|| "running".to_string());
     let mut state_reason = use_signal::<Option<String>>(|| None);
-    let mut idle = use_signal(|| false);
     // Agent is processing (between a user turn and the next idle/approval).
     // Set by send() and by live running-tool events, so replaying an old
     // session never shows the indicator.
@@ -644,7 +643,6 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                                 && role != "approval_request"
                                 && role != "approval_decision"
                             {
-                                idle.set(false);
                                 messages.push(ChatMsg {
                                     role,
                                     content,
@@ -720,7 +718,6 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                         }
                     }
                     "idle" => {
-                        idle.set(true);
                         busy.set(false);
                         active_tools.set(Vec::new());
                         meta_refresh += 1;
@@ -775,7 +772,6 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
         let ctx = page_ctx_send.clone();
         input.set(String::new());
         send_error.set(None);
-        idle.set(false);
         busy.set(true);
         spawn(async move {
             if let Err(e) = send_chat_message(sid, text, Some(ctx)).await {
@@ -891,10 +887,10 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                     class: "input w-full min-h-14 text-sm rounded-xl pr-12",
                     placeholder: if is_terminal {
                         t!("chat-session-over").to_string()
-                    } else if *idle.read() {
-                        t!("chat-input-placeholder").to_string()
-                    } else {
+                    } else if *busy.read() {
                         t!("chat-input-queued-placeholder").to_string()
+                    } else {
+                        t!("chat-input-placeholder").to_string()
                     },
                     disabled: is_terminal,
                     value: "{input}",
