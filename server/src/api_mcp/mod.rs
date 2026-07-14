@@ -249,6 +249,230 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
         );
     }
 
+    {
+        let mut o = reg.resource("organizations", "organization", "Organizations");
+        o.list(
+            "List all organizations with member and cluster counts (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgListInput| async move {
+                endpoints::organizations::organization_list(&pool, &p, input).await
+            },
+        );
+        o.get(
+            "Get an organization (name, created_at); requires org membership or admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgGetInput| async move {
+                endpoints::organizations::organization_get(&pool, &p, input).await
+            },
+        );
+        o.create(
+            "Create an organization with the given name; returns the new org id (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgCreateInput| async move {
+                endpoints::organizations::organization_create(&pool, &p, input).await
+            },
+        );
+        o.update(
+            "Rename an organization (org-admin or global admin).",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgUpdateInput| async move {
+                endpoints::organizations::organization_update(&pool, &p, input).await
+            },
+        );
+        o.delete(
+            "Delete an organization and its memberships, cluster links and tokens (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgDeleteInput| async move {
+                endpoints::organizations::organization_delete(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "permissions",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "What the caller can do on the organization: global-admin and org-admin flags.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgPermissionsInput| async move {
+                endpoints::organizations::organization_permissions(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "members",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List the organization's members (user id, email, name, role); requires org membership or admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgMembersInput| async move {
+                endpoints::organizations::organization_members(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "member_add",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Add a user to the organization with role admin, write or read; requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgMemberAddInput| async move {
+                endpoints::organizations::organization_member_add(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "member_remove",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Remove a user from the organization; requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgMemberRemoveInput| async move {
+                endpoints::organizations::organization_member_remove(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "member_set_role",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Change a member's role in the organization (admin, write or read); requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgMemberSetRoleInput| async move {
+                endpoints::organizations::organization_member_set_role(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "clusters",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List the clusters linked to the organization; requires org membership or admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgClustersInput| async move {
+                endpoints::organizations::organization_clusters(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "cluster_add",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Link a cluster to the organization, granting the org's members access to it (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgClusterAddInput| async move {
+                endpoints::organizations::organization_cluster_add(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "cluster_remove",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Unlink a cluster from the organization, revoking the org's access to it (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgClusterRemoveInput| async move {
+                endpoints::organizations::organization_cluster_remove(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "available_users",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List users that are not yet members of the organization (picker for member_add); requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgAvailableUsersInput| async move {
+                endpoints::organizations::organization_available_users(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "available_clusters",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List clusters not yet linked to the organization (picker for cluster_add); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgAvailableClustersInput| async move {
+                endpoints::organizations::organization_available_clusters(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "tokens_list",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List the organization's API tokens (label, kind, revoked, expiry; never the token value); requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgTokensListInput| async move {
+                endpoints::organizations::organization_tokens_list(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "token_create",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Create an org-scoped API token with a label and optional expiry (seconds from now). Returns the plaintext token, shown only this once — store it securely, it cannot be retrieved again. Requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgTokenCreateInput| async move {
+                endpoints::organizations::organization_token_create(&pool, &p, input).await
+            },
+        );
+        o.custom(
+            "token_revoke",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Revoke an organization API token (irreversible); requires org-admin.",
+            |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgTokenRevokeInput| async move {
+                endpoints::organizations::organization_token_revoke(&pool, &p, input).await
+            },
+        );
+    }
+
+    {
+        let mut u = reg.resource("users", "user", "Users");
+        u.list(
+            "List all users with admin flag and organization names (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserListInput| async move {
+                endpoints::users::user_list(&pool, &p, input).await
+            },
+        );
+        u.get(
+            "Get a user (email, name, admin flag, created_at); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserGetInput| async move {
+                endpoints::users::user_get(&pool, &p, input).await
+            },
+        );
+        u.create(
+            "Create a user with email, display name and optional global-admin flag; returns the new user id (admin only).",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserCreateInput| async move {
+                endpoints::users::user_create(&pool, &p, input).await
+            },
+        );
+        u.delete(
+            "Delete a user and their org memberships (admin only; you cannot delete yourself).",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserDeleteInput| async move {
+                endpoints::users::user_delete(&pool, &p, input).await
+            },
+        );
+        u.custom(
+            "set_admin",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Grant or revoke a user's global-admin status (admin only; you cannot revoke your own).",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserSetAdminInput| async move {
+                endpoints::users::user_set_admin(&pool, &p, input).await
+            },
+        );
+        u.custom(
+            "orgs",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List the organizations the user belongs to, with their role in each; admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserOrgsInput| async move {
+                endpoints::users::user_orgs(&pool, &p, input).await
+            },
+        );
+        u.custom(
+            "available_orgs",
+            Risk::ReadOnly,
+            OnItem::Yes,
+            "List organizations the user is not yet a member of (picker for org_add); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserAvailableOrgsInput| async move {
+                endpoints::users::user_available_orgs(&pool, &p, input).await
+            },
+        );
+        u.custom(
+            "org_add",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Add the user to an organization with role admin, write or read (idempotent); admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserOrgAddInput| async move {
+                endpoints::users::user_org_add(&pool, &p, input).await
+            },
+        );
+        u.custom(
+            "org_remove",
+            Risk::Mutating,
+            OnItem::Yes,
+            "Remove the user from an organization; admin only.",
+            |pool: sqlx::PgPool, p, input: endpoints::users::UserOrgRemoveInput| async move {
+                endpoints::users::user_org_remove(&pool, &p, input).await
+            },
+        );
+    }
+
     reg
 }
 

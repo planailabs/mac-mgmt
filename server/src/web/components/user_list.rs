@@ -1,25 +1,14 @@
-use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
 
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::users::{
+    UserListInput, UserRow, UserSetAdminInput, list_users, toggle_user_admin,
+};
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th, page_window};
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct UserRow {
-    id: String,
-    email: String,
-    name: String,
-    is_admin: bool,
-    org_names: Vec<String>,
-    created_at: DateTime<Utc>,
-}
 
 impl Searchable for UserRow {
     fn matches_search(&self, query: &str) -> bool {
@@ -32,81 +21,10 @@ impl Searchable for UserRow {
     }
 }
 
-#[server]
-async fn list_users() -> Result<Vec<UserRow>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: uuid::Uuid,
-        email: String,
-        name: String,
-        is_admin: bool,
-        created_at: DateTime<Utc>,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, email, name, is_admin, created_at FROM users ORDER BY email",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let mut users = Vec::with_capacity(rows.len());
-    for r in rows {
-        let org_names: Vec<String> = sqlx::query_scalar(
-            "SELECT o.name FROM organizations o \
-             JOIN organization_members om ON om.organization_id = o.id \
-             WHERE om.user_id = $1 \
-             ORDER BY o.name",
-        )
-        .bind(r.id)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        users.push(UserRow {
-            id: r.id.to_string(),
-            email: r.email,
-            name: r.name,
-            is_admin: r.is_admin,
-            org_names,
-            created_at: r.created_at,
-        });
-    }
-
-    Ok(users)
-}
-
-#[server]
-async fn toggle_user_admin(user_id: String, is_admin: bool) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-
-    let uid: uuid::Uuid = user_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    if uid == user.id && !is_admin {
-        return Err(ServerFnError::new("cannot remove your own admin status"));
-    }
-
-    let pool = crate::server_pool()?;
-    sqlx::query("UPDATE users SET is_admin = $2 WHERE id = $1")
-        .bind(uid)
-        .bind(is_admin)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
 #[component]
 pub fn UserList() -> Element {
     use_topbar(t!("user-list-title"), None);
-    let users_future = use_server_future(list_users)?;
+    let users_future = use_server_future(|| list_users(UserListInput {}))?;
 
     rsx! {
         div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
@@ -197,8 +115,14 @@ fn UserRowView(
                         let uid = uid.clone();
                         let new_val = e.checked();
                         async move {
-                            let _ = toggle_user_admin(uid, new_val).await;
-                            users_future.restart();
+                            if let Ok(id) = uid.parse::<uuid::Uuid>() {
+                                let _ = toggle_user_admin(UserSetAdminInput {
+                                    id,
+                                    is_admin: new_val,
+                                })
+                                .await;
+                                users_future.restart();
+                            }
                         }
                     },
                 }

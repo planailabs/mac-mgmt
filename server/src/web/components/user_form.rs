@@ -1,30 +1,10 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::users::{UserCreateInput, create_user};
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[server]
-async fn create_user(email: String, name: String, is_admin: bool) -> Result<String, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    let id: uuid::Uuid = sqlx::query_scalar(
-        "INSERT INTO users (email, name, is_admin) VALUES ($1, $2, $3) RETURNING id",
-    )
-    .bind(&email)
-    .bind(&name)
-    .bind(is_admin)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(id.to_string())
-}
 
 #[component]
 pub fn UserForm() -> Element {
@@ -42,7 +22,13 @@ pub fn UserForm() -> Element {
         let name_val = name.read().clone();
         let admin_val = *is_admin.read();
         spawn(async move {
-            match create_user(email_val, name_val, admin_val).await {
+            match create_user(UserCreateInput {
+                email: email_val,
+                name: name_val,
+                is_admin: admin_val,
+            })
+            .await
+            {
                 Ok(id) => {
                     nav.push(Route::UserDetail { id });
                 }

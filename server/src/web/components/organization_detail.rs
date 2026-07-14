@@ -1,8 +1,16 @@
-use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
 
+use crate::api_mcp::endpoints::organizations::{
+    OrgAvailableClustersInput, OrgAvailableUsersInput, OrgClusterAddInput, OrgClusterRemoveInput,
+    OrgClustersInput, OrgDeleteInput, OrgGetInput, OrgMemberAddInput, OrgMemberRemoveInput,
+    OrgMemberSetRoleInput, OrgMembersInput, OrgPermissions, OrgPermissionsInput,
+    OrgTokenCreateInput, OrgTokenRevokeInput, OrgTokensListInput, OrgUpdateInput, add_org_cluster,
+    add_org_member, change_member_role, create_org_token, delete_organization,
+    get_available_clusters, get_available_users, get_org_clusters, get_org_members,
+    get_org_permissions, get_organization, list_org_tokens, remove_org_cluster, remove_org_member,
+    rename_organization, revoke_org_token,
+};
 use crate::web::app::Route;
 use crate::web::components::organization_client_cas::OrganizationClientCas;
 use crate::web::components::organization_client_certs::OrganizationClientCerts;
@@ -11,518 +19,6 @@ use crate::web::components::ui::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
     SectionHeading, TokenCreateForm, TokenCreateInput, TokenReveal, TokenRow, TokenTable,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgInfo {
-    name: String,
-    created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct MemberEntry {
-    user_id: String,
-    email: String,
-    name: String,
-    role: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ClusterEntry {
-    cluster_id: String,
-    name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UserOption {
-    id: String,
-    email: String,
-    name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ClusterOption {
-    id: String,
-    name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgTokenRow {
-    id: String,
-    label: String,
-    kind: String,
-    revoked: bool,
-    created_at: DateTime<Utc>,
-    expires_at: Option<DateTime<Utc>>,
-}
-
-/// What the current user can do on this org.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OrgPermissions {
-    /// mac-mgmt global admin
-    is_global_admin: bool,
-    /// org-level admin (can manage members, roles, tokens)
-    is_org_admin: bool,
-}
-
-#[server]
-async fn get_organization(id: String) -> Result<OrgInfo, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let oid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    if !user.is_admin && !user.org_ids().contains(&oid) {
-        return Err(ServerFnError::new("access denied"));
-    }
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        name: String,
-        created_at: DateTime<Utc>,
-    }
-
-    let row = sqlx::query_as::<_, Row>("SELECT name, created_at FROM organizations WHERE id = $1")
-        .bind(oid)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(OrgInfo {
-        name: row.name,
-        created_at: row.created_at,
-    })
-}
-
-#[server]
-async fn get_org_permissions(org_id: String) -> Result<OrgPermissions, ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    Ok(OrgPermissions {
-        is_global_admin: user.is_admin,
-        is_org_admin: user.is_org_admin(&oid),
-    })
-}
-
-#[server]
-async fn get_org_members(org_id: String) -> Result<Vec<MemberEntry>, ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    if !user.is_admin && !user.org_ids().contains(&oid) {
-        return Err(ServerFnError::new("access denied"));
-    }
-
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        user_id: uuid::Uuid,
-        email: String,
-        name: String,
-        role: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT u.id AS user_id, u.email, u.name, om.role \
-         FROM users u \
-         JOIN organization_members om ON om.user_id = u.id \
-         WHERE om.organization_id = $1 \
-         ORDER BY u.email",
-    )
-    .bind(oid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| MemberEntry {
-            user_id: r.user_id.to_string(),
-            email: r.email,
-            name: r.name,
-            role: r.role,
-        })
-        .collect())
-}
-
-#[server]
-async fn get_org_clusters(org_id: String) -> Result<Vec<ClusterEntry>, ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    if !user.is_admin && !user.org_ids().contains(&oid) {
-        return Err(ServerFnError::new("access denied"));
-    }
-
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        cluster_id: uuid::Uuid,
-        name: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT c.id AS cluster_id, c.name \
-         FROM clusters c \
-         JOIN organization_clusters oc ON oc.cluster_id = c.id \
-         WHERE oc.organization_id = $1 \
-         ORDER BY c.name",
-    )
-    .bind(oid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| ClusterEntry {
-            cluster_id: r.cluster_id.to_string(),
-            name: r.name,
-        })
-        .collect())
-}
-
-#[server]
-async fn get_available_users(org_id: String) -> Result<Vec<UserOption>, ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: uuid::Uuid,
-        email: String,
-        name: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, email, name FROM users \
-         WHERE id NOT IN (SELECT user_id FROM organization_members WHERE organization_id = $1) \
-         ORDER BY email",
-    )
-    .bind(oid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| UserOption {
-            id: r.id.to_string(),
-            email: r.email,
-            name: r.name,
-        })
-        .collect())
-}
-
-#[server]
-async fn get_available_clusters(org_id: String) -> Result<Vec<ClusterOption>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: uuid::Uuid,
-        name: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, name FROM clusters \
-         WHERE id NOT IN (SELECT cluster_id FROM organization_clusters WHERE organization_id = $1) \
-         ORDER BY name",
-    )
-    .bind(oid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| ClusterOption {
-            id: r.id.to_string(),
-            name: r.name,
-        })
-        .collect())
-}
-
-#[server]
-async fn add_org_member(
-    org_id: String,
-    user_id: String,
-    role: String,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-
-    if !["admin", "write", "read"].contains(&role.as_str()) {
-        return Err(ServerFnError::new("invalid role"));
-    }
-
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)",
-    )
-    .bind(oid)
-    .bind(uid)
-    .bind(&role)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn remove_org_member(org_id: String, user_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2")
-        .bind(oid)
-        .bind(uid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn change_member_role(
-    org_id: String,
-    user_id: String,
-    role: String,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-
-    if !["admin", "write", "read"].contains(&role.as_str()) {
-        return Err(ServerFnError::new("invalid role"));
-    }
-
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "UPDATE organization_members SET role = $3 WHERE organization_id = $1 AND user_id = $2",
-    )
-    .bind(oid)
-    .bind(uid)
-    .bind(&role)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn add_org_cluster(org_id: String, cluster_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let cid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("INSERT INTO organization_clusters (organization_id, cluster_id) VALUES ($1, $2)")
-        .bind(oid)
-        .bind(cid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn remove_org_cluster(org_id: String, cluster_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let cid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM organization_clusters WHERE organization_id = $1 AND cluster_id = $2")
-        .bind(oid)
-        .bind(cid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn list_org_tokens(org_id: String) -> Result<Vec<OrgTokenRow>, ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: uuid::Uuid,
-        label: String,
-        kind: String,
-        revoked: bool,
-        created_at: DateTime<Utc>,
-        expires_at: Option<DateTime<Utc>>,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, label, kind, revoked, created_at, expires_at FROM tokens \
-         WHERE organization_id = $1 ORDER BY created_at DESC",
-    )
-    .bind(oid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| OrgTokenRow {
-            id: r.id.to_string(),
-            label: r.label,
-            kind: r.kind,
-            revoked: r.revoked,
-            created_at: r.created_at,
-            expires_at: r.expires_at,
-        })
-        .collect())
-}
-
-#[server]
-async fn create_org_token(
-    org_id: String,
-    label: String,
-    expires_in_secs: Option<i64>,
-) -> Result<String, ServerFnError> {
-    use rand::Rng;
-    use sha2::Digest;
-
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-    let pool = crate::server_pool()?;
-
-    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
-    let hash = hex::encode(sha2::Sha256::digest(raw_token.as_bytes()));
-    let expires_at = expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
-
-    sqlx::query(
-        "INSERT INTO tokens (organization_id, token_hash, label, kind, expires_at) VALUES ($1, $2, $3, 'setting', $4)",
-    )
-    .bind(oid)
-    .bind(hash)
-    .bind(label)
-    .bind(expires_at)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(raw_token)
-}
-
-#[server]
-async fn revoke_org_token(org_id: String, token_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    user.require_org_admin(&oid)?;
-    let pool = crate::server_pool()?;
-    let tid: uuid::Uuid = token_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1 AND organization_id = $2")
-        .bind(tid)
-        .bind(oid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(())
-}
-
-#[server]
-async fn rename_organization(id: String, name: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let oid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if !user.is_admin && !user.is_org_admin(&oid) {
-        return Err(ServerFnError::new("access denied"));
-    }
-    sqlx::query("UPDATE organizations SET name = $1 WHERE id = $2")
-        .bind(&name)
-        .bind(oid)
-        .execute(&pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("23505") {
-                ServerFnError::new("An organization with that name already exists")
-            } else {
-                ServerFnError::new(e.to_string())
-            }
-        })?;
-    Ok(())
-}
-
-#[server]
-async fn delete_organization(id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM organizations WHERE id = $1")
-        .bind(uid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 fn role_variant(role: &str) -> BadgeVariant {
     match role {
@@ -538,43 +34,78 @@ pub fn OrganizationDetail(id: String) -> Element {
     let id_for_org = id.clone();
     let mut org_future = use_server_future(move || {
         let id = id_for_org.clone();
-        async move { get_organization(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_organization(OrgGetInput { id }).await
+        }
     })?;
 
     let id_for_perms = id.clone();
     let perms_future = use_server_future(move || {
         let id = id_for_perms.clone();
-        async move { get_org_permissions(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_org_permissions(OrgPermissionsInput { id }).await
+        }
     })?;
 
     let id_for_members = id.clone();
     let mut members_future = use_server_future(move || {
         let id = id_for_members.clone();
-        async move { get_org_members(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_org_members(OrgMembersInput { id }).await
+        }
     })?;
 
     let id_for_clusters = id.clone();
     let mut clusters_future = use_server_future(move || {
         let id = id_for_clusters.clone();
-        async move { get_org_clusters(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_org_clusters(OrgClustersInput { id }).await
+        }
     })?;
 
     let id_for_avail_users = id.clone();
     let mut avail_users_future = use_server_future(move || {
         let id = id_for_avail_users.clone();
-        async move { get_available_users(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_available_users(OrgAvailableUsersInput { id }).await
+        }
     })?;
 
     let id_for_avail_clusters = id.clone();
     let mut avail_clusters_future = use_server_future(move || {
         let id = id_for_avail_clusters.clone();
-        async move { get_available_clusters(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_available_clusters(OrgAvailableClustersInput { id }).await
+        }
     })?;
 
     let id_for_tokens = id.clone();
     let mut tokens_future = use_server_future(move || {
         let id = id_for_tokens.clone();
-        async move { list_org_tokens(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            list_org_tokens(OrgTokensListInput { id }).await
+        }
     })?;
 
     let mut selected_user = use_signal(|| Option::<String>::None);
@@ -637,8 +168,14 @@ pub fn OrganizationDetail(id: String) -> Element {
                                         let new_name = draft_name.read().clone();
                                         async move {
                                             if !new_name.trim().is_empty() {
-                                                let _ = rename_organization(oid, new_name).await;
-                                                org_future.restart();
+                                                if let Ok(id) = oid.parse::<uuid::Uuid>() {
+                                                    let _ = rename_organization(OrgUpdateInput {
+                                                        id,
+                                                        name: new_name,
+                                                    })
+                                                    .await;
+                                                    org_future.restart();
+                                                }
                                             }
                                             editing_name.set(false);
                                         }
@@ -685,7 +222,9 @@ pub fn OrganizationDetail(id: String) -> Element {
                                         move |_| {
                                             let oid = oid.clone();
                                             async move {
-                                                let _ = delete_organization(oid).await;
+                                                if let Ok(id) = oid.parse::<uuid::Uuid>() {
+                                                    let _ = delete_organization(OrgDeleteInput { id }).await;
+                                                }
                                                 nav.push(Route::OrganizationList {});
                                             }
                                         }
@@ -748,10 +287,19 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             let role = selected_role.read().clone();
                                             async move {
                                                 if let Some(uid) = uid {
-                                                    let _ = add_org_member(oid, uid, role).await;
-                                                    selected_user.set(None);
-                                                    members_future.restart();
-                                                    avail_users_future.restart();
+                                                    if let (Ok(id), Ok(user_id)) =
+                                                        (oid.parse::<uuid::Uuid>(), uid.parse::<uuid::Uuid>())
+                                                    {
+                                                        let _ = add_org_member(OrgMemberAddInput {
+                                                            id,
+                                                            user_id,
+                                                            role,
+                                                        })
+                                                        .await;
+                                                        selected_user.set(None);
+                                                        members_future.restart();
+                                                        avail_users_future.restart();
+                                                    }
                                                 }
                                             }
                                         }
@@ -789,8 +337,17 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                                     let oid = oid.clone();
                                                                     let new_role = e.value();
                                                                     async move {
-                                                                        let _ = change_member_role(oid, uid, new_role).await;
-                                                                        members_future.restart();
+                                                                        if let (Ok(id), Ok(user_id)) =
+                                                                            (oid.parse::<uuid::Uuid>(), uid.parse::<uuid::Uuid>())
+                                                                        {
+                                                                            let _ = change_member_role(OrgMemberSetRoleInput {
+                                                                                id,
+                                                                                user_id,
+                                                                                role: new_role,
+                                                                            })
+                                                                            .await;
+                                                                            members_future.restart();
+                                                                        }
                                                                     }
                                                                 }
                                                             },
@@ -811,9 +368,17 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                                 let uid = uid.clone();
                                                                 let oid = oid.clone();
                                                                 async move {
-                                                                    let _ = remove_org_member(oid, uid).await;
-                                                                    members_future.restart();
-                                                                    avail_users_future.restart();
+                                                                    if let (Ok(id), Ok(user_id)) =
+                                                                        (oid.parse::<uuid::Uuid>(), uid.parse::<uuid::Uuid>())
+                                                                    {
+                                                                        let _ = remove_org_member(OrgMemberRemoveInput {
+                                                                            id,
+                                                                            user_id,
+                                                                        })
+                                                                        .await;
+                                                                        members_future.restart();
+                                                                        avail_users_future.restart();
+                                                                    }
                                                                 }
                                                             }
                                                         },
@@ -861,10 +426,18 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             let cid = selected_cluster.read().clone();
                                             async move {
                                                 if let Some(cid) = cid {
-                                                    let _ = add_org_cluster(oid, cid).await;
-                                                    selected_cluster.set(None);
-                                                    clusters_future.restart();
-                                                    avail_clusters_future.restart();
+                                                    if let (Ok(id), Ok(cluster_id)) =
+                                                        (oid.parse::<uuid::Uuid>(), cid.parse::<uuid::Uuid>())
+                                                    {
+                                                        let _ = add_org_cluster(OrgClusterAddInput {
+                                                            id,
+                                                            cluster_id,
+                                                        })
+                                                        .await;
+                                                        selected_cluster.set(None);
+                                                        clusters_future.restart();
+                                                        avail_clusters_future.restart();
+                                                    }
                                                 }
                                             }
                                         }
@@ -897,9 +470,17 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                                 let cid = cid.clone();
                                                                 let oid = oid.clone();
                                                                 async move {
-                                                                    let _ = remove_org_cluster(oid, cid).await;
-                                                                    clusters_future.restart();
-                                                                    avail_clusters_future.restart();
+                                                                    if let (Ok(id), Ok(cluster_id)) =
+                                                                        (oid.parse::<uuid::Uuid>(), cid.parse::<uuid::Uuid>())
+                                                                    {
+                                                                        let _ = remove_org_cluster(OrgClusterRemoveInput {
+                                                                            id,
+                                                                            cluster_id,
+                                                                        })
+                                                                        .await;
+                                                                        clusters_future.restart();
+                                                                        avail_clusters_future.restart();
+                                                                    }
                                                                 }
                                                             }
                                                         },
@@ -930,9 +511,17 @@ pub fn OrganizationDetail(id: String) -> Element {
                                     move |input: TokenCreateInput| {
                                         let oid = oid.clone();
                                         spawn(async move {
-                                            if let Ok(raw) = create_org_token(oid, input.label, input.expires_in_secs).await {
-                                                created_token.set(Some(raw));
-                                                tokens_future.restart();
+                                            if let Ok(id) = oid.parse::<uuid::Uuid>() {
+                                                if let Ok(raw) = create_org_token(OrgTokenCreateInput {
+                                                    id,
+                                                    label: input.label,
+                                                    expires_in_secs: input.expires_in_secs,
+                                                })
+                                                .await
+                                                {
+                                                    created_token.set(Some(raw));
+                                                    tokens_future.restart();
+                                                }
                                             }
                                         });
                                     }
@@ -961,9 +550,17 @@ pub fn OrganizationDetail(id: String) -> Element {
                                         move |tid: String| {
                                             let oid = oid.clone();
                                             spawn(async move {
-                                                let _ = revoke_org_token(oid, tid).await;
-                                                created_token.set(None);
-                                                tokens_future.restart();
+                                                if let (Ok(id), Ok(token_id)) =
+                                                    (oid.parse::<uuid::Uuid>(), tid.parse::<uuid::Uuid>())
+                                                {
+                                                    let _ = revoke_org_token(OrgTokenRevokeInput {
+                                                        id,
+                                                        token_id,
+                                                    })
+                                                    .await;
+                                                    created_token.set(None);
+                                                    tokens_future.restart();
+                                                }
                                             });
                                         }
                                     },

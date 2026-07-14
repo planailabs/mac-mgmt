@@ -1,241 +1,18 @@
-use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
 
 use dioxus_i18n::t;
 
+use crate::api_mcp::endpoints::users::{
+    UserAvailableOrgsInput, UserDeleteInput, UserGetInput, UserOrgAddInput, UserOrgRemoveInput,
+    UserOrgsInput, UserSetAdminInput, add_user_to_org, delete_user, get_available_orgs_for_user,
+    get_user, get_user_orgs, remove_user_from_org, toggle_user_admin,
+};
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText, Kicker,
     SectionHeading,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UserInfo {
-    id: String,
-    email: String,
-    name: String,
-    is_admin: bool,
-    created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UserOrgEntry {
-    organization_id: String,
-    name: String,
-    role: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct OrgOption {
-    id: String,
-    name: String,
-}
-
-#[server]
-async fn get_user(id: String) -> Result<UserInfo, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: uuid::Uuid,
-        email: String,
-        name: String,
-        is_admin: bool,
-        created_at: DateTime<Utc>,
-    }
-
-    let row = sqlx::query_as::<_, Row>(
-        "SELECT id, email, name, is_admin, created_at FROM users WHERE id = $1",
-    )
-    .bind(uid)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(UserInfo {
-        id: row.id.to_string(),
-        email: row.email,
-        name: row.name,
-        is_admin: row.is_admin,
-        created_at: row.created_at,
-    })
-}
-
-#[server]
-async fn get_user_orgs(user_id: String) -> Result<Vec<UserOrgEntry>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        organization_id: uuid::Uuid,
-        name: String,
-        role: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT om.organization_id, o.name, om.role \
-         FROM organization_members om \
-         JOIN organizations o ON o.id = om.organization_id \
-         WHERE om.user_id = $1 \
-         ORDER BY o.name",
-    )
-    .bind(uid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| UserOrgEntry {
-            organization_id: r.organization_id.to_string(),
-            name: r.name,
-            role: r.role,
-        })
-        .collect())
-}
-
-#[server]
-async fn get_available_orgs_for_user(user_id: String) -> Result<Vec<OrgOption>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: uuid::Uuid,
-        name: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, name FROM organizations \
-         WHERE id NOT IN (SELECT organization_id FROM organization_members WHERE user_id = $1) \
-         ORDER BY name",
-    )
-    .bind(uid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| OrgOption {
-            id: r.id.to_string(),
-            name: r.name,
-        })
-        .collect())
-}
-
-#[server]
-async fn add_user_to_org(
-    user_id: String,
-    org_id: String,
-    role: String,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    if !["admin", "write", "read"].contains(&role.as_str()) {
-        return Err(ServerFnError::new("invalid role"));
-    }
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    sqlx::query("INSERT INTO organization_members (user_id, organization_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
-        .bind(uid)
-        .bind(oid)
-        .bind(&role)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(())
-}
-
-#[server]
-async fn remove_user_from_org(user_id: String, org_id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let oid: uuid::Uuid = org_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    sqlx::query("DELETE FROM organization_members WHERE user_id = $1 AND organization_id = $2")
-        .bind(uid)
-        .bind(oid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(())
-}
-
-#[server]
-async fn toggle_user_admin(user_id: String, is_admin: bool) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-
-    let uid: uuid::Uuid = user_id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if uid == user.id && !is_admin {
-        return Err(ServerFnError::new("cannot remove your own admin status"));
-    }
-
-    let pool = crate::server_pool()?;
-    sqlx::query("UPDATE users SET is_admin = $2 WHERE id = $1")
-        .bind(uid)
-        .bind(is_admin)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
-#[server]
-async fn delete_user(id: String) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = id
-        .parse()
-        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-
-    if uid == user.id {
-        return Err(ServerFnError::new("cannot delete yourself"));
-    }
-
-    sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(uid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 fn role_variant(role: &str) -> BadgeVariant {
     match role {
@@ -251,19 +28,34 @@ pub fn UserDetail(id: String) -> Element {
     let id_for_user = id.clone();
     let mut user_future = use_server_future(move || {
         let id = id_for_user.clone();
-        async move { get_user(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_user(UserGetInput { id }).await
+        }
     })?;
 
     let id_for_orgs = id.clone();
     let mut orgs_future = use_server_future(move || {
         let id = id_for_orgs.clone();
-        async move { get_user_orgs(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_user_orgs(UserOrgsInput { id }).await
+        }
     })?;
 
     let id_for_avail = id.clone();
     let mut avail_future = use_server_future(move || {
         let id = id_for_avail.clone();
-        async move { get_available_orgs_for_user(id).await }
+        async move {
+            let id: uuid::Uuid = id
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            get_available_orgs_for_user(UserAvailableOrgsInput { id }).await
+        }
     })?;
 
     let mut selected_org = use_signal(|| Option::<String>::None);
@@ -311,8 +103,14 @@ pub fn UserDetail(id: String) -> Element {
                                         let uid = uid.clone();
                                         let new_val = e.checked();
                                         async move {
-                                            let _ = toggle_user_admin(uid, new_val).await;
-                                            user_future.restart();
+                                            if let Ok(id) = uid.parse::<uuid::Uuid>() {
+                                                let _ = toggle_user_admin(UserSetAdminInput {
+                                                    id,
+                                                    is_admin: new_val,
+                                                })
+                                                .await;
+                                                user_future.restart();
+                                            }
                                         }
                                     }
                                 },
@@ -345,7 +143,9 @@ pub fn UserDetail(id: String) -> Element {
                                     move |_| {
                                         let uid = uid.clone();
                                         async move {
-                                            let _ = delete_user(uid).await;
+                                            if let Ok(id) = uid.parse::<uuid::Uuid>() {
+                                                let _ = delete_user(UserDeleteInput { id }).await;
+                                            }
                                             nav.push(Route::UserList {});
                                         }
                                     }
@@ -407,10 +207,19 @@ pub fn UserDetail(id: String) -> Element {
                                     let role = selected_org_role.read().clone();
                                     async move {
                                         if let Some(oid) = oid {
-                                            let _ = add_user_to_org(uid, oid, role).await;
-                                            selected_org.set(None);
-                                            orgs_future.restart();
-                                            avail_future.restart();
+                                            if let (Ok(id), Ok(org_id)) =
+                                                (uid.parse::<uuid::Uuid>(), oid.parse::<uuid::Uuid>())
+                                            {
+                                                let _ = add_user_to_org(UserOrgAddInput {
+                                                    id,
+                                                    org_id,
+                                                    role,
+                                                })
+                                                .await;
+                                                selected_org.set(None);
+                                                orgs_future.restart();
+                                                avail_future.restart();
+                                            }
                                         }
                                     }
                                 }
@@ -447,9 +256,17 @@ pub fn UserDetail(id: String) -> Element {
                                                         let oid = oid.clone();
                                                         let uid = uid.clone();
                                                         async move {
-                                                            let _ = remove_user_from_org(uid, oid).await;
-                                                            orgs_future.restart();
-                                                            avail_future.restart();
+                                                            if let (Ok(id), Ok(org_id)) =
+                                                                (uid.parse::<uuid::Uuid>(), oid.parse::<uuid::Uuid>())
+                                                            {
+                                                                let _ = remove_user_from_org(UserOrgRemoveInput {
+                                                                    id,
+                                                                    org_id,
+                                                                })
+                                                                .await;
+                                                                orgs_future.restart();
+                                                                avail_future.restart();
+                                                            }
                                                         }
                                                     }
                                                 },

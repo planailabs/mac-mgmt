@@ -4,6 +4,8 @@
 //! Dioxus `#[server]` wrappers the UI calls.
 
 pub mod clusters;
+pub mod organizations;
+pub mod users;
 
 /// Map an internal error to a framework 500.
 #[cfg(feature = "server")]
