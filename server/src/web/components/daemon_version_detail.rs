@@ -1,188 +1,26 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
+use crate::api_mcp::endpoints::daemon_versions::{
+    ClustersOnVersionInput, ClustersPinnedToInput, DaemonStorePath, DaemonStorePathsInput,
+    RolloutsForVersionInput, VersionCluster, VersionRollout, get_clusters_on_version,
+    get_clusters_pinned_to, get_daemon_store_paths, get_rollouts_for_version,
+};
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     DataTable, ErrorText, HelpText, PageHeader, SectionHeading, SortState, SortableTh, Td, TdMono,
     TdMuted, Th, page_window,
 };
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
 
 /// Return the configured external API base URL.
+///
+/// Plain `#[server]` config probe: it only reads server config so the UI can
+/// render absolute download links; not exposed as an API/MCP tool.
 #[server]
 async fn get_api_base_url() -> Result<String, ServerFnError> {
     let cfg = crate::config::config();
     Ok(cfg.api.external_url.clone())
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VersionCluster {
-    pub id: Uuid,
-    pub name: String,
-    pub instances: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VersionRollout {
-    pub id: Uuid,
-    pub status: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[server]
-async fn get_rollouts_for_version(version: String) -> Result<Vec<VersionRollout>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: Uuid,
-        status: String,
-        created_at: chrono::DateTime<chrono::Utc>,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, status, created_at FROM rollouts \
-         WHERE target_version = $1 \
-         ORDER BY created_at DESC",
-    )
-    .bind(&version)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| VersionRollout {
-            id: r.id,
-            status: r.status,
-            created_at: r.created_at,
-        })
-        .collect())
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PinnedCluster {
-    pub id: Uuid,
-    pub name: String,
-}
-
-#[server]
-async fn get_clusters_pinned_to(version: String) -> Result<Vec<PinnedCluster>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: Uuid,
-        name: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, name FROM clusters WHERE pinned_version = $1 ORDER BY name",
-    )
-    .bind(&version)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| PinnedCluster {
-            id: r.id,
-            name: r.name,
-        })
-        .collect())
-}
-
-#[server]
-async fn get_clusters_on_version(version: String) -> Result<Vec<VersionCluster>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: Uuid,
-        name: String,
-        instances: i64,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT c.id, c.name, COUNT(*)::bigint AS instances \
-         FROM daemon_heartbeats h \
-         JOIN clusters c ON c.id = h.cluster_id \
-         WHERE h.version = $1 \
-         GROUP BY c.id, c.name \
-         ORDER BY c.name",
-    )
-    .bind(&version)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| VersionCluster {
-            id: r.id,
-            name: r.name,
-            instances: r.instances,
-        })
-        .collect())
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DaemonStorePath {
-    pub system: String,
-    pub store_path: String,
-}
-
-/// Fetch all `daemon/{version}/{system}` pins from xzar live and return
-/// the (system, store_path) pairs for the requested version.
-#[server]
-async fn get_daemon_store_paths(version: String) -> Result<Vec<DaemonStorePath>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let cfg = crate::config::config();
-    let xzar = cfg
-        .xzar
-        .as_ref()
-        .ok_or_else(|| ServerFnError::new("xzar not configured".to_string()))?;
-    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
-        .await
-        .map_err(|e| ServerFnError::new(format!("xzar error: {e}")))?;
-
-    let prefix = format!("daemon/{version}/");
-    let mut out: Vec<DaemonStorePath> = Vec::new();
-    for pin in &pins {
-        if pin.abandoned || pin.roots.is_empty() {
-            continue;
-        }
-        let Some(system) = pin.name.strip_prefix(&prefix) else {
-            continue;
-        };
-        if system.contains('/') {
-            continue;
-        }
-        let raw = &pin.roots[0].drv_full;
-        let store_path = if raw.starts_with("/nix/store/") {
-            raw.clone()
-        } else {
-            format!("/nix/store/{raw}")
-        };
-        out.push(DaemonStorePath {
-            system: system.to_string(),
-            store_path,
-        });
-    }
-    out.sort_by(|a, b| a.system.cmp(&b.system));
-    Ok(out)
 }
 
 #[component]
@@ -197,22 +35,22 @@ pub fn DaemonVersionDetail(version: String) -> Element {
     let v = version.clone();
     let paths = use_server_future(move || {
         let v = v.clone();
-        async move { get_daemon_store_paths(v).await }
+        async move { get_daemon_store_paths(DaemonStorePathsInput { version: v }).await }
     })?;
     let v2 = version.clone();
     let clusters = use_server_future(move || {
         let v = v2.clone();
-        async move { get_clusters_on_version(v).await }
+        async move { get_clusters_on_version(ClustersOnVersionInput { version: v }).await }
     })?;
     let v_r = version.clone();
     let rollouts = use_server_future(move || {
         let v = v_r.clone();
-        async move { get_rollouts_for_version(v).await }
+        async move { get_rollouts_for_version(RolloutsForVersionInput { version: v }).await }
     })?;
     let v3 = version.clone();
     let pinned = use_server_future(move || {
         let v = v3.clone();
-        async move { get_clusters_pinned_to(v).await }
+        async move { get_clusters_pinned_to(ClustersPinnedToInput { version: v }).await }
     })?;
 
     rsx! {
