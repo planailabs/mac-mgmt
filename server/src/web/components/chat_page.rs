@@ -611,11 +611,21 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
         async move { get_chat_session_meta(sid).await }
     });
 
-    // SSE consumer
+    // SSE consumer. Restartable: the stream ends (done/_closed) for parked
+    // sessions; sending a message resumes the session server-side and bumps
+    // the epoch so we reconnect and replay the fresh state.
+    let mut stream_epoch = use_signal(|| 0u32);
+    let mut stream_ended = use_signal(|| false);
     let sid_for_sse = session_id.clone();
-    use_future(move || {
+    let _sse = use_resource(move || {
         let sid = sid_for_sse.clone();
+        let _epoch = stream_epoch();
         async move {
+            // Reconnects replay the whole session — start from a clean slate.
+            messages.set(Vec::new());
+            approvals.set(Vec::new());
+            active_tools.set(Vec::new());
+            stream_ended.set(false);
             let mut ev = document::eval(&format!(
                 r#"
                 const es = new EventSource("/_sse/chat/{sid}");
@@ -737,6 +747,7 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                     _ => {}
                 }
             }
+            stream_ended.set(true);
         }
     });
 
@@ -776,6 +787,10 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
         spawn(async move {
             if let Err(e) = send_chat_message(sid, text, Some(ctx)).await {
                 send_error.set(Some(e.to_string()));
+                busy.set(false);
+            } else if *stream_ended.peek() {
+                // The session was parked — it just respawned; reconnect.
+                stream_epoch += 1;
             }
         });
     };
