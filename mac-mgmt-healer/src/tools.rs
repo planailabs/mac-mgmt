@@ -14,20 +14,8 @@ use swiftide::traits::AgentContext;
 pub type PushFn = Arc<dyn Fn(uuid::Uuid, mac_mgmt_common::PushEvent) + Send + Sync>;
 
 /// Risk level for a healer tool, controlling which validation tiers fire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ToolRisk {
-    /// Read-only, no side effects. Static checks only, no LLM validation.
-    ReadOnly,
-    /// Session-local bookkeeping (pin, name_session). No external visibility,
-    /// no state machine transitions. Static checks only — not worth validating.
-    SessionLocal,
-    /// Externally visible or state-changing but bounded (config patches, staff_ping,
-    /// set_phase). LLM validation, fail-open on validator error.
-    Mutating,
-    /// Hard to reverse (write_file, set_config, run_command).
-    /// LLM validation, fail-closed on validator error.
-    Destructive,
-}
+/// Provided by the generic `plan-ai-chat` crate.
+pub use plan_ai_chat::ToolRisk;
 
 /// Shared context for all healer tools.
 #[derive(Clone)]

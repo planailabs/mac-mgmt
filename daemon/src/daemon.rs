@@ -1364,10 +1364,12 @@ pub async fn run(
     #[cfg(feature = "healer")]
     let healer = {
         let store_dir = config::config_dir().join("healer");
-        let store: mac_mgmt_healer::store::DynStore = std::sync::Arc::new(
+        let json_store = std::sync::Arc::new(
             mac_mgmt_healer::store::json_file::JsonFileStore::open(&store_dir)
                 .context("failed to open healer store")?,
         );
+        let store: mac_mgmt_healer::store::DynStore = json_store.clone();
+        let chat_store: mac_mgmt_healer::DynChatStore = json_store;
         let instance_data: mac_mgmt_healer::DynInstanceData =
             std::sync::Arc::new(crate::healer_bridge::LocalInstanceDataSource::new(
                 Arc::clone(&assessor),
@@ -1404,6 +1406,7 @@ pub async fn run(
         ));
         Arc::new(mac_mgmt_healer::HealerState::new(
             store,
+            chat_store,
             instance_data,
             session_factory,
             connector_config,

@@ -147,6 +147,59 @@ pub fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerSt
             },
             true,
         ),
+        HealerEvent::ApprovalRequest {
+            approval_id,
+            tool_name,
+            args,
+            reason,
+            risk,
+            requested_at,
+        } => (
+            HealerStreamEvent {
+                kind: "approval_request".to_string(),
+                metadata: Some(serde_json::json!({
+                    "approval_id": approval_id,
+                    "tool_name": tool_name,
+                    "tool_args": args,
+                    "reason": reason,
+                    "risk": risk,
+                    "requested_at": requested_at,
+                })),
+                ..empty
+            },
+            false,
+        ),
+        HealerEvent::ApprovalResolved {
+            approval_id,
+            decision,
+            by,
+        } => (
+            HealerStreamEvent {
+                kind: "approval_resolved".to_string(),
+                metadata: Some(serde_json::json!({
+                    "approval_id": approval_id,
+                    "decision": decision,
+                    "by": by,
+                })),
+                ..empty
+            },
+            false,
+        ),
+        HealerEvent::Idle => (
+            HealerStreamEvent {
+                kind: "idle".to_string(),
+                ..empty
+            },
+            false,
+        ),
+        HealerEvent::StreamDelta { delta } => (
+            HealerStreamEvent {
+                kind: "stream_delta".to_string(),
+                content: Some(delta.clone()),
+                ..empty
+            },
+            false,
+        ),
     }
 }
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["antithesis-workloads", "common", "common/plan-ai-api-mcp", "common/plan-ai-api-mcp-macros", "common/plan-ai-auth", "common/plan-ai-html", "daemon", "mac-mgmt-agent", "mac-mgmt-executor", "mac-mgmt-healer", "mac-mgmt-services", "mac-mgmt-ws", "mmr-causality", "nix-driver-sync", "plan-ai-cleaner", "plan-ai-cloud", "plan-ai-memvault-share-agent", "runner", "server", "relay", "relay-ssh", "sim-tests", "trainer"]
+members = ["antithesis-workloads", "common", "common/plan-ai-api-mcp", "common/plan-ai-api-mcp-macros", "common/plan-ai-auth", "common/plan-ai-chat", "common/plan-ai-html", "daemon", "mac-mgmt-agent", "mac-mgmt-executor", "mac-mgmt-healer", "mac-mgmt-services", "mac-mgmt-ws", "mmr-causality", "nix-driver-sync", "plan-ai-cleaner", "plan-ai-cloud", "plan-ai-memvault-share-agent", "runner", "server", "relay", "relay-ssh", "sim-tests", "trainer"]
 # memvault is an independent submodule with its own workspace root and is NOT a
 # member here (Cargo workspaces cannot nest). Crates that need its crates — or
 # the plan-ai-design submodule vendored inside it — depend on them by path,

@@ -5,9 +5,10 @@ edition = "2024"
 
 [features]
 default = ["postgres"]
-postgres = ["dep:sqlx", "sqlx?/postgres"]
+postgres = ["dep:sqlx", "sqlx?/postgres", "plan-ai-chat/postgres"]
 
 [dependencies]
+plan-ai-chat = { path = "../common/plan-ai-chat", features = ["mcp"] }
 swiftide = { version = "0.32.1", default-features = false, features = ["ollama", "anthropic", "openai", "swiftide-agents", "mcp"] }
 rmcp = { version = "0.17", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider"], default-features = false }
 schemars = { version = "1.2", features = ["derive"] }

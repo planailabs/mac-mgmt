@@ -2,6 +2,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// Generic chat types, re-exported under their healer-era names so consumers
+// (server, daemon) keep compiling with minimal churn. Wire formats identical.
+pub use plan_ai_chat::ChatEvent as HealerEvent;
+pub use plan_ai_chat::ChatMessage as HealerMessage;
+pub use plan_ai_chat::{RunningTool, RunningToolValidation};
+
 /// Session state machine states.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,6 +98,64 @@ impl SessionState {
     }
 }
 
+/// State strings that make a session non-resumable. Must match the historical
+/// SQL semantics exactly (note: `done` IS non-resumable here even though the
+/// partial index from migration 038 does not exclude it).
+pub const NON_RESUMABLE_STATES: &[&str] = &[
+    "completed",
+    "done",
+    "failed",
+    "cancelled",
+    "paused",
+    "needs_human_attention",
+];
+
+/// State strings that do NOT count as "running" for the concurrent-session
+/// guard (paused sessions still block new spawns, matching historical SQL).
+pub const INACTIVE_STATES: &[&str] = &[
+    "completed",
+    "done",
+    "failed",
+    "cancelled",
+    "needs_human_attention",
+];
+
+/// [`plan_ai_chat::StateModel`] over the healer state vocabulary.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HealerStateModel;
+
+impl plan_ai_chat::StateModel for HealerStateModel {
+    fn core(&self, state: &str) -> plan_ai_chat::CoreState {
+        use plan_ai_chat::CoreState;
+        match SessionState::from_str(state) {
+            Some(SessionState::Created) => CoreState::Created,
+            Some(SessionState::Initializing) => CoreState::Initializing,
+            Some(
+                SessionState::Diagnosing | SessionState::Remediating | SessionState::Verifying,
+            ) => CoreState::Running,
+            Some(SessionState::Completed | SessionState::Done) => CoreState::Completed,
+            Some(SessionState::Failed) | None => CoreState::Failed,
+            Some(SessionState::Cancelled) => CoreState::Cancelled,
+            Some(SessionState::AwaitingRetry) => CoreState::AwaitingRetry,
+            Some(SessionState::AwaitingApproval) => CoreState::AwaitingApproval,
+            Some(SessionState::Paused) => CoreState::Paused,
+            Some(SessionState::NeedsHumanAttention) => CoreState::NeedsAttention,
+        }
+    }
+
+    fn agent_allowed(&self, name: &str) -> Option<String> {
+        SessionState::agent_allowed(name).map(|s| s.as_str().to_string())
+    }
+
+    fn initial_running_state(&self) -> &str {
+        "diagnosing"
+    }
+
+    fn non_resumable_states(&self) -> &[&str] {
+        NON_RESUMABLE_STATES
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealerSession {
     pub id: Uuid,
@@ -113,64 +177,46 @@ pub struct HealerSession {
     pub label: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealerMessage {
-    pub id: Uuid,
-    pub session_id: Uuid,
-    pub role: String,
-    pub content: String,
-    pub metadata: Option<serde_json::Value>,
-    pub created_at: DateTime<Utc>,
+impl From<plan_ai_chat::ChatSession> for HealerSession {
+    fn from(s: plan_ai_chat::ChatSession) -> Self {
+        Self {
+            id: s.id,
+            cluster_id: s.scope_id,
+            instance_id: s.subject,
+            state: SessionState::from_str(&s.state).unwrap_or(SessionState::Failed),
+            state_data: s.state_data,
+            created_by: s.created_by,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
+            completed_at: s.completed_at,
+            error_message: s.error_message,
+            initial_issues: s.initial_context,
+            provider: s.provider,
+            model: s.model,
+            label: s.label,
+        }
+    }
 }
 
-/// Event emitted during a running session, consumed by SSE streams.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HealerEvent {
-    Message {
-        role: String,
-        content: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        metadata: Option<serde_json::Value>,
-        created_at: DateTime<Utc>,
-    },
-    /// Snapshot of currently executing tools. Sent on every tool start/end.
-    RunningTools {
-        tools: Vec<RunningTool>,
-    },
-    /// Ephemeral status message (not persisted). Shown in UI but cleared on reload.
-    Status {
-        message: String,
-    },
-    State {
-        state: String,
-        state_data: serde_json::Value,
-    },
-    Done {
-        state: String,
-    },
-}
-
-/// A tool currently being executed by the agent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunningTool {
-    pub name: String,
-    pub args: Option<String>,
-    pub started_at: DateTime<Utc>,
-    /// Validation state: None before validation, Some after verdict.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub validation: Option<RunningToolValidation>,
-}
-
-/// Validation state attached to a running tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunningToolValidation {
-    /// "validating", "approved", "skipped"
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning: Option<String>,
-    /// "read_only", "session_local", "mutating", "destructive"
-    pub risk: String,
+impl From<HealerSession> for plan_ai_chat::ChatSession {
+    fn from(s: HealerSession) -> Self {
+        Self {
+            id: s.id,
+            scope_id: s.cluster_id,
+            subject: s.instance_id,
+            state: s.state.as_str().to_string(),
+            state_data: s.state_data,
+            created_by: s.created_by,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
+            completed_at: s.completed_at,
+            error_message: s.error_message,
+            initial_context: s.initial_issues,
+            provider: s.provider,
+            model: s.model,
+            label: s.label,
+        }
+    }
 }
 
 /// A staff ping: actionable notification from the healer to admins.

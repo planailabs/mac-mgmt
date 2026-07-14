@@ -270,6 +270,7 @@ async fn init_server() -> (
     let pg_healer_store =
         std::sync::Arc::new(mac_mgmt_healer::store::pg::PgHealerStore::new(pool.clone()));
     let healer_store: mac_mgmt_healer::DynStore = pg_healer_store.clone();
+    let healer_chat_store: mac_mgmt_healer::DynChatStore = pg_healer_store.clone();
     let healer_instance_data: mac_mgmt_healer::DynInstanceData = pg_healer_store.clone();
     let session_factory: std::sync::Arc<dyn mac_mgmt_healer::SessionFactory> =
         std::sync::Arc::new(ServerSessionFactory {
@@ -277,6 +278,7 @@ async fn init_server() -> (
         });
     let mut healer_state = mac_mgmt_healer::HealerState::new(
         healer_store,
+        healer_chat_store,
         healer_instance_data,
         session_factory,
         healer_connector,

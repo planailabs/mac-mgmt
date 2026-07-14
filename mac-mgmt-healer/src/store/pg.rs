@@ -1,125 +1,50 @@
 //! Postgres-backed implementation of [`HealerStore`].
+//!
+//! Generic session/message/token persistence is delegated to the shared
+//! [`plan_ai_chat::store::pg::PgChatStore`] configured with the healer's
+//! original table names — the rows and SQL semantics are unchanged. Only
+//! healer-specific data (staff pings, cluster settings, instance data)
+//! keeps direct SQL here.
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use plan_ai_chat::store::pg::{PgChatStore, PgTables};
+use plan_ai_chat::{ChatStore, NewSession};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::*;
 use crate::instance_data::InstanceDataSource;
-use crate::session::models::{HealerMessage, HealerSession, SessionState, StaffPing};
+use crate::session::models::{
+    HealerMessage, HealerSession, INACTIVE_STATES, NON_RESUMABLE_STATES, SessionState, StaffPing,
+};
 
 /// [`HealerStore`] backed by a Postgres connection pool.
 #[derive(Clone)]
 pub struct PgHealerStore {
-    pool: PgPool,
+    chat: PgChatStore,
 }
 
 impl PgHealerStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            chat: PgChatStore::new(pool, PgTables::healer()),
+        }
     }
 
     /// Return the underlying pool (escape hatch for callers that still need it).
     pub fn pool(&self) -> &PgPool {
-        &self.pool
+        self.chat.pool()
+    }
+
+    /// The generic chat store view over the same tables.
+    pub fn chat_store(&self) -> &PgChatStore {
+        &self.chat
     }
 }
 
-// ── Internal helpers ───────────────────────────────────────────────────
-
-/// Persist a `state_change` message to the session chat log.
-async fn append_state_change(
-    pool: &PgPool,
-    session_id: Uuid,
-    state: &str,
-    state_data: &serde_json::Value,
-) {
-    let reason = state_data
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let content = serde_json::json!({
-        "state": state,
-        "reason": reason,
-    })
-    .to_string();
-    let _ = sqlx::query(
-        "INSERT INTO healer_messages (session_id, role, content, metadata) \
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(session_id)
-    .bind("state_change")
-    .bind(&content)
-    .bind(Some(state_data))
-    .execute(pool)
-    .await;
-}
-
-// ── sqlx row types ─────────────────────────────────────────────────────
-
-#[derive(sqlx::FromRow)]
-struct SessionRow {
-    id: Uuid,
-    cluster_id: Uuid,
-    instance_id: String,
-    state: String,
-    state_data: serde_json::Value,
-    created_by: String,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    completed_at: Option<DateTime<Utc>>,
-    error_message: Option<String>,
-    initial_issues: serde_json::Value,
-    provider: Option<String>,
-    model: Option<String>,
-    label: Option<String>,
-}
-
-impl From<SessionRow> for HealerSession {
-    fn from(r: SessionRow) -> Self {
-        Self {
-            id: r.id,
-            cluster_id: r.cluster_id,
-            instance_id: r.instance_id,
-            state: SessionState::from_str(&r.state).unwrap_or(SessionState::Failed),
-            state_data: r.state_data,
-            created_by: r.created_by,
-            created_at: r.created_at,
-            updated_at: r.updated_at,
-            completed_at: r.completed_at,
-            error_message: r.error_message,
-            initial_issues: r.initial_issues,
-            provider: r.provider,
-            model: r.model,
-            label: r.label,
-        }
-    }
-}
-
-#[derive(sqlx::FromRow)]
-struct MessageRow {
-    id: Uuid,
-    session_id: Uuid,
-    role: String,
-    content: String,
-    metadata: Option<serde_json::Value>,
-    created_at: DateTime<Utc>,
-}
-
-impl From<MessageRow> for HealerMessage {
-    fn from(r: MessageRow) -> Self {
-        Self {
-            id: r.id,
-            session_id: r.session_id,
-            role: r.role,
-            content: r.content,
-            metadata: r.metadata,
-            created_at: r.created_at,
-        }
-    }
-}
+// ── sqlx row types (healer-specific) ───────────────────────────────────
 
 #[derive(sqlx::FromRow)]
 struct StaffPingRow {
@@ -156,7 +81,7 @@ impl From<StaffPingRow> for StaffPing {
 
 #[async_trait]
 impl HealerStore for PgHealerStore {
-    // -- Session lifecycle ------------------------------------------------
+    // -- Session lifecycle (delegated to the generic chat store) -----------
 
     async fn create_session(
         &self,
@@ -169,31 +94,22 @@ impl HealerStore for PgHealerStore {
         model: Option<&str>,
         label: Option<&str>,
     ) -> Result<Uuid> {
-        let id = sqlx::query_scalar::<_, Uuid>(
-            "INSERT INTO healer_sessions (cluster_id, instance_id, state, state_data, created_by, initial_issues, provider, model, label) \
-             VALUES ($1, $2, 'created', $3, $4, $5, $6, $7, $8) \
-             RETURNING id",
-        )
-        .bind(cluster_id)
-        .bind(instance_id)
-        .bind(state_data)
-        .bind(created_by)
-        .bind(initial_issues)
-        .bind(provider)
-        .bind(model)
-        .bind(label)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(id)
+        self.chat
+            .create_session(NewSession {
+                scope_id: cluster_id,
+                subject: instance_id,
+                created_by,
+                initial_context: initial_issues,
+                state_data,
+                provider,
+                model,
+                label,
+            })
+            .await
     }
 
     async fn set_label(&self, session_id: Uuid, label: &str) -> Result<()> {
-        sqlx::query("UPDATE healer_sessions SET label = $1 WHERE id = $2")
-            .bind(label)
-            .bind(session_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        ChatStore::set_label(&self.chat, session_id, label).await
     }
 
     async fn transition_state(
@@ -202,25 +118,14 @@ impl HealerStore for PgHealerStore {
         new_state: &SessionState,
         state_data: &serde_json::Value,
     ) -> Result<()> {
-        let completed_at: Option<DateTime<Utc>> = if new_state.is_terminal() {
-            Some(Utc::now())
-        } else {
-            None
-        };
-        sqlx::query(
-            "UPDATE healer_sessions \
-             SET state = $1, state_data = $2, updated_at = now(), completed_at = COALESCE($3, completed_at) \
-             WHERE id = $4",
-        )
-        .bind(new_state.as_str())
-        .bind(state_data)
-        .bind(completed_at)
-        .bind(session_id)
-        .execute(&self.pool)
-        .await?;
-
-        append_state_change(&self.pool, session_id, new_state.as_str(), state_data).await;
-        Ok(())
+        self.chat
+            .transition_state(
+                session_id,
+                new_state.as_str(),
+                new_state.is_terminal(),
+                state_data,
+            )
+            .await
     }
 
     async fn fail_session(
@@ -229,63 +134,31 @@ impl HealerStore for PgHealerStore {
         error_message: &str,
         state_data: &serde_json::Value,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE healer_sessions \
-             SET state = 'failed', state_data = $1, error_message = $2, \
-                 updated_at = now(), completed_at = now() \
-             WHERE id = $3",
-        )
-        .bind(state_data)
-        .bind(error_message)
-        .bind(session_id)
-        .execute(&self.pool)
-        .await?;
-
-        let data = serde_json::json!({"reason": error_message});
-        append_state_change(&self.pool, session_id, "failed", &data).await;
-        Ok(())
+        ChatStore::fail_session(&self.chat, session_id, error_message, state_data).await
     }
 
     async fn get_session(&self, session_id: Uuid) -> Result<Option<HealerSession>> {
-        let row = sqlx::query_as::<_, SessionRow>(
-            "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
-                    created_at, updated_at, completed_at, error_message, initial_issues, \
-                    provider, model, label \
-             FROM healer_sessions WHERE id = $1",
-        )
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(Into::into))
+        Ok(ChatStore::get_session(&self.chat, session_id)
+            .await?
+            .map(Into::into))
     }
 
     async fn list_sessions(&self, cluster_id: Uuid) -> Result<Vec<HealerSession>> {
-        let rows = sqlx::query_as::<_, SessionRow>(
-            "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
-                    created_at, updated_at, completed_at, error_message, initial_issues, \
-                    provider, model, label \
-             FROM healer_sessions WHERE cluster_id = $1 \
-             ORDER BY created_at DESC LIMIT 100",
-        )
-        .bind(cluster_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows.into_iter().map(Into::into).collect())
+        Ok(ChatStore::list_sessions(&self.chat, cluster_id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
     async fn find_resumable(&self) -> Result<Vec<HealerSession>> {
-        let rows = sqlx::query_as::<_, SessionRow>(
-            "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
-                    created_at, updated_at, completed_at, error_message, initial_issues, \
-                    provider, model, label \
-             FROM healer_sessions \
-             WHERE state NOT IN ('completed', 'done', 'failed', 'cancelled', 'paused', 'needs_human_attention') \
-               AND created_by != 'admin-mcp' \
-             ORDER BY created_at ASC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows.into_iter().map(Into::into).collect())
+        Ok(self
+            .chat
+            .find_resumable(NON_RESUMABLE_STATES, &["admin-mcp"])
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
     async fn update_provider_model(
@@ -294,16 +167,10 @@ impl HealerStore for PgHealerStore {
         provider: &str,
         model: &str,
     ) -> Result<()> {
-        sqlx::query("UPDATE healer_sessions SET provider = $1, model = $2 WHERE id = $3")
-            .bind(provider)
-            .bind(model)
-            .bind(session_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        ChatStore::update_provider_model(&self.chat, session_id, provider, model).await
     }
 
-    // -- Messages ---------------------------------------------------------
+    // -- Messages -----------------------------------------------------------
 
     async fn append_message(
         &self,
@@ -312,29 +179,11 @@ impl HealerStore for PgHealerStore {
         content: &str,
         metadata: Option<&serde_json::Value>,
     ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO healer_messages (session_id, role, content, metadata) \
-             VALUES ($1, $2, $3, $4)",
-        )
-        .bind(session_id)
-        .bind(role)
-        .bind(content)
-        .bind(metadata)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        ChatStore::append_message(&self.chat, session_id, role, content, metadata).await
     }
 
     async fn get_messages(&self, session_id: Uuid) -> Result<Vec<HealerMessage>> {
-        let rows = sqlx::query_as::<_, MessageRow>(
-            "SELECT id, session_id, role, content, metadata, created_at \
-             FROM healer_messages WHERE session_id = $1 \
-             ORDER BY created_at ASC",
-        )
-        .bind(session_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows.into_iter().map(Into::into).collect())
+        ChatStore::get_messages(&self.chat, session_id).await
     }
 
     async fn get_messages_after(
@@ -342,16 +191,7 @@ impl HealerStore for PgHealerStore {
         session_id: Uuid,
         after: DateTime<Utc>,
     ) -> Result<Vec<HealerMessage>> {
-        let rows = sqlx::query_as::<_, MessageRow>(
-            "SELECT id, session_id, role, content, metadata, created_at \
-             FROM healer_messages WHERE session_id = $1 AND created_at > $2 \
-             ORDER BY created_at ASC",
-        )
-        .bind(session_id)
-        .bind(after)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows.into_iter().map(Into::into).collect())
+        ChatStore::get_messages_after(&self.chat, session_id, after).await
     }
 
     // -- Staff pings ------------------------------------------------------
@@ -373,7 +213,7 @@ impl HealerStore for PgHealerStore {
         .bind(instance_id)
         .bind(category)
         .bind(message)
-        .fetch_one(&self.pool)
+        .fetch_one(self.pool())
         .await?;
         Ok(id)
     }
@@ -386,7 +226,7 @@ impl HealerStore for PgHealerStore {
              ORDER BY resolved ASC, created_at DESC LIMIT 100",
         )
         .bind(cluster_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -399,7 +239,7 @@ impl HealerStore for PgHealerStore {
              ORDER BY created_at DESC LIMIT 50",
         )
         .bind(instance_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -412,7 +252,7 @@ impl HealerStore for PgHealerStore {
              ORDER BY created_at ASC",
         )
         .bind(session_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -424,7 +264,7 @@ impl HealerStore for PgHealerStore {
         )
         .bind(resolved_by)
         .bind(ping_id)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await?;
         Ok(())
     }
@@ -432,15 +272,7 @@ impl HealerStore for PgHealerStore {
     // -- Session guards ---------------------------------------------------
 
     async fn has_running_session(&self, instance_id: &str) -> Result<bool> {
-        Ok(sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM healer_sessions \
-             WHERE instance_id = $1 AND state NOT IN \
-             ('completed', 'done', 'failed', 'cancelled', 'needs_human_attention'))",
-        )
-        .bind(instance_id)
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or(false))
+        ChatStore::has_running_session(&self.chat, instance_id, INACTIVE_STATES).await
     }
 
     async fn has_recent_session(&self, instance_id: &str) -> Result<bool> {
@@ -449,25 +281,29 @@ impl HealerStore for PgHealerStore {
              WHERE instance_id = $1 AND created_at > now() - interval '1 hour')",
         )
         .bind(instance_id)
-        .fetch_one(&self.pool)
+        .fetch_one(self.pool())
         .await
         .unwrap_or(false))
     }
 
     async fn find_mcp_session(&self) -> Result<Option<HealerSession>> {
+        #[derive(sqlx::FromRow)]
+        struct SessionRow {
+            id: Uuid,
+        }
         let row = sqlx::query_as::<_, SessionRow>(
-            "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
-                    created_at, updated_at, completed_at, error_message, initial_issues, \
-                    provider, model, label \
-             FROM healer_sessions \
+            "SELECT id FROM healer_sessions \
              WHERE created_by = 'admin-mcp' \
                AND state NOT IN ('completed', 'done', 'failed', 'cancelled', 'needs_human_attention') \
              ORDER BY created_at DESC \
              LIMIT 1",
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?;
-        Ok(row.map(Into::into))
+        match row {
+            Some(r) => HealerStore::get_session(self, r.id).await,
+            None => Ok(None),
+        }
     }
 
     // -- Cluster settings -------------------------------------------------
@@ -478,7 +314,7 @@ impl HealerStore for PgHealerStore {
              WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
         )
         .bind(cluster_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?)
     }
 
@@ -486,7 +322,7 @@ impl HealerStore for PgHealerStore {
         sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
             .bind(cluster_id)
             .bind(config)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?;
         Ok(())
     }
@@ -501,7 +337,7 @@ impl HealerStore for PgHealerStore {
              ORDER BY s.slug, sc.channel",
         )
         .bind(cluster_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?;
         Ok(rows
             .into_iter()
@@ -516,7 +352,7 @@ impl HealerStore for PgHealerStore {
         )
         .bind(cluster_id)
         .bind(skill_channel_id)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await?;
         Ok(())
     }
@@ -527,7 +363,7 @@ impl HealerStore for PgHealerStore {
         )
         .bind(cluster_id)
         .bind(skill_channel_id)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await?;
         Ok(r.rows_affected() > 0)
     }
@@ -541,7 +377,7 @@ impl HealerStore for PgHealerStore {
              ORDER BY m.slug",
         )
         .bind(cluster_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?;
         Ok(rows
             .into_iter()
@@ -556,7 +392,7 @@ impl HealerStore for PgHealerStore {
         )
         .bind(cluster_id)
         .bind(mcp_server_id)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await?;
         Ok(())
     }
@@ -567,12 +403,12 @@ impl HealerStore for PgHealerStore {
         )
         .bind(cluster_id)
         .bind(mcp_server_id)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await?;
         Ok(r.rows_affected() > 0)
     }
 
-    // -- Token usage tracking ------------------------------------------------
+    // -- Token usage tracking (delegated) -----------------------------------
 
     async fn append_token_event(
         &self,
@@ -582,56 +418,126 @@ impl HealerStore for PgHealerStore {
         input_tokens: u32,
         output_tokens: u32,
     ) -> Result<u64> {
-        let total = (input_tokens + output_tokens) as i64;
-        // Insert event and atomically update denormalized total.
-        sqlx::query(
-            "INSERT INTO healer_token_events (session_id, provider, model, input_tokens, output_tokens) \
-             VALUES ($1, $2, $3, $4, $5)",
+        ChatStore::append_token_event(
+            &self.chat,
+            session_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
         )
-        .bind(session_id)
-        .bind(provider)
-        .bind(model)
-        .bind(input_tokens as i32)
-        .bind(output_tokens as i32)
-        .execute(&self.pool)
-        .await?;
-
-        let new_total: i64 = sqlx::query_scalar(
-            "UPDATE healer_sessions SET tokens_used = tokens_used + $1 WHERE id = $2 \
-             RETURNING tokens_used",
-        )
-        .bind(total)
-        .bind(session_id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(new_total as u64)
+        .await
     }
 
     async fn get_token_usage(&self, session_id: Uuid) -> Result<u64> {
-        let used: i64 = sqlx::query_scalar("SELECT tokens_used FROM healer_sessions WHERE id = $1")
-            .bind(session_id)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(used as u64)
+        ChatStore::get_token_usage(&self.chat, session_id).await
     }
 
     async fn set_token_budget(&self, session_id: Uuid, budget: u64) -> Result<()> {
-        sqlx::query("UPDATE healer_sessions SET token_budget = $1 WHERE id = $2")
-            .bind(budget as i64)
-            .bind(session_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        ChatStore::set_token_budget(&self.chat, session_id, budget).await
     }
 
     async fn get_token_budget(&self, session_id: Uuid) -> Result<u64> {
-        let budget: i64 =
-            sqlx::query_scalar("SELECT token_budget FROM healer_sessions WHERE id = $1")
-                .bind(session_id)
-                .fetch_one(&self.pool)
-                .await?;
-        Ok(budget as u64)
+        ChatStore::get_token_budget(&self.chat, session_id).await
+    }
+}
+
+// ── ChatStore delegation (for SessionManager / generic session loop) ────
+
+#[async_trait]
+impl ChatStore for PgHealerStore {
+    async fn create_session(&self, new: NewSession<'_>) -> Result<Uuid> {
+        self.chat.create_session(new).await
+    }
+    async fn set_label(&self, session_id: Uuid, label: &str) -> Result<()> {
+        ChatStore::set_label(&self.chat, session_id, label).await
+    }
+    async fn transition_state(
+        &self,
+        session_id: Uuid,
+        new_state: &str,
+        terminal: bool,
+        state_data: &serde_json::Value,
+    ) -> Result<()> {
+        ChatStore::transition_state(&self.chat, session_id, new_state, terminal, state_data).await
+    }
+    async fn fail_session(
+        &self,
+        session_id: Uuid,
+        error_message: &str,
+        state_data: &serde_json::Value,
+    ) -> Result<()> {
+        ChatStore::fail_session(&self.chat, session_id, error_message, state_data).await
+    }
+    async fn get_session(&self, session_id: Uuid) -> Result<Option<plan_ai_chat::ChatSession>> {
+        ChatStore::get_session(&self.chat, session_id).await
+    }
+    async fn list_sessions(&self, scope_id: Uuid) -> Result<Vec<plan_ai_chat::ChatSession>> {
+        ChatStore::list_sessions(&self.chat, scope_id).await
+    }
+    async fn find_resumable(
+        &self,
+        non_resumable: &[&str],
+        exclude_created_by: &[&str],
+    ) -> Result<Vec<plan_ai_chat::ChatSession>> {
+        ChatStore::find_resumable(&self.chat, non_resumable, exclude_created_by).await
+    }
+    async fn update_provider_model(
+        &self,
+        session_id: Uuid,
+        provider: &str,
+        model: &str,
+    ) -> Result<()> {
+        ChatStore::update_provider_model(&self.chat, session_id, provider, model).await
+    }
+    async fn has_running_session(&self, subject: &str, inactive_states: &[&str]) -> Result<bool> {
+        ChatStore::has_running_session(&self.chat, subject, inactive_states).await
+    }
+    async fn append_message(
+        &self,
+        session_id: Uuid,
+        role: &str,
+        content: &str,
+        metadata: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        ChatStore::append_message(&self.chat, session_id, role, content, metadata).await
+    }
+    async fn get_messages(&self, session_id: Uuid) -> Result<Vec<plan_ai_chat::ChatMessage>> {
+        ChatStore::get_messages(&self.chat, session_id).await
+    }
+    async fn get_messages_after(
+        &self,
+        session_id: Uuid,
+        after: DateTime<Utc>,
+    ) -> Result<Vec<plan_ai_chat::ChatMessage>> {
+        ChatStore::get_messages_after(&self.chat, session_id, after).await
+    }
+    async fn append_token_event(
+        &self,
+        session_id: Uuid,
+        provider: &str,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+    ) -> Result<u64> {
+        ChatStore::append_token_event(
+            &self.chat,
+            session_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+        )
+        .await
+    }
+    async fn get_token_usage(&self, session_id: Uuid) -> Result<u64> {
+        ChatStore::get_token_usage(&self.chat, session_id).await
+    }
+    async fn set_token_budget(&self, session_id: Uuid, budget: u64) -> Result<()> {
+        ChatStore::set_token_budget(&self.chat, session_id, budget).await
+    }
+    async fn get_token_budget(&self, session_id: Uuid) -> Result<u64> {
+        ChatStore::get_token_budget(&self.chat, session_id).await
     }
 }
 
@@ -651,7 +557,7 @@ impl InstanceDataSource for PgHealerStore {
              FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
         )
         .bind(instance_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?;
         Ok(row.map(|r| ProbeStatus {
             services_extended: r.services_extended,
@@ -671,7 +577,7 @@ impl InstanceDataSource for PgHealerStore {
              FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
         )
         .bind(instance_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?;
         Ok(row.map(|r| SystemSample {
             sample: r.sample,
@@ -692,7 +598,7 @@ impl InstanceDataSource for PgHealerStore {
              ORDER BY collected_at DESC LIMIT 1",
         )
         .bind(instance_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?;
         Ok(row.map(|r| Inventory {
             inventory: r.inventory,
@@ -732,7 +638,7 @@ impl InstanceDataSource for PgHealerStore {
             .bind(instance_id)
             .bind(svc)
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
         } else {
             sqlx::query_as::<_, Row>(
@@ -743,7 +649,7 @@ impl InstanceDataSource for PgHealerStore {
             )
             .bind(instance_id)
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
         };
 
@@ -770,7 +676,7 @@ impl InstanceDataSource for PgHealerStore {
             "SELECT row_to_json(h) FROM daemon_heartbeats h WHERE instance_id = $1 LIMIT 1",
         )
         .bind(instance_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?;
         Ok(row.map(|(v,)| v))
     }
@@ -787,7 +693,7 @@ impl InstanceDataSource for PgHealerStore {
              WHERE instance_id = $1 LIMIT 1",
         )
         .bind(instance_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?;
 
         #[derive(sqlx::FromRow)]
@@ -801,7 +707,7 @@ impl InstanceDataSource for PgHealerStore {
             "SELECT version, system, store_path, created_at FROM daemon_versions \
              ORDER BY created_at DESC LIMIT 10",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await
         .unwrap_or_default();
 
@@ -838,7 +744,7 @@ impl InstanceDataSource for PgHealerStore {
              ORDER BY reported_at DESC",
         )
         .bind(cluster_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?;
         Ok(rows
             .into_iter()
@@ -864,7 +770,7 @@ impl InstanceDataSource for PgHealerStore {
              FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
         )
         .bind(instance_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?;
         Ok(row.map(|r| ServiceState {
             services: r.services,
@@ -917,7 +823,7 @@ impl PgHealerStore {
         .bind(&hash)
         .bind(expires_at)
         .bind(&scopes_json)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await
         .context("failed to mint proxy token")?;
 
@@ -931,7 +837,7 @@ impl PgHealerStore {
              LIMIT 1",
         )
         .bind(instance_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?)
     }
 
@@ -941,7 +847,7 @@ impl PgHealerStore {
              WHERE instance_id = $1 AND reported_at > now() - interval '2 minutes')",
         )
         .bind(instance_id)
-        .fetch_one(&self.pool)
+        .fetch_one(self.pool())
         .await
         .unwrap_or(false))
     }

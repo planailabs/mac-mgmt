@@ -9066,6 +9066,7 @@ dependencies = [
  "dashmap",
  "hex",
  "mac-mgmt-common",
+ "plan-ai-chat",
  "rand 0.9.4",
  "reqwest 0.13.2",
  "rmcp",
@@ -11698,6 +11699,29 @@ dependencies = [
  "plan-ai-html",
  "serde",
  "serde_json",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "plan-ai-chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-openai 0.34.0",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "plan-ai-api-mcp",
+ "reqwest 0.13.2",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "swiftide",
+ "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
