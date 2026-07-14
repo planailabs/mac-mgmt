@@ -269,7 +269,10 @@ pub async fn get_chat_session_meta(session_id: String) -> Result<ChatSessionMeta
 /// Floating chat bubble + slide-in sidebar. Mounted once in the Layout.
 #[component]
 pub fn ChatSidebar() -> Element {
-    let ctx = use_server_future(get_chat_context)?;
+    // use_resource (not use_server_future): the sidebar lives OUTSIDE the
+    // router's SuspenseBoundary, so suspending here would bubble to the app
+    // root and replace the whole page with the loading state.
+    let ctx = use_resource(get_chat_context);
     let mut open = use_signal(|| false);
     // None = session list; Some(id) = active conversation.
     let mut active: Signal<Option<String>> = use_signal(|| None);
@@ -287,6 +290,7 @@ pub fn ChatSidebar() -> Element {
         // Floating open button
         if !*open.read() {
             button {
+                r#type: "button",
                 class: "fixed bottom-5 right-5 z-40 w-12 h-12 rounded-full bg-brand text-white shadow-lg flex items-center justify-center hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand transition-opacity",
                 "aria-label": t!("chat-open"),
                 onclick: move |_| open.set(true),
@@ -431,7 +435,8 @@ fn ChatBubbleIcon() -> Element {
 /// Session list + new-chat composer (sidebar start view).
 #[component]
 fn ChatSessionList(models: Vec<ModelEntry>, active: Signal<Option<String>>) -> Element {
-    let mut sessions = use_server_future(list_chat_sessions)?;
+    // Non-suspending: see ChatSidebar.
+    let mut sessions = use_resource(list_chat_sessions);
     let mut selected_model = use_signal(String::new);
     let mut first_message = use_signal(String::new);
     let mut error = use_signal::<Option<String>>(|| None);
