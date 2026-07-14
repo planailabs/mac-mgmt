@@ -1,141 +1,10 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
-use serde::{Deserialize, Serialize};
 
+use crate::api_mcp::endpoints::clusters::{
+    HealerModelOption, HealerSettingsInput, HealerSettingsSetInput, load_settings, save_settings,
+};
 use crate::web::components::ui::{Button, ButtonSize, HelpText};
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct Settings {
-    enabled: bool,
-    auto_trigger: bool,
-    auto_trigger_key: String,
-    auto_approve: bool,
-    fix_model_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ModelOption {
-    key: String,
-    name: String,
-    provider: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SettingsData {
-    settings: Settings,
-    models: Vec<ModelOption>,
-}
-
-#[server]
-async fn load_settings(cluster_id: String) -> Result<SettingsData, ServerFnError> {
-    let _user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid cluster id"))?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        enabled: bool,
-        auto_trigger: Option<bool>,
-        auto_trigger_provider: Option<String>,
-        auto_trigger_model: Option<String>,
-        auto_approve: Option<bool>,
-        fix_provider: Option<String>,
-        fix_model: Option<String>,
-    }
-    let row = sqlx::query_as::<_, Row>(
-        "SELECT enabled, auto_trigger, auto_trigger_provider, auto_trigger_model, \
-                auto_approve, fix_provider, fix_model \
-         FROM healer_cluster_settings WHERE cluster_id = $1",
-    )
-    .bind(cid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let settings = row
-        .map(|r| Settings {
-            enabled: r.enabled,
-            auto_trigger: r.auto_trigger.unwrap_or(false),
-            auto_trigger_key: match (r.auto_trigger_provider, r.auto_trigger_model) {
-                (Some(p), Some(m)) => format!("{p}:{m}"),
-                _ => "none".to_string(),
-            },
-            auto_approve: r.auto_approve.unwrap_or(false),
-            fix_model_key: match (r.fix_provider, r.fix_model) {
-                (Some(p), Some(m)) => format!("{p}:{m}"),
-                _ => "none".to_string(),
-            },
-        })
-        .unwrap_or_default();
-
-    let healer_cfg = &crate::config::config().healer;
-    let model_entries = if healer_cfg.models.is_empty() {
-        crate::config::default_healer_models()
-    } else {
-        healer_cfg.models.clone()
-    };
-    let models = model_entries
-        .into_iter()
-        .map(|e| ModelOption {
-            key: format!("{}:{}", e.provider, e.model),
-            name: e.display_name(),
-            provider: e.provider,
-        })
-        .collect();
-
-    Ok(SettingsData { settings, models })
-}
-
-#[server]
-async fn save_settings(
-    cluster_id: String,
-    enabled: bool,
-    auto_trigger: bool,
-    auto_trigger_provider: Option<String>,
-    auto_trigger_model: Option<String>,
-    auto_approve: bool,
-    fix_provider: Option<String>,
-    fix_model: Option<String>,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid cluster id"))?;
-    user.require_cluster_write(&pool, cid).await?;
-
-    sqlx::query(
-        "INSERT INTO healer_cluster_settings \
-            (cluster_id, enabled, auto_trigger, auto_trigger_provider, auto_trigger_model, \
-             auto_approve, fix_provider, fix_model, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
-         ON CONFLICT (cluster_id) DO UPDATE SET \
-            enabled = EXCLUDED.enabled, \
-            auto_trigger = EXCLUDED.auto_trigger, \
-            auto_trigger_provider = EXCLUDED.auto_trigger_provider, \
-            auto_trigger_model = EXCLUDED.auto_trigger_model, \
-            auto_approve = EXCLUDED.auto_approve, \
-            fix_provider = EXCLUDED.fix_provider, \
-            fix_model = EXCLUDED.fix_model, \
-            updated_at = now()",
-    )
-    .bind(cid)
-    .bind(enabled)
-    .bind(auto_trigger)
-    .bind(&auto_trigger_provider)
-    .bind(&auto_trigger_model)
-    .bind(auto_approve)
-    .bind(&fix_provider)
-    .bind(&fix_model)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
 
 fn parse_key(key: &str) -> (Option<String>, Option<String>) {
     if key == "none" || key.is_empty() {
@@ -152,7 +21,12 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
     let cid = cluster_id.clone();
     let mut data_future = use_server_future(move || {
         let cid = cid.clone();
-        async move { load_settings(cid).await }
+        async move {
+            let id: uuid::Uuid = cid
+                .parse()
+                .map_err(|_| ServerFnError::new("invalid cluster id"))?;
+            load_settings(HealerSettingsInput { id }).await
+        }
     })?;
 
     let Some(Ok(data)) = &*data_future.read() else {
@@ -275,7 +149,19 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                             let (fp, fm) = parse_key(&fix_key);
                             saving.set(true);
                             async move {
-                                let _ = save_settings(cid, en, at, atp, atm, aa, fp, fm).await;
+                                if let Ok(id) = cid.parse::<uuid::Uuid>() {
+                                    let _ = save_settings(HealerSettingsSetInput {
+                                        id,
+                                        enabled: en,
+                                        auto_trigger: at,
+                                        auto_trigger_provider: atp,
+                                        auto_trigger_model: atm,
+                                        auto_approve: aa,
+                                        fix_provider: fp,
+                                        fix_model: fm,
+                                    })
+                                    .await;
+                                }
                                 saving.set(false);
                                 data_future.restart();
                             }
@@ -289,10 +175,10 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
 }
 
 fn model_optgroups(
-    ollama: &[ModelOption],
-    anthropic: &[ModelOption],
-    openrouter: &[ModelOption],
-    other: &[ModelOption],
+    ollama: &[HealerModelOption],
+    anthropic: &[HealerModelOption],
+    openrouter: &[HealerModelOption],
+    other: &[HealerModelOption],
 ) -> Element {
     rsx! {
         if !ollama.is_empty() {

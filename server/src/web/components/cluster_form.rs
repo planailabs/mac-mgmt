@@ -1,26 +1,10 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::models::Cluster;
+use crate::api_mcp::endpoints::clusters::{ClusterCreateInput, create_cluster};
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
-#[cfg(feature = "server")]
-use crate::web::user::{WebUserExt, current_user};
-
-#[server]
-async fn create_cluster(name: String) -> Result<Cluster, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let cluster =
-        sqlx::query_as::<_, Cluster>("INSERT INTO clusters (name) VALUES ($1) RETURNING *")
-            .bind(&name)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(cluster)
-}
 
 #[component]
 pub fn ClusterForm() -> Element {
@@ -34,7 +18,7 @@ pub fn ClusterForm() -> Element {
         let nav = navigator;
         let name_val = name.read().clone();
         spawn(async move {
-            match create_cluster(name_val).await {
+            match create_cluster(ClusterCreateInput { name: name_val }).await {
                 Ok(cluster) => {
                     nav.push(Route::ClusterDetail {
                         id: cluster.id.to_string(),
