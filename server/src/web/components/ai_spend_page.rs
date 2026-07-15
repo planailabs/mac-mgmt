@@ -1,6 +1,6 @@
-//! Healer spend dashboard.
+//! AI spend dashboard (admin-only).
 //!
-//! Lands at `/healer-spend`. Renders the per-model breakdown (tokens
+//! Lands at `/ai-spend`. Renders the per-model breakdown (tokens
 //! in/out, sessions, daily trend, estimated dollar spend for priced
 //! models) aggregated by the `healer_spend` api-mcp endpoint
 //! (`api_mcp::endpoints::healer`) over the last 30 days.
@@ -40,10 +40,10 @@ fn fmt_usd(v: f64) -> String {
 }
 
 #[component]
-pub fn HealerSpend() -> Element {
+pub fn AiSpend() -> Element {
     use_topbar(
-        t!("healer-spend-title").to_string(),
-        Some(t!("healer-spend-subtitle", days: SPEND_WINDOW_DAYS).to_string()),
+        t!("ai-spend-title").to_string(),
+        Some(t!("ai-spend-subtitle", days: SPEND_WINDOW_DAYS).to_string()),
     );
 
     let data =
@@ -64,30 +64,30 @@ fn render_spend(d: &SpendData) -> Element {
         // ── KPI strip ──
         div { class: "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5",
             KpiCard {
-                label: t!("healer-spend-kpi-total", days: d.days),
+                label: t!("ai-spend-kpi-total", days: d.days),
                 value: fmt_tokens(d.total_tokens),
                 data: d.daily_total.clone(),
                 color: ChartColor::Brand,
             }
             KpiCard {
-                label: t!("healer-spend-kpi-input"),
+                label: t!("ai-spend-kpi-input"),
                 value: fmt_tokens(d.total_input),
                 color: ChartColor::Info,
             }
             KpiCard {
-                label: t!("healer-spend-kpi-output"),
+                label: t!("ai-spend-kpi-output"),
                 value: fmt_tokens(d.total_output),
                 color: ChartColor::Ok,
             }
             if let Some(cost) = cost_value {
                 KpiCard {
-                    label: t!("healer-spend-kpi-cost", days: d.days),
+                    label: t!("ai-spend-kpi-cost", days: d.days),
                     value: cost,
                     color: ChartColor::Warn,
                 }
             } else {
                 KpiCard {
-                    label: t!("healer-spend-kpi-sessions"),
+                    label: t!("ai-spend-kpi-sessions"),
                     value: d.total_sessions.to_string(),
                     color: ChartColor::Warn,
                 }
@@ -96,11 +96,11 @@ fn render_spend(d: &SpendData) -> Element {
 
         // ── Per-model breakdown ──
         div { class: "mb-3",
-            Kicker { {t!("healer-spend-models-title").to_uppercase()} }
+            Kicker { {t!("ai-spend-models-title").to_uppercase()} }
         }
         if !has_usage {
             div { class: "mb-3",
-                Pill { variant: PillVariant::Muted, {t!("healer-spend-empty")} }
+                Pill { variant: PillVariant::Muted, {t!("ai-spend-empty")} }
             }
         }
         Card {
@@ -108,14 +108,14 @@ fn render_spend(d: &SpendData) -> Element {
                 table { class: "table",
                     thead { class: "thead",
                         tr {
-                            Th { {t!("healer-spend-col-model")} }
-                            Th { {t!("healer-spend-col-role")} }
-                            Th { {t!("healer-spend-col-input")} }
-                            Th { {t!("healer-spend-col-output")} }
-                            Th { {t!("healer-spend-col-sessions")} }
-                            Th { {t!("healer-spend-col-cost")} }
-                            Th { {t!("healer-spend-col-trend", days: d.days)} }
-                            Th { {t!("healer-spend-col-last-used")} }
+                            Th { {t!("ai-spend-col-model")} }
+                            Th { {t!("ai-spend-col-role")} }
+                            Th { {t!("ai-spend-col-input")} }
+                            Th { {t!("ai-spend-col-output")} }
+                            Th { {t!("ai-spend-col-sessions")} }
+                            Th { {t!("ai-spend-col-cost")} }
+                            Th { {t!("ai-spend-col-trend", days: d.days)} }
+                            Th { {t!("ai-spend-col-last-used")} }
                         }
                     }
                     tbody { class: "tbody",
@@ -130,13 +130,13 @@ fn render_spend(d: &SpendData) -> Element {
                                 Td {
                                     div { class: "flex gap-1",
                                         if !row.validator || !row.configured {
-                                            Pill { variant: PillVariant::Info, {t!("healer-spend-role-model")} }
+                                            Pill { variant: PillVariant::Info, {t!("ai-spend-role-model")} }
                                         }
                                         if row.validator {
-                                            Pill { variant: PillVariant::Accent, {t!("healer-spend-role-validator")} }
+                                            Pill { variant: PillVariant::Accent, {t!("ai-spend-role-validator")} }
                                         }
                                         if !row.configured {
-                                            Pill { variant: PillVariant::Muted, {t!("healer-spend-role-removed")} }
+                                            Pill { variant: PillVariant::Muted, {t!("ai-spend-role-removed")} }
                                         }
                                     }
                                 }
@@ -160,7 +160,7 @@ fn render_spend(d: &SpendData) -> Element {
                                 if let Some(at) = &row.last_used {
                                     TdMuted { "{at}" }
                                 } else {
-                                    TdMuted { {t!("healer-spend-never-used")} }
+                                    TdMuted { {t!("ai-spend-never-used")} }
                                 }
                             }
                         }

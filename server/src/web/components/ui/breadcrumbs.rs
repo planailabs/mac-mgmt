@@ -105,7 +105,6 @@ fn chain_keys(route: &Route) -> Vec<Entry> {
             cur("breadcrumb-packages"),
         ],
         FleetDashboard { .. } => vec![cat("nav-overview"), cur("nav-fleet")],
-        HealerSpend {} => vec![cat("nav-overview"), cur("nav-healer-spend")],
         FleetDetail { .. }
         | FleetFiles { .. }
         | FleetShell { .. }
@@ -207,6 +206,7 @@ fn chain_keys(route: &Route) -> Vec<Entry> {
         AdminClientCerts {} => vec![cat("nav-admin"), cur("nav-admin-client-certs")],
         AdminClientCas {} => vec![cat("nav-admin"), cur("nav-admin-client-cas")],
         StaffPings {} => vec![cat("nav-admin"), cur("nav-staff-pings")],
+        AiSpend {} => vec![cat("nav-admin"), cur("nav-ai-spend")],
         OrganizationList {} => vec![cat("nav-admin"), cur("nav-organizations")],
         OrganizationForm {} => vec![
             cat("nav-admin"),

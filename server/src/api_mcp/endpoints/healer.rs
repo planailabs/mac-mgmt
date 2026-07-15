@@ -182,14 +182,16 @@ pub async fn healer_ping_resolve(
 
 // ── Spend dashboard ─────────────────────────────────────────────────────
 
-/// was: get_healer_spend() in web/components/healer_spend_page.rs
+/// Admin-only AI spend dashboard data (web: components/ai_spend_page.rs).
 #[api_mcp_dioxus_server(server = "get_healer_spend")]
 pub async fn healer_spend(
     pool: &sqlx::PgPool,
     p: &Principal,
     _input: HealerSpendInput,
 ) -> Result<SpendData, ApiError> {
-    let accessible = access::accessible_cluster_ids(pool, p).await?;
+    // Admin-only: the dashboard aggregates spend across the entire fleet
+    // (all clusters, all chat users), so no per-org cluster filtering.
+    p.require_admin()?;
 
     let days = SPEND_WINDOW_DAYS;
 
@@ -202,29 +204,20 @@ pub async fn healer_spend(
         sessions: i64,
         last_used: chrono::DateTime<chrono::Utc>,
     }
-    let summary_sql_base = "SELECT e.provider, e.model, \
+    let summaries: Vec<SummaryRow> = sqlx::query_as(
+        "SELECT e.provider, e.model, \
          SUM(e.input_tokens)::BIGINT AS input_tokens, \
          SUM(e.output_tokens)::BIGINT AS output_tokens, \
          COUNT(DISTINCT e.session_id) AS sessions, \
          MAX(e.created_at) AS last_used \
          FROM healer_token_events e \
-         JOIN healer_sessions s ON s.id = e.session_id \
-         WHERE e.created_at > now() - make_interval(days => $1)";
-    let summaries: Vec<SummaryRow> = match accessible.as_ref() {
-        Some(ids) => sqlx::query_as(&format!(
-            "{summary_sql_base} AND s.cluster_id = ANY($2) GROUP BY e.provider, e.model"
-        ))
-        .bind(days)
-        .bind(ids)
-        .fetch_all(pool)
-        .await
-        .map_err(internal)?,
-        None => sqlx::query_as(&format!("{summary_sql_base} GROUP BY e.provider, e.model"))
-            .bind(days)
-            .fetch_all(pool)
-            .await
-            .map_err(internal)?,
-    };
+         WHERE e.created_at > now() - make_interval(days => $1) \
+         GROUP BY e.provider, e.model",
+    )
+    .bind(days)
+    .fetch_all(pool)
+    .await
+    .map_err(internal)?;
 
     #[derive(sqlx::FromRow)]
     struct DailyRow {
@@ -233,84 +226,52 @@ pub async fn healer_spend(
         day: chrono::DateTime<chrono::Utc>,
         tokens: i64,
     }
-    let daily_sql_base = "SELECT e.provider, e.model, \
+    let daily_rows: Vec<DailyRow> = sqlx::query_as(
+        "SELECT e.provider, e.model, \
          date_trunc('day', e.created_at) AS day, \
          SUM(e.input_tokens + e.output_tokens)::BIGINT AS tokens \
          FROM healer_token_events e \
-         JOIN healer_sessions s ON s.id = e.session_id \
-         WHERE e.created_at > now() - make_interval(days => $1)";
-    let daily_rows: Vec<DailyRow> = match accessible.as_ref() {
-        Some(ids) => sqlx::query_as(&format!(
-            "{daily_sql_base} AND s.cluster_id = ANY($2) GROUP BY 1, 2, 3"
-        ))
-        .bind(days)
-        .bind(ids)
-        .fetch_all(pool)
-        .await
-        .map_err(internal)?,
-        None => sqlx::query_as(&format!("{daily_sql_base} GROUP BY 1, 2, 3"))
-            .bind(days)
-            .fetch_all(pool)
-            .await
-            .map_err(internal)?,
-    };
+         WHERE e.created_at > now() - make_interval(days => $1) \
+         GROUP BY 1, 2, 3",
+    )
+    .bind(days)
+    .fetch_all(pool)
+    .await
+    .map_err(internal)?;
 
-    // Chat spend rides in the same dashboard: admins see all chat usage,
-    // everyone else sees their own sessions (owner = principal subject).
+    // Chat spend rides in the same dashboard. The endpoint is admin-only,
+    // so all chat usage is included unconditionally.
     let mut summaries = summaries;
     let mut daily_rows = daily_rows;
     {
-        let chat_owner = if p.admin {
-            None
-        } else {
-            Some(p.subject.clone())
-        };
-        let chat_summary_base = "SELECT e.provider, e.model, \
+        let chat_summaries: Vec<SummaryRow> = sqlx::query_as(
+            "SELECT e.provider, e.model, \
              SUM(e.input_tokens)::BIGINT AS input_tokens, \
              SUM(e.output_tokens)::BIGINT AS output_tokens, \
              COUNT(DISTINCT e.session_id) AS sessions, \
              MAX(e.created_at) AS last_used \
              FROM chat_token_events e \
-             JOIN chat_sessions s ON s.id = e.session_id \
-             WHERE e.created_at > now() - make_interval(days => $1)";
-        let chat_summaries: Vec<SummaryRow> = match chat_owner.as_ref() {
-            Some(owner) => sqlx::query_as(&format!(
-                "{chat_summary_base} AND s.subject = $2 GROUP BY e.provider, e.model"
-            ))
-            .bind(days)
-            .bind(owner)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default(),
-            None => sqlx::query_as(&format!("{chat_summary_base} GROUP BY e.provider, e.model"))
-                .bind(days)
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default(),
-        };
+             WHERE e.created_at > now() - make_interval(days => $1) \
+             GROUP BY e.provider, e.model",
+        )
+        .bind(days)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
         summaries.extend(chat_summaries);
 
-        let chat_daily_base = "SELECT e.provider, e.model, \
+        let chat_daily: Vec<DailyRow> = sqlx::query_as(
+            "SELECT e.provider, e.model, \
              date_trunc('day', e.created_at) AS day, \
              SUM(e.input_tokens + e.output_tokens)::BIGINT AS tokens \
              FROM chat_token_events e \
-             JOIN chat_sessions s ON s.id = e.session_id \
-             WHERE e.created_at > now() - make_interval(days => $1)";
-        let chat_daily: Vec<DailyRow> = match chat_owner.as_ref() {
-            Some(owner) => sqlx::query_as(&format!(
-                "{chat_daily_base} AND s.subject = $2 GROUP BY 1, 2, 3"
-            ))
-            .bind(days)
-            .bind(owner)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default(),
-            None => sqlx::query_as(&format!("{chat_daily_base} GROUP BY 1, 2, 3"))
-                .bind(days)
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default(),
-        };
+             WHERE e.created_at > now() - make_interval(days => $1) \
+             GROUP BY 1, 2, 3",
+        )
+        .bind(days)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
         daily_rows.extend(chat_daily);
     }
 

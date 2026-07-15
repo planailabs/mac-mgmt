@@ -63,10 +63,6 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
         "nav-fleet".to_string(),
     ));
     overview_links.push(NavLink::Internal(
-        Route::HealerSpend {},
-        "nav-healer-spend".to_string(),
-    ));
-    overview_links.push(NavLink::Internal(
         Route::EasyAccess {},
         "nav-easy-access".to_string(),
     ));
@@ -107,6 +103,7 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
                 ),
                 NavLink::Internal(Route::AdminClientCas {}, "nav-admin-client-cas".to_string()),
                 NavLink::Internal(Route::StaffPings {}, "nav-staff-pings".to_string()),
+                NavLink::Internal(Route::AiSpend {}, "nav-ai-spend".to_string()),
                 NavLink::Internal(Route::OrganizationList {}, "nav-organizations".to_string()),
                 NavLink::Internal(Route::UserList {}, "nav-users".to_string()),
                 NavLink::Internal(Route::SkillCenterList {}, "nav-skill-centers".to_string()),
