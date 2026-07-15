@@ -664,6 +664,41 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
                 match evt.kind.as_str() {
                     "message" => {
                         if let (Some(role), Some(content)) = (evt.role, evt.content) {
+                            // Pins belong in the pinned panel, not the
+                            // transcript (the content is a JSON envelope).
+                            if role == "pin" {
+                                if let Ok(data) =
+                                    serde_json::from_str::<serde_json::Value>(&content)
+                                {
+                                    if let Some(slot) =
+                                        data.get("slot").and_then(|v| v.as_str())
+                                    {
+                                        let pin = PinInfo {
+                                            slot: slot.to_string(),
+                                            summary: data
+                                                .get("summary")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            affected_services: data
+                                                .get("affected_services")
+                                                .and_then(|v| v.as_array())
+                                                .map(|a| {
+                                                    a.iter()
+                                                        .filter_map(|v| {
+                                                            v.as_str().map(String::from)
+                                                        })
+                                                        .collect()
+                                                })
+                                                .unwrap_or_default(),
+                                        };
+                                        let mut cur = pins.write();
+                                        cur.retain(|p| p.slot != pin.slot);
+                                        cur.push(pin);
+                                    }
+                                }
+                                continue;
+                            }
                             if !content.is_empty()
                                 && role != "approval_request"
                                 && role != "approval_decision"
