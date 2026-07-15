@@ -6,6 +6,8 @@ mod api;
 mod api_mcp;
 #[cfg(all(feature = "server", feature = "webui"))]
 mod chat;
+#[cfg(all(feature = "server", feature = "webui"))]
+mod chat_backend;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod builtin_skill_center;
 #[cfg(feature = "server")]
@@ -334,7 +336,14 @@ async fn init_server() -> (
         )
         .await
         {
-            Ok(chat) => server_state::set_chat_state(chat),
+            Ok(chat) => {
+                server_state::set_chat_state(chat);
+                // Wire the reusable sidebar's server functions to this
+                // chat service.
+                plan_ai_chat_ui::backend::set_chat_backend(std::sync::Arc::new(
+                    crate::chat_backend::MacMgmtChatBackend,
+                ));
+            }
             Err(e) => tracing::error!("failed to initialize chat: {e:#}"),
         }
     }

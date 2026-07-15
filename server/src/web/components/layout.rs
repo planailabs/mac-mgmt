@@ -218,7 +218,10 @@ pub fn Layout() -> Element {
 
             // Context-aware fleet chat: floating bubble + slide-in sidebar,
             // available on every page (renders nothing when chat is disabled).
-            crate::web::components::chat_page::ChatSidebar {}
+            plan_ai_chat_ui::sidebar::ChatSidebar {
+                page_context: use_route::<Route>().to_string(),
+                logo: rsx! { crate::web::components::navbar::LogoMark {} },
+            }
         }
     }
 }
