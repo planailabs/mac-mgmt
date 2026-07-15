@@ -89,12 +89,10 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # api_key = "sk-yyy"
 # model = "gpt-4.1"
 #
-# Models shown in the UI model picker. If omitted, built-in defaults are used.
-# Each entry has: name (display label), model (provider identifier),
-# provider ("ollama", "anthropic", "openrouter", or a [[healer.openai]] source name),
-# an optional token_budget override, and optional input_cost_per_mtok /
-# output_cost_per_mtok (USD per 1M tokens; when both are set, the healer spend
-# dashboard shows estimated dollar spend for the model).
+# LEGACY: per-domain model list for the healer picker. Prefer the unified
+# top-level [[models]] list (see below) — when [[models]] is present, the
+# [[healer.models]] / [[healer.validator_models]] / [[chat.models]] lists are
+# ignored. Entry shape is identical (minus validator/restrict).
 # [[healer.models]]
 # name = "Gemma 4"
 # model = "gemma4"
@@ -127,9 +125,10 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # fix_provider = "anthropic"                      # provider for the remediation phase
 # fix_model = "claude-sonnet-4-6"                 # model for the remediation phase
 #
-# Validator models for tool-call validation. A cheap/fast second model that checks
-# whether each tool call makes sense before executing it. Uses the same API keys
-# as regular healer models. If omitted, built-in defaults (Gemma 4, Qwen 3, Haiku) are used.
+# LEGACY: validator models for tool-call validation (a cheap/fast second model
+# that checks each tool call before executing it). Prefer `validator = true`
+# entries in the unified [[models]] list below. If omitted, built-in defaults
+# (Gemma 4, Qwen 3, Haiku) are used.
 # [[healer.validator_models]]
 # name = "Gemma 4"
 # model = "gemma4"
@@ -161,7 +160,7 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # tools_include = []                             # tool-name globs to offer (empty = all, e.g. ["cluster_*"])
 # tools_exclude = []                             # tool-name globs to hide (e.g. ["*_delete"])
 #
-# Models for the chat model picker. Same entry shape as [[healer.models]];
+# LEGACY: separate chat model list. Prefer the unified [[models]] list below;
 # falls back to [[healer.models]] (or built-in defaults) when omitted.
 # [[chat.models]]
 # name = "Claude Sonnet 4.6"
@@ -169,6 +168,41 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # provider = "anthropic"
 # input_cost_per_mtok = 3.0
 # output_cost_per_mtok = 15.0
+
+# Unified model list for ALL chat types (healer sessions, fleet chat, ...).
+# Preferred over the legacy per-domain lists above — when any [[models]] entry
+# is present, those lists are ignored. Each entry has: name (display label),
+# model (provider identifier), provider ("ollama", "anthropic", "openrouter",
+# or a [[healer.openai]] source name), optional token_budget override,
+# optional input_cost_per_mtok / output_cost_per_mtok (USD per 1M tokens;
+# both set = the AI spend dashboard estimates dollar spend), and:
+#   validator = true        # also offered in validator/guard pickers
+#   validator_only = true   # hidden from regular model pickers
+#   restrict = "healer"     # limit to chat types; string or list, e.g.
+#                           # restrict = ["healer", "chat"]; omit = all types
+# [[models]]
+# name = "Gemma 4"
+# model = "gemma4"
+# provider = "ollama"
+# validator = true                               # doubles as a guard model
+# [[models]]
+# name = "Claude Sonnet 4.6"
+# model = "claude-sonnet-4-6"
+# provider = "anthropic"
+# token_budget = 200000
+# input_cost_per_mtok = 3.0
+# output_cost_per_mtok = 15.0
+# [[models]]
+# name = "Claude Haiku 4.5"
+# model = "claude-haiku-4-5-20251001"
+# provider = "anthropic"
+# validator = true
+# validator_only = true                          # guard only, not in pickers
+# [[models]]
+# name = "Devstral"
+# model = "devstral"
+# provider = "ollama"
+# restrict = "healer"                            # healer sessions only
 
 # Secrets vault: encrypted key-value store for daemon secrets (requires "mgmt" feature).
 # Daemons reference secrets in config via secret:NAME syntax.
