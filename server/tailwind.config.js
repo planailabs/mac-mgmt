@@ -14,7 +14,7 @@ module.exports = {
   // Scan both the server's own `.rs` files AND the design crate's
   // shared component sources so Tailwind's class extractor doesn't
   // purge any class emitted by the imported components.
-  content: ["./src/**/*.rs", "../memvault/plan-ai-design/src/**/*.rs", "../config-ui/src/**/*.rs"],
+  content: ["./src/**/*.rs", "../memvault/plan-ai-design/src/**/*.rs", "../config-ui/src/**/*.rs", "../common/plan-ai-chat-ui/src/**/*.rs"],
   // `td` and `th` collide with HTML element names; Tailwind's content
   // extractor heuristically drops them. Safelist so the @layer rules
   // for our `<Td>` / `<TdMono>` / `<TdMuted>` cells survive purge.
