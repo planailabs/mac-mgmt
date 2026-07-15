@@ -289,6 +289,50 @@ pub fn ChatSidebar() -> Element {
     let mut active: Signal<Option<String>> = use_signal(|| None);
 
     let enabled = matches!(&*ctx.read(), Some(Ok(c)) if c.enabled);
+
+    // Width drag: DOM-driven for smoothness (no per-move round trip through
+    // the VDOM); width persists in localStorage. Re-runs on every open so a
+    // remounted panel gets rewired.
+    use_effect(move || {
+        if !*open.read() {
+            return;
+        }
+        document::eval(
+            r#"
+            (function() {
+                const sb = document.getElementById('chat-sidebar');
+                const handle = document.getElementById('chat-resize');
+                if (!sb || !handle || handle.dataset.wired) return;
+                handle.dataset.wired = '1';
+                const clamp = (w) => Math.min(Math.max(w, 320), window.innerWidth - 80);
+                const saved = parseInt(localStorage.getItem('chat.sidebar.width') || '');
+                if (saved) sb.style.width = clamp(saved) + 'px';
+                let dragging = false;
+                handle.addEventListener('pointerdown', (e) => {
+                    dragging = true;
+                    handle.setPointerCapture(e.pointerId);
+                    document.body.style.userSelect = 'none';
+                    e.preventDefault();
+                });
+                handle.addEventListener('pointermove', (e) => {
+                    if (!dragging) return;
+                    sb.style.width = clamp(window.innerWidth - e.clientX) + 'px';
+                });
+                const end = () => {
+                    if (!dragging) return;
+                    dragging = false;
+                    document.body.style.userSelect = '';
+                    try {
+                        localStorage.setItem('chat.sidebar.width', parseInt(sb.style.width) || '');
+                    } catch (_) {}
+                };
+                handle.addEventListener('pointerup', end);
+                handle.addEventListener('pointercancel', end);
+            })();
+            "#,
+        );
+    });
+
     if !enabled {
         return rsx! {};
     }
@@ -311,7 +355,15 @@ pub fn ChatSidebar() -> Element {
 
         // Sidebar panel
         if *open.read() {
-            div { class: "fixed inset-y-0 right-0 z-50 w-[26rem] max-w-full flex flex-col bg-surface border-l border-line shadow-2xl",
+            div {
+                id: "chat-sidebar",
+                class: "fixed inset-y-0 right-0 z-50 w-[26rem] max-w-full flex flex-col bg-surface border-l border-line shadow-2xl",
+                // Drag handle over the left border: resizes the sidebar.
+                div {
+                    id: "chat-resize",
+                    class: "absolute left-0 inset-y-0 w-1.5 -ml-0.5 cursor-ew-resize hover:bg-brand/40 z-10",
+                    "aria-hidden": "true",
+                }
                 // Header: [logo] chat
                 div { class: "shrink-0 flex items-center gap-2 px-3 py-2 border-b border-line",
                     crate::web::components::navbar::LogoMark {}
