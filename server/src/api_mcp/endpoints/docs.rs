@@ -15,6 +15,29 @@ pub fn register(reg: &mut plan_ai_api_mcp::Registry<sqlx::PgPool>) {
         "Read a documentation page as raw markdown by its slug (from doc_list).",
         |_pool: sqlx::PgPool, _p, input: DocGetInput| async move { doc_get(input).await },
     );
+
+    let mut g = reg.resource("glossary", "glossary", "Glossary");
+    g.list(
+        "List all platform glossary terms (Cluster, Daemon, Skill, Healer, ...).          Use glossary_get to read a definition.",
+        |pool: sqlx::PgPool, p, input: GlossaryListInput| async move {
+            glossary_list(&pool, &p, input).await
+        },
+    );
+    g.get(
+        "Read the definition of one glossary term (case-insensitive).",
+        |pool: sqlx::PgPool, p, input: GlossaryGetInput| async move {
+            glossary_get(&pool, &p, input).await
+        },
+    );
+    g.custom(
+        "search",
+        plan_ai_api_mcp::Risk::ReadOnly,
+        plan_ai_api_mcp::OnItem::No,
+        "Search glossary term names and definitions (case-insensitive substring);          returns matching terms with a snippet.",
+        |pool: sqlx::PgPool, p, input: GlossarySearchInput| async move {
+            glossary_search(&pool, &p, input).await
+        },
+    );
 }
 
 use serde::{Deserialize, Serialize};
@@ -95,4 +118,154 @@ async fn doc_get(input: DocGetInput) -> Result<DocPage, plan_ai_api_mcp::ApiErro
         title,
         markdown: body.to_string(),
     })
+}
+
+// ── Glossary ────────────────────────────────────────────────────────────
+//
+// server/glossary/*.md — one file per term (filename = term), embedded like
+// the docs. Exposed as tools AND as the #[server] wrappers the docs UI uses.
+
+use dioxus::prelude::*;
+use plan_ai_api_mcp_macros::api_mcp_dioxus_server;
+
+#[cfg(feature = "server")]
+use super::internal;
+#[cfg(feature = "server")]
+use crate::server_pool;
+#[cfg(feature = "server")]
+use crate::web::user::{current_user, principal_from, to_serverfn};
+#[cfg(feature = "server")]
+use plan_ai_api_mcp::{ApiError, Principal};
+
+#[cfg(feature = "server")]
+mod glossary_embedded {
+    use rust_embed::RustEmbed;
+
+    #[derive(RustEmbed)]
+    #[folder = "glossary/"]
+    #[include = "*.md"]
+    pub struct GlossaryAssets;
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GlossaryListInput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GlossaryGetInput {
+    /// Term name, e.g. "Healer" (case-insensitive; from glossary_list).
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GlossarySearchInput {
+    /// Case-insensitive substring searched in term names and definitions.
+    pub query: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GlossaryTermInfo {
+    pub term: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GlossaryEntry {
+    pub term: String,
+    /// Definition as raw markdown.
+    pub markdown: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GlossaryHit {
+    pub term: String,
+    /// The matching line, trimmed.
+    pub snippet: String,
+}
+
+#[cfg(feature = "server")]
+fn glossary_read(term_file: &str) -> Option<String> {
+    let content = glossary_embedded::GlossaryAssets::get(term_file)?;
+    std::str::from_utf8(content.data.as_ref())
+        .ok()
+        .map(String::from)
+}
+
+/// List all glossary terms.
+#[api_mcp_dioxus_server(server = "glossary_terms")]
+pub async fn glossary_list(
+    _pool: &sqlx::PgPool,
+    _p: &Principal,
+    _input: GlossaryListInput,
+) -> Result<Vec<GlossaryTermInfo>, ApiError> {
+    let mut terms: Vec<GlossaryTermInfo> = glossary_embedded::GlossaryAssets::iter()
+        .filter_map(|path| {
+            let term = path.as_ref().strip_suffix(".md")?.to_string();
+            Some(GlossaryTermInfo { term })
+        })
+        .collect();
+    terms.sort_by(|a, b| a.term.to_lowercase().cmp(&b.term.to_lowercase()));
+    Ok(terms)
+}
+
+/// Read one glossary term (case-insensitive lookup).
+#[api_mcp_dioxus_server(server = "glossary_term")]
+pub async fn glossary_get(
+    _pool: &sqlx::PgPool,
+    _p: &Principal,
+    input: GlossaryGetInput,
+) -> Result<GlossaryEntry, ApiError> {
+    let wanted = input.id.to_lowercase();
+    let path = glossary_embedded::GlossaryAssets::iter()
+        .find(|p| {
+            p.as_ref()
+                .strip_suffix(".md")
+                .is_some_and(|t| t.to_lowercase() == wanted)
+        })
+        .ok_or_else(|| ApiError::not_found("unknown glossary term"))?;
+    let term = path.as_ref().trim_end_matches(".md").to_string();
+    let markdown = glossary_read(path.as_ref())
+        .ok_or_else(|| ApiError::internal("glossary entry unreadable"))?;
+    Ok(GlossaryEntry { term, markdown })
+}
+
+/// Search term names and definitions.
+#[api_mcp_dioxus_server(server = "search_glossary")]
+pub async fn glossary_search(
+    _pool: &sqlx::PgPool,
+    _p: &Principal,
+    input: GlossarySearchInput,
+) -> Result<Vec<GlossaryHit>, ApiError> {
+    let q = input.query.trim().to_lowercase();
+    if q.is_empty() {
+        return Err(ApiError::bad_request("query is empty"));
+    }
+    let mut hits = Vec::new();
+    for path in glossary_embedded::GlossaryAssets::iter() {
+        let Some(term) = path.as_ref().strip_suffix(".md").map(String::from) else {
+            continue;
+        };
+        let Some(text) = glossary_read(path.as_ref()) else {
+            continue;
+        };
+        if term.to_lowercase().contains(&q) {
+            let snippet = text
+                .lines()
+                .find(|l| !l.trim().is_empty() && !l.starts_with('#'))
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            hits.push(GlossaryHit { term, snippet });
+            continue;
+        }
+        if let Some(line) = text
+            .lines()
+            .find(|l| l.to_lowercase().contains(&q) && !l.starts_with('#'))
+        {
+            hits.push(GlossaryHit {
+                term,
+                snippet: line.trim().to_string(),
+            });
+        }
+    }
+    hits.sort_by(|a, b| a.term.to_lowercase().cmp(&b.term.to_lowercase()));
+    Ok(hits)
 }

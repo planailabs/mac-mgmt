@@ -1128,3 +1128,6 @@ chat-state-running = läuft
 chat-state-planning = plant
 chat-state-executing = führt aus
 chat-state-executed = ausgeführt
+docs-glossary = Glossar
+glossary-search-placeholder = Begriffe und Definitionen durchsuchen…
+glossary-no-results = Keine Glossareinträge gefunden.

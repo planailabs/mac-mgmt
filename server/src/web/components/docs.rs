@@ -2,6 +2,10 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::api_mcp::endpoints::docs::{
+    GlossaryGetInput, GlossaryListInput, GlossarySearchInput, GlossaryTermInfo, glossary_term,
+    glossary_terms, search_glossary,
+};
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText};
@@ -214,6 +218,110 @@ pub fn DocList() -> Element {
                 Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
                 None => rsx! { p { {t!("loading")} } },
             }}
+
+            GlossarySection {}
+        }
+    }
+}
+
+/// Searchable glossary of platform terms (server/glossary/*.md).
+#[component]
+fn GlossarySection() -> Element {
+    let terms = use_server_future(|| glossary_terms(GlossaryListInput {}))?;
+    let mut query = use_signal(String::new);
+
+    // Server-side content search whenever the query changes (debounce-free:
+    // the corpus is tiny). Empty query = full term list.
+    let results = use_resource(move || {
+        let q = query.read().trim().to_string();
+        async move {
+            if q.is_empty() {
+                return None;
+            }
+            Some(search_glossary(GlossarySearchInput { query: q }).await)
+        }
+    });
+
+    rsx! {
+        h3 { class: "h-section text-fg mt-6", {t!("docs-glossary")} }
+        input {
+            class: "input w-full mb-3",
+            placeholder: t!("glossary-search-placeholder").to_string(),
+            value: "{query}",
+            oninput: move |e| query.set(e.value()),
+        }
+        {match &*results.read() {
+            Some(Some(Ok(hits))) if hits.is_empty() => rsx! {
+                p { class: "text-sm text-fg-muted", {t!("glossary-no-results")} }
+            },
+            Some(Some(Ok(hits))) => rsx! {
+                div { class: "card divide-y divide-line-soft mb-6",
+                    for hit in hits.iter() {
+                        GlossaryTermRow {
+                            key: "{hit.term}",
+                            term: hit.term.clone(),
+                            snippet: Some(hit.snippet.clone()),
+                        }
+                    }
+                }
+            },
+            Some(Some(Err(e))) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            _ => match &*terms.read() {
+                Some(Ok(list)) => rsx! {
+                    div { class: "card divide-y divide-line-soft mb-6",
+                        for t in list.iter() {
+                            GlossaryTermRow { key: "{t.term}", term: t.term.clone(), snippet: None }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+                None => rsx! { p { {t!("loading")} } },
+            },
+        }}
+    }
+}
+
+/// One glossary row; the definition loads and renders on expand.
+#[component]
+fn GlossaryTermRow(term: String, snippet: Option<String>) -> Element {
+    let mut open = use_signal(|| false);
+    let term_fetch = term.clone();
+    let entry = use_resource(move || {
+        let term = term_fetch.clone();
+        let load = *open.read();
+        async move {
+            if !load {
+                return None;
+            }
+            Some(glossary_term(GlossaryGetInput { id: term }).await)
+        }
+    });
+
+    rsx! {
+        div {
+            button {
+                r#type: "button",
+                class: "w-full text-left px-6 py-3 hover:bg-surface-2 transition-colors",
+                onclick: move |_| { let v = *open.read(); open.set(!v); },
+                h4 { class: "font-medium text-brand", "{term}" }
+                if let Some(sn) = &snippet {
+                    p { class: "text-sm text-fg-muted mt-1", "{sn}" }
+                }
+            }
+            if *open.read() {
+                div { class: "px-6 pb-4",
+                    {match &*entry.read() {
+                        Some(Some(Ok(e))) => rsx! {
+                            div {
+                                class: "prose-chat text-sm",
+                                dangerous_inner_html: crate::web::components::healer_page::simple_md_to_html(&e.markdown),
+                            }
+                        },
+                        Some(Some(Err(err))) => rsx! { ErrorText { {t!("error-message", message: err.to_string())} } },
+                        _ => rsx! { p { class: "text-sm text-fg-muted", {t!("loading")} } },
+                    }}
+                }
+            }
         }
     }
 }
