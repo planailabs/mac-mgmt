@@ -269,3 +269,48 @@ pub async fn glossary_search(
     hits.sort_by(|a, b| a.term.to_lowercase().cmp(&b.term.to_lowercase()));
     Ok(hits)
 }
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+
+    fn principal() -> Principal {
+        Principal::admin("test")
+    }
+
+    fn pool() -> sqlx::PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .expect("lazy pool")
+    }
+
+    #[tokio::test]
+    async fn glossary_search_is_case_insensitive() {
+        for q in ["hermes", "HERMES", "Hermes", "openclaw", "gateway"] {
+            let hits = glossary_search(
+                &pool(),
+                &principal(),
+                GlossarySearchInput {
+                    query: q.to_string(),
+                },
+            )
+            .await
+            .expect("search");
+            assert!(!hits.is_empty(), "no hits for query '{q}'");
+        }
+    }
+
+    #[tokio::test]
+    async fn glossary_get_is_case_insensitive() {
+        for id in ["Hermes", "hermes", "HERMES", "openclaw"] {
+            let entry = glossary_get(
+                &pool(),
+                &principal(),
+                GlossaryGetInput { id: id.to_string() },
+            )
+            .await
+            .expect("get");
+            assert!(!entry.markdown.is_empty());
+        }
+    }
+}
