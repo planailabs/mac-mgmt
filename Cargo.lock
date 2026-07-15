@@ -11726,6 +11726,7 @@ dependencies = [
  "swiftide",
  "tokio",
  "tokio-util",
+ "toml 0.8.23",
  "tracing",
  "uuid",
 ]
@@ -11734,6 +11735,8 @@ dependencies = [
 name = "plan-ai-chat-ui"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "chrono",
  "dioxus",
  "dioxus-i18n",
  "plan-ai-chat",
