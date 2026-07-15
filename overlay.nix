@@ -37,7 +37,9 @@ let
     wasmRustPlatform.buildRustPackage {
       pname = "${crate}-wasm";
       version = "0.1.0";
-      src = ./memvault;
+      src = ./.;
+      cargoRoot = "memvault";
+      buildAndTestSubdir = "memvault";
       cargoLock = {
         lockFile = ./memvault/Cargo.lock;
         outputHashes = import ./memvault/extra-hashes.nix;
