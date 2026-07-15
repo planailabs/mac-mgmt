@@ -1828,4 +1828,16 @@ mod tests {
         let parsed: Result<utoipa::openapi::OpenApi, _> = serde_json::from_value(doc);
         assert!(parsed.is_ok(), "openapi must parse: {:?}", parsed.err());
     }
+
+    /// Mounting the axum router panics on route collisions (e.g. a resource
+    /// path clashing with the /api/v1/docs Swagger mount) — build it in tests
+    /// so a bad registration fails here instead of crashing server startup.
+    #[tokio::test]
+    async fn http_router_mounts_without_route_collisions() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .expect("lazy pool");
+        let reg = super::build_registry(pool.clone());
+        let _router = reg.http_router(pool);
+    }
 }

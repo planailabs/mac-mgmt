@@ -3,7 +3,9 @@
 
 #[cfg(feature = "server")]
 pub fn register(reg: &mut plan_ai_api_mcp::Registry<sqlx::PgPool>) {
-    let mut d = reg.resource("docs", "doc", "Documentation");
+    // NOTE: path segment must not be "docs" — /api/v1/docs is the Swagger UI
+    // mount and axum panics on the route collision at startup.
+    let mut d = reg.resource("documentation", "doc", "Documentation");
     d.list(
         "List the built-in platform documentation topics (slug + title + audience). \
          Use doc_get to read one.",
