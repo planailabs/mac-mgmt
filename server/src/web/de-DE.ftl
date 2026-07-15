@@ -1131,3 +1131,5 @@ chat-state-executed = ausgeführt
 docs-glossary = Glossar
 glossary-search-placeholder = Begriffe und Definitionen durchsuchen…
 glossary-no-results = Keine Glossareinträge gefunden.
+docs-glossary-link = → Glossar der Plattform-Begriffe
+nav-glossary = Glossar

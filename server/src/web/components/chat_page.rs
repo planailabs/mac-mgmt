@@ -607,7 +607,8 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
     // Set by send() and by live running-tool events, so replaying an old
     // session never shows the indicator.
     let mut busy = use_signal(|| false);
-    let mut show_pins = use_signal(|| false);
+    // Pinned panel is expanded by default; the header button collapses it.
+    let mut show_pins = use_signal(|| true);
     // Optimistic local echoes of sent messages, pending their server copy
     // (the loop persists user turns at pickup, which can lag the submit).
     let mut pending_echoes = use_signal::<Vec<String>>(Vec::new);

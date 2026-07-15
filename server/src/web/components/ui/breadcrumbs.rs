@@ -268,6 +268,7 @@ fn chain_keys(route: &Route) -> Vec<Entry> {
 
         // ── Resources
         DocList {} => vec![cat("nav-resources"), cur("nav-docs")],
+        GlossaryPage {} => vec![cat("nav-resources"), cur("nav-glossary")],
         DocPage { .. } => vec![
             cat("nav-resources"),
             parent("nav-docs", DocList {}),

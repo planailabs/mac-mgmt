@@ -14,7 +14,7 @@ use super::components::cluster_list::ClusterList;
 use super::components::cluster_packages::ClusterPackagesPage;
 use super::components::daemon_version_detail::DaemonVersionDetail;
 use super::components::daemon_version_list::DaemonVersionList;
-use super::components::docs::{DocList, DocPage};
+use super::components::docs::{DocList, DocPage, GlossaryPage};
 use super::components::easy_access::EasyAccess;
 use super::components::file_editor::FleetFiles;
 use super::components::fleet_dashboard::FleetDashboard;
@@ -169,6 +169,8 @@ pub enum Route {
     DocList {},
     #[route("/docs/:slug")]
     DocPage { slug: String },
+    #[route("/glossary")]
+    GlossaryPage {},
 }
 
 // Pre-hydration loading banner. Self-contained styling because it must

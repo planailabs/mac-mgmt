@@ -125,7 +125,10 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
         });
     }
 
-    let mut resources_links = vec![NavLink::Internal(Route::DocList {}, "nav-docs".to_string())];
+    let mut resources_links = vec![
+        NavLink::Internal(Route::DocList {}, "nav-docs".to_string()),
+        NavLink::Internal(Route::GlossaryPage {}, "nav-glossary".to_string()),
+    ];
     if let Some(url) = swagger_url {
         resources_links.push(NavLink::External(url, "nav-api-docs".to_string()));
     }

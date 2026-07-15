@@ -219,14 +219,22 @@ pub fn DocList() -> Element {
                 None => rsx! { p { {t!("loading")} } },
             }}
 
-            GlossarySection {}
+            // Glossary lives on its own page.
+            div { class: "mt-6",
+                Link {
+                    to: Route::GlossaryPage {},
+                    class: "link text-sm",
+                    {t!("docs-glossary-link")}
+                }
+            }
         }
     }
 }
 
 /// Searchable glossary of platform terms (server/glossary/*.md).
 #[component]
-fn GlossarySection() -> Element {
+pub fn GlossaryPage() -> Element {
+    use_topbar(t!("docs-glossary"), None);
     let terms = use_server_future(|| glossary_terms(GlossaryListInput {}))?;
     let mut query = use_signal(String::new);
 
@@ -243,7 +251,7 @@ fn GlossarySection() -> Element {
     });
 
     rsx! {
-        h3 { class: "h-section text-fg mt-6", {t!("docs-glossary")} }
+        h2 { class: "h-page", {t!("docs-glossary")} }
         input {
             class: "input w-full mb-3",
             placeholder: t!("glossary-search-placeholder").to_string(),
