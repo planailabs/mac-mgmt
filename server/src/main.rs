@@ -328,14 +328,7 @@ async fn init_server() -> (
     #[cfg(feature = "webui")]
     if cfg.chat.enabled {
         let registry = crate::api_mcp::shared_registry(pool.clone());
-        match crate::chat::ChatState::new(
-            pool.clone(),
-            registry,
-            chat_connector,
-            cfg.chat.clone(),
-        )
-        .await
-        {
+        match crate::chat::init(pool.clone(), registry, chat_connector, &cfg.chat).await {
             Ok(chat) => {
                 server_state::set_chat_state(chat);
                 // Wire the reusable sidebar's server functions to this
