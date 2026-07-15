@@ -50,7 +50,7 @@ pub struct ChatConfig {
     /// Models offered in the chat model picker. Falls back to
     /// `[healer].models` (or the built-in defaults) when empty.
     #[serde(default)]
-    pub models: Vec<HealerModelEntry>,
+    pub models: Vec<LlmModelEntry>,
     /// Validator LLM for the guard layer (shown alongside approval prompts).
     #[serde(default)]
     pub validator_provider: Option<String>,
@@ -313,7 +313,7 @@ pub struct HealerConfig {
     /// name, provider ("ollama" or "anthropic"), and the model identifier.
     /// If empty, built-in defaults are used.
     #[serde(default)]
-    pub models: Vec<HealerModelEntry>,
+    pub models: Vec<LlmModelEntry>,
 
     /// Automatically trigger healer sessions when instances are unhealthy.
     #[serde(default)]
@@ -339,7 +339,7 @@ pub struct HealerConfig {
     /// Models available in the validator model picker.
     /// If empty, built-in defaults (cheap/fast models) are used.
     #[serde(default)]
-    pub validator_models: Vec<HealerModelEntry>,
+    pub validator_models: Vec<LlmModelEntry>,
 
     /// Fine-tuned Ollama model name (e.g. "mac-mgmt-healer").
     /// When set and present in Ollama, preferred over `ollama_model`.
@@ -371,9 +371,10 @@ pub struct OpenAiSourceEntry {
     pub model: Option<String>,
 }
 
-/// A model entry for the healer UI model picker.
+/// A configured LLM model entry (healer and chat model pickers, spend
+/// dashboard pricing).
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
-pub struct HealerModelEntry {
+pub struct LlmModelEntry {
     /// Human-readable display name shown in the dropdown.
     pub name: String,
     /// Model identifier passed to the provider (e.g. "gemma4", "claude-sonnet-4-6").
@@ -386,7 +387,7 @@ pub struct HealerModelEntry {
     #[serde(default)]
     pub token_budget: Option<u64>,
     /// USD per 1M input tokens. When set (together with
-    /// `output_cost_per_mtok`), the healer spend dashboard shows estimated
+    /// `output_cost_per_mtok`), the AI spend dashboard shows estimated
     /// dollar spend for this model; token counts are shown either way.
     #[serde(default)]
     pub input_cost_per_mtok: Option<f64>,
@@ -396,9 +397,9 @@ pub struct HealerModelEntry {
 }
 
 /// Built-in default model list used when `[healer] models` is empty.
-pub fn default_healer_models() -> Vec<HealerModelEntry> {
+pub fn default_healer_models() -> Vec<LlmModelEntry> {
     vec![
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Gemma 4".into(),
             model: "gemma4".into(),
             provider: "ollama".into(),
@@ -406,7 +407,7 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Qwen 3".into(),
             model: "qwen3".into(),
             provider: "ollama".into(),
@@ -414,7 +415,7 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Llama 3.3".into(),
             model: "llama3.3".into(),
             provider: "ollama".into(),
@@ -422,7 +423,7 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Devstral".into(),
             model: "devstral".into(),
             provider: "ollama".into(),
@@ -430,7 +431,7 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Claude Sonnet 4.6".into(),
             model: "claude-sonnet-4-6".into(),
             provider: "anthropic".into(),
@@ -438,7 +439,7 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Claude Haiku 4.5".into(),
             model: "claude-haiku-4-5-20251001".into(),
             provider: "anthropic".into(),
@@ -446,7 +447,7 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Claude Sonnet 4".into(),
             model: "anthropic/claude-sonnet-4".into(),
             provider: "openrouter".into(),
@@ -454,7 +455,7 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "GPT-4.1".into(),
             model: "openai/gpt-4.1".into(),
             provider: "openrouter".into(),
@@ -462,7 +463,7 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Gemini 2.5 Pro".into(),
             model: "google/gemini-2.5-pro-preview".into(),
             provider: "openrouter".into(),
@@ -470,7 +471,7 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Kimi K2.6".into(),
             model: "moonshotai/kimi-k2.6".into(),
             provider: "openrouter".into(),
@@ -484,9 +485,9 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
 /// Built-in default validator model list. Cheap/fast models suitable for
 /// single-shot tool-call validation. Used when `[healer] validator_models`
 /// is empty.
-pub fn default_validator_models() -> Vec<HealerModelEntry> {
+pub fn default_validator_models() -> Vec<LlmModelEntry> {
     vec![
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Gemma 4".into(),
             model: "gemma4".into(),
             provider: "ollama".into(),
@@ -494,7 +495,7 @@ pub fn default_validator_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Qwen 3".into(),
             model: "qwen3".into(),
             provider: "ollama".into(),
@@ -502,7 +503,7 @@ pub fn default_validator_models() -> Vec<HealerModelEntry> {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
         },
-        HealerModelEntry {
+        LlmModelEntry {
             name: "Claude Haiku 4.5".into(),
             model: "claude-haiku-4-5-20251001".into(),
             provider: "anthropic".into(),
@@ -513,7 +514,7 @@ pub fn default_validator_models() -> Vec<HealerModelEntry> {
     ]
 }
 
-impl HealerModelEntry {
+impl LlmModelEntry {
     /// Return the display name with an auto-appended provider suffix
     /// (e.g. "Gemma 4" becomes "Gemma 4 (Ollama)") unless it already
     /// contains the provider name (case-insensitive).

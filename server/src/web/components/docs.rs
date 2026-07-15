@@ -122,7 +122,7 @@ async fn get_doc(slug: String) -> Result<(String, String, String), ServerFnError
         .map(|l| l.trim_start_matches("# ").to_string())
         .unwrap_or_else(|| slug.replace('-', " "));
 
-    let html_output = crate::web::components::healer_page::simple_md_to_html(body);
+    let html_output = crate::web::components::chat_ui::simple_md_to_html(body);
 
     Ok((title, html_output, audience))
 }
@@ -322,7 +322,7 @@ fn GlossaryTermRow(term: String, snippet: Option<String>) -> Element {
                         Some(Some(Ok(e))) => rsx! {
                             div {
                                 class: "prose-chat text-sm",
-                                dangerous_inner_html: crate::web::components::healer_page::simple_md_to_html(&e.markdown),
+                                dangerous_inner_html: crate::web::components::chat_ui::simple_md_to_html(&e.markdown),
                             }
                         },
                         Some(Some(Err(err))) => rsx! { ErrorText { {t!("error-message", message: err.to_string())} } },

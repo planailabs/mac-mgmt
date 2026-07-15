@@ -16,9 +16,9 @@ use uuid::Uuid;
 
 use super::user::{WebUser, WebUserExt};
 use crate::server_state;
-use mac_mgmt_common::HealerStreamEvent;
+use mac_mgmt_common::ChatStreamEvent;
 
-fn event_json(evt: &HealerStreamEvent) -> Event {
+fn event_json(evt: &ChatStreamEvent) -> Event {
     Event::default().data(serde_json::to_string(evt).unwrap_or_default())
 }
 
@@ -63,15 +63,18 @@ pub async fn view_session_sse(
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(64);
 
     tokio::spawn(async move {
-        use super::components::healer_page::{
-            PinInfo, extract_pins_from_messages, healer_event_to_stream, running_tools_to_wire,
-            staff_pings_to_wire,
+        use super::components::chat_ui::{
+            PinInfo, chat_event_to_stream, extract_pins_from_messages, running_tools_to_wire,
         };
+        use super::components::healer_page::staff_pings_to_wire;
 
-        let empty = HealerStreamEvent::default;
+        let empty = ChatStreamEvent::default;
 
         let mut last_seen_at = chrono::DateTime::<chrono::Utc>::MIN_UTC;
-        let mut pins = extract_pins_from_messages(&existing_messages);
+        let mut pins = extract_pins_from_messages(
+            &existing_messages,
+            &plan_ai_chat::tools::PinConfig::healer(),
+        );
 
         // Replay persisted messages
         for msg in &existing_messages {
@@ -79,7 +82,7 @@ pub async fn view_session_sse(
                 last_seen_at = msg.created_at;
             }
             let _ = tx
-                .send(Ok(event_json(&HealerStreamEvent {
+                .send(Ok(event_json(&ChatStreamEvent {
                     kind: "message".to_string(),
                     role: Some(msg.role.clone()),
                     content: Some(msg.content.clone()),
@@ -92,7 +95,7 @@ pub async fn view_session_sse(
         // Send pins snapshot
         if !pins.is_empty() {
             let _ = tx
-                .send(Ok(event_json(&HealerStreamEvent {
+                .send(Ok(event_json(&ChatStreamEvent {
                     kind: "pins".to_string(),
                     pins: Some(pins.clone()),
                     ..empty()
@@ -104,7 +107,7 @@ pub async fn view_session_sse(
         if let Ok(pings) = healer.store().list_session_pings(uuid).await {
             if !pings.is_empty() {
                 let _ = tx
-                    .send(Ok(event_json(&HealerStreamEvent {
+                    .send(Ok(event_json(&ChatStreamEvent {
                         kind: "staff_pings".to_string(),
                         staff_pings: Some(staff_pings_to_wire(&pings)),
                         ..empty()
@@ -115,7 +118,7 @@ pub async fn view_session_sse(
 
         // Current state
         let _ = tx
-            .send(Ok(event_json(&HealerStreamEvent {
+            .send(Ok(event_json(&ChatStreamEvent {
                 kind: "state".to_string(),
                 state: Some(current_state.clone()),
                 state_reason: current_reason.clone(),
@@ -127,7 +130,7 @@ pub async fn view_session_sse(
         let tools = healer.running_tools(uuid);
         if !tools.is_empty() {
             let _ = tx
-                .send(Ok(event_json(&HealerStreamEvent {
+                .send(Ok(event_json(&ChatStreamEvent {
                     kind: "running_tools".to_string(),
                     running_tools: Some(running_tools_to_wire(&tools)),
                     ..empty()
@@ -148,7 +151,7 @@ pub async fn view_session_sse(
                                 }
                             }
 
-                            let (stream_event, is_done) = healer_event_to_stream(&event);
+                            let (stream_event, is_done) = chat_event_to_stream(&event);
                             let _ = tx.send(Ok(event_json(&stream_event))).await;
 
                             // Re-send pins/staff_pings on relevant messages
@@ -184,7 +187,7 @@ pub async fn view_session_sse(
                                             pins.retain(|p| p.slot != pin.slot);
                                             pins.push(pin);
                                             let _ = tx
-                                                .send(Ok(event_json(&HealerStreamEvent {
+                                                .send(Ok(event_json(&ChatStreamEvent {
                                                     kind: "pins".to_string(),
                                                     pins: Some(pins.clone()),
                                                     ..empty()
@@ -198,7 +201,7 @@ pub async fn view_session_sse(
                                     if let Ok(pings) = healer.store().list_session_pings(uuid).await
                                     {
                                         let _ = tx
-                                            .send(Ok(event_json(&HealerStreamEvent {
+                                            .send(Ok(event_json(&ChatStreamEvent {
                                                 kind: "staff_pings".to_string(),
                                                 staff_pings: Some(staff_pings_to_wire(&pings)),
                                                 ..empty()
@@ -224,7 +227,7 @@ pub async fn view_session_sse(
                                         last_seen_at = msg.created_at;
                                     }
                                     let _ = tx
-                                        .send(Ok(event_json(&HealerStreamEvent {
+                                        .send(Ok(event_json(&ChatStreamEvent {
                                             kind: "message".to_string(),
                                             role: Some(msg.role.clone()),
                                             content: Some(msg.content.clone()),
@@ -243,7 +246,7 @@ pub async fn view_session_sse(
 
         // Final done event
         let _ = tx
-            .send(Ok(event_json(&HealerStreamEvent {
+            .send(Ok(event_json(&ChatStreamEvent {
                 kind: "done".to_string(),
                 state: Some(current_state),
                 state_reason: current_reason,

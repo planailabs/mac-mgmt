@@ -6,9 +6,9 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
-use crate::web::components::healer_page::{
-    ChatMsg, ModelEntry, PinInfo, RunningToolInfo, reason_display, render_message, simple_md_to_html,
-    state_badge,
+use crate::web::components::chat_ui::{
+    ChatMsg, ModelEntry, PinInfo, RunningToolInfo, reason_display, render_message,
+    simple_md_to_html, state_badge,
 };
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText};
 
@@ -710,7 +710,7 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
             while let Ok(val) = ev.recv::<serde_json::Value>().await {
                 let val_str = val.as_str().unwrap_or_default();
                 let Ok(evt) =
-                    serde_json::from_str::<mac_mgmt_common::HealerStreamEvent>(val_str)
+                    serde_json::from_str::<mac_mgmt_common::ChatStreamEvent>(val_str)
                 else {
                     continue;
                 };

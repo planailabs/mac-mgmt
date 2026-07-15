@@ -105,7 +105,7 @@ fn render_ping_card(ping: &StaffPingRow, pings: Signal<Vec<StaffPingRow>>) -> El
                         span { class: "text-xs text-fg-faint", "{created_at}" }
                     }
                     {
-                        let html = crate::web::components::healer_page::simple_md_to_html(&message);
+                        let html = crate::web::components::chat_ui::simple_md_to_html(&message);
                         let class = if is_resolved {
                             "text-sm text-fg-strong prose prose-sm dark:prose-invert max-w-none line-through"
                         } else {

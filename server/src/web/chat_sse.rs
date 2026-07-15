@@ -2,8 +2,8 @@
 //!
 //! Same shape as `healer_sse`: replay persisted messages, snapshots (pins,
 //! state, running tools, pending approvals), then live broadcast with lag
-//! recovery from the store. The wire format reuses `HealerStreamEvent`
-//! (chat events are the same `ChatEvent` type the healer emits).
+//! recovery from the store. The wire format is `ChatStreamEvent`, shared
+//! with the healer streams.
 
 use dioxus::fullstack::axum::{
     self,
@@ -18,14 +18,14 @@ use uuid::Uuid;
 
 use super::user::WebUser;
 use crate::server_state;
-use mac_mgmt_common::HealerStreamEvent;
+use mac_mgmt_common::ChatStreamEvent;
 
-fn event_json(evt: &HealerStreamEvent) -> Event {
+fn event_json(evt: &ChatStreamEvent) -> Event {
     Event::default().data(serde_json::to_string(evt).unwrap_or_default())
 }
 
-fn approval_event(p: &plan_ai_chat::PendingApproval) -> HealerStreamEvent {
-    HealerStreamEvent {
+fn approval_event(p: &plan_ai_chat::PendingApproval) -> ChatStreamEvent {
+    ChatStreamEvent {
         kind: "approval_request".to_string(),
         metadata: Some(serde_json::json!({
             "approval_id": p.id,
@@ -36,7 +36,7 @@ fn approval_event(p: &plan_ai_chat::PendingApproval) -> HealerStreamEvent {
             "guard_reasoning": p.guard_reasoning,
             "requested_at": p.requested_at,
         })),
-        ..HealerStreamEvent::default()
+        ..ChatStreamEvent::default()
     }
 }
 
@@ -78,14 +78,17 @@ pub async fn view_session_sse(
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(64);
 
     tokio::spawn(async move {
-        use super::components::healer_page::{
-            extract_pins_from_messages, healer_event_to_stream, running_tools_to_wire,
+        use super::components::chat_ui::{
+            chat_event_to_stream, extract_pins_from_messages, running_tools_to_wire,
         };
 
-        let empty = HealerStreamEvent::default;
+        let empty = ChatStreamEvent::default;
 
         let mut last_seen_at = chrono::DateTime::<chrono::Utc>::MIN_UTC;
-        let pins = extract_pins_from_messages(&existing_messages);
+        let pins = extract_pins_from_messages(
+            &existing_messages,
+            &plan_ai_chat::tools::PinConfig::chat(),
+        );
 
         // Replay persisted messages
         for msg in &existing_messages {
@@ -93,7 +96,7 @@ pub async fn view_session_sse(
                 last_seen_at = msg.created_at;
             }
             let _ = tx
-                .send(Ok(event_json(&HealerStreamEvent {
+                .send(Ok(event_json(&ChatStreamEvent {
                     kind: "message".to_string(),
                     role: Some(msg.role.clone()),
                     content: Some(msg.content.clone()),
@@ -106,7 +109,7 @@ pub async fn view_session_sse(
         // Pins snapshot
         if !pins.is_empty() {
             let _ = tx
-                .send(Ok(event_json(&HealerStreamEvent {
+                .send(Ok(event_json(&ChatStreamEvent {
                     kind: "pins".to_string(),
                     pins: Some(pins.clone()),
                     ..empty()
@@ -116,7 +119,7 @@ pub async fn view_session_sse(
 
         // Current state
         let _ = tx
-            .send(Ok(event_json(&HealerStreamEvent {
+            .send(Ok(event_json(&ChatStreamEvent {
                 kind: "state".to_string(),
                 state: Some(current_state.clone()),
                 state_reason: current_reason.clone(),
@@ -128,7 +131,7 @@ pub async fn view_session_sse(
         let tools = manager.running_tools(uuid);
         if !tools.is_empty() {
             let _ = tx
-                .send(Ok(event_json(&HealerStreamEvent {
+                .send(Ok(event_json(&ChatStreamEvent {
                     kind: "running_tools".to_string(),
                     running_tools: Some(running_tools_to_wire(&tools)),
                     ..empty()
@@ -150,7 +153,7 @@ pub async fn view_session_sse(
                                     last_seen_at = *created_at;
                                 }
                             }
-                            let (stream_event, is_done) = healer_event_to_stream(&event);
+                            let (stream_event, is_done) = chat_event_to_stream(&event);
                             let _ = tx.send(Ok(event_json(&stream_event))).await;
                             if is_done {
                                 break;
@@ -167,7 +170,7 @@ pub async fn view_session_sse(
                                         last_seen_at = msg.created_at;
                                     }
                                     let _ = tx
-                                        .send(Ok(event_json(&HealerStreamEvent {
+                                        .send(Ok(event_json(&ChatStreamEvent {
                                             kind: "message".to_string(),
                                             role: Some(msg.role.clone()),
                                             content: Some(msg.content.clone()),
@@ -186,7 +189,7 @@ pub async fn view_session_sse(
 
         // Final done event
         let _ = tx
-            .send(Ok(event_json(&HealerStreamEvent {
+            .send(Ok(event_json(&ChatStreamEvent {
                 kind: "done".to_string(),
                 state: Some(current_state),
                 state_reason: current_reason,
