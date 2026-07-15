@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::user::{WebUser, WebUserExt};
 use crate::server_state;
-use mac_mgmt_common::ChatStreamEvent;
+use plan_ai_chat_ui::wire::ChatStreamEvent;
 
 fn event_json(evt: &ChatStreamEvent) -> Event {
     Event::default().data(serde_json::to_string(evt).unwrap_or_default())

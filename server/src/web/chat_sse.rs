@@ -18,26 +18,10 @@ use uuid::Uuid;
 
 use super::user::WebUser;
 use crate::server_state;
-use mac_mgmt_common::ChatStreamEvent;
+use plan_ai_chat_ui::wire::ChatStreamEvent;
 
 fn event_json(evt: &ChatStreamEvent) -> Event {
     Event::default().data(serde_json::to_string(evt).unwrap_or_default())
-}
-
-fn approval_event(p: &plan_ai_chat::PendingApproval) -> ChatStreamEvent {
-    ChatStreamEvent {
-        kind: "approval_request".to_string(),
-        metadata: Some(serde_json::json!({
-            "approval_id": p.id,
-            "tool_name": p.tool_name,
-            "tool_args": p.args,
-            "reason": p.reason,
-            "risk": plan_ai_chat::validation::risk_to_str(p.risk),
-            "guard_reasoning": p.guard_reasoning,
-            "requested_at": p.requested_at,
-        })),
-        ..ChatStreamEvent::default()
-    }
 }
 
 /// GET /_sse/chat/:session_id — SSE stream for a chat session.
@@ -79,7 +63,8 @@ pub async fn view_session_sse(
 
     tokio::spawn(async move {
         use super::components::chat_ui::{
-            chat_event_to_stream, extract_pins_from_messages, running_tools_to_wire,
+            approval_request_event, chat_event_to_stream, extract_pins_from_messages,
+            running_tools_to_wire,
         };
 
         let empty = ChatStreamEvent::default;
@@ -139,7 +124,9 @@ pub async fn view_session_sse(
                 .await;
         }
         for pending in manager.pending_approvals(uuid) {
-            let _ = tx.send(Ok(event_json(&approval_event(&pending)))).await;
+            let _ = tx
+                .send(Ok(event_json(&approval_request_event(&pending))))
+                .await;
         }
 
         // Live events

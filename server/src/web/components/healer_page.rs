@@ -43,9 +43,8 @@ pub struct SessionSummary {
     pub fix_model: Option<String>,
 }
 
-// Healer-specific wire type from common (generic chat wire types live in
-// `chat_ui`).
-pub use mac_mgmt_common::HealerStaffPing as StaffPingSummary;
+// Staff pings ride the generic stream event's staff_pings slot.
+pub use plan_ai_chat_ui::wire::ChatStaffPing as StaffPingSummary;
 
 #[cfg(feature = "server")]
 pub fn staff_pings_to_wire(pings: &[mac_mgmt_healer::session::StaffPing]) -> Vec<StaffPingSummary> {

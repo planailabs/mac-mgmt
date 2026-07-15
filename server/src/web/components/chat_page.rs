@@ -710,7 +710,7 @@ fn ChatConversation(session_id: String, active: Signal<Option<String>>) -> Eleme
             while let Ok(val) = ev.recv::<serde_json::Value>().await {
                 let val_str = val.as_str().unwrap_or_default();
                 let Ok(evt) =
-                    serde_json::from_str::<mac_mgmt_common::ChatStreamEvent>(val_str)
+                    serde_json::from_str::<plan_ai_chat_ui::wire::ChatStreamEvent>(val_str)
                 else {
                     continue;
                 };
