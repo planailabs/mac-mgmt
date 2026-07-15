@@ -15,7 +15,7 @@ pub struct DocEntry {
 }
 
 #[cfg(feature = "server")]
-mod embedded {
+pub mod embedded {
     use rust_embed::RustEmbed;
 
     #[derive(RustEmbed)]
@@ -27,7 +27,7 @@ mod embedded {
 /// Parse YAML frontmatter from markdown content.
 /// Returns (frontmatter_pairs, body_without_frontmatter).
 #[cfg(feature = "server")]
-fn parse_frontmatter(content: &str) -> (Vec<(String, String)>, &str) {
+pub fn parse_frontmatter(content: &str) -> (Vec<(String, String)>, &str) {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return (vec![], content);

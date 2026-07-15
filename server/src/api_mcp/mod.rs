@@ -1809,6 +1809,8 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
     );
     }
 
+    endpoints::docs::register(&mut reg);
+
     reg
 }
 

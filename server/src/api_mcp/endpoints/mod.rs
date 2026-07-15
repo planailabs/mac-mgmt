@@ -7,6 +7,7 @@ pub mod ai;
 pub mod certificates;
 pub mod clusters;
 pub mod daemon_versions;
+pub mod docs;
 pub mod fleet;
 pub mod healer;
 pub mod imports;
