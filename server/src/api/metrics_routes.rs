@@ -328,16 +328,19 @@ async fn collect_healer_sessions(
 ) -> Result<(), sqlx::Error> {
     let rows: Vec<(String, i64)> = if let Some(ids) = cluster_ids {
         sqlx::query_as(
-            "SELECT state, COUNT(*) FROM healer_sessions \
-             WHERE cluster_id = ANY($1) GROUP BY state",
+            "SELECT state, COUNT(*) FROM chat_sessions \
+             WHERE session_type = 'healer' AND scope_id = ANY($1) GROUP BY state",
         )
         .bind(ids)
         .fetch_all(pool)
         .await?
     } else {
-        sqlx::query_as("SELECT state, COUNT(*) FROM healer_sessions GROUP BY state")
-            .fetch_all(pool)
-            .await?
+        sqlx::query_as(
+            "SELECT state, COUNT(*) FROM chat_sessions \
+             WHERE session_type = 'healer' GROUP BY state",
+        )
+        .fetch_all(pool)
+        .await?
     };
 
     let _ = writeln!(
@@ -374,9 +377,9 @@ async fn collect_healer_tokens(
             "SELECT te.provider, te.model, \
                     SUM(te.input_tokens)::bigint AS total_input, \
                     SUM(te.output_tokens)::bigint AS total_output \
-             FROM healer_token_events te \
-             JOIN healer_sessions hs ON hs.id = te.session_id \
-             WHERE hs.cluster_id = ANY($1) \
+             FROM chat_token_events te \
+             JOIN chat_sessions hs ON hs.id = te.session_id \
+             WHERE hs.session_type = 'healer' AND hs.scope_id = ANY($1) \
              GROUP BY te.provider, te.model",
         )
         .bind(ids)
@@ -384,10 +387,13 @@ async fn collect_healer_tokens(
         .await?
     } else {
         sqlx::query_as(
-            "SELECT provider, model, \
-                    SUM(input_tokens)::bigint AS total_input, \
-                    SUM(output_tokens)::bigint AS total_output \
-             FROM healer_token_events GROUP BY provider, model",
+            "SELECT te.provider, te.model, \
+                    SUM(te.input_tokens)::bigint AS total_input, \
+                    SUM(te.output_tokens)::bigint AS total_output \
+             FROM chat_token_events te \
+             JOIN chat_sessions hs ON hs.id = te.session_id \
+             WHERE hs.session_type = 'healer' \
+             GROUP BY te.provider, te.model",
         )
         .fetch_all(pool)
         .await?

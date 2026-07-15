@@ -42,11 +42,12 @@ pub struct ExportedStaffPing {
 pub async fn extract_all(pool: &PgPool, min_messages: usize) -> Result<Vec<ExportedSession>> {
     // Fetch all terminal sessions
     let sessions = sqlx::query_as::<_, SessionRow>(
-        "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
-                created_at, updated_at, completed_at, error_message, initial_issues, \
-                provider, model, label \
-         FROM healer_sessions \
-         WHERE state IN ('done', 'completed', 'failed', 'needs_human_attention', 'cancelled', 'paused') \
+        "SELECT id, scope_id AS cluster_id, subject AS instance_id, state, state_data, \
+                created_by, created_at, updated_at, completed_at, error_message, \
+                initial_context AS initial_issues, provider, model, label \
+         FROM chat_sessions \
+         WHERE session_type = 'healer' \
+           AND state IN ('done', 'completed', 'failed', 'needs_human_attention', 'cancelled', 'paused') \
          ORDER BY created_at ASC",
     )
     .fetch_all(pool)
@@ -60,7 +61,7 @@ pub async fn extract_all(pool: &PgPool, min_messages: usize) -> Result<Vec<Expor
         // Fetch messages
         let messages = sqlx::query_as::<_, MessageRow>(
             "SELECT role, content, metadata, created_at \
-             FROM healer_messages WHERE session_id = $1 \
+             FROM chat_messages WHERE session_id = $1 \
              ORDER BY created_at ASC",
         )
         .bind(sess.id)

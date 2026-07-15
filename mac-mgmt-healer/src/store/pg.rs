@@ -1,15 +1,14 @@
 //! Postgres-backed implementation of [`HealerStore`].
 //!
 //! Generic session/message/token persistence is delegated to the shared
-//! [`plan_ai_chat::store::pg::PgChatStore`] configured with the healer's
-//! original table names — the rows and SQL semantics are unchanged. Only
-//! healer-specific data (staff pings, cluster settings, instance data)
-//! keeps direct SQL here.
+//! [`plan_ai_chat::store::pg::PgChatStore`] over the unified chat tables,
+//! scoped to `session_type = 'healer'`. Only healer-specific data (staff
+//! pings, cluster settings, instance data) keeps direct SQL here.
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use plan_ai_chat::store::pg::{PgChatStore, PgTables};
+use plan_ai_chat::store::pg::PgChatStore;
 use plan_ai_chat::{ChatStore, NewSession};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -26,10 +25,13 @@ pub struct PgHealerStore {
     chat: PgChatStore,
 }
 
+/// The healer's `session_type` discriminator in the unified chat tables.
+pub const SESSION_TYPE: &str = "healer";
+
 impl PgHealerStore {
     pub fn new(pool: PgPool) -> Self {
         Self {
-            chat: PgChatStore::new(pool, PgTables::healer()),
+            chat: PgChatStore::new(pool, SESSION_TYPE),
         }
     }
 
@@ -277,8 +279,9 @@ impl HealerStore for PgHealerStore {
 
     async fn has_recent_session(&self, instance_id: &str) -> Result<bool> {
         Ok(sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM healer_sessions \
-             WHERE instance_id = $1 AND created_at > now() - interval '1 hour')",
+            "SELECT EXISTS(SELECT 1 FROM chat_sessions \
+             WHERE subject = $1 AND session_type = 'healer' \
+               AND created_at > now() - interval '1 hour')",
         )
         .bind(instance_id)
         .fetch_one(self.pool())
@@ -292,8 +295,8 @@ impl HealerStore for PgHealerStore {
             id: Uuid,
         }
         let row = sqlx::query_as::<_, SessionRow>(
-            "SELECT id FROM healer_sessions \
-             WHERE created_by = 'admin-mcp' \
+            "SELECT id FROM chat_sessions \
+             WHERE session_type = 'healer' AND created_by = 'admin-mcp' \
                AND state NOT IN ('completed', 'done', 'failed', 'cancelled', 'needs_human_attention') \
              ORDER BY created_at DESC \
              LIMIT 1",

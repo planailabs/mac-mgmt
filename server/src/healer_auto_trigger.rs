@@ -152,8 +152,9 @@ async fn tick(
     for (instance_id, cluster_id) in to_trigger {
         // Skip if last session ended in needs_human_attention
         let needs_human = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM healer_sessions \
-             WHERE instance_id = $1 AND state = 'needs_human_attention' \
+            "SELECT EXISTS(SELECT 1 FROM chat_sessions \
+             WHERE session_type = 'healer' AND subject = $1 \
+             AND state = 'needs_human_attention' \
              AND completed_at > now() - interval '24 hours')",
         )
         .bind(&instance_id)

@@ -105,8 +105,8 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
     }
     let sessions = sqlx::query_as::<_, SessRow>(
         "SELECT id, state, created_by, created_at, error_message, provider, model, label, state_data \
-         FROM healer_sessions \
-         WHERE cluster_id = $1 AND instance_id = $2 \
+         FROM chat_sessions \
+         WHERE session_type = 'healer' AND scope_id = $1 AND subject = $2 \
          ORDER BY created_at DESC LIMIT 20",
     )
     .bind(hb.cluster_id)
@@ -478,7 +478,7 @@ pub async fn get_session_meta(session_id: String) -> Result<SessionMeta, ServerF
         created_by: String,
     }
     let row = sqlx::query_as::<_, Row>(
-        "SELECT provider, model, label, created_by FROM healer_sessions WHERE id = $1",
+        "SELECT provider, model, label, created_by FROM chat_sessions WHERE id = $1",
     )
     .bind(uuid)
     .fetch_optional(&pool)

@@ -151,6 +151,8 @@ pub async fn ai_spend(
 
     let days = SPEND_WINDOW_DAYS;
 
+    // The unified chat_token_events table covers every agent domain
+    // (healer + chat sessions alike), so one query each suffices.
     #[derive(sqlx::FromRow)]
     struct SummaryRow {
         provider: String,
@@ -160,13 +162,13 @@ pub async fn ai_spend(
         sessions: i64,
         last_used: chrono::DateTime<chrono::Utc>,
     }
-    let mut summaries: Vec<SummaryRow> = sqlx::query_as(
+    let summaries: Vec<SummaryRow> = sqlx::query_as(
         "SELECT e.provider, e.model, \
          SUM(e.input_tokens)::BIGINT AS input_tokens, \
          SUM(e.output_tokens)::BIGINT AS output_tokens, \
          COUNT(DISTINCT e.session_id) AS sessions, \
          MAX(e.created_at) AS last_used \
-         FROM healer_token_events e \
+         FROM chat_token_events e \
          WHERE e.created_at > now() - make_interval(days => $1) \
          GROUP BY e.provider, e.model",
     )
@@ -182,11 +184,11 @@ pub async fn ai_spend(
         day: chrono::DateTime<chrono::Utc>,
         tokens: i64,
     }
-    let mut daily_rows: Vec<DailyRow> = sqlx::query_as(
+    let daily_rows: Vec<DailyRow> = sqlx::query_as(
         "SELECT e.provider, e.model, \
          date_trunc('day', e.created_at) AS day, \
          SUM(e.input_tokens + e.output_tokens)::BIGINT AS tokens \
-         FROM healer_token_events e \
+         FROM chat_token_events e \
          WHERE e.created_at > now() - make_interval(days => $1) \
          GROUP BY 1, 2, 3",
     )
@@ -194,40 +196,6 @@ pub async fn ai_spend(
     .fetch_all(pool)
     .await
     .map_err(internal)?;
-
-    // Chat spend rides in the same dashboard. The endpoint is admin-only,
-    // so all chat usage is included unconditionally.
-    {
-        let chat_summaries: Vec<SummaryRow> = sqlx::query_as(
-            "SELECT e.provider, e.model, \
-             SUM(e.input_tokens)::BIGINT AS input_tokens, \
-             SUM(e.output_tokens)::BIGINT AS output_tokens, \
-             COUNT(DISTINCT e.session_id) AS sessions, \
-             MAX(e.created_at) AS last_used \
-             FROM chat_token_events e \
-             WHERE e.created_at > now() - make_interval(days => $1) \
-             GROUP BY e.provider, e.model",
-        )
-        .bind(days)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-        summaries.extend(chat_summaries);
-
-        let chat_daily: Vec<DailyRow> = sqlx::query_as(
-            "SELECT e.provider, e.model, \
-             date_trunc('day', e.created_at) AS day, \
-             SUM(e.input_tokens + e.output_tokens)::BIGINT AS tokens \
-             FROM chat_token_events e \
-             WHERE e.created_at > now() - make_interval(days => $1) \
-             GROUP BY 1, 2, 3",
-        )
-        .bind(days)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-        daily_rows.extend(chat_daily);
-    }
 
     // Day axis, oldest first, ending today (UTC).
     let today = chrono::Utc::now().date_naive();

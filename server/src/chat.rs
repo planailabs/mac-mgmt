@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use plan_ai_chat::bridge::api_mcp::{ToolFilter, registry_tools};
 use plan_ai_chat::session_loop::{InitialPrompt, SessionHandles, SessionSpec};
-use plan_ai_chat::store::pg::{PgChatStore, PgTables};
+use plan_ai_chat::store::pg::PgChatStore;
 use plan_ai_chat::tools::{ChatToolContext, NameSessionTool, PinConfig, PinTool, SetPhaseTool};
 use plan_ai_chat::{
     ApprovalDecision, ApprovalPolicy, ChatSession, ConnectorConfig, CoreState, DynChatStore,
@@ -99,11 +99,9 @@ impl ChatState {
         connector: ConnectorConfig,
         cfg: ChatConfig,
     ) -> Result<Self> {
-        plan_ai_chat::store::migrations::run_migrations(&pool)
-            .await
-            .context("chat migrations failed")?;
-
-        let store: DynChatStore = Arc::new(PgChatStore::new(pool.clone(), PgTables::chat()));
+        // Chat migrations already ran in init_server (before the server's
+        // own migration chain, which depends on the chat tables).
+        let store: DynChatStore = Arc::new(PgChatStore::new(pool.clone(), "chat"));
         let manager = SessionManager::new(store, Arc::new(ChatStateModel));
 
         // Sweep sessions interrupted by a previous shutdown: no auto-respawn,

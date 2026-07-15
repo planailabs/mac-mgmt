@@ -190,6 +190,12 @@ async fn init_server() -> (
     let cfg = config::load();
     let pool = db::connect(&cfg.database.url).await;
 
+    // Chat-crate migrations first: they own the unified chat tables
+    // (chat_sessions & co.), which server migration 067 references when
+    // folding the healer tables in.
+    plan_ai_chat::store::migrations::run_migrations(&pool)
+        .await
+        .expect("failed to run chat migrations");
     sqlx::migrate!()
         .run(&pool)
         .await
@@ -861,10 +867,11 @@ async fn dump_healer_sessions(database_url: &str, output_dir: &str, model_filter
 
     let sessions: Vec<SessionRow> = if let Some(model) = model_filter {
         sqlx::query_as(
-            "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
-                    created_at, updated_at, completed_at, error_message, initial_issues, \
-                    provider, model, label \
-             FROM healer_sessions WHERE model = $1 ORDER BY created_at ASC",
+            "SELECT id, scope_id AS cluster_id, subject AS instance_id, state, state_data, \
+                    created_by, created_at, updated_at, completed_at, error_message, \
+                    initial_context AS initial_issues, provider, model, label \
+             FROM chat_sessions WHERE session_type = 'healer' AND model = $1 \
+             ORDER BY created_at ASC",
         )
         .bind(model)
         .fetch_all(&pool)
@@ -872,10 +879,10 @@ async fn dump_healer_sessions(database_url: &str, output_dir: &str, model_filter
         .expect("failed to query sessions")
     } else {
         sqlx::query_as(
-            "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
-                    created_at, updated_at, completed_at, error_message, initial_issues, \
-                    provider, model, label \
-             FROM healer_sessions ORDER BY created_at ASC",
+            "SELECT id, scope_id AS cluster_id, subject AS instance_id, state, state_data, \
+                    created_by, created_at, updated_at, completed_at, error_message, \
+                    initial_context AS initial_issues, provider, model, label \
+             FROM chat_sessions WHERE session_type = 'healer' ORDER BY created_at ASC",
         )
         .fetch_all(&pool)
         .await
@@ -893,7 +900,7 @@ async fn dump_healer_sessions(database_url: &str, output_dir: &str, model_filter
     for sess in &sessions {
         let messages: Vec<MessageRow> = sqlx::query_as(
             "SELECT id, session_id, role, content, metadata, created_at \
-             FROM healer_messages WHERE session_id = $1 ORDER BY created_at ASC",
+             FROM chat_messages WHERE session_id = $1 ORDER BY created_at ASC",
         )
         .bind(sess.id)
         .fetch_all(&pool)
