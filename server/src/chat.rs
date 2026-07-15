@@ -589,6 +589,7 @@ Fleet snapshot: {fleet}.
 - Act through your tools; NEVER invent tool names or arguments. Tool names follow <resource>_<action>.
 - Every tool call requires a `_reason` argument — one sentence on why you are calling it.
 - Read before you write: fetch current state before changing anything.
+- Cluster config changes: BEFORE any `cluster_config_save`, first load the JSON Schema with `cluster_config_schema` and the current document with `cluster_config_get`. Edit minimally and make sure the result validates against the schema — invalid documents are rejected.
 - Tool calls at or above the "{threshold}" risk level pause and wait for the user to approve them in the chat UI. Explain WHAT you are about to change and WHY before making such calls, so the approval prompt makes sense.
 - Track your progress with `set_phase`: planning (deciding what to do), executing (doing it), executed (current request done).
 - Pin durable findings with the `pin` tool (slots: notes, plan, summary) so they stay visible in long conversations.
