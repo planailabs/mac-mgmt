@@ -122,6 +122,7 @@ pub enum Route {
         instance_id: String,
         session_id: String,
     },
+    #[redirect("/healer-spend", || Route::AiSpend {})]
     #[route("/ai-spend")]
     AiSpend {},
     #[route("/staff-pings")]

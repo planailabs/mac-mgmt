@@ -1776,15 +1776,6 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
             healer_ping_resolve(&pool, &p, input).await
         },
     );
-    h.custom(
-        "spend",
-        Risk::ReadOnly,
-        OnItem::No,
-        "Aggregate healer token usage over the last 30 days into a per-model breakdown (tokens in/out, sessions, daily trend, estimated USD for priced models), scoped to clusters visible to the caller.",
-        |pool: sqlx::PgPool, p, input: HealerSpendInput| async move {
-            healer_spend(&pool, &p, input).await
-        },
-    );
     }
     {
         use endpoints::ai::*;
@@ -1796,6 +1787,15 @@ pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgP
         "Generate a concise name + description for a skill, bundle, MCP server, or MCP bundle via the Anthropic API (external call that costs money; nothing is persisted).",
         |pool: sqlx::PgPool, p, input: GenerateNameDescInput| async move {
             ai_generate_name_desc(&pool, &p, input).await
+        },
+    );
+    a.custom(
+        "spend",
+        Risk::ReadOnly,
+        OnItem::No,
+        "Admin-only: aggregate AI token usage (healer + chat) over the last 30 days into a per-model breakdown (tokens in/out, sessions, daily trend, estimated USD for priced models).",
+        |pool: sqlx::PgPool, p, input: AiSpendInput| async move {
+            ai_spend(&pool, &p, input).await
         },
     );
     a.custom(

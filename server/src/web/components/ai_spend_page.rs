@@ -2,15 +2,13 @@
 //!
 //! Lands at `/ai-spend`. Renders the per-model breakdown (tokens
 //! in/out, sessions, daily trend, estimated dollar spend for priced
-//! models) aggregated by the `healer_spend` api-mcp endpoint
-//! (`api_mcp::endpoints::healer`) over the last 30 days.
+//! models) aggregated by the `ai_spend` api-mcp endpoint
+//! (`api_mcp::endpoints::ai`) over the last 30 days.
 
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::api_mcp::endpoints::healer::{
-    HealerSpendInput, SPEND_WINDOW_DAYS, SpendData, get_healer_spend,
-};
+use crate::api_mcp::endpoints::ai::{AiSpendInput, SPEND_WINDOW_DAYS, SpendData, get_ai_spend};
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Card, ChartColor, ErrorText, HelpText, Kicker, KpiCard, Pill, PillVariant, Sparkline, Td,
@@ -47,7 +45,7 @@ pub fn AiSpend() -> Element {
     );
 
     let data =
-        use_server_future(move || async move { get_healer_spend(HealerSpendInput {}).await })?;
+        use_server_future(move || async move { get_ai_spend(AiSpendInput {}).await })?;
 
     match &*data.read() {
         Some(Ok(d)) => render_spend(d),

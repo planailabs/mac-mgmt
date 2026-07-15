@@ -3,8 +3,8 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::api_mcp::endpoints::docs::{
-    GlossaryGetInput, GlossaryListInput, GlossarySearchInput, GlossaryTermInfo, glossary_term,
-    glossary_terms, search_glossary,
+    GlossaryGetInput, GlossaryListInput, GlossarySearchInput, glossary_term, glossary_terms,
+    search_glossary,
 };
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;

@@ -129,8 +129,6 @@ use dioxus::prelude::*;
 use plan_ai_api_mcp_macros::api_mcp_dioxus_server;
 
 #[cfg(feature = "server")]
-use super::internal;
-#[cfg(feature = "server")]
 use crate::server_pool;
 #[cfg(feature = "server")]
 use crate::web::user::{current_user, principal_from, to_serverfn};
