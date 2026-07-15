@@ -1,138 +1,61 @@
-//! JSON file-backed implementation of [`HealerStore`].
+//! JSON file-backed implementation of [`HealerStore`], built on the generic
+//! [`plan_ai_chat::store::json_file::JsonFileChatStore`].
 //!
-//! Each session is a single JSON file containing the session metadata,
-//! messages, and staff pings. Zero external dependencies beyond serde_json.
-//!
-//! Layout:
-//! ```text
-//! {dir}/
-//!   {session_uuid}.json   # SessionFile { session, messages, pings }
-//! ```
+//! Generic session/message/token persistence lives in the shared store; only
+//! healer-specific data keeps logic here: staff pings ride in each session
+//! file's extension blob under the `pings` key (the pre-unification on-disk
+//! layout — old files parse unchanged via the ChatSession field aliases).
 
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use serde::{Deserialize, Serialize};
+use plan_ai_chat::store::json_file::{JsonFileChatStore, SessionFile};
+use plan_ai_chat::{ChatStore, NewSession};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::*;
-use crate::session::models::{HealerMessage, HealerSession, SessionState, StaffPing};
-use plan_ai_chat::{ChatStore, NewSession};
-
-/// On-disk format: one file per session.
-#[derive(Serialize, Deserialize)]
-struct SessionFile {
-    session: HealerSession,
-    messages: Vec<HealerMessage>,
-    pings: Vec<StaffPing>,
-}
+use crate::session::models::{
+    HealerMessage, HealerSession, INACTIVE_STATES, NON_RESUMABLE_STATES, SessionState, StaffPing,
+};
 
 /// [`HealerStore`] backed by JSON files in a directory.
 pub struct JsonFileStore {
-    dir: PathBuf,
-    /// Serialize writes to avoid torn reads during concurrent appends.
-    lock: Mutex<()>,
+    inner: JsonFileChatStore,
+}
+
+const PINGS_KEY: &str = "pings";
+
+fn pings_of(sf: &SessionFile) -> Vec<StaffPing> {
+    sf.extra
+        .get(PINGS_KEY)
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+fn set_pings(sf: &mut SessionFile, pings: &[StaffPing]) {
+    sf.extra.insert(
+        PINGS_KEY.to_string(),
+        serde_json::to_value(pings).unwrap_or_default(),
+    );
 }
 
 impl JsonFileStore {
     /// Open (or create) the store directory.
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self> {
-        let dir = dir.into();
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("failed to create healer store dir: {}", dir.display()))?;
         Ok(Self {
-            dir,
-            lock: Mutex::new(()),
+            inner: JsonFileChatStore::open(dir)?,
         })
     }
-
-    fn session_path(&self, id: Uuid) -> PathBuf {
-        self.dir.join(format!("{id}.json"))
-    }
-
-    fn read_file(&self, id: Uuid) -> Result<Option<SessionFile>> {
-        let path = self.session_path(id);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let data =
-            std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
-        let sf: SessionFile = serde_json::from_slice(&data)
-            .with_context(|| format!("failed to parse {}", path.display()))?;
-        Ok(Some(sf))
-    }
-
-    fn write_file(&self, id: Uuid, sf: &SessionFile) -> Result<()> {
-        let path = self.session_path(id);
-        let data = serde_json::to_vec_pretty(sf)?;
-        atomic_write(&path, &data)
-    }
-
-    fn mutate<F>(&self, id: Uuid, f: F) -> Result<()>
-    where
-        F: FnOnce(&mut SessionFile),
-    {
-        let _guard = self.lock.lock().unwrap();
-        let mut sf = self
-            .read_file(id)?
-            .ok_or_else(|| anyhow::anyhow!("session {id} not found"))?;
-        f(&mut sf);
-        self.write_file(id, &sf)
-    }
-
-    /// Read all session files in the directory.
-    fn all_sessions(&self) -> Result<Vec<SessionFile>> {
-        let mut out = Vec::new();
-        let entries = std::fs::read_dir(&self.dir)?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "json") {
-                match std::fs::read(&path) {
-                    Ok(data) => {
-                        if let Ok(sf) = serde_json::from_slice::<SessionFile>(&data) {
-                            out.push(sf);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("failed to read {}: {e}", path.display());
-                    }
-                }
-            }
-        }
-        Ok(out)
-    }
-}
-
-fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, data).with_context(|| format!("failed to write {}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("failed to rename {} → {}", tmp.display(), path.display()))?;
-    Ok(())
-}
-
-fn append_state_change(sf: &mut SessionFile, state: &str, state_data: &serde_json::Value) {
-    let reason = state_data
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    sf.messages.push(HealerMessage {
-        id: Uuid::new_v4(),
-        session_id: sf.session.id,
-        role: "state_change".to_string(),
-        content: serde_json::json!({ "state": state, "reason": reason }).to_string(),
-        metadata: Some(state_data.clone()),
-        created_at: Utc::now(),
-    });
 }
 
 // ── Trait implementation ───────────────────────────────────────────────
 
 #[async_trait]
 impl HealerStore for JsonFileStore {
+    // -- Session lifecycle (delegated to the generic file store) ------------
+
     async fn create_session(
         &self,
         cluster_id: Uuid,
@@ -144,39 +67,22 @@ impl HealerStore for JsonFileStore {
         model: Option<&str>,
         label: Option<&str>,
     ) -> Result<Uuid> {
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-        let sf = SessionFile {
-            session: HealerSession {
-                id,
-                cluster_id,
-                instance_id: instance_id.to_string(),
-                state: SessionState::Created,
-                state_data: state_data.clone(),
-                created_by: created_by.to_string(),
-                created_at: now,
-                updated_at: now,
-                completed_at: None,
-                error_message: None,
-                initial_issues: initial_issues.clone(),
-                provider: provider.map(String::from),
-                model: model.map(String::from),
-                label: label.map(String::from),
-            },
-            messages: Vec::new(),
-            pings: Vec::new(),
-        };
-        let _guard = self.lock.lock().unwrap();
-        self.write_file(id, &sf)?;
-        Ok(id)
+        self.inner
+            .create_session(NewSession {
+                scope_id: cluster_id,
+                subject: instance_id,
+                created_by,
+                initial_context: initial_issues,
+                state_data,
+                provider,
+                model,
+                label,
+            })
+            .await
     }
 
     async fn set_label(&self, session_id: Uuid, label: &str) -> Result<()> {
-        let label = label.to_string();
-        self.mutate(session_id, |sf| {
-            sf.session.label = Some(label);
-            sf.session.updated_at = Utc::now();
-        })
+        ChatStore::set_label(&self.inner, session_id, label).await
     }
 
     async fn transition_state(
@@ -185,17 +91,14 @@ impl HealerStore for JsonFileStore {
         new_state: &SessionState,
         state_data: &serde_json::Value,
     ) -> Result<()> {
-        let new_state = new_state.clone();
-        let state_data = state_data.clone();
-        self.mutate(session_id, |sf| {
-            sf.session.state = new_state.clone();
-            sf.session.state_data = state_data.clone();
-            sf.session.updated_at = Utc::now();
-            if new_state.is_terminal() {
-                sf.session.completed_at = Some(Utc::now());
-            }
-            append_state_change(sf, new_state.as_str(), &state_data);
-        })
+        self.inner
+            .transition_state(
+                session_id,
+                new_state.as_str(),
+                new_state.is_terminal(),
+                state_data,
+            )
+            .await
     }
 
     async fn fail_session(
@@ -204,55 +107,31 @@ impl HealerStore for JsonFileStore {
         error_message: &str,
         state_data: &serde_json::Value,
     ) -> Result<()> {
-        let error_message = error_message.to_string();
-        let state_data = state_data.clone();
-        self.mutate(session_id, |sf| {
-            sf.session.state = SessionState::Failed;
-            sf.session.state_data = state_data.clone();
-            sf.session.error_message = Some(error_message.clone());
-            sf.session.updated_at = Utc::now();
-            sf.session.completed_at = Some(Utc::now());
-            let data = serde_json::json!({"reason": error_message});
-            append_state_change(sf, "failed", &data);
-        })
+        ChatStore::fail_session(&self.inner, session_id, error_message, state_data).await
     }
 
     async fn get_session(&self, session_id: Uuid) -> Result<Option<HealerSession>> {
-        Ok(self.read_file(session_id)?.map(|sf| sf.session))
+        Ok(ChatStore::get_session(&self.inner, session_id)
+            .await?
+            .map(Into::into))
     }
 
     async fn list_sessions(&self, cluster_id: Uuid) -> Result<Vec<HealerSession>> {
-        let mut sessions: Vec<HealerSession> = self
-            .all_sessions()?
+        Ok(ChatStore::list_sessions(&self.inner, cluster_id)
+            .await?
             .into_iter()
-            .filter(|sf| sf.session.cluster_id == cluster_id)
-            .map(|sf| sf.session)
-            .collect();
-        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        sessions.truncate(100);
-        Ok(sessions)
+            .map(Into::into)
+            .collect())
     }
 
     async fn find_resumable(&self) -> Result<Vec<HealerSession>> {
-        let mut sessions: Vec<HealerSession> = self
-            .all_sessions()?
+        Ok(self
+            .inner
+            .find_resumable(NON_RESUMABLE_STATES, &["admin-mcp"])
+            .await?
             .into_iter()
-            .filter(|sf| {
-                sf.session.created_by != "admin-mcp"
-                    && !matches!(
-                        sf.session.state,
-                        SessionState::Completed
-                            | SessionState::Done
-                            | SessionState::Failed
-                            | SessionState::Cancelled
-                            | SessionState::Paused
-                            | SessionState::NeedsHumanAttention
-                    )
-            })
-            .map(|sf| sf.session)
-            .collect();
-        sessions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        Ok(sessions)
+            .map(Into::into)
+            .collect())
     }
 
     async fn update_provider_model(
@@ -261,14 +140,10 @@ impl HealerStore for JsonFileStore {
         provider: &str,
         model: &str,
     ) -> Result<()> {
-        let provider = provider.to_string();
-        let model = model.to_string();
-        self.mutate(session_id, |sf| {
-            sf.session.provider = Some(provider);
-            sf.session.model = Some(model);
-            sf.session.updated_at = Utc::now();
-        })
+        ChatStore::update_provider_model(&self.inner, session_id, provider, model).await
     }
+
+    // -- Messages -----------------------------------------------------------
 
     async fn append_message(
         &self,
@@ -277,24 +152,11 @@ impl HealerStore for JsonFileStore {
         content: &str,
         metadata: Option<&serde_json::Value>,
     ) -> Result<()> {
-        let msg = HealerMessage {
-            id: Uuid::new_v4(),
-            session_id,
-            role: role.to_string(),
-            content: content.to_string(),
-            metadata: metadata.cloned(),
-            created_at: Utc::now(),
-        };
-        self.mutate(session_id, |sf| {
-            sf.messages.push(msg);
-        })
+        ChatStore::append_message(&self.inner, session_id, role, content, metadata).await
     }
 
     async fn get_messages(&self, session_id: Uuid) -> Result<Vec<HealerMessage>> {
-        Ok(self
-            .read_file(session_id)?
-            .map(|sf| sf.messages)
-            .unwrap_or_default())
+        ChatStore::get_messages(&self.inner, session_id).await
     }
 
     async fn get_messages_after(
@@ -302,16 +164,10 @@ impl HealerStore for JsonFileStore {
         session_id: Uuid,
         after: DateTime<Utc>,
     ) -> Result<Vec<HealerMessage>> {
-        Ok(self
-            .read_file(session_id)?
-            .map(|sf| {
-                sf.messages
-                    .into_iter()
-                    .filter(|m| m.created_at > after)
-                    .collect()
-            })
-            .unwrap_or_default())
+        ChatStore::get_messages_after(&self.inner, session_id, after).await
     }
+
+    // -- Staff pings (healer-specific, stored in the session file) ----------
 
     async fn create_staff_ping(
         &self,
@@ -334,18 +190,21 @@ impl HealerStore for JsonFileStore {
             resolved_at: None,
             created_at: Utc::now(),
         };
-        self.mutate(session_id, |sf| {
-            sf.pings.push(ping);
+        self.inner.mutate(session_id, |sf| {
+            let mut pings = pings_of(sf);
+            pings.push(ping);
+            set_pings(sf, &pings);
         })?;
         Ok(ping_id)
     }
 
     async fn list_staff_pings(&self, cluster_id: Uuid) -> Result<Vec<StaffPing>> {
         let mut pings: Vec<StaffPing> = self
+            .inner
             .all_sessions()?
-            .into_iter()
-            .filter(|sf| sf.session.cluster_id == cluster_id)
-            .flat_map(|sf| sf.pings)
+            .iter()
+            .filter(|sf| sf.session.scope_id == cluster_id)
+            .flat_map(pings_of)
             .collect();
         pings.sort_by(|a, b| {
             a.resolved
@@ -358,9 +217,10 @@ impl HealerStore for JsonFileStore {
 
     async fn list_instance_pings(&self, instance_id: &str) -> Result<Vec<StaffPing>> {
         let mut pings: Vec<StaffPing> = self
+            .inner
             .all_sessions()?
-            .into_iter()
-            .flat_map(|sf| sf.pings)
+            .iter()
+            .flat_map(pings_of)
             .filter(|p| p.instance_id == instance_id && !p.resolved)
             .collect();
         pings.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -370,67 +230,57 @@ impl HealerStore for JsonFileStore {
 
     async fn list_session_pings(&self, session_id: Uuid) -> Result<Vec<StaffPing>> {
         Ok(self
+            .inner
             .read_file(session_id)?
-            .map(|sf| sf.pings)
+            .map(|sf| pings_of(&sf))
             .unwrap_or_default())
     }
 
     async fn resolve_staff_ping(&self, ping_id: Uuid, resolved_by: &str) -> Result<()> {
         let resolved_by = resolved_by.to_string();
         // Scan all sessions to find the ping
-        let all = self.all_sessions()?;
+        let all = self.inner.all_sessions()?;
         for sf in &all {
-            if sf.pings.iter().any(|p| p.id == ping_id) {
-                return self.mutate(sf.session.id, |sf| {
-                    if let Some(p) = sf.pings.iter_mut().find(|p| p.id == ping_id) {
+            if pings_of(sf).iter().any(|p| p.id == ping_id) {
+                return self.inner.mutate(sf.session.id, |sf| {
+                    let mut pings = pings_of(sf);
+                    if let Some(p) = pings.iter_mut().find(|p| p.id == ping_id) {
                         p.resolved = true;
                         p.resolved_by = Some(resolved_by.clone());
                         p.resolved_at = Some(Utc::now());
                     }
+                    set_pings(sf, &pings);
                 });
             }
         }
         anyhow::bail!("staff ping {ping_id} not found")
     }
 
+    // -- Session guards ---------------------------------------------------
+
     async fn has_running_session(&self, instance_id: &str) -> Result<bool> {
-        Ok(self.all_sessions()?.iter().any(|sf| {
-            sf.session.instance_id == instance_id
-                && !matches!(
-                    sf.session.state,
-                    SessionState::Completed
-                        | SessionState::Done
-                        | SessionState::Failed
-                        | SessionState::Cancelled
-                        | SessionState::NeedsHumanAttention
-                )
-        }))
+        ChatStore::has_running_session(&self.inner, instance_id, INACTIVE_STATES).await
     }
 
     async fn has_recent_session(&self, instance_id: &str) -> Result<bool> {
         let cutoff = Utc::now() - Duration::hours(1);
         Ok(self
+            .inner
             .all_sessions()?
             .iter()
-            .any(|sf| sf.session.instance_id == instance_id && sf.session.created_at > cutoff))
+            .any(|sf| sf.session.subject == instance_id && sf.session.created_at > cutoff))
     }
 
     async fn find_mcp_session(&self) -> Result<Option<HealerSession>> {
         let mut sessions: Vec<HealerSession> = self
+            .inner
             .all_sessions()?
             .into_iter()
             .filter(|sf| {
                 sf.session.created_by == "admin-mcp"
-                    && !matches!(
-                        sf.session.state,
-                        SessionState::Completed
-                            | SessionState::Done
-                            | SessionState::Failed
-                            | SessionState::Cancelled
-                            | SessionState::NeedsHumanAttention
-                    )
+                    && !INACTIVE_STATES.contains(&sf.session.state.as_str())
             })
-            .map(|sf| sf.session)
+            .map(|sf| sf.session.into())
             .collect();
         sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         Ok(sessions.into_iter().next())
@@ -470,164 +320,7 @@ impl HealerStore for JsonFileStore {
         anyhow::bail!("MCP server management not available in local mode")
     }
 
-    // -- Token usage tracking (in-memory for local mode) -------------------
-
-    async fn append_token_event(
-        &self,
-        session_id: Uuid,
-        _provider: &str,
-        _model: &str,
-        input_tokens: u32,
-        output_tokens: u32,
-    ) -> Result<u64> {
-        let total = (input_tokens + output_tokens) as u64;
-        self.mutate(session_id, |sf| {
-            let used = sf
-                .session
-                .state_data
-                .get("tokens_used")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-                + total;
-            sf.session.state_data["tokens_used"] = serde_json::json!(used);
-        })?;
-        HealerStore::get_token_usage(self, session_id).await
-    }
-
-    async fn get_token_usage(&self, session_id: Uuid) -> Result<u64> {
-        Ok(self
-            .read_file(session_id)?
-            .and_then(|sf| sf.session.state_data.get("tokens_used")?.as_u64())
-            .unwrap_or(0))
-    }
-
-    async fn set_token_budget(&self, session_id: Uuid, budget: u64) -> Result<()> {
-        self.mutate(session_id, |sf| {
-            sf.session.state_data["token_budget"] = serde_json::json!(budget);
-        })
-    }
-
-    async fn get_token_budget(&self, session_id: Uuid) -> Result<u64> {
-        Ok(self
-            .read_file(session_id)?
-            .and_then(|sf| sf.session.state_data.get("token_budget")?.as_u64())
-            .unwrap_or(0))
-    }
-}
-
-// ── ChatStore (generic view, for SessionManager / session loop) ─────────
-
-#[async_trait]
-impl ChatStore for JsonFileStore {
-    async fn create_session(&self, new: NewSession<'_>) -> Result<Uuid> {
-        HealerStore::create_session(
-            self,
-            new.scope_id,
-            new.subject,
-            new.created_by,
-            new.initial_context,
-            new.state_data,
-            new.provider,
-            new.model,
-            new.label,
-        )
-        .await
-    }
-
-    async fn set_label(&self, session_id: Uuid, label: &str) -> Result<()> {
-        HealerStore::set_label(self, session_id, label).await
-    }
-
-    async fn transition_state(
-        &self,
-        session_id: Uuid,
-        new_state: &str,
-        _terminal: bool,
-        state_data: &serde_json::Value,
-    ) -> Result<()> {
-        let state = SessionState::from_str(new_state)
-            .ok_or_else(|| anyhow::anyhow!("unknown session state '{new_state}'"))?;
-        HealerStore::transition_state(self, session_id, &state, state_data).await
-    }
-
-    async fn fail_session(
-        &self,
-        session_id: Uuid,
-        error_message: &str,
-        state_data: &serde_json::Value,
-    ) -> Result<()> {
-        HealerStore::fail_session(self, session_id, error_message, state_data).await
-    }
-
-    async fn get_session(&self, session_id: Uuid) -> Result<Option<plan_ai_chat::ChatSession>> {
-        Ok(HealerStore::get_session(self, session_id)
-            .await?
-            .map(Into::into))
-    }
-
-    async fn list_sessions(&self, scope_id: Uuid) -> Result<Vec<plan_ai_chat::ChatSession>> {
-        Ok(HealerStore::list_sessions(self, scope_id)
-            .await?
-            .into_iter()
-            .map(Into::into)
-            .collect())
-    }
-
-    async fn find_resumable(
-        &self,
-        non_resumable: &[&str],
-        exclude_created_by: &[&str],
-    ) -> Result<Vec<plan_ai_chat::ChatSession>> {
-        let mut sessions: Vec<HealerSession> = self
-            .all_sessions()?
-            .into_iter()
-            .filter(|sf| {
-                !exclude_created_by.contains(&sf.session.created_by.as_str())
-                    && !non_resumable.contains(&sf.session.state.as_str())
-            })
-            .map(|sf| sf.session)
-            .collect();
-        sessions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        Ok(sessions.into_iter().map(Into::into).collect())
-    }
-
-    async fn update_provider_model(
-        &self,
-        session_id: Uuid,
-        provider: &str,
-        model: &str,
-    ) -> Result<()> {
-        HealerStore::update_provider_model(self, session_id, provider, model).await
-    }
-
-    async fn has_running_session(&self, subject: &str, inactive_states: &[&str]) -> Result<bool> {
-        Ok(self.all_sessions()?.iter().any(|sf| {
-            sf.session.instance_id == subject
-                && !inactive_states.contains(&sf.session.state.as_str())
-        }))
-    }
-
-    async fn append_message(
-        &self,
-        session_id: Uuid,
-        role: &str,
-        content: &str,
-        metadata: Option<&serde_json::Value>,
-    ) -> Result<()> {
-        HealerStore::append_message(self, session_id, role, content, metadata).await
-    }
-
-    async fn get_messages(&self, session_id: Uuid) -> Result<Vec<HealerMessage>> {
-        HealerStore::get_messages(self, session_id).await
-    }
-
-    async fn get_messages_after(
-        &self,
-        session_id: Uuid,
-        after: DateTime<Utc>,
-    ) -> Result<Vec<HealerMessage>> {
-        HealerStore::get_messages_after(self, session_id, after).await
-    }
+    // -- Token usage tracking (delegated) -----------------------------------
 
     async fn append_token_event(
         &self,
@@ -637,8 +330,8 @@ impl ChatStore for JsonFileStore {
         input_tokens: u32,
         output_tokens: u32,
     ) -> Result<u64> {
-        HealerStore::append_token_event(
-            self,
+        ChatStore::append_token_event(
+            &self.inner,
             session_id,
             provider,
             model,
@@ -649,14 +342,132 @@ impl ChatStore for JsonFileStore {
     }
 
     async fn get_token_usage(&self, session_id: Uuid) -> Result<u64> {
-        HealerStore::get_token_usage(self, session_id).await
+        ChatStore::get_token_usage(&self.inner, session_id).await
     }
 
     async fn set_token_budget(&self, session_id: Uuid, budget: u64) -> Result<()> {
-        HealerStore::set_token_budget(self, session_id, budget).await
+        ChatStore::set_token_budget(&self.inner, session_id, budget).await
     }
 
     async fn get_token_budget(&self, session_id: Uuid) -> Result<u64> {
-        HealerStore::get_token_budget(self, session_id).await
+        ChatStore::get_token_budget(&self.inner, session_id).await
+    }
+}
+
+// ── ChatStore (generic view, for SessionManager / session loop) ─────────
+
+#[async_trait]
+impl ChatStore for JsonFileStore {
+    async fn create_session(&self, new: NewSession<'_>) -> Result<Uuid> {
+        self.inner.create_session(new).await
+    }
+
+    async fn set_label(&self, session_id: Uuid, label: &str) -> Result<()> {
+        ChatStore::set_label(&self.inner, session_id, label).await
+    }
+
+    async fn transition_state(
+        &self,
+        session_id: Uuid,
+        new_state: &str,
+        terminal: bool,
+        state_data: &serde_json::Value,
+    ) -> Result<()> {
+        // Reject unknown states before they land on disk — the healer state
+        // machine only understands its own vocabulary.
+        SessionState::from_str(new_state)
+            .ok_or_else(|| anyhow::anyhow!("unknown session state '{new_state}'"))?;
+        ChatStore::transition_state(&self.inner, session_id, new_state, terminal, state_data).await
+    }
+
+    async fn fail_session(
+        &self,
+        session_id: Uuid,
+        error_message: &str,
+        state_data: &serde_json::Value,
+    ) -> Result<()> {
+        ChatStore::fail_session(&self.inner, session_id, error_message, state_data).await
+    }
+
+    async fn get_session(&self, session_id: Uuid) -> Result<Option<plan_ai_chat::ChatSession>> {
+        ChatStore::get_session(&self.inner, session_id).await
+    }
+
+    async fn list_sessions(&self, scope_id: Uuid) -> Result<Vec<plan_ai_chat::ChatSession>> {
+        ChatStore::list_sessions(&self.inner, scope_id).await
+    }
+
+    async fn find_resumable(
+        &self,
+        non_resumable: &[&str],
+        exclude_created_by: &[&str],
+    ) -> Result<Vec<plan_ai_chat::ChatSession>> {
+        ChatStore::find_resumable(&self.inner, non_resumable, exclude_created_by).await
+    }
+
+    async fn update_provider_model(
+        &self,
+        session_id: Uuid,
+        provider: &str,
+        model: &str,
+    ) -> Result<()> {
+        ChatStore::update_provider_model(&self.inner, session_id, provider, model).await
+    }
+
+    async fn has_running_session(&self, subject: &str, inactive_states: &[&str]) -> Result<bool> {
+        ChatStore::has_running_session(&self.inner, subject, inactive_states).await
+    }
+
+    async fn append_message(
+        &self,
+        session_id: Uuid,
+        role: &str,
+        content: &str,
+        metadata: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        ChatStore::append_message(&self.inner, session_id, role, content, metadata).await
+    }
+
+    async fn get_messages(&self, session_id: Uuid) -> Result<Vec<HealerMessage>> {
+        ChatStore::get_messages(&self.inner, session_id).await
+    }
+
+    async fn get_messages_after(
+        &self,
+        session_id: Uuid,
+        after: DateTime<Utc>,
+    ) -> Result<Vec<HealerMessage>> {
+        ChatStore::get_messages_after(&self.inner, session_id, after).await
+    }
+
+    async fn append_token_event(
+        &self,
+        session_id: Uuid,
+        provider: &str,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+    ) -> Result<u64> {
+        ChatStore::append_token_event(
+            &self.inner,
+            session_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+        )
+        .await
+    }
+
+    async fn get_token_usage(&self, session_id: Uuid) -> Result<u64> {
+        ChatStore::get_token_usage(&self.inner, session_id).await
+    }
+
+    async fn set_token_budget(&self, session_id: Uuid, budget: u64) -> Result<()> {
+        ChatStore::set_token_budget(&self.inner, session_id, budget).await
+    }
+
+    async fn get_token_budget(&self, session_id: Uuid) -> Result<u64> {
+        ChatStore::get_token_budget(&self.inner, session_id).await
     }
 }
