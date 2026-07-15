@@ -205,21 +205,9 @@ pub async fn ai_spend(
         .collect();
     let day_index = |d: chrono::NaiveDate| axis.iter().position(|a| *a == d);
 
-    // Configured entries: models first, then validators (a model can be both).
-    let cfg = crate::config::config();
-    let healer_cfg = &cfg.healer;
-    let mut model_entries = if healer_cfg.models.is_empty() {
-        crate::config::default_healer_models()
-    } else {
-        healer_cfg.models.clone()
-    };
-    // Chat-specific model entries (pricing/config) join the same table.
-    model_entries.extend(cfg.chat.models.iter().cloned());
-    let validator_entries = if healer_cfg.validator_models.is_empty() {
-        crate::config::default_validator_models()
-    } else {
-        healer_cfg.validator_models.clone()
-    };
+    // The unified catalog covers every chat type (models, validators,
+    // pricing) — one pass seeds the configured rows.
+    let catalog = crate::config::config().model_catalog();
 
     let mut rows: Vec<ModelSpendRow> = Vec::new();
     let find_row = |rows: &mut Vec<ModelSpendRow>, provider: &str, model: &str| -> Option<usize> {
@@ -227,36 +215,27 @@ pub async fn ai_spend(
             .position(|r| r.provider == provider && r.model == model)
     };
 
-    for (entries, validator) in [(&model_entries, false), (&validator_entries, true)] {
-        for e in entries.iter() {
-            if let Some(i) = find_row(&mut rows, &e.provider, &e.model) {
-                rows[i].validator |= validator;
-                continue;
-            }
-            rows.push(ModelSpendRow {
-                name: e.display_name(),
-                provider: e.provider.clone(),
-                model: e.model.clone(),
-                input_tokens: 0,
-                output_tokens: 0,
-                sessions: 0,
-                daily: vec![0.0; days as usize],
-                cost_usd: None,
-                configured: true,
-                validator,
-                last_used: None,
-            });
+    for e in catalog.entries() {
+        if let Some(i) = find_row(&mut rows, &e.provider, &e.model) {
+            rows[i].validator |= e.validator;
+            continue;
         }
+        rows.push(ModelSpendRow {
+            name: e.display_name(),
+            provider: e.provider.clone(),
+            model: e.model.clone(),
+            input_tokens: 0,
+            output_tokens: 0,
+            sessions: 0,
+            daily: vec![0.0; days as usize],
+            cost_usd: None,
+            configured: true,
+            validator: e.validator,
+            last_used: None,
+        });
     }
 
-    // Price lookup from config (either list; first match wins).
-    let price_of = |provider: &str, model: &str| -> Option<(f64, f64)> {
-        model_entries
-            .iter()
-            .chain(validator_entries.iter())
-            .find(|e| e.provider == provider && e.model == model)
-            .and_then(|e| Some((e.input_cost_per_mtok?, e.output_cost_per_mtok?)))
-    };
+    let price_of = |provider: &str, model: &str| catalog.price_of(provider, model);
 
     for s in &summaries {
         let i = match find_row(&mut rows, &s.provider, &s.model) {

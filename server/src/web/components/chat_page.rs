@@ -78,19 +78,12 @@ pub async fn get_chat_context() -> Result<ChatContext, ServerFnError> {
     let _user = current_user().await?;
     let cfg = crate::config::config();
     let enabled = cfg.chat.enabled && crate::server_state::chat_state().is_some();
-    let entries = if cfg.chat.models.is_empty() {
-        if cfg.healer.models.is_empty() {
-            crate::config::default_healer_models()
-        } else {
-            cfg.healer.models.clone()
-        }
-    } else {
-        cfg.chat.models.clone()
-    };
     Ok(ChatContext {
         enabled,
-        models: entries
-            .iter()
+        models: cfg
+            .model_catalog()
+            .models_for("chat")
+            .into_iter()
             .map(|m| ModelEntry {
                 name: m.name.clone(),
                 model: m.model.clone(),

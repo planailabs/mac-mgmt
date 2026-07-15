@@ -134,32 +134,23 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
     })
     .collect();
 
-    let healer_cfg = &crate::config::config().healer;
-    let model_entries = if healer_cfg.models.is_empty() {
-        crate::config::default_healer_models()
-    } else {
-        healer_cfg.models.clone()
-    };
-    let models = model_entries
+    let catalog = crate::config::config().model_catalog();
+    let models = catalog
+        .models_for(mac_mgmt_healer::store::pg::SESSION_TYPE)
         .into_iter()
         .map(|e| ModelEntry {
             name: e.display_name(),
-            model: e.model,
-            provider: e.provider,
+            model: e.model.clone(),
+            provider: e.provider.clone(),
         })
         .collect();
-
-    let validator_entries = if healer_cfg.validator_models.is_empty() {
-        crate::config::default_validator_models()
-    } else {
-        healer_cfg.validator_models.clone()
-    };
-    let validator_models = validator_entries
+    let validator_models = catalog
+        .validators_for(mac_mgmt_healer::store::pg::SESSION_TYPE)
         .into_iter()
         .map(|e| ModelEntry {
             name: e.display_name(),
-            model: e.model,
-            provider: e.provider,
+            model: e.model.clone(),
+            provider: e.provider.clone(),
         })
         .collect();
 

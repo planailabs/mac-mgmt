@@ -18,6 +18,13 @@ pub struct ServerConfig {
     /// Interactive fleet chatbot (agent over the api-mcp tool surface).
     #[serde(default)]
     pub chat: ChatConfig,
+    /// Unified model list (`[[models]]`) for every chat type. Each entry may
+    /// set `validator = true` (offered as validator), `validator_only = true`
+    /// (hidden from regular pickers) and `restrict = "healer" | [types]`.
+    /// When present, the legacy `[healer].models` / `[healer].validator_models`
+    /// / `[chat].models` lists are ignored — see [`ServerConfig::model_catalog`].
+    #[serde(default)]
+    pub models: Vec<LlmModelEntry>,
     #[serde(default)]
     pub sentry: SentryConfig,
     #[serde(default)]
@@ -37,6 +44,72 @@ pub struct ServerConfig {
     /// enabled only in the antithesis test cluster's server, never in prod.
     #[serde(default)]
     pub chaos: ChaosConfig,
+}
+
+impl ServerConfig {
+    /// The unified model catalog. Prefers the top-level `[[models]]` list;
+    /// when it's empty, assembles an equivalent catalog from the legacy
+    /// per-domain lists so existing config files keep their exact semantics:
+    /// `[healer].models` (or built-in defaults) serve type "healer",
+    /// `[chat].models` serve type "chat" (falling back to the healer list),
+    /// and `[healer].validator_models` (or defaults) become validator
+    /// entries — validator-only unless they also appear in a model list.
+    pub fn model_catalog(&self) -> ModelCatalog {
+        if !self.models.is_empty() {
+            return ModelCatalog::new(self.models.clone());
+        }
+
+        let healer_list = if self.healer.models.is_empty() {
+            default_healer_models()
+        } else {
+            self.healer.models.clone()
+        };
+        let chat_list = if self.chat.models.is_empty() {
+            healer_list.clone()
+        } else {
+            self.chat.models.clone()
+        };
+        let validator_list = if self.healer.validator_models.is_empty() {
+            default_validator_models()
+        } else {
+            self.healer.validator_models.clone()
+        };
+
+        let mut entries: Vec<LlmModelEntry> = Vec::new();
+        let find = |entries: &mut Vec<LlmModelEntry>, e: &LlmModelEntry| -> Option<usize> {
+            entries
+                .iter()
+                .position(|x| x.provider == e.provider && x.model == e.model)
+        };
+        for e in &healer_list {
+            let mut e = e.clone();
+            e.restrict = vec!["healer".into()];
+            entries.push(e);
+        }
+        for e in &chat_list {
+            match find(&mut entries, e) {
+                Some(i) => entries[i].restrict.push("chat".into()),
+                None => {
+                    let mut e = e.clone();
+                    e.restrict = vec!["chat".into()];
+                    entries.push(e);
+                }
+            }
+        }
+        for e in &validator_list {
+            match find(&mut entries, e) {
+                Some(i) => entries[i].validator = true,
+                None => {
+                    let mut e = e.clone();
+                    e.validator = true;
+                    e.validator_only = true;
+                    e.restrict = vec!["healer".into()];
+                    entries.push(e);
+                }
+            }
+        }
+        ModelCatalog::new(entries)
+    }
 }
 
 /// `[chat]` — interactive fleet chatbot. The agent's tools are the api-mcp
@@ -371,114 +444,37 @@ pub struct OpenAiSourceEntry {
     pub model: Option<String>,
 }
 
-/// A configured LLM model entry (healer and chat model pickers, spend
-/// dashboard pricing).
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
-pub struct LlmModelEntry {
-    /// Human-readable display name shown in the dropdown.
-    pub name: String,
-    /// Model identifier passed to the provider (e.g. "gemma4", "claude-sonnet-4-6").
-    pub model: String,
-    /// Provider: "ollama", "anthropic", "openrouter", or the name of an
-    /// OpenAI-compatible source from `[[healer.openai]]`.
-    pub provider: String,
-    /// Per-model token budget override. If set, overrides the global `token_budget`
-    /// when this model is selected. 0 = unlimited.
-    #[serde(default)]
-    pub token_budget: Option<u64>,
-    /// USD per 1M input tokens. When set (together with
-    /// `output_cost_per_mtok`), the AI spend dashboard shows estimated
-    /// dollar spend for this model; token counts are shown either way.
-    #[serde(default)]
-    pub input_cost_per_mtok: Option<f64>,
-    /// USD per 1M output tokens. See `input_cost_per_mtok`.
-    #[serde(default)]
-    pub output_cost_per_mtok: Option<f64>,
-}
+// The model entry type and catalog live in the shared chat crate.
+pub use plan_ai_chat::models::{LlmModelEntry, ModelCatalog};
 
-/// Built-in default model list used when `[healer] models` is empty.
+/// Built-in default model list used when no models are configured.
 pub fn default_healer_models() -> Vec<LlmModelEntry> {
     vec![
-        LlmModelEntry {
-            name: "Gemma 4".into(),
-            model: "gemma4".into(),
-            provider: "ollama".into(),
-            token_budget: None,
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Qwen 3".into(),
-            model: "qwen3".into(),
-            provider: "ollama".into(),
-            token_budget: None,
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Llama 3.3".into(),
-            model: "llama3.3".into(),
-            provider: "ollama".into(),
-            token_budget: None,
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Devstral".into(),
-            model: "devstral".into(),
-            provider: "ollama".into(),
-            token_budget: None,
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Claude Sonnet 4.6".into(),
-            model: "claude-sonnet-4-6".into(),
-            provider: "anthropic".into(),
-            token_budget: Some(200_000),
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Claude Haiku 4.5".into(),
-            model: "claude-haiku-4-5-20251001".into(),
-            provider: "anthropic".into(),
-            token_budget: Some(400_000),
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Claude Sonnet 4".into(),
-            model: "anthropic/claude-sonnet-4".into(),
-            provider: "openrouter".into(),
-            token_budget: Some(200_000),
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "GPT-4.1".into(),
-            model: "openai/gpt-4.1".into(),
-            provider: "openrouter".into(),
-            token_budget: Some(200_000),
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Gemini 2.5 Pro".into(),
-            model: "google/gemini-2.5-pro-preview".into(),
-            provider: "openrouter".into(),
-            token_budget: Some(200_000),
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Kimi K2.6".into(),
-            model: "moonshotai/kimi-k2.6".into(),
-            provider: "openrouter".into(),
-            token_budget: Some(200_000),
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
+        LlmModelEntry::basic("Gemma 4", "gemma4", "ollama"),
+        LlmModelEntry::basic("Qwen 3", "qwen3", "ollama"),
+        LlmModelEntry::basic("Llama 3.3", "llama3.3", "ollama"),
+        LlmModelEntry::basic("Devstral", "devstral", "ollama"),
+        LlmModelEntry::with_budget("Claude Sonnet 4.6", "claude-sonnet-4-6", "anthropic", 200_000),
+        LlmModelEntry::with_budget(
+            "Claude Haiku 4.5",
+            "claude-haiku-4-5-20251001",
+            "anthropic",
+            400_000,
+        ),
+        LlmModelEntry::with_budget(
+            "Claude Sonnet 4",
+            "anthropic/claude-sonnet-4",
+            "openrouter",
+            200_000,
+        ),
+        LlmModelEntry::with_budget("GPT-4.1", "openai/gpt-4.1", "openrouter", 200_000),
+        LlmModelEntry::with_budget(
+            "Gemini 2.5 Pro",
+            "google/gemini-2.5-pro-preview",
+            "openrouter",
+            200_000,
+        ),
+        LlmModelEntry::with_budget("Kimi K2.6", "moonshotai/kimi-k2.6", "openrouter", 200_000),
     ]
 }
 
@@ -487,53 +483,10 @@ pub fn default_healer_models() -> Vec<LlmModelEntry> {
 /// is empty.
 pub fn default_validator_models() -> Vec<LlmModelEntry> {
     vec![
-        LlmModelEntry {
-            name: "Gemma 4".into(),
-            model: "gemma4".into(),
-            provider: "ollama".into(),
-            token_budget: None,
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Qwen 3".into(),
-            model: "qwen3".into(),
-            provider: "ollama".into(),
-            token_budget: None,
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
-        LlmModelEntry {
-            name: "Claude Haiku 4.5".into(),
-            model: "claude-haiku-4-5-20251001".into(),
-            provider: "anthropic".into(),
-            token_budget: None,
-            input_cost_per_mtok: None,
-            output_cost_per_mtok: None,
-        },
+        LlmModelEntry::basic("Gemma 4", "gemma4", "ollama"),
+        LlmModelEntry::basic("Qwen 3", "qwen3", "ollama"),
+        LlmModelEntry::basic("Claude Haiku 4.5", "claude-haiku-4-5-20251001", "anthropic"),
     ]
-}
-
-impl LlmModelEntry {
-    /// Return the display name with an auto-appended provider suffix
-    /// (e.g. "Gemma 4" becomes "Gemma 4 (Ollama)") unless it already
-    /// contains the provider name (case-insensitive).
-    pub fn display_name(&self) -> String {
-        let lower = self.name.to_lowercase();
-        let provider_lower = self.provider.to_lowercase();
-        if lower.contains(&provider_lower) {
-            self.name.clone()
-        } else {
-            let suffix = match self.provider.as_str() {
-                "ollama" => "Ollama",
-                "anthropic" => "Anthropic",
-                "openrouter" => "OpenRouter",
-                "openai_compat" => "plan.ai Hosted",
-                other => other,
-            };
-            format!("{} ({})", self.name, suffix)
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]

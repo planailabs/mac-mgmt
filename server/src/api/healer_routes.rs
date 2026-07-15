@@ -206,14 +206,9 @@ pub async fn create_session(
 
     // Look up per-model token budget from the configured model list
     let per_model_budget = if let (Some(provider), Some(model)) = (&body.provider, &body.model) {
-        let models = if crate::config::load().healer.models.is_empty() {
-            crate::config::default_healer_models()
-        } else {
-            crate::config::load().healer.models.clone()
-        };
-        models
-            .iter()
-            .find(|m| m.provider == *provider && m.model == *model)
+        server_cfg
+            .model_catalog()
+            .find(provider, model)
             .and_then(|m| m.token_budget)
     } else {
         None

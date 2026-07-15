@@ -966,18 +966,14 @@ pub async fn cluster_healer_settings_get(
         })
         .unwrap_or_default();
 
-    let healer_cfg = &crate::config::config().healer;
-    let model_entries = if healer_cfg.models.is_empty() {
-        crate::config::default_healer_models()
-    } else {
-        healer_cfg.models.clone()
-    };
-    let models = model_entries
+    let models = crate::config::config()
+        .model_catalog()
+        .models_for("healer")
         .into_iter()
         .map(|e| HealerModelOption {
             key: format!("{}:{}", e.provider, e.model),
             name: e.display_name(),
-            provider: e.provider,
+            provider: e.provider.clone(),
         })
         .collect();
 
