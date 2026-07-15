@@ -1816,6 +1816,15 @@ pub fn render_message(msg: &ChatMsg) -> Element {
     }
 }
 
+/// Largest index <= `max` that is a char boundary (safe multibyte truncation).
+fn floor_char_boundary(s: &str, max: usize) -> usize {
+    let mut i = max.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 pub fn render_tool_result(msg: &ChatMsg) -> Element {
     let (tool_name, result) = msg
         .content
@@ -1825,7 +1834,11 @@ pub fn render_tool_result(msg: &ChatMsg) -> Element {
     let is_rejected =
         result.starts_with("[Validation rejected]") || result.starts_with("[Validator rejected]");
     let truncated = result.len() > 500;
-    let preview = if truncated { &result[..500] } else { result };
+    let preview = if truncated {
+        &result[..floor_char_boundary(result, 500)]
+    } else {
+        result
+    };
     let tool_badge = if is_rejected {
         "badge badge-danger font-mono"
     } else if is_error {
@@ -1846,7 +1859,7 @@ pub fn render_tool_result(msg: &ChatMsg) -> Element {
         .filter(|a| *a != "{}")
         .unwrap_or("");
     let args_short = if args.len() > 120 {
-        format!("{}...", &args[..120])
+        format!("{}...", &args[..floor_char_boundary(args, 120)])
     } else {
         args.to_string()
     };
