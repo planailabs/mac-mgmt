@@ -219,6 +219,22 @@ pub fn desired_flake_ref(pkg: &str) -> Result<String> {
     Ok(format!("{}#{pkg}", desired_flake_base()?))
 }
 
+/// Compare a profile element's `originalUrl` against a desired flake base,
+/// ignoring nix's flakeref normalisations: the indirect ref `nixpkgs` is
+/// written back to the manifest as `flake:nixpkgs`, and URL-like refs may
+/// gain a `tarball+`/`file+` scheme prefix. Raw string equality misreports
+/// these as drift forever (a reinstall gets re-normalised the same way),
+/// which loops upgrade_pending + in-window restarts on every tick.
+fn flake_base_eq(a: &str, b: &str) -> bool {
+    fn norm(s: &str) -> &str {
+        let s = s.strip_prefix("flake:").unwrap_or(s);
+        let s = s.strip_prefix("tarball+").unwrap_or(s);
+        let s = s.strip_prefix("file+").unwrap_or(s);
+        s.trim_end_matches('/')
+    }
+    norm(a) == norm(b)
+}
+
 /// Flake ref for unmanaged installs: uses the standard nixpkgs channel
 /// instead of the git.plan.ai custom tarball. This makes unmanaged
 /// services follow the host's nixpkgs pin rather than the cluster's.
@@ -583,7 +599,7 @@ pub fn packages_with_upgrades(packages: &[&str]) -> Result<Vec<String>> {
         if let Ok(desired_base) = desired_flake_base() {
             for (name, url) in installed_urls {
                 if packages.contains(&name.as_str())
-                    && url != desired_base
+                    && !flake_base_eq(&url, &desired_base)
                     && !result.contains(&name)
                 {
                     tracing::info!("flake URL drift detected for {name}: {url} -> {desired_base}");
@@ -784,7 +800,10 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
         .ok()
         .and_then(|m| m.get(pkg).cloned());
 
-    if installed_url.as_deref() == Some(desired_base.as_str()) {
+    if installed_url
+        .as_deref()
+        .is_some_and(|u| flake_base_eq(u, &desired_base))
+    {
         // Same URL → in-place upgrade.
         return run_profile_cmd(nix_bin, "upgrade", pkg, &["upgrade", pkg]);
     }
@@ -1067,6 +1086,24 @@ mod tests {
     #[test]
     fn nixpkgs_base_empty_is_none() {
         assert_eq!(nixpkgs_base_from_src(""), None);
+    }
+
+    #[test]
+    fn flake_base_eq_ignores_nix_normalisations() {
+        // Indirect ref: manifest stores `flake:nixpkgs` for `nixpkgs`.
+        assert!(flake_base_eq("flake:nixpkgs", "nixpkgs"));
+        // Tarball URLs may gain a scheme prefix in the manifest.
+        assert!(flake_base_eq(
+            "tarball+https://srv/api/nixpkgs-archive/abc",
+            "https://srv/api/nixpkgs-archive/abc"
+        ));
+        assert!(flake_base_eq("https://srv/x/", "https://srv/x"));
+        // Genuine drift still detected.
+        assert!(!flake_base_eq(
+            "https://srv/api/nixpkgs-archive/abc",
+            "https://srv/api/nixpkgs-archive/def"
+        ));
+        assert!(!flake_base_eq("flake:nixpkgs", "https://srv/x"));
     }
 
     #[test]
