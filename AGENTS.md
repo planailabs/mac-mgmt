@@ -64,7 +64,7 @@ Never modify an existing migration file in `server/migrations/`. Migrations that
 
 ## Server docs: keep English and German in sync
 
-Server web UI documentation lives in `server/docs/*.md` (English, canonical) with German translations under `server/docs/de/` using **identical filenames/slugs**. Whenever you add or change a doc, update **both languages in the same commit** — never let them drift:
+Server web UI documentation lives in per-language directories: `server/docs/en/*.md` (English, canonical) and `server/docs/de/*.md` (German) using **identical filenames/slugs**. Every language lives in its own subdirectory — no top-level doc files. Whenever you add or change a doc, update **both languages in the same commit** — never let them drift:
 
 - New doc → write the English file and its German translation together.
 - Edited doc → apply the same content change to the other language.

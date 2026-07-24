@@ -22,50 +22,55 @@ pub struct DocEntry {
 pub mod embedded {
     use rust_embed::RustEmbed;
 
-    /// English docs live at the top level (`docs/<slug>.md`); translations in
-    /// per-language subdirectories (`docs/de/<slug>.md`) with identical slugs.
+    /// Every language lives in its own subdirectory (`docs/en/<slug>.md`,
+    /// `docs/de/<slug>.md`) with identical slugs; English is canonical.
     #[derive(RustEmbed)]
     #[folder = "docs/"]
-    #[include = "*.md"]
     #[include = "*/*.md"]
     pub struct DocsAssets;
 }
 
-/// Languages with translated docs under `docs/<lang>/`. English is the
-/// canonical top-level fallback.
+/// The canonical docs language — the complete set every other language
+/// falls back to.
 #[cfg(feature = "server")]
-pub const DOC_TRANSLATIONS: &[&str] = &["de"];
+pub const DOC_CANONICAL_LANG: &str = "en";
 
-/// Map a UI language tag ("de-DE", "de") to a docs translation directory,
-/// or `None` for English / unknown languages.
+/// Languages with docs under `docs/<lang>/`.
 #[cfg(feature = "server")]
-pub fn doc_translation_dir(lang: &str) -> Option<&'static str> {
+pub const DOC_LANGS: &[&str] = &["en", "de"];
+
+/// Map a UI language tag ("de-DE", "de") to a docs language directory,
+/// or `None` for unknown languages.
+#[cfg(feature = "server")]
+pub fn doc_lang_dir(lang: &str) -> Option<&'static str> {
     let primary = lang.split(['-', '_']).next().unwrap_or("");
-    DOC_TRANSLATIONS
+    DOC_LANGS
         .iter()
         .find(|l| **l == primary.to_ascii_lowercase())
         .copied()
 }
 
 /// Load the raw markdown for a slug in the requested language, falling back
-/// to English when no translation exists. Returns `None` for unknown slugs.
+/// to the canonical language when no translation exists. Returns `None` for
+/// unknown slugs.
 #[cfg(feature = "server")]
 pub fn load_doc_markdown(slug: &str, lang: &str) -> Option<String> {
     use embedded::DocsAssets;
     if slug.contains('/') || slug.contains("..") {
         return None;
     }
-    if let Some(dir) = doc_translation_dir(lang) {
+    let dirs = [
+        doc_lang_dir(lang).unwrap_or(DOC_CANONICAL_LANG),
+        DOC_CANONICAL_LANG,
+    ];
+    for dir in dirs {
         if let Some(file) = DocsAssets::get(&format!("{dir}/{slug}.md")) {
-            if let Ok(text) = std::str::from_utf8(file.data.as_ref()) {
-                return Some(text.to_string());
-            }
+            return std::str::from_utf8(file.data.as_ref())
+                .ok()
+                .map(String::from);
         }
     }
-    let file = DocsAssets::get(&format!("{slug}.md"))?;
-    std::str::from_utf8(file.data.as_ref())
-        .ok()
-        .map(String::from)
+    None
 }
 
 /// Parse YAML frontmatter from markdown content.
@@ -102,12 +107,13 @@ async fn list_docs(lang: String) -> Result<Vec<DocEntry>, ServerFnError> {
     let mut entries: Vec<DocEntry> = DocsAssets::iter()
         .filter_map(|path| {
             let path_str = path.as_ref();
-            // Top-level files are the canonical (English) doc list;
-            // subdirectories hold translations of the same slugs.
-            if !path_str.ends_with(".md") || path_str.contains('/') {
+            // The canonical language directory defines the doc list; other
+            // directories hold translations of the same slugs.
+            let name = path_str.strip_prefix(DOC_CANONICAL_LANG)?.strip_prefix('/')?;
+            if !name.ends_with(".md") || name.contains('/') {
                 return None;
             }
-            let slug = path_str.trim_end_matches(".md").to_string();
+            let slug = name.trim_end_matches(".md").to_string();
             let content = DocsAssets::get(path_str)?;
             let text = std::str::from_utf8(content.data.as_ref()).ok()?;
             // Metadata (audience, ordering) always comes from the canonical
@@ -418,5 +424,23 @@ pub fn DocPage(slug: String) -> Element {
                 None => rsx! { p { {t!("loading")} } },
             }}
         }
+    }
+}
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doc_lookup_prefers_translation_and_falls_back() {
+        let en = load_doc_markdown("getting-started", "en-US").expect("english doc");
+        assert!(en.contains("# Getting Started"));
+        let de = load_doc_markdown("getting-started", "de-DE").expect("german doc");
+        assert!(de.contains("# Erste Schritte"));
+        // Unknown languages fall back to the canonical set.
+        let fr = load_doc_markdown("getting-started", "fr-FR").expect("fallback doc");
+        assert!(fr.contains("# Getting Started"));
+        assert!(load_doc_markdown("no-such-doc", "en").is_none());
+        assert!(load_doc_markdown("../Cargo", "en").is_none());
     }
 }

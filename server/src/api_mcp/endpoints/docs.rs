@@ -1,4 +1,4 @@
-//! Built-in platform documentation (server/docs/*.md) exposed as read-only
+//! Built-in platform documentation (server/docs/<lang>/*.md) exposed as read-only
 //! tools, so agents can look things up when the platform behavior is unclear.
 
 #[cfg(feature = "server")]
@@ -78,17 +78,20 @@ pub struct DocPage {
 
 #[cfg(feature = "server")]
 async fn doc_list(input: DocListInput) -> Result<Vec<DocInfo>, plan_ai_api_mcp::ApiError> {
-    use crate::web::components::docs::{embedded::DocsAssets, load_doc_markdown, parse_frontmatter};
+    use crate::web::components::docs::{
+        DOC_CANONICAL_LANG, embedded::DocsAssets, load_doc_markdown, parse_frontmatter,
+    };
 
     let lang = input.lang.unwrap_or_default();
     let mut out: Vec<DocInfo> = DocsAssets::iter()
         .filter_map(|path| {
             let path_str = path.as_ref();
-            // Top-level files only — subdirectories are translations.
-            if path_str.contains('/') {
+            // The canonical language directory defines the doc list.
+            let name = path_str.strip_prefix(DOC_CANONICAL_LANG)?.strip_prefix('/')?;
+            let slug = name.strip_suffix(".md")?.to_string();
+            if slug.contains('/') {
                 return None;
             }
-            let slug = path_str.strip_suffix(".md")?.to_string();
             let content = DocsAssets::get(path_str)?;
             let text = std::str::from_utf8(content.data.as_ref()).ok()?;
             let (frontmatter, body) = parse_frontmatter(text);

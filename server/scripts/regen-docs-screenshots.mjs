@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Regenerate the language-specific screenshots embedded in the step-by-step
-// guides under server/docs/ (and server/docs/de/). Drives the running dev app
+// guides under server/docs/en/ and server/docs/de/. Drives the running dev app
 // over the Chrome DevTools Protocol — no extra npm deps.
 //
 // Ported from wg-vpng's server/scripts/regen-tutorial-screenshots.mjs,

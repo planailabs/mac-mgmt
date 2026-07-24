@@ -7,11 +7,11 @@ description: Write and update server web UI documentation. Reads all server comp
 
 You are updating the mac-mgmt server documentation. Documentation lives in `server/docs/` as markdown files rendered by the web UI at `/docs`.
 
-**The docs are bilingual.** English files in `server/docs/*.md` are canonical; German translations live in `server/docs/de/` with identical filenames. Every doc change updates both languages in the same commit (see "Step 5b").
+**The docs are bilingual.** Every language lives in its own subdirectory: `server/docs/en/` (English, canonical) and `server/docs/de/` (German), with identical filenames. Every doc change updates both languages in the same commit (see "Step 5b").
 
 ## Step 1: Read existing documentation
 
-Read every `.md` file in `server/docs/` to understand what is already documented, the writing style, and the frontmatter structure.
+Read every `.md` file in `server/docs/en/` (and its `server/docs/de/` counterpart) to understand what is already documented, the writing style, and the frontmatter structure.
 
 ## Step 2: Read all server web components
 
@@ -35,7 +35,7 @@ Read `common/src/lib.rs` for the `ClusterConfig` struct and all nested config ty
 
 ## Step 5: Write or update documentation
 
-For each feature area, create or update a `.md` file in `server/docs/`.
+For each feature area, create or update a `.md` file in `server/docs/en/`.
 
 ### Frontmatter format
 
