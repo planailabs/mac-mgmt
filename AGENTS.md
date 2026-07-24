@@ -62,6 +62,16 @@ Mark every compat shim with a `// compat: added YYYY-MM-DD, removable after YYYY
 
 Never modify an existing migration file in `server/migrations/`. Migrations that have already been applied to a database cannot be re-run, so editing them has no effect on deployed instances and causes checksum mismatches. Always create a new migration with the next sequence number instead (e.g. if `033_*.sql` exists, create `034_*.sql`).
 
+## Server docs: keep English and German in sync
+
+Server web UI documentation lives in `server/docs/*.md` (English, canonical) with German translations under `server/docs/de/` using **identical filenames/slugs**. Whenever you add or change a doc, update **both languages in the same commit** — never let them drift:
+
+- New doc → write the English file and its German translation together.
+- Edited doc → apply the same content change to the other language.
+- Frontmatter (`audience`, `ordering_override`) is only read from the English file, but keep it byte-identical in the German file anyway.
+- Keep slugs, cross-links (`/docs/<slug>`), config keys, code blocks, and API endpoints untranslated; use the German UI terminology from `server/src/web/de-DE.ftl` for UI labels. Formal address ("Sie").
+- Screenshots in docs are language-specific (`/docs-img/<name>-en.png` / `-de.png`). Regenerate them with `server/scripts/regen-docs-screenshots.mjs` (see the header comment for prereqs) after UI changes that make them stale, and reference the `-en` variant from English docs and `-de` from German docs.
+
 ## Config migrations: always add one when modifying config properties
 
 When changing config struct fields in `common/src/lib.rs` (renames, type changes, structural changes like turning a single field into a list), you **must** add a corresponding config migration in `common/src/config_migrate.rs`. This ensures existing JSON configs stored in the database and served to daemons are transformed automatically.

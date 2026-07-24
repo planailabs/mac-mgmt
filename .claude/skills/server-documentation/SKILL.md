@@ -1,11 +1,13 @@
 ---
 name: server-documentation
-description: Write and update server web UI documentation. Reads all server components, checks admin gating, and maintains docs in server/docs/ with audience frontmatter badges.
+description: Write and update server web UI documentation. Reads all server components, checks admin gating, and maintains bilingual (English + German) docs in server/docs/ with audience frontmatter badges.
 ---
 
 # Server Documentation Skill
 
 You are updating the mac-mgmt server documentation. Documentation lives in `server/docs/` as markdown files rendered by the web UI at `/docs`.
+
+**The docs are bilingual.** English files in `server/docs/*.md` are canonical; German translations live in `server/docs/de/` with identical filenames. Every doc change updates both languages in the same commit (see "Step 5b").
 
 ## Step 1: Read existing documentation
 
@@ -84,6 +86,21 @@ For each feature area, cover:
 - Internal implementation details (database schema, Rust types)
 - Code examples in Rust
 - Anything derivable from the Swagger UI
+
+## Step 5b: Keep the German translation in sync
+
+For every English doc you create or change, create/update `server/docs/de/<same-filename>` in the same commit:
+
+- Frontmatter stays byte-identical (`audience` values are English keywords; `ordering_override` unchanged).
+- Translate headings (including the `# Title` — it is the displayed title), prose, and table header/description columns. Formal address ("Sie").
+- Never translate: slugs, cross-link targets (`/docs/<slug>`), config keys, code blocks, API endpoints, CLI commands, defaults.
+- Use the German UI terminology from `server/src/web/de-DE.ftl` for bolded UI labels (e.g. **Users** → **Benutzer**) so docs match the rendered UI. Product terms (Cluster, Daemon, Skill, Token, Rollout, Healer, Relay, Heartbeat) stay as loanwords, matching the UI.
+
+## Step 5c: Screenshots for step-by-step guides
+
+Step-by-step guides embed language-specific screenshots from `server/public/docs-img/`, referenced as `![...](/docs-img/<name>-en.png)` in English docs and `.../<name>-de.png` in German docs. They carry numbered orange step markers matching the numbered steps in the doc text.
+
+Regenerate them with `server/scripts/regen-docs-screenshots.mjs` (header comment documents prereqs: dev app with `DEV_ONLY_NO_AUTH=1` on a scratch database, Chrome on PATH). When you add a new guide flow, extend the script's `capture()` with the new page(s) and markers — element lookup must use the per-language labels in its `LANGS` table. Regenerate whenever UI changes make existing screenshots stale.
 
 ## Step 6: Verify
 
