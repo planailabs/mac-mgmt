@@ -22,10 +22,50 @@ pub struct DocEntry {
 pub mod embedded {
     use rust_embed::RustEmbed;
 
+    /// English docs live at the top level (`docs/<slug>.md`); translations in
+    /// per-language subdirectories (`docs/de/<slug>.md`) with identical slugs.
     #[derive(RustEmbed)]
     #[folder = "docs/"]
     #[include = "*.md"]
+    #[include = "*/*.md"]
     pub struct DocsAssets;
+}
+
+/// Languages with translated docs under `docs/<lang>/`. English is the
+/// canonical top-level fallback.
+#[cfg(feature = "server")]
+pub const DOC_TRANSLATIONS: &[&str] = &["de"];
+
+/// Map a UI language tag ("de-DE", "de") to a docs translation directory,
+/// or `None` for English / unknown languages.
+#[cfg(feature = "server")]
+pub fn doc_translation_dir(lang: &str) -> Option<&'static str> {
+    let primary = lang.split(['-', '_']).next().unwrap_or("");
+    DOC_TRANSLATIONS
+        .iter()
+        .find(|l| **l == primary.to_ascii_lowercase())
+        .copied()
+}
+
+/// Load the raw markdown for a slug in the requested language, falling back
+/// to English when no translation exists. Returns `None` for unknown slugs.
+#[cfg(feature = "server")]
+pub fn load_doc_markdown(slug: &str, lang: &str) -> Option<String> {
+    use embedded::DocsAssets;
+    if slug.contains('/') || slug.contains("..") {
+        return None;
+    }
+    if let Some(dir) = doc_translation_dir(lang) {
+        if let Some(file) = DocsAssets::get(&format!("{dir}/{slug}.md")) {
+            if let Ok(text) = std::str::from_utf8(file.data.as_ref()) {
+                return Some(text.to_string());
+            }
+        }
+    }
+    let file = DocsAssets::get(&format!("{slug}.md"))?;
+    std::str::from_utf8(file.data.as_ref())
+        .ok()
+        .map(String::from)
 }
 
 /// Parse YAML frontmatter from markdown content.
@@ -56,18 +96,22 @@ pub fn parse_frontmatter(content: &str) -> (Vec<(String, String)>, &str) {
 }
 
 #[server]
-async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
+async fn list_docs(lang: String) -> Result<Vec<DocEntry>, ServerFnError> {
     use embedded::DocsAssets;
 
     let mut entries: Vec<DocEntry> = DocsAssets::iter()
         .filter_map(|path| {
             let path_str = path.as_ref();
-            if !path_str.ends_with(".md") {
+            // Top-level files are the canonical (English) doc list;
+            // subdirectories hold translations of the same slugs.
+            if !path_str.ends_with(".md") || path_str.contains('/') {
                 return None;
             }
             let slug = path_str.trim_end_matches(".md").to_string();
             let content = DocsAssets::get(path_str)?;
             let text = std::str::from_utf8(content.data.as_ref()).ok()?;
+            // Metadata (audience, ordering) always comes from the canonical
+            // English file so a stale translation can't change gating/order.
             let (frontmatter, body) = parse_frontmatter(text);
             let audience = frontmatter
                 .iter()
@@ -78,7 +122,12 @@ async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
                 .iter()
                 .find(|(k, _)| k == "ordering_override")
                 .and_then(|(_, v)| v.parse::<i32>().ok());
-            let title = body
+            let translated = load_doc_markdown(&slug, &lang);
+            let title_body = match &translated {
+                Some(t) => parse_frontmatter(t).1,
+                None => body,
+            };
+            let title = title_body
                 .lines()
                 .find(|l| l.starts_with("# "))
                 .map(|l| l.trim_start_matches("# ").to_string())
@@ -100,21 +149,23 @@ async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
 }
 
 #[server]
-async fn get_doc(slug: String) -> Result<(String, String, String), ServerFnError> {
-    use embedded::DocsAssets;
-
-    let filename = format!("{slug}.md");
-    let file = DocsAssets::get(&filename)
+async fn get_doc(slug: String, lang: String) -> Result<(String, String, String), ServerFnError> {
+    let markdown = load_doc_markdown(&slug, &lang)
         .ok_or_else(|| ServerFnError::new(format!("Document '{slug}' not found")))?;
-    let markdown =
-        std::str::from_utf8(file.data.as_ref()).map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let (frontmatter, body) = parse_frontmatter(markdown);
-    let audience = frontmatter
-        .iter()
-        .find(|(k, _)| k == "audience")
-        .map(|(_, v)| v.clone())
+    // Audience gating comes from the canonical English file.
+    let audience = load_doc_markdown(&slug, "en")
+        .map(|en| {
+            let (frontmatter, _) = parse_frontmatter(&en);
+            frontmatter
+                .iter()
+                .find(|(k, _)| k == "audience")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        })
         .unwrap_or_default();
+
+    let (_, body) = parse_frontmatter(&markdown);
 
     let title = body
         .lines()
@@ -143,7 +194,9 @@ fn AudienceBadge(audience: String) -> Element {
 #[component]
 pub fn DocList() -> Element {
     use_topbar(t!("docs-title"), None);
-    let docs = use_server_future(list_docs)?;
+    let i18n = dioxus_i18n::prelude::i18n();
+    // Reading the language inside the closure re-fetches on switch.
+    let docs = use_server_future(move || list_docs(i18n.language().to_string()))?;
 
     rsx! {
         div {
@@ -337,7 +390,8 @@ fn GlossaryTermRow(term: String, snippet: Option<String>) -> Element {
 #[component]
 pub fn DocPage(slug: String) -> Element {
     let slug_clone = slug.clone();
-    let doc = use_server_future(move || get_doc(slug_clone.clone()))?;
+    let i18n = dioxus_i18n::prelude::i18n();
+    let doc = use_server_future(move || get_doc(slug_clone.clone(), i18n.language().to_string()))?;
 
     rsx! {
         div {

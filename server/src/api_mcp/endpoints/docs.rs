@@ -8,11 +8,12 @@ pub fn register(reg: &mut plan_ai_api_mcp::Registry<sqlx::PgPool>) {
     let mut d = reg.resource("documentation", "doc", "Documentation");
     d.list(
         "List the built-in platform documentation topics (slug + title + audience). \
-         Use doc_get to read one.",
-        |_pool: sqlx::PgPool, _p, _input: DocListInput| async move { doc_list().await },
+         Use doc_get to read one. Optional lang for translated titles.",
+        |_pool: sqlx::PgPool, _p, input: DocListInput| async move { doc_list(input).await },
     );
     d.get(
-        "Read a documentation page as raw markdown by its slug (from doc_list).",
+        "Read a documentation page as raw markdown by its slug (from doc_list). \
+         Optional lang for a translated version (falls back to English).",
         |_pool: sqlx::PgPool, _p, input: DocGetInput| async move { doc_get(input).await },
     );
 
@@ -43,12 +44,21 @@ pub fn register(reg: &mut plan_ai_api_mcp::Registry<sqlx::PgPool>) {
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DocListInput {}
+pub struct DocListInput {
+    /// Language tag ("en-US", "de-DE", "de"); titles come from the
+    /// translated docs when available. Default: English.
+    #[serde(default)]
+    pub lang: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DocGetInput {
     /// Documentation slug, e.g. "configuration-reference".
     pub id: String,
+    /// Language tag ("en-US", "de-DE", "de"); falls back to English when
+    /// no translation exists. Default: English.
+    #[serde(default)]
+    pub lang: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -67,12 +77,17 @@ pub struct DocPage {
 }
 
 #[cfg(feature = "server")]
-async fn doc_list() -> Result<Vec<DocInfo>, plan_ai_api_mcp::ApiError> {
-    use crate::web::components::docs::{embedded::DocsAssets, parse_frontmatter};
+async fn doc_list(input: DocListInput) -> Result<Vec<DocInfo>, plan_ai_api_mcp::ApiError> {
+    use crate::web::components::docs::{embedded::DocsAssets, load_doc_markdown, parse_frontmatter};
 
+    let lang = input.lang.unwrap_or_default();
     let mut out: Vec<DocInfo> = DocsAssets::iter()
         .filter_map(|path| {
             let path_str = path.as_ref();
+            // Top-level files only — subdirectories are translations.
+            if path_str.contains('/') {
+                return None;
+            }
             let slug = path_str.strip_suffix(".md")?.to_string();
             let content = DocsAssets::get(path_str)?;
             let text = std::str::from_utf8(content.data.as_ref()).ok()?;
@@ -82,7 +97,12 @@ async fn doc_list() -> Result<Vec<DocInfo>, plan_ai_api_mcp::ApiError> {
                 .find(|(k, _)| k == "audience")
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
-            let title = body
+            let translated = load_doc_markdown(&slug, &lang);
+            let title_body = match &translated {
+                Some(t) => parse_frontmatter(t).1,
+                None => body,
+            };
+            let title = title_body
                 .lines()
                 .find(|l| l.starts_with("# "))
                 .map(|l| l.trim_start_matches("# ").to_string())
@@ -100,14 +120,12 @@ async fn doc_list() -> Result<Vec<DocInfo>, plan_ai_api_mcp::ApiError> {
 
 #[cfg(feature = "server")]
 async fn doc_get(input: DocGetInput) -> Result<DocPage, plan_ai_api_mcp::ApiError> {
-    use crate::web::components::docs::{embedded::DocsAssets, parse_frontmatter};
+    use crate::web::components::docs::{load_doc_markdown, parse_frontmatter};
 
-    let path = format!("{}.md", input.id);
-    let content = DocsAssets::get(&path)
+    let lang = input.lang.unwrap_or_default();
+    let text = load_doc_markdown(&input.id, &lang)
         .ok_or_else(|| plan_ai_api_mcp::ApiError::not_found("unknown documentation slug"))?;
-    let text = std::str::from_utf8(content.data.as_ref())
-        .map_err(|e| plan_ai_api_mcp::ApiError::internal(e.to_string()))?;
-    let (_, body) = parse_frontmatter(text);
+    let (_, body) = parse_frontmatter(&text);
     let title = body
         .lines()
         .find(|l| l.starts_with("# "))
