@@ -58,6 +58,10 @@ Tokens can be created through:
 1. **Web UI** — navigate to **Admin Tokens** or to a cluster's detail page
 2. **API** — `POST /api/admin/clusters/<id>/tokens` (requires an admin token)
 
+On the **Admin Tokens** page, enter an optional label and expiry, then click **Create Admin Token** (①). The raw token is shown once — copy it immediately:
+
+![Admin Tokens page](/docs-img/admin-tokens-en.png)
+
 ## Token security
 
 - Raw tokens are shown **only once** at creation time

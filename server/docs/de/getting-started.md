@@ -25,6 +25,14 @@ mac-mgmt ist ein Flottenmanagement-System für macOS- und Linux-Geräte. Es biet
 3. Öffnen Sie das **Flotten**-Dashboard, um den Gerätezustand zu überwachen
 4. Unter **Dokumentation** finden Sie Leitfäden zu einzelnen Themen
 
+Die Seite **Cluster** listet Ihre verwalteten Geräte auf — klicken Sie auf einen Cluster-Namen (①), um die Detailseite zu öffnen, oder auf **Neuer Cluster** (②), um einen hinzuzufügen:
+
+![Cluster-Liste](/docs-img/clusters-list-de.png)
+
+Die integrierten Leitfäden (einschließlich dieses hier) finden Sie unter **Dokumentation** im Bereich Ressourcen der Seitenleiste:
+
+![Dokumentationsseite](/docs-img/docs-list-de.png)
+
 ## Zentrale Konzepte
 
 ### Cluster

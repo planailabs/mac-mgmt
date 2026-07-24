@@ -58,6 +58,10 @@ Tokens können erstellt werden über:
 1. **Web-UI** — unter **Admin Tokens** oder auf der Detailseite eines Clusters
 2. **API** — `POST /api/admin/clusters/<id>/tokens` (erfordert einen Admin Token)
 
+Geben Sie auf der Seite **Admin Tokens** optional eine Bezeichnung und ein Ablaufdatum ein und klicken Sie dann auf **Admin Token erstellen** (①). Der Roh-Token wird nur einmal angezeigt — kopieren Sie ihn sofort:
+
+![Admin-Tokens-Seite](/docs-img/admin-tokens-de.png)
+
 ## Token-Sicherheit
 
 - Roh-Tokens werden **nur einmal** bei der Erstellung angezeigt

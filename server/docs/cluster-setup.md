@@ -4,6 +4,14 @@ audience: user
 
 # Cluster Setup
 
+## Creating a cluster
+
+Open **Clusters** and click **New Cluster**. Enter a name (①) and click **Create** (②):
+
+![New cluster form](/docs-img/cluster-new-en.png)
+
+The new cluster appears in the cluster list; open its detail page to assign skills, MCP servers, and the configuration described below.
+
 ## Setting up OpenClaw standalone (not managed by the daemon)
 
 - Install OpenClaw as provided on the OpenClaw website

@@ -10,15 +10,21 @@ Admins can manage user accounts through the **Users** page in the Admin sidebar.
 
 The Users page shows all registered users with their name, email, organization memberships, and admin status. You can toggle a user's admin status directly from the list using the admin toggle.
 
+![Users page](/docs-img/users-list-en.png)
+
 ## Creating a user
 
-Click **New User** to create a user account. Required fields:
+Click **New User** (① above) to create a user account. Required fields:
 
 | Field | Description |
 |-------|-------------|
 | Email | The user's email address (must be unique) |
 | Name | Display name |
 | Admin | Whether the user has global admin privileges |
+
+Enter the email address (①) and display name (②), optionally grant admin, then click **Create** (③):
+
+![New user form](/docs-img/user-new-en.png)
 
 Users created here can log in via SSO if their email matches the SSO identity provider.
 

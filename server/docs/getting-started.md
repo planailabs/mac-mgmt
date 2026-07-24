@@ -25,6 +25,14 @@ mac-mgmt is a fleet management system for macOS and Linux devices. It provides:
 3. Open the **Fleet** dashboard to monitor device health
 4. Check **Docs** for guides on specific topics
 
+The **Clusters** page lists your managed devices — click a cluster name (①) to open its detail page, or **New Cluster** (②) to add one:
+
+![Clusters list](/docs-img/clusters-list-en.png)
+
+The built-in guides (including this one) live under **Docs** in the Resources section of the sidebar:
+
+![Documentation page](/docs-img/docs-list-en.png)
+
 ## Key Concepts
 
 ### Clusters

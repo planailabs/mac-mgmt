@@ -10,15 +10,21 @@ Admins können Benutzerkonten über die Seite **Benutzer** in der Admin-Seitenle
 
 Die Benutzer-Seite zeigt alle registrierten Benutzer mit Name, E-Mail, Organisationsmitgliedschaften und Admin-Status. Über den Admin-Schalter in der Liste können Sie den Admin-Status eines Benutzers direkt umschalten.
 
+![Benutzer-Seite](/docs-img/users-list-de.png)
+
 ## Benutzer anlegen
 
-Klicken Sie auf **Neuer Benutzer**, um ein Benutzerkonto anzulegen. Pflichtfelder:
+Klicken Sie auf **Neuer Benutzer** (① oben), um ein Benutzerkonto anzulegen. Pflichtfelder:
 
 | Feld | Beschreibung |
 |-------|-------------|
 | E-Mail | Die E-Mail-Adresse des Benutzers (muss eindeutig sein) |
 | Name | Anzeigename |
 | Admin | Ob der Benutzer globale Admin-Rechte hat |
+
+Geben Sie die E-Mail-Adresse (①) und den Anzeigenamen (②) ein, aktivieren Sie optional Admin, und klicken Sie dann auf **Erstellen** (③):
+
+![Formular Neuer Benutzer](/docs-img/user-new-de.png)
 
 Hier angelegte Benutzer können sich per SSO anmelden, sofern ihre E-Mail-Adresse mit dem SSO-Identitätsanbieter übereinstimmt.
 
