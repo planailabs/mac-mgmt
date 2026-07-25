@@ -78,6 +78,17 @@ let
   };
 in
 {
+  python313 = prev.python313.override {
+    packageOverrides = pyFinal: pyPrev: {
+      torchao = pyPrev.torchao.overridePythonAttrs (old: {
+        doCheck = false;
+        env = (old.env or {}) // {
+          VERSION_SUFFIX = "";
+        };
+      });
+    };
+  };
+
   inherit dioxus-cli-patched;
   memvault-extract-guest-text-wasm = memvaultExtractGuestTextWasm;
   memvault-extract-guest-pdfrender-wasm = memvaultExtractGuestPdfRenderWasm;
