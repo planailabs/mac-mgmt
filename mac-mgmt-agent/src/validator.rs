@@ -222,6 +222,34 @@ impl Validator {
     }
 }
 
+// ── Timestamped backups ────────────────────────────────────────────────
+
+/// Flatten an absolute path into a single filename component:
+/// `/home/u/.config/opencode/opencode.json` → `home_u_.config_opencode_opencode.json`.
+fn path_safe_name(path: &Path) -> String {
+    path.to_string_lossy()
+        .trim_start_matches(['/', '\\'])
+        .replace(['/', '\\', ':'], "_")
+}
+
+/// Copy `path` to `~/.config/mac-mgmt/config-backup/<path-safe>.<datetime>`
+/// before it is overwritten. Missing files are skipped; failures are logged
+/// but never block the write (the config dir may be read-only, e.g. on the
+/// USB stick), since each write path also keeps its own rollback copy.
+pub fn backup_config_file(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let dir = crate::config::config_dir().join("config-backup");
+    let dest = dir.join(format!("{}.{stamp}", path_safe_name(path)));
+    let result = std::fs::create_dir_all(&dir).and_then(|_| std::fs::copy(path, &dest));
+    match result {
+        Ok(_) => tracing::info!("backed up {} → {}", path.display(), dest.display()),
+        Err(e) => tracing::warn!("failed to back up {}: {e}", path.display()),
+    }
+}
+
 // ── Merge + validate + write ───────────────────────────────────────────
 
 impl Validator {
@@ -230,8 +258,9 @@ impl Validator {
     /// 1. Read existing file (or empty doc if missing, creating parent dirs).
     /// 2. Deep-merge `patch` into the existing value.
     /// 3. Validate merged value against URL/file/exec schema (pre-write).
-    /// 4. Serialize and write.
-    /// 5. Run command validator if configured; rollback on failure.
+    /// 4. Copy the current file to the timestamped config-backup folder.
+    /// 5. Serialize and write.
+    /// 6. Run command validator if configured; rollback on failure.
     pub fn merge_validate_and_write(
         &self,
         config_path: &Path,
@@ -274,6 +303,8 @@ impl Validator {
         let merged = self
             .serialize(&existing)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        backup_config_file(config_path);
 
         std::fs::write(config_path, &merged)
             .with_context(|| format!("failed to write {}", config_path.display()))?;
@@ -647,6 +678,68 @@ fn run_jsonschema(schema: &serde_json::Value, value: &serde_json::Value) -> Resu
         Ok(())
     } else {
         Err(errors.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    /// Backups for `prefix` in `dir`. Prefix-filtered because sibling tests in
+    /// this process may share the `MAC_MGMT_CONFIG_DIR` override.
+    fn backups_for(dir: &Path, prefix: &str) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
+            .map(|e| e.path())
+            .collect()
+    }
+
+    fn backed_up(dir: &Path, prefix: &str) -> bool {
+        !backups_for(dir, prefix).is_empty()
+    }
+
+    #[test]
+    fn write_copies_previous_contents_into_config_backup() {
+        let root = std::env::temp_dir().join("mac-mgmt-backup-validator-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // Only this test touches MAC_MGMT_CONFIG_DIR in this module's run.
+        unsafe { std::env::set_var("MAC_MGMT_CONFIG_DIR", &root) };
+
+        let path = root.join("target.json");
+        let v = Validator::json("*.json");
+        v.merge_validate_and_write(&path, &serde_json::json!({ "a": 1 }))
+            .unwrap();
+        // First write had no original — nothing to back up yet.
+        let backup_dir = root.join("config-backup");
+        assert!(
+            !backed_up(&backup_dir, &path_safe_name(&path)),
+            "no backup for a file that did not exist"
+        );
+
+        v.merge_validate_and_write(&path, &serde_json::json!({ "a": 2 }))
+            .unwrap();
+        let prefix = path_safe_name(&path);
+        let backups = backups_for(&backup_dir, &prefix);
+        assert_eq!(backups.len(), 1);
+        let name = backups[0]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            name.len() > prefix.len() + 1,
+            "flattened path plus timestamp suffix, got {name}"
+        );
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&backups[0]).unwrap()).unwrap();
+        assert_eq!(saved["a"], 1, "backup holds the pre-write contents");
+
+        unsafe { std::env::remove_var("MAC_MGMT_CONFIG_DIR") };
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

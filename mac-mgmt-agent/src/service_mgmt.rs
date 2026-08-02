@@ -1111,11 +1111,8 @@ impl ServiceManager {
                     // the running one (e.g. a flake-URL-only reinstall or a pin
                     // move that rebuilt to an identical output), a restart
                     // would bounce the service for nothing — skip it.
-                    let current_store =
-                        crate::nix::binary_store_path(state.service.binary_name());
-                    if current_store.is_some()
-                        && current_store == state.running_store_path
-                    {
+                    let current_store = crate::nix::binary_store_path(state.service.binary_name());
+                    if current_store.is_some() && current_store == state.running_store_path {
                         tracing::info!(
                             "{name} upgrade produced no binary change, skipping restart"
                         );

@@ -364,7 +364,13 @@ pub fn write_file(
     std::fs::write(&tmp_path, content)
         .map_err(|e| (500u16, format!("failed to create temp file: {e}")))?;
 
-    // Back up original file (if it exists)
+    // Back up original file (if it exists). Validated files (i.e. configs) also
+    // get a timestamped copy in the mac-mgmt config-backup folder for history;
+    // the sibling copy below is the rollback used on validation failure.
+    let validator = find_validator(tunnel, &path);
+    if validator.is_some() {
+        crate::validator::backup_config_file(&path);
+    }
     let backup_path = path.with_extension("bak.file-tunnel");
     let had_original = path.exists();
     if had_original {
@@ -381,7 +387,7 @@ pub fn write_file(
     }
 
     // Run validator if one matches.
-    if let Some(validator) = find_validator(tunnel, &path) {
+    if let Some(validator) = validator {
         if let Err(msg) = validator.validate_file(&path) {
             tracing::warn!("validation failed for {}: {msg}", path.display());
             // Rollback: restore original or remove newly created file.
