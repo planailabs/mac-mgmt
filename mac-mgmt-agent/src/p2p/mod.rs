@@ -29,6 +29,14 @@ use discovery::{BackendAdvertisement, PeerRegistry};
 use protocols::ai_proxy;
 use relay_state::{RelayAction, RelayEvent, RelayState};
 
+/// Largest proxied request body accepted from the relay (matches the relay's
+/// own `to_bytes` limit). Bodies arrive as chunked binary frames.
+const MAX_PROXY_BODY: usize = 16 * 1024 * 1024;
+
+/// Largest tunnel handshake frame. Bodies are streamed separately, so a
+/// handshake only ever carries request metadata.
+const MAX_HANDSHAKE_SIZE: u32 = 1024 * 1024;
+
 /// Commands the daemon event loop can send to the P2pManager.
 #[derive(Debug)]
 pub enum P2pCommand {
@@ -1147,7 +1155,14 @@ async fn handle_tunnel_stream(
         return;
     }
     let len = u32::from_be_bytes(len_buf);
-    if len > 1024 * 1024 {
+    if len > MAX_HANDSHAKE_SIZE {
+        // Answer instead of dropping the stream: a bare close reaches the
+        // relay as a connection reset with nothing to report.
+        tracing::warn!(%peer_id, len, "tunnel handshake frame too large");
+        let err = serde_json::json!({ "status": 413, "error": "handshake frame too large" });
+        let _ = mac_mgmt_common::framing::write_json(&mut stream, &err).await;
+        let _ = mac_mgmt_common::framing::write_end(&mut stream).await;
+        let _ = stream.close().await;
         return;
     }
     let mut buf = vec![0u8; len as usize];
@@ -1375,6 +1390,30 @@ async fn handle_streamed_proxy(
         .unwrap_or_default();
     let body_b64 = handshake["body"].as_str().map(String::from);
 
+    // A body too big to inline arrives as binary frames right after the
+    // handshake (see `body_frames` in the relay's proxy handler). Drain it
+    // before any early return, otherwise the relay stays blocked writing it
+    // and never reads the response we send.
+    let streamed_body = if handshake["body_frames"].as_bool().unwrap_or(false) {
+        match stream_framing::read_binary_body(stream, MAX_PROXY_BODY).await {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                write_proxy_error(
+                    stream,
+                    &headers,
+                    413,
+                    "payload-too-large-title",
+                    "payload-too-large-body",
+                    &format!("request body: {e}"),
+                )
+                .await;
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
     let tunnel_defs = handler_state.tunnel_defs.read().await;
     let Some(target) = tunnel_defs.get(tunnel_name).cloned() else {
         write_proxy_error(
@@ -1440,7 +1479,11 @@ async fn handle_streamed_proxy(
     );
     let req =
         proxy_helpers::apply_headers_vec(req, &headers, handler_state.fake_origin_local, &target);
-    let req = proxy_helpers::apply_body_b64(req, body_b64);
+
+    let req = match streamed_body {
+        Some(bytes) => req.body(bytes),
+        None => proxy_helpers::apply_body_b64(req, body_b64),
+    };
 
     // reqwest's timeout covers the whole request INCLUDING body streaming.
     // Event-stream (SSE) responses are intentionally unbounded, so a total
@@ -1637,14 +1680,30 @@ async fn handle_file_write_stream(
     let path = handshake["path"].as_str();
     let expected_mtime = handshake["expected_mtime"].as_i64();
 
-    // Decode base64 data from handshake.
-    let content = handshake["data"]
-        .as_str()
-        .and_then(|d| {
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD.decode(d).ok()
-        })
-        .unwrap_or_default();
+    // Content either rides inline in the handshake (small files) or arrives as
+    // binary frames after it (see `data_frames` in the relay's file_write).
+    let content = if handshake["data_frames"].as_bool().unwrap_or(false) {
+        match stream_framing::read_binary_body(stream, crate::file_tunnels::MAX_FILE_SIZE as usize)
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                let resp =
+                    serde_json::json!({ "status": 413, "body": { "error": "file too large" } });
+                let _ = stream_framing::write_json(stream, &resp).await;
+                let _ = stream_framing::write_end(stream).await;
+                return;
+            }
+        }
+    } else {
+        handshake["data"]
+            .as_str()
+            .and_then(|d| {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.decode(d).ok()
+            })
+            .unwrap_or_default()
+    };
 
     let registry = handler_state.file_tunnel_registry.read().await;
     let Some(tunnel) = registry.get(tunnel_name) else {

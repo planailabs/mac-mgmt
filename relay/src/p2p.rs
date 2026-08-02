@@ -452,6 +452,15 @@ async fn handle_daemon_rpc(
                 let mut payload = outbound.payload;
                 payload["id"] = serde_json::Value::Number(id.into());
                 let data = serde_json::to_vec(&payload).unwrap_or_default();
+                // Sending an oversized frame makes the daemon tear down the
+                // whole RPC stream — fail just this request instead.
+                if data.len() > mac_mgmt_common::framing::MAX_FRAME_SIZE as usize {
+                    tracing::warn!(%peer_id, len = data.len(), "dropping oversized RPC request");
+                    let _ = outbound
+                        .response_tx
+                        .send(Err("request too large for RPC frame".to_string()));
+                    continue;
+                }
                 let _ = writer.write_all(&(data.len() as u32).to_be_bytes()).await;
                 let _ = writer.write_all(&data).await;
                 let _ = writer.flush().await;

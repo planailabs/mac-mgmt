@@ -52,6 +52,61 @@ async fn validate_token_cached(server_api_url: &str, token: &str) -> Result<Self
 
 const PROXY_TOKEN_COOKIE: &str = "proxy_token";
 
+/// Request bodies up to this size ride along inside the handshake frame as
+/// base64; larger ones are streamed as separate binary frames.
+///
+/// The daemon caps the handshake frame at 1 MiB and base64 inflates by 4/3,
+/// so anything bigger inline makes the daemon drop the stream mid-request —
+/// which surfaces as a connection reset instead of a response.
+const INLINE_BODY_LIMIT: usize = 256 * 1024;
+
+/// Decide how a request body reaches the daemon: base64 inside the handshake
+/// frame, or as chunked binary frames written after it.
+///
+/// Returns `(inline_base64, stream_as_frames)`. Keeping small bodies inline
+/// also keeps daemons that predate the framed body path working.
+fn body_placement(body: &[u8]) -> (Option<String>, bool) {
+    if body.is_empty() {
+        return (None, false);
+    }
+    if body.len() > INLINE_BODY_LIMIT {
+        return (None, true);
+    }
+    use base64::Engine;
+    (
+        Some(base64::engine::general_purpose::STANDARD.encode(body)),
+        false,
+    )
+}
+
+#[cfg(test)]
+mod body_placement_tests {
+    use super::*;
+
+    #[test]
+    fn small_bodies_stay_inline() {
+        let (inline, streamed) = body_placement(b"hello");
+        assert_eq!(inline.as_deref(), Some("aGVsbG8="));
+        assert!(!streamed);
+    }
+
+    #[test]
+    fn empty_body_is_neither() {
+        assert_eq!(body_placement(b""), (None, false));
+    }
+
+    #[test]
+    fn oversized_bodies_are_streamed_not_inlined() {
+        let (inline, streamed) = body_placement(&vec![0u8; INLINE_BODY_LIMIT + 1]);
+        assert!(inline.is_none());
+        assert!(streamed);
+        // Base64 of the largest inline body must still fit the daemon's 1 MiB
+        // handshake cap, with room for headers.
+        let (inline, _) = body_placement(&vec![0u8; INLINE_BODY_LIMIT]);
+        assert!(inline.unwrap().len() < 1024 * 1024 - 64 * 1024);
+    }
+}
+
 #[derive(Clone)]
 pub struct ProxyState {
     pub registry: Arc<DaemonRegistry>,
@@ -727,12 +782,7 @@ async fn proxy_catchall(
         }
     };
 
-    let body_b64 = if body_bytes.is_empty() {
-        None
-    } else {
-        use base64::Engine;
-        Some(base64::engine::general_purpose::STANDARD.encode(&body_bytes))
-    };
+    let (body_b64, stream_body) = body_placement(&body_bytes);
 
     tracing::debug!("proxy {method} {path} -> {instance_id}/{tunnel_name} via tunnel stream");
 
@@ -744,6 +794,7 @@ async fn proxy_catchall(
         "path": path,
         "headers": fwd_headers,
         "body": body_b64,
+        "body_frames": stream_body,
     });
 
     let mut tunnel = match tokio::time::timeout(
@@ -772,7 +823,8 @@ async fn proxy_catchall(
         }
     };
 
-    // Send handshake frame.
+    // Send handshake frame, then the body as binary frames if it was too big
+    // to inline.
     {
         use futures_util::AsyncWriteExt;
         let data = serde_json::to_vec(&handshake).unwrap_or_default();
@@ -786,6 +838,22 @@ async fn proxy_catchall(
             );
         }
         let _ = tunnel.flush().await;
+
+        if stream_body
+            && (mac_mgmt_common::framing::write_binary(&mut tunnel, &body_bytes)
+                .await
+                .is_err()
+                || mac_mgmt_common::framing::write_end(&mut tunnel)
+                    .await
+                    .is_err())
+        {
+            return error_page(
+                &headers,
+                StatusCode::BAD_GATEWAY,
+                "unreachable-title",
+                "unreachable-body",
+            );
+        }
     }
 
     // Read streamed response: JSON header + binary body chunks.
@@ -1081,20 +1149,33 @@ async fn file_write(
         }
     }
 
-    use base64::Engine;
-    let body_b64 = base64::engine::general_purpose::STANDARD.encode(&body_bytes);
+    let (data_b64, stream_data) = body_placement(&body_bytes);
 
     let handshake = serde_json::json!({
         "type": "file_write",
         "tunnel_name": tunnel_name,
         "path": query.path,
         "expected_mtime": query.expected_mtime,
-        "data": body_b64,
+        "data": data_b64,
+        "data_frames": stream_data,
     });
 
-    match crate::tunnel_io::open_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(60))
-        .await
-    {
+    let timeout = Duration::from_secs(60);
+    let result = async {
+        let mut tunnel = crate::tunnel_io::open(&swarm, peer_id, &handshake, timeout).await?;
+        if stream_data {
+            mac_mgmt_common::framing::write_binary(&mut tunnel, &body_bytes)
+                .await
+                .map_err(|_| StatusCode::BAD_GATEWAY)?;
+            mac_mgmt_common::framing::write_end(&mut tunnel)
+                .await
+                .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        }
+        crate::tunnel_io::read_json_frame(&mut tunnel).await
+    }
+    .await;
+
+    match result {
         Ok(resp) => {
             let status = resp["status"].as_u64().unwrap_or(500) as u16;
             axum::response::Response::builder()
