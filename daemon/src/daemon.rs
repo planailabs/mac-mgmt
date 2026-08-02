@@ -306,6 +306,7 @@ impl Daemon {
                 .args(["--repo", &repo])
                 .args(["--password-file", &pw])
                 .args(["--json"])
+                .args(Restic::repo_opts(&repo))
                 .envs(&env);
             for pattern in &excludes {
                 cmd.args(["--exclude", pattern]);
@@ -338,6 +339,7 @@ impl Daemon {
                     .args(["forget", "--prune", "--keep-within", &keep_within])
                     .args(["--repo", &repo])
                     .args(["--password-file", &pw])
+                    .args(Restic::repo_opts(&repo))
                     .envs(&env),
                 backup_timeout,
             );

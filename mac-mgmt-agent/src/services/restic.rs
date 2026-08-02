@@ -29,6 +29,23 @@ impl Restic {
             .unwrap_or_else(|| crate::config::config_dir().join("restic-key"))
     }
 
+    /// Extra `-o` options for a repository URL.
+    ///
+    /// For SFTP repos, restic shells out to `ssh`, which fails with "Host key
+    /// verification failed" the first time a host is contacted — there is no
+    /// TTY to answer the prompt. `accept-new` pins the key on first connect and
+    /// still refuses a *changed* key later (unlike `no`), so MITM protection
+    /// after the initial trust-on-first-use is kept.
+    pub fn repo_opts(repository: &str) -> Vec<String> {
+        if !repository.starts_with("sftp:") {
+            return Vec::new();
+        }
+        vec![
+            "-o".into(),
+            "sftp.args=-o StrictHostKeyChecking=accept-new".into(),
+        ]
+    }
+
     /// Check if the restic repository has been initialized.
     fn repo_initialized(&self) -> bool {
         let password_file = Self::password_file_path(&self.config);
@@ -40,10 +57,30 @@ impl Restic {
                 .args(["cat", "config"])
                 .args(["--repo", &self.config.repository])
                 .args(["--password-file", &password_file.to_string_lossy()])
+                .args(Self::repo_opts(&self.config.repository))
                 .envs(&self.config.env),
             RESTIC_CMD_TIMEOUT,
         );
         matches!(result, Ok(out) if out.status.success())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_opts_only_for_sftp() {
+        assert_eq!(
+            Restic::repo_opts("sftp:deploy@backup.example:/srv/restic"),
+            vec![
+                "-o".to_string(),
+                "sftp.args=-o StrictHostKeyChecking=accept-new".to_string()
+            ]
+        );
+        // Other backends reject unknown `-o` keys, so pass nothing.
+        assert!(Restic::repo_opts("/mnt/backups").is_empty());
+        assert!(Restic::repo_opts("rest:https://backup.example/repo").is_empty());
     }
 }
 
@@ -114,6 +151,7 @@ impl ManagedService for Restic {
                     .args(["init"])
                     .args(["--repo", &self.config.repository])
                     .args(["--password-file", &password_file.to_string_lossy()])
+                    .args(Self::repo_opts(&self.config.repository))
                     .envs(&self.config.env),
                 RESTIC_CMD_TIMEOUT,
             )
@@ -171,18 +209,23 @@ impl ManagedService for Restic {
         let pw = Self::password_file_path(&self.config)
             .to_string_lossy()
             .into_owned();
+        let opts = Self::repo_opts(&repo);
         vec![
             ShellCommandDef {
                 name: "restic-snapshots".into(),
                 command: "restic".into(),
-                args: vec![
-                    "snapshots".into(),
-                    "--repo".into(),
-                    repo.clone(),
-                    "--password-file".into(),
-                    pw.clone(),
-                    "--json".into(),
-                ],
+                args: [
+                    vec![
+                        "snapshots".into(),
+                        "--repo".into(),
+                        repo.clone(),
+                        "--password-file".into(),
+                        pw.clone(),
+                        "--json".into(),
+                    ],
+                    opts.clone(),
+                ]
+                .concat(),
                 description: "List backup snapshots".into(),
                 arg_template: None,
                 timeout_secs: Some(60),
@@ -190,14 +233,18 @@ impl ManagedService for Restic {
             ShellCommandDef {
                 name: "restic-stats".into(),
                 command: "restic".into(),
-                args: vec![
-                    "stats".into(),
-                    "--repo".into(),
-                    repo.clone(),
-                    "--password-file".into(),
-                    pw.clone(),
-                    "--json".into(),
-                ],
+                args: [
+                    vec![
+                        "stats".into(),
+                        "--repo".into(),
+                        repo.clone(),
+                        "--password-file".into(),
+                        pw.clone(),
+                        "--json".into(),
+                    ],
+                    opts.clone(),
+                ]
+                .concat(),
                 description: "Show backup repository statistics".into(),
                 arg_template: None,
                 timeout_secs: Some(120),
@@ -205,19 +252,23 @@ impl ManagedService for Restic {
             ShellCommandDef {
                 name: "restic-backup-now".into(),
                 command: "restic".into(),
-                args: vec![
-                    "backup".into(),
-                    "--files-from".into(),
-                    crate::config::config_dir()
-                        .join("restic-includes.txt")
-                        .to_string_lossy()
-                        .into_owned(),
-                    "--repo".into(),
-                    repo,
-                    "--password-file".into(),
-                    pw,
-                    "--json".into(),
-                ],
+                args: [
+                    vec![
+                        "backup".into(),
+                        "--files-from".into(),
+                        crate::config::config_dir()
+                            .join("restic-includes.txt")
+                            .to_string_lossy()
+                            .into_owned(),
+                        "--repo".into(),
+                        repo,
+                        "--password-file".into(),
+                        pw,
+                        "--json".into(),
+                    ],
+                    opts,
+                ]
+                .concat(),
                 description: "Run a backup now".into(),
                 arg_template: None,
                 timeout_secs: Some(3600),
