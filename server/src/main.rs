@@ -412,13 +412,17 @@ async fn init_server() -> (
     (pool, api_rocket, healer_state)
 }
 
-/// Install a tracing subscriber that mirrors events to stdout and, when
-/// Sentry is initialised, forwards ERROR/WARN events as Sentry breadcrumbs
-/// and errors. Safe to call from either server-api-only or the full webui
-/// mode — the webui path otherwise relies on whatever dioxus sets up.
+/// Install a tracing subscriber that mirrors events to stdout, forwards
+/// ERROR/WARN events to Sentry when it is initialised, and — when
+/// `[opentelemetry]` names a collector — exports spans, metrics and log
+/// records over OTLP. Safe to call from either server-api-only or the full
+/// webui mode; the webui path otherwise relies on whatever dioxus sets up.
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 fn init_tracing() {
-    mac_mgmt_common::tracing_init::init_tracing_with_sentry("info");
+    // Publishes OTEL_* for the exporter to read, without overriding anything
+    // the environment already set. Must run before any thread spawns.
+    config::load().opentelemetry.apply_env();
+    mac_mgmt_common::otel::init("mac-mgmt-server", "info");
 }
 
 #[cfg(any(feature = "server", feature = "server-api-only"))]
@@ -791,6 +795,10 @@ fn main() {
                 } else {
                     rocket_task.abort();
                 }
+
+                // The batch processors buffer; without this the final batch —
+                // covering the shutdown itself — never leaves the process.
+                mac_mgmt_common::otel::shutdown();
             });
     }
 
@@ -821,6 +829,10 @@ fn main() {
             if let Err(e) = api_rocket.launch().await {
                 tracing::error!("API server failed: {e}");
             }
+
+            // The batch processors buffer; without this the final batch —
+            // covering the shutdown itself — never leaves the process.
+            mac_mgmt_common::otel::shutdown();
         });
     }
 

@@ -27,6 +27,11 @@ pub struct ServerConfig {
     pub models: Vec<LlmModelEntry>,
     #[serde(default)]
     pub sentry: SentryConfig,
+    /// OTLP export target. Translated into the standard `OTEL_*` variables
+    /// before the exporter is built, so an operator can still override any of
+    /// them from the environment.
+    #[serde(default)]
+    pub opentelemetry: mac_mgmt_common::OpenTelemetryConfig,
     #[serde(default)]
     pub git: GitConfig,
     #[serde(default)]

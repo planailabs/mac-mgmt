@@ -469,6 +469,9 @@ pub fn build_rocket(
     }
 
     rocket::custom(config)
+        // Server spans with W3C context extraction, so a daemon's trace
+        // continues into the API instead of starting a second one.
+        .attach(mac_mgmt_common::otel::rocket::OtelFairing)
         .manage(pool)
         .manage(push_channels)
         .manage(healer_state)

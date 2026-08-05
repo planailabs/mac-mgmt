@@ -471,5 +471,16 @@ pub async fn get_metrics(
         tracing::warn!("metrics: healer tokens query failed: {e}");
     }
 
+    // The server's own OpenTelemetry instruments (request durations, event
+    // counts, uptime), rendered through the Prometheus converter. Admin scope
+    // only: a cluster- or org-scoped token has no business seeing whole-process
+    // internals, and none of these series carry a cluster label to filter on.
+    if matches!(auth.scope, MetricsScope::All) {
+        match mac_mgmt_common::metrics::prom::encode() {
+            Ok(text) => out.push_str(&text),
+            Err(e) => tracing::warn!("metrics: otel encode failed: {e}"),
+        }
+    }
+
     Ok(PrometheusText(out))
 }
