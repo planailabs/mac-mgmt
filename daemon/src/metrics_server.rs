@@ -117,6 +117,9 @@ pub fn build_rocket(
     };
 
     rocket::custom(config)
+        // /metrics and /logs are excluded inside the fairing — the scrape and
+        // the dashboard's log poll are constant traffic.
+        .attach(mac_mgmt_common::otel::rocket::OtelFairing)
         .manage(metrics)
         .manage(log_buf)
         .manage(sync_trigger)

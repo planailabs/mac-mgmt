@@ -75,7 +75,7 @@ russh = { version = "0.60", default-features = false, features = ["ring", "flate
 rand = "0.9"
 futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
-mac-mgmt-common = { path = "../common", features = ["sentry"] }
+mac-mgmt-common = { path = "../common", features = ["sentry", "otel-rocket", "otel-prometheus"] }
 mac-mgmt-services = { path = "../mac-mgmt-services" }
 mac-mgmt-agent = { path = "../mac-mgmt-agent" }
 axum = { version = "0.8", optional = true }

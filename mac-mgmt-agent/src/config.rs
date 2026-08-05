@@ -58,6 +58,31 @@ pub fn read_metrics_port() -> u16 {
         .unwrap_or(DEFAULT_METRICS_PORT)
 }
 
+/// Read the `[opentelemetry]` section before the full (async, network-backed)
+/// config load, so the exporter can be configured while the process is still
+/// single-threaded. Same remote-then-local precedence as [`load`], using the
+/// cached copy of the server's config — a change the server pushes therefore
+/// takes effect on the next daemon restart, like `metrics.port`.
+pub fn read_opentelemetry() -> mac_mgmt_common::OpenTelemetryConfig {
+    let local = std::fs::read_to_string(config_path())
+        .ok()
+        .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+        .and_then(|v| serde_json::to_value(v).ok());
+
+    let mut merged = match load_cached_remote_config() {
+        Some(remote) => remote,
+        None => serde_json::Value::Object(Default::default()),
+    };
+    if let Some(local) = local {
+        merge_json(&mut merged, &local);
+    }
+
+    merged
+        .get("opentelemetry")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default()
+}
+
 pub fn merge_json(base: &mut serde_json::Value, overlay: &serde_json::Value) {
     match (base, overlay) {
         (serde_json::Value::Object(b), serde_json::Value::Object(o)) => {

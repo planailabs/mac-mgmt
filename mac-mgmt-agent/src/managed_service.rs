@@ -274,17 +274,16 @@ pub trait ManagedService: Send + Sync {
         false
     }
 
-    /// Return Prometheus metric collectors owned by this service.
-    /// Called once during init; the daemon registers them with its Registry.
-    /// Services should create and store their metrics in their struct and
-    /// update them in `collect_metrics()`.
-    fn metric_collectors(&self) -> Vec<Box<dyn prometheus::core::Collector>> {
-        Vec::new()
-    }
+    /// Register the OpenTelemetry instruments this service reports. Called
+    /// once during init, after the meter provider is installed. Services keep
+    /// the observed value in their own struct (an atomic, so the observable
+    /// callback can read it) and refresh it in `collect_metrics`; see
+    /// [`crate::metrics::observable_gauge`].
+    fn register_metrics(&self) {}
 
     /// Update custom metrics from the running service. Called on each
-    /// health tick. Services should update the metrics they registered
-    /// via `metric_collectors()`.
+    /// health tick. Services should update the values behind the instruments
+    /// they registered in `register_metrics()`.
     fn collect_metrics(&self) {}
 
     /// Return the TCP tunnels this service exposes for browser proxying

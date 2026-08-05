@@ -197,14 +197,25 @@ pub async fn main() -> ! {
 
     let log_buf = log_buffer::LogBuffer::new();
 
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    // Publish [opentelemetry] as the OTEL_* variables the exporter reads,
+    // before any thread spawns. Read from the config file directly: the full
+    // load needs the network, and the subscriber has to exist before that.
+    mac_mgmt_daemon::config::read_opentelemetry().apply_env();
+
+    let env_filter = tracing_subscriber::EnvFilter::new(
+        // RUST_LOG when set, plus the directives that keep the exporter's own
+        // HTTP stack from tracing itself into a feedback loop.
+        mac_mgmt_common::otel::effective_filter("info"),
+    );
     let (filter_layer, filter_handle) = tracing_subscriber::reload::Layer::new(env_filter);
 
     tracing_subscriber::registry()
         .with(filter_layer)
         .with(tracing_subscriber::fmt::layer())
         .with(log_layer::BufferLayer::new(log_buf.clone()))
+        // Spans, log records and metrics to the collector when one is
+        // configured; empty otherwise, so a host without one stays quiet.
+        .with(mac_mgmt_common::otel::layers("mac-mgmt-daemon"))
         .init();
 
     const ENVIRONMENT: &str = match option_env!("ENVIRONMENT") {
@@ -221,6 +232,9 @@ pub async fn main() -> ! {
     let cli = Cli::parse();
 
     let result = run(cli, log_buf, filter_handle).await;
+    // The batch processors buffer; without this the final batch — covering
+    // whatever brought the daemon down — never leaves the process.
+    mac_mgmt_common::otel::shutdown();
     match result {
         Ok(()) => std::process::exit(0),
         Err(e) => {

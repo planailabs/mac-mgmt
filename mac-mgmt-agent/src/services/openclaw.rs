@@ -77,19 +77,16 @@ fn openclaw_cmd() -> Command {
 
 pub struct OpenClaw {
     config: OpenClawConfig,
-    active_sessions: prometheus::IntGauge,
+    /// Read by the observable gauge at collection time, written by
+    /// `collect_metrics` on each health tick.
+    active_sessions: std::sync::Arc<std::sync::atomic::AtomicI64>,
 }
 
 impl OpenClaw {
     pub fn new(config: OpenClawConfig) -> Self {
-        let active_sessions = prometheus::IntGauge::new(
-            "mac_mgmt_openclaw_active_sessions",
-            "Number of active openclaw sessions",
-        )
-        .unwrap();
         Self {
             config,
-            active_sessions,
+            active_sessions: Default::default(),
         }
     }
 
@@ -431,13 +428,19 @@ impl ManagedService for OpenClaw {
         Ok(count > 0)
     }
 
-    fn metric_collectors(&self) -> Vec<Box<dyn prometheus::core::Collector>> {
-        vec![Box::new(self.active_sessions.clone())]
+    fn register_metrics(&self) {
+        crate::metrics::observable_gauge(
+            "mac_mgmt_openclaw_active_sessions",
+            "Number of active openclaw sessions",
+            std::sync::Arc::clone(&self.active_sessions),
+        );
     }
 
     fn collect_metrics(&self) {
-        self.active_sessions
-            .set(Self::active_session_count() as i64);
+        self.active_sessions.store(
+            Self::active_session_count() as i64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     fn data_paths(&self, home: &std::path::Path) -> Vec<DataPath> {

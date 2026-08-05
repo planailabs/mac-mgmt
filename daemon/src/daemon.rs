@@ -234,6 +234,13 @@ impl Daemon {
                         "metrics.port changed \u{2014} daemon restart required to apply"
                     );
                 }
+                // The exporter reads its endpoint once, at startup, before any
+                // thread exists — the environment can't be rewritten safely now.
+                if new_cfg.opentelemetry.server != self.current_cfg.opentelemetry.server {
+                    tracing::warn!(
+                        "opentelemetry.server changed \u{2014} daemon restart required to apply"
+                    );
+                }
                 if new_cfg.daemon.log_level != self.current_cfg.daemon.log_level {
                     tracing::info!("log_level changed to {}", new_cfg.daemon.log_level);
                     set_log_level(&new_cfg.daemon.log_level);

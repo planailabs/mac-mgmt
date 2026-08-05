@@ -640,14 +640,11 @@ impl ServiceManager {
         }
     }
 
-    /// Register service-specific Prometheus metrics with the given Metrics instance.
-    pub fn register_metrics(&self, metrics: &Metrics) {
+    /// Let each service register its own OpenTelemetry instruments. Called
+    /// once at startup, after the meter provider is installed.
+    pub fn register_metrics(&self, _metrics: &Metrics) {
         for s in &self.services {
-            for collector in s.service.metric_collectors() {
-                if let Err(e) = metrics.register_collector(collector) {
-                    tracing::warn!("{}: failed to register metric: {e}", s.name);
-                }
-            }
+            s.service.register_metrics();
         }
     }
 
@@ -1405,30 +1402,21 @@ impl ServiceManager {
         busy: bool,
         phase: ServicePhase,
     ) {
-        metrics
-            .service_healthy
-            .with_label_values(&[name])
-            .set(if healthy { 1 } else { 0 });
-        metrics
-            .service_upgrade_pending
-            .with_label_values(&[name])
-            .set(if upgrade_pending { 1 } else { 0 });
-        metrics
-            .service_busy
-            .with_label_values(&[name])
-            .set(if busy { 1 } else { 0 });
-        metrics
-            .service_phase
-            .with_label_values(&[name])
-            .set(match phase {
-                ServicePhase::Installing => 5,
-                ServicePhase::InstallFailed => 6,
+        metrics.set_service_state(
+            name,
+            healthy,
+            upgrade_pending,
+            busy,
+            match phase {
                 ServicePhase::Stopped => 0,
                 ServicePhase::Starting => 1,
                 ServicePhase::Healthy => 2,
                 ServicePhase::Unhealthy => 3,
                 ServicePhase::CrashBackoff => 4,
-            });
+                ServicePhase::Installing => 5,
+                ServicePhase::InstallFailed => 6,
+            },
+        );
     }
 
     // ── Schedule restart ─────────────────────────────────────────────

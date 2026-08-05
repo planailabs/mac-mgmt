@@ -27,21 +27,18 @@ fn other_flavour_pkgs(flavour: &str) -> Vec<String> {
 
 pub struct Ollama {
     config: OllamaConfig,
-    loaded_models: prometheus::IntGauge,
+    /// Read by the observable gauge at collection time, written by
+    /// `collect_metrics` on each health tick.
+    loaded_models: std::sync::Arc<std::sync::atomic::AtomicI64>,
     /// Hash of the ollama-env file at last spawn, to detect changes.
     last_env_hash: std::sync::atomic::AtomicU64,
 }
 
 impl Ollama {
     pub fn new(config: OllamaConfig) -> Self {
-        let loaded_models = prometheus::IntGauge::new(
-            "mac_mgmt_ollama_loaded_models",
-            "Number of models currently loaded in ollama",
-        )
-        .unwrap();
         Self {
             config,
-            loaded_models,
+            loaded_models: Default::default(),
             last_env_hash: std::sync::atomic::AtomicU64::new(0),
         }
     }
@@ -234,12 +231,19 @@ impl ManagedService for Ollama {
         last != 0 && current != last
     }
 
-    fn metric_collectors(&self) -> Vec<Box<dyn prometheus::core::Collector>> {
-        vec![Box::new(self.loaded_models.clone())]
+    fn register_metrics(&self) {
+        crate::metrics::observable_gauge(
+            "mac_mgmt_ollama_loaded_models",
+            "Number of models currently loaded in ollama",
+            std::sync::Arc::clone(&self.loaded_models),
+        );
     }
 
     fn collect_metrics(&self) {
-        self.loaded_models.set(self.loaded_model_count() as i64);
+        self.loaded_models.store(
+            self.loaded_model_count() as i64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     fn data_paths(&self, home: &std::path::Path) -> Vec<DataPath> {
