@@ -47,6 +47,8 @@ pub fn router(
         proxy_url,
     };
 
+    use mac_mgmt_common::otel::http as otel_http;
+
     Router::new()
         .route(
             "/api/daemon/{instance_id}/metrics/{*path}",
@@ -57,6 +59,11 @@ pub fn router(
         .route("/api/ssh", get(list_ssh_targets))
         .route("/api/batch/instances", get(batch_instances))
         .route("/certificate-info", get(certificate_info))
+        // A layer applies to the routes registered above it, so /metrics and
+        // /health below stay untraced — scrape and probe traffic is constant
+        // and would be pure export volume.
+        .layer(otel_http::trace_layer())
+        .layer(middleware::from_fn(otel_http::record_request_metrics))
         .route("/metrics", get(federated_metrics))
         .route("/health", get(health))
         .layer(middleware::from_fn(security_headers))
@@ -572,6 +579,13 @@ async fn federated_metrics(
         &[],
         target_count as f64,
     );
+
+    // The relay's own OpenTelemetry metrics, rendered through the Prometheus
+    // converter. Collecting runs the observable callbacks, so gauges read at
+    // scrape time — same as the federated daemon series next to them.
+    for fam in mac_mgmt_common::metrics::prom::registry().gather() {
+        merge_family(&mut families, fam);
+    }
 
     let families_vec: Vec<_> = families.into_values().collect();
     match encode_families(&families_vec) {

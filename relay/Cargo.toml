@@ -44,4 +44,4 @@ x509-parser = "0.16"
 rcgen = "0.13"
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1", "http2", "server-auto"] }
-mac-mgmt-common = { path = "../common" }
+mac-mgmt-common = { path = "../common", features = ["otel-axum", "otel-prometheus"] }

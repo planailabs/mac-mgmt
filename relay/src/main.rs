@@ -8,7 +8,6 @@ use axum_extra::extract::Host;
 use clap::Parser;
 use std::sync::Arc;
 use tower::ServiceExt;
-use tracing_subscriber::EnvFilter;
 
 mod api;
 mod auth;
@@ -42,9 +41,10 @@ async fn main() -> Result<()> {
         .install_default()
         .expect("failed to install rustls ring crypto provider");
 
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
+    // Traces, metrics and logs over OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is
+    // set; a plain stdout subscriber otherwise. Metrics are collected either
+    // way — /metrics renders them alongside the federated daemon series.
+    mac_mgmt_common::otel::init("mac-mgmt-relay", "info");
 
     let cli = Cli::parse();
     let mut cfg = config::load(&cli.config)?;
@@ -313,13 +313,18 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
     tracing::info!("relay listening on {} (HTTPS)", cfg.listen_addr);
 
-    mtls::serve_tls(
+    let served = mtls::serve_tls(
         listener,
         tls_main,
         tls_quiet,
         cfg.proxy_hostname.clone(),
         app,
     )
-    .await?;
+    .await;
+
+    // The batch processors buffer, so the last batch — the one covering
+    // whatever brought the relay down — is exactly what's lost without this.
+    mac_mgmt_common::otel::shutdown();
+    served?;
     Ok(())
 }
