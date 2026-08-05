@@ -41,13 +41,17 @@ async fn main() -> Result<()> {
         .install_default()
         .expect("failed to install rustls ring crypto provider");
 
-    // Traces, metrics and logs over OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is
-    // set; a plain stdout subscriber otherwise. Metrics are collected either
-    // way — /metrics renders them alongside the federated daemon series.
-    mac_mgmt_common::otel::init("mac-mgmt-relay", "info");
-
     let cli = Cli::parse();
     let mut cfg = config::load(&cli.config)?;
+
+    // Before any thread starts, and before the exporter reads its settings:
+    // [opentelemetry] only fills in variables the environment didn't already
+    // set, so OTEL_* from the unit file still wins.
+    cfg.opentelemetry.apply_env();
+    // Traces, metrics and logs over OTLP when an endpoint is configured; a
+    // plain stdout subscriber otherwise. Metrics are collected either way —
+    // /metrics renders them alongside the federated daemon series.
+    mac_mgmt_common::otel::init("mac-mgmt-relay", "info");
 
     // Default proxy_url to https://{listen_addr} if not explicitly set.
     // This ensures the healer gets a working URL in dev/localhost setups.

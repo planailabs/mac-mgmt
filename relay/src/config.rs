@@ -18,6 +18,12 @@ pub struct RelayConfig {
     /// Server API URL for token validation (e.g., "http://localhost:7378")
     pub server_api_url: String,
 
+    /// OTLP export target. Translated into the standard `OTEL_*` variables
+    /// before the exporter is built, so an operator can still override any of
+    /// them from the environment.
+    #[serde(default)]
+    pub opentelemetry: mac_mgmt_common::OpenTelemetryConfig,
+
     /// Maximum number of concurrent daemon connections (default: 1000)
     #[serde(default = "default_max_daemons")]
     pub max_daemons: usize,
