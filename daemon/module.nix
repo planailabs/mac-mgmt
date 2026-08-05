@@ -22,9 +22,13 @@ let
     StateDirectory = "mac-mgmt";
     WorkingDirectory = stateDir;
     RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" "AF_NETLINK" ];
-  } // lib.optionalAttrs (cfg.environmentFile != null) {
-    EnvironmentFile = cfg.environmentFile;
+  } // lib.optionalAttrs (envFiles != [ ]) {
+    # Read after Environment=, so a secret here wins over the store-visible
+    # otlpHeaders in config.toml.
+    EnvironmentFile = envFiles;
   };
+
+  envFiles = lib.filter (f: f != null) [ cfg.environmentFile cfg.otlpHeadersFile ];
 
   # Shared unit fields for both daemon and services-supervisor.
   commonUnitAttrs = {
@@ -48,7 +52,7 @@ let
   };
 in
 {
-  options.services.mac-mgmt = {
+  options.services.mac-mgmt = (import ../otel-options.nix { inherit lib; }) // {
     enable = lib.mkEnableOption "mac-mgmt daemon";
 
     serverUrl = lib.mkOption {
@@ -160,6 +164,11 @@ in
       serviceConfig = commonServiceConfig // {
         ExecStart = "${pkgs.bashInteractive}/bin/bash -lc 'exec ${binPath} daemon'";
       };
+    };
+
+    services.mac-mgmt.settings.opentelemetry = lib.mkIf (cfg.otlpEndpoint != null) {
+      server = cfg.otlpEndpoint;
+      headers = lib.mapAttrsToList (key: value: { inherit key value; }) cfg.otlpHeaders;
     };
 
     systemd.services.mac-mgmt-services = commonUnitAttrs // {

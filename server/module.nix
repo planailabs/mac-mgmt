@@ -9,9 +9,12 @@ let
   cfg = config.services.mac-mgmt-server;
   settingsFormat = pkgs.formats.toml { };
   configFile = settingsFormat.generate "config.toml" cfg.settings;
+  # Read after Environment=, so a secret here wins over the store-visible
+  # otlpHeaders in config.toml.
+  envFiles = lib.filter (f: f != null) [ cfg.environmentFile cfg.otlpHeadersFile ];
 in
 {
-  options.services.mac-mgmt-server = {
+  options.services.mac-mgmt-server = (import ../otel-options.nix { inherit lib; }) // {
     enable = lib.mkEnableOption "mac-mgmt server";
 
     package = lib.mkPackageOption pkgs "mac-mgmt-server" { };
@@ -97,13 +100,17 @@ in
         RestrictNamespaces = true;
         RestrictRealtime = true;
         SystemCallArchitectures = "native";
-      } // lib.optionalAttrs (cfg.environmentFile != null) {
-        EnvironmentFile = cfg.environmentFile;
+      } // lib.optionalAttrs (envFiles != [ ]) {
+        EnvironmentFile = envFiles;
       };
     };
 
     services.mac-mgmt-server.settings = {
       database.url = "postgres:///mac-mgmt?host=/run/postgresql";
+      opentelemetry = lib.mkIf (cfg.otlpEndpoint != null) {
+        server = cfg.otlpEndpoint;
+        headers = lib.mapAttrsToList (key: value: { inherit key value; }) cfg.otlpHeaders;
+      };
     };
 
     services.postgresql = {
