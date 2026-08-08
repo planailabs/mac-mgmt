@@ -17,7 +17,7 @@ rustPlatform.buildRustPackage {
     rm design
     mv design-canonical design
     rm -rf memvault/plan-ai-design
-    ln -s ../../design memvault/plan-ai-design
+    ln -s ../design memvault/plan-ai-design
   '';
 
   doCheck = false;
