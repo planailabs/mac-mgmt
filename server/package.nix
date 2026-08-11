@@ -30,8 +30,11 @@ rustPlatform.buildRustPackage {
   cargoBuildFlags = [ "-p" "mac-mgmt-server" ];
 
   postPatch = ''
-    rm -rf design
-    ln -s memvault/plan-ai-design design
+    cp -rL design design-canonical
+    rm design
+    mv design-canonical design
+    substituteInPlace memvault/crates/memvault-web/Cargo.toml \
+      --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
   '';
 
   nativeBuildInputs = [
