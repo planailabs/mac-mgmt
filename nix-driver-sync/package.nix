@@ -13,11 +13,8 @@ rustPlatform.buildRustPackage {
   cargoBuildFlags = [ "-p" "nix-driver-sync" ];
 
   postPatch = ''
-    cp -rL design design-canonical
-    rm design
-    mv design-canonical design
-    rm -rf memvault/plan-ai-design
-    ln -s ../design memvault/plan-ai-design
+    rm -rf design
+    ln -s memvault/plan-ai-design design
   '';
 
   doCheck = false;
