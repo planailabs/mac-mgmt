@@ -28,6 +28,13 @@ let
     cargoLock.lockFile = ../Cargo.lock;
     cargoLock.outputHashes = import ../extra-hashes.nix;
     cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" "--features" "relay" ];
+    postPatch = ''
+      cp -rL design design-canonical
+      rm design
+      mv design-canonical design
+      substituteInPlace memvault/crates/memvault-web/Cargo.toml \
+        --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
+    '';
     nativeBuildInputs = [ pkgs.lld ];
     env.MEMVAULT_EXTRACT_GUEST_TEXT_WASM = "${pkgs.memvault-extract-guest-text-wasm}/memvault_extract_guest_text.wasm";
     env.MEMVAULT_EXTRACT_GUEST_PDFRENDER_WASM = "${pkgs.memvault-extract-guest-pdfrender-wasm}/memvault_extract_guest_pdfrender.wasm";

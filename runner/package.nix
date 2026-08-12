@@ -16,6 +16,14 @@ rustPlatform.buildRustPackage {
   cargoBuildFlags = [ "-p" "mac-mgmt-runner" ];
   env.GIT_SHA = gitSha;
 
+  postPatch = ''
+    cp -rL design design-canonical
+    rm design
+    mv design-canonical design
+    substituteInPlace memvault/crates/memvault-web/Cargo.toml \
+      --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
+  '';
+
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [ openssl ];
 

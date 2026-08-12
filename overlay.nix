@@ -104,6 +104,13 @@ in
     cargoLock.lockFile = ./Cargo.lock;
     cargoLock.outputHashes = import ./extra-hashes.nix;
     cargoTestFlags = [ "-p" "mac-mgmt" ];
+    postPatch = ''
+      cp -rL design design-canonical
+      rm design
+      mv design-canonical design
+      substituteInPlace memvault/crates/memvault-web/Cargo.toml \
+        --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
+    '';
     nativeBuildInputs = [
       prev.nodejs
       prev.tailwindcss_3

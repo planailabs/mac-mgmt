@@ -16,6 +16,14 @@ rustPlatform.buildRustPackage {
   cargoBuildFlags = [ "-p" "mmr-causality" ];
   env.GIT_SHA = gitSha;
 
+  postPatch = ''
+    cp -rL design design-canonical
+    rm design
+    mv design-canonical design
+    substituteInPlace memvault/crates/memvault-web/Cargo.toml \
+      --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
+  '';
+
   doCheck = false;
 
   meta = {

@@ -32,6 +32,13 @@ let
     cargoLock.lockFile = ../Cargo.lock;
     cargoLock.outputHashes = import ../extra-hashes.nix;
     cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" "--features" "usb" ];
+    postPatch = ''
+      cp -rL design design-canonical
+      rm design
+      mv design-canonical design
+      substituteInPlace memvault/crates/memvault-web/Cargo.toml \
+        --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
+    '';
     # The mac-mgmt USB binary depends on memvault-web even in headless mode, and
     # memvault-web's build script regenerates Tailwind CSS with `npm run
     # tailwind:build`. Keep the Node/Tailwind tools in this derivation so CI

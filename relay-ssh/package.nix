@@ -14,6 +14,14 @@ rustPlatform.buildRustPackage {
 
   cargoBuildFlags = [ "-p" "relay-ssh" ];
 
+  postPatch = ''
+    cp -rL design design-canonical
+    rm design
+    mv design-canonical design
+    substituteInPlace memvault/crates/memvault-web/Cargo.toml \
+      --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
+  '';
+
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [ openssl ];
 
