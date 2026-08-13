@@ -15,8 +15,9 @@ MEMVAULT_MANIFEST="$WEB_DIR/Cargo.toml"
 # The superproject exposes memvault's design checkout through ./design. Cargo
 # keys path packages by their written path, not their resolved inode, so the
 # nested memvault path and the superproject path otherwise become two distinct
-# plan-ai-design packages in one lockfile. Rewrite the nested manifest only for
-# this build, and restore it on every exit so the submodule remains untouched.
+# plan-ai-design packages in one lockfile. Rewrite the nested manifest for this
+# build. Callers that run another workspace Cargo command can keep the canonical
+# path until their lifecycle cleanup; other callers restore it on exit.
 restore_memvault_manifest() {
   if [ -n "${MEMVAULT_MANIFEST_BACKUP:-}" ] && [ -f "$MEMVAULT_MANIFEST_BACKUP" ]; then
     cp "$MEMVAULT_MANIFEST_BACKUP" "$MEMVAULT_MANIFEST"
@@ -25,7 +26,12 @@ restore_memvault_manifest() {
 }
 MEMVAULT_MANIFEST_BACKUP="$(mktemp "${TMPDIR:-/tmp}/memvault-web-Cargo.toml.XXXXXX")"
 cp "$MEMVAULT_MANIFEST" "$MEMVAULT_MANIFEST_BACKUP"
-trap restore_memvault_manifest EXIT
+if [ "${MEMVAULT_KEEP_CANONICAL_MANIFEST:-0}" = "1" ]; then
+  rm -f "$MEMVAULT_MANIFEST_BACKUP"
+  MEMVAULT_MANIFEST_BACKUP=""
+else
+  trap restore_memvault_manifest EXIT
+fi
 python3 - "$MEMVAULT_MANIFEST" <<'PY'
 from pathlib import Path
 import sys
