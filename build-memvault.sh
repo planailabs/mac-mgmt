@@ -32,18 +32,7 @@ if [ "${MEMVAULT_KEEP_CANONICAL_MANIFEST:-0}" = "1" ]; then
 else
   trap restore_memvault_manifest EXIT
 fi
-python3 - "$MEMVAULT_MANIFEST" <<'PY'
-from pathlib import Path
-import sys
-
-manifest = Path(sys.argv[1])
-old = 'plan-ai-design = { path = "../../plan-ai-design" }'
-new = 'plan-ai-design = { path = "../../../design" }'
-text = manifest.read_text()
-if text.count(old) != 1:
-    raise SystemExit(f"expected exactly one canonical design dependency in {manifest}")
-manifest.write_text(text.replace(old, new))
-PY
+python3 "$SCRIPT_DIR/scripts/canonicalize-design-path.py" "$MEMVAULT_MANIFEST"
 
 # Cargo and dx both need a usable Cargo home. CI normally symlinks ~/.cargo to a
 # shared cache volume; if that symlink is broken, dx's nested cargo-metadata run

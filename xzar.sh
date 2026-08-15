@@ -8,6 +8,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 export ENVIRONMENT=production
 
+# Cargo must see one path identity for plan-ai-design across the superproject
+# and memvault workspace. Preserve and restore the submodule manifest so local
+# runs and CI cleanup cannot leave submodule drift behind.
+MEMVAULT_MANIFEST="$SCRIPT_DIR/memvault/crates/memvault-web/Cargo.toml"
+MEMVAULT_MANIFEST_BACKUP="$(mktemp "${TMPDIR:-/tmp}/memvault-web-Cargo.toml.XXXXXX")"
+cp "$MEMVAULT_MANIFEST" "$MEMVAULT_MANIFEST_BACKUP"
+python3 "$SCRIPT_DIR/scripts/canonicalize-design-path.py" "$MEMVAULT_MANIFEST"
+cleanup() {
+  if [ -n "${CARGO_SHIM:-}" ]; then
+    export PATH="${PATH#"$CARGO_SHIM:"}"
+    rm -rf "$CARGO_SHIM"
+  fi
+  cp "$MEMVAULT_MANIFEST_BACKUP" "$MEMVAULT_MANIFEST"
+  rm -f "$MEMVAULT_MANIFEST_BACKUP"
+}
+trap cleanup EXIT
+
 # ── Configure xzar plan.ai cache ────────────────────────────────────
 xzar config add-server planai https://xzar.plan.ai "$XZAR_TOKEN"
 
@@ -105,12 +122,6 @@ fi
 SHIM
 chmod +x "$CARGO_SHIM/cargo"
 export PATH="$CARGO_SHIM:$PATH"
-cleanup_cargo_shim() {
-  export PATH="${PATH#"$CARGO_SHIM:"}"
-  rm -rf "$CARGO_SHIM"
-}
-trap cleanup_cargo_shim EXIT
-
 # ── Linux (musl) ────────────────────────────────────────────────────────
 # libloading (via dioxus→subsecond) emits #[link(name = "dl")] on Linux,
 # but musl libc has dlopen/dlsym built-in — no separate libdl exists.
