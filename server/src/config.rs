@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 static CONFIG: OnceLock<ServerConfig> = OnceLock::new();
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ServerConfig {
     pub database: DatabaseConfig,
     #[serde(default)]
@@ -120,7 +120,7 @@ impl ServerConfig {
 /// `[chat]` — interactive fleet chatbot. The agent's tools are the api-mcp
 /// registry endpoints, dispatched with the chat user's principal; calls at or
 /// above `risk_threshold` pause for human approval in the chat UI.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, schemars::JsonSchema)]
 pub struct ChatConfig {
     /// Master switch. Default off.
     #[serde(default)]
@@ -175,7 +175,7 @@ fn default_chat_idle_park_minutes() -> u64 {
 }
 
 /// Gates the chaos-node registration API. See `server/src/api/chaos.rs`.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, schemars::JsonSchema)]
 pub struct ChaosConfig {
     /// When true, mounts `/api/admin/clusters/<id>/chaos-nodes`. Default false.
     #[serde(default)]
@@ -183,7 +183,7 @@ pub struct ChaosConfig {
 }
 
 /// Runtime server mode — controls which API route modules are active.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ServerMode {
     /// All modules enabled (default).
@@ -197,7 +197,7 @@ pub enum ServerMode {
     SkillImporter,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SkillCentersConfig {
     #[serde(default = "default_skill_center_refresh")]
     pub refresh_interval_secs: u64,
@@ -240,7 +240,7 @@ fn default_nixpkgs_branch() -> String {
     "plan-ai".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GitConfig {
     #[serde(default = "default_git_state_dir")]
     pub state_dir: String,
@@ -275,12 +275,12 @@ impl Default for GitConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AnthropicConfig {
     pub api_key: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct XzarConfig {
     pub url: String,
     pub token: String,
@@ -289,13 +289,13 @@ pub struct XzarConfig {
     pub public_key: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     pub url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApiConfig {
     #[serde(default = "default_api_port")]
@@ -324,7 +324,7 @@ fn default_api_port() -> u16 {
     7378
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WebConfig {
     #[serde(default = "default_web_port")]
@@ -349,7 +349,7 @@ fn default_token_budget() -> u64 {
     200_000
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, schemars::JsonSchema)]
 pub struct HealerConfig {
     /// Ollama base URL. Defaults to http://localhost:11434.
     #[serde(default)]
@@ -434,7 +434,7 @@ fn default_auto_trigger_provider() -> String {
 }
 
 /// A named OpenAI-compatible source for the healer (`[[healer.openai]]`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct OpenAiSourceEntry {
     /// Unique name; used as the provider string in `[[healer.models]]`.
     /// Must not be "ollama"/"anthropic"/"openrouter" and must not contain ':'.
@@ -494,14 +494,14 @@ pub fn default_validator_models() -> Vec<LlmModelEntry> {
     ]
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SecretsConfig {
     /// Base64-encoded 32-byte AES-256 key for encrypting secrets at rest.
     /// Generate with: `openssl rand -base64 32`
     pub encryption_key: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ImporterConfig {
     /// Directory for temporary git clones and builds.
     #[serde(default = "default_importer_work_dir")]
