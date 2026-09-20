@@ -1283,6 +1283,14 @@ fn SectionFieldRow(
             .get("x-secret")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+    // A value something else owns — a connection, a relation, whatever the
+    // host calls it. Shown with where it comes from, and not editable here:
+    // two places to change one value is one too many.
+    let provided_by = resolved
+        .get("x-provided-by")
+        .or_else(|| field_schema.get("x-provided-by"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let model_source_kind = resolved
         .get("x-model-source")
         .or_else(|| field_schema.get("x-model-source"))
@@ -1450,11 +1458,27 @@ fn SectionFieldRow(
                     if !description.is_empty() {
                         p { class: "text-[11px] text-fg-faint mt-0.5 leading-tight", "{description}" }
                     }
+                    if let Some(source) = provided_by.as_ref() {
+                        p { class: "text-[11px] text-brand mt-0.5 leading-tight", "from {source}" }
+                    }
                 }
                 // Input column. On phones it spans both grid columns
                 // (under the label) so the field gets the full row
                 // width; on `sm+` it sits as the middle column.
                 div { class: "min-w-0 col-span-2 sm:col-span-1 space-y-1",
+                    if let Some(source) = provided_by.as_ref() {
+                        div {
+                            class: "input input-sm font-mono text-fg-muted bg-surface-2 truncate",
+                            title: "{source} sets this",
+                            {
+                                match (is_secret, current_value.as_ref().and_then(|v| v.as_str())) {
+                                    (true, Some(_)) => "••••••••".to_string(),
+                                    (_, Some(text)) => text.to_string(),
+                                    _ => "—".to_string(),
+                                }
+                            }
+                        }
+                    } else {
                     {render_field_input(
                         &field_type,
                         &resolved,
@@ -1474,6 +1498,7 @@ fn SectionFieldRow(
                         sync.clone(),
                         field_name.clone(),
                     )}
+                    }
                     // "Select models" button for fields with x-model-source
                     if let Some(ref source_kind) = model_source_kind {
                         {
