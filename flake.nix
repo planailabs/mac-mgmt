@@ -4,10 +4,11 @@
     self.submodules = true;
 
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    # nixos2docker's systemd-in-container patch set currently fails against
-    # systemd 261 in nixpkgs-unstable. Keep only the Docker test images on a
-    # compatible NixOS release until nixos2docker updates its patches.
-    nixpkgs-docker-image.url = "github:NixOS/nixpkgs/nixos-25.11";
+    # The NixOS-in-Docker test images use the same nixpkgs as the rest of the
+    # flake. nixos2docker's systemd-in-container patch set is rebased onto the
+    # systemd version shipped by nixpkgs-unstable; pinning the image base to an
+    # older release (nixos-25.11 / systemd 258.x) makes those patches fail to
+    # apply (src/core/main.c hunk 3), so the split input is no longer used.
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -21,7 +22,7 @@
     xzar.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, nixpkgs-docker-image, rust-overlay, flake-utils, nixos2docker, gitlab-incus-image, xzar, ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, nixos2docker, gitlab-incus-image, xzar, ... }:
     {
       overlays.default = import ./overlay.nix { gitSha = self.rev or self.dirtyRev or "unknown"; };
       nixosModules.default = import ./server/module.nix;
@@ -40,7 +41,7 @@
       # Run:  docker compose -f docker-compose.test.yml up
 
       nixosConfigurations = let
-        dockerImageNixpkgs = nixpkgs-docker-image;
+        dockerImageNixpkgs = nixpkgs;
         x86Pkgs = import nixpkgs {
           system = "x86_64-linux";
           overlays = [ (import rust-overlay) self.overlays.default xzar.overlays.default ];

@@ -73,32 +73,16 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1786593342,
-        "narHash": "sha256-smTKQXMLLStzc8zJevMCckbk3My7SvbbLmPYZUJJKW4=",
+        "lastModified": 1791366222,
+        "narHash": "sha256-o0N4g6uSOIppU7CGToNvGlMf5vC+B6O6ukFHKY/TKOY=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "6b5e5b7a6631f065bf6908986990b37d845f847f",
+        "rev": "39ad350a0602fa0a58a544344e3e9187526ea45c",
         "type": "github"
       },
       "original": {
         "owner": "NixOS",
         "ref": "nixpkgs-unstable",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs-docker-image": {
-      "locked": {
-        "lastModified": 1782847189,
-        "narHash": "sha256-twXPFqFsrrY5r28Zh7Homgcp2gUMBgQ6WDS98Q/3xFI=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "b6018f87da91d19d0ab4cf979885689b469cdd41",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-25.11",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -109,7 +93,6 @@
         "gitlab-incus-image": "gitlab-incus-image",
         "nixos2docker": "nixos2docker",
         "nixpkgs": "nixpkgs",
-        "nixpkgs-docker-image": "nixpkgs-docker-image",
         "rust-overlay": "rust-overlay",
         "xzar": "xzar"
       }
@@ -121,11 +104,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1786762605,
-        "narHash": "sha256-iQpYIhInh8gRx+cSnPtX+Yp2Gg9kr2h+MehETCqRgDo=",
+        "lastModified": 1791535654,
+        "narHash": "sha256-QFgGi6Wgh7AgqPFdAXEmkTgnR0B5M0omheIHvo/02dU=",
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "ad8ebb59d84bcf3780c46f107e1d99eb4ca2fe7f",
+        "rev": "4ca2963243427cb86bd6b4d9ca6010db0162a619",
         "type": "github"
       },
       "original": {
