@@ -182,11 +182,11 @@ The daemon's job is to make the machine match the config and to tell the server 
 found. Its surface is wider than that suggests:
 
 - **Service management.** A `ManagedService` trait
-  (`mac-mgmt-agent/src/managed_service.rs`) with ~25 impls — openclaw, ollama, lms,
-  litellm, hermes (4 variants), opencode, apprise, mcporter, restic, nvidia/rocm-smi,
-  memvault, relay, ai-proxy, swarm, unsloth, custom. Each declares install, spawn,
-  health, tunnels, file tunnels, shell commands and probes; `connectors::build_services`
-  assembles the active set from config. `[[custom-service]]`
+  (`mac-mgmt-agent/src/managed_service.rs`) with ~19 impls — openclaw, ollama, lms,
+  litellm, hermes (+ `hermes-dashboard`, `hermes-webui`), opencode, apprise, mcporter,
+  restic, nvidia/rocm-smi, memvault, relay, ai-proxy, swarm, unsloth, custom. Each
+  declares install, spawn, health, tunnels, file tunnels, shell commands and probes;
+  `connectors::build_services` assembles the active set from config. `[[custom-service]]`
   (`common/src/custom_service.rs`) exposes the same surface declaratively, so a service
   needs no Rust to be supervised.
 - **The supervisor is a separate process.** Services are spawned by `mac-mgmt-services`,
@@ -198,11 +198,13 @@ found. Its surface is wider than that suggests:
   stay on the wire during transition, and every shim carries a
   `// compat: added …, removable after …` comment.
 - **Self-update.** Version check → `nix-store --realise` → symlink swap → restart, gated
-  by an upgrade window. An interval is chosen to avoid all instances restarting at once.
-  There is **no staged rollout and no automatic rollback** in the binary updater; the
-  staged, health-gated machinery is the server's *rollout* feature, which drives which
-  version instances are told to run (see `runner/README.md` and `server/docs/*/rollouts.md`).
-  `canary.rs` is about cloud-provider canary endpoints, not binary rollout.
+  by an **upgrade window** (`[daemon] upgrade_window`), outside which updates are skipped.
+  A store-path mismatch also triggers an update when the version string is unchanged, which
+  catches a re-uploaded build. There is **no staged rollout, no per-instance stagger and no
+  automatic rollback** in the binary updater; the staged, health-gated machinery is the
+  server's *rollout* feature, which drives which version instances are told to run (see
+  `runner/README.md` and `server/docs/*/rollouts.md`). `canary.rs` is about cloud-provider
+  canary endpoints, not binary rollout.
 - **Relay side.** The daemon dials out over libp2p (circuit relay through the relay's
   `p2p_port`), registers file/shell/TCP tunnels, and gets a reserved SSH port with a
   30-day TTL so a reconnect reclaims the same port. No inbound firewall opening needed.
