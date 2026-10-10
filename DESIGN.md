@@ -63,15 +63,16 @@ instances through the relay) and the **runner / mmr-causality** (test fleets on 
 
 ### Three-tier assessment
 
-The fleet view is built from three cadences with different costs, which is what keeps
+The fleet view is built from three tiers of collection (the probe tier splits into
+liveness and functional), each on its own cadence with its own cost — which is what keeps
 the server's tables from growing with instance count × time:
 
 | Tier | Cadence | Cost | What it answers |
 |---|---|---|---|
 | Sample | every heartbeat (1m) | cheap sysinfo | CPU/mem/disk/net/GPU right now |
 | Liveness probe | 60s ±10s | pid/port checks | is the process up |
-| Inventory | 6h | `nix`, disk, security audit | what is this machine |
 | Functional probe | 30m ±120s | a real LLM round-trip | does it actually work |
+| Inventory | 6h | `nix`, disk, security audit | what is this machine |
 
 The jitter is not cosmetic: without it every instance in a cluster would hit the same
 backend in the same second.
