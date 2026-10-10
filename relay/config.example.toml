@@ -1,4 +1,5 @@
 # Address to listen on for WebSocket + REST API
+# (code default is 0.0.0.0:8080; dev setups use 7379)
 listen_addr = "0.0.0.0:7379"
 
 # Port range for dynamically allocated SSH tunnels

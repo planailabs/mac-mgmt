@@ -78,7 +78,7 @@ pub struct ServiceStatus {
 ///
 /// The `Services` variant carries both `statuses` (new) and `names` (legacy)
 /// so that newer daemons can talk to older supervisors and vice-versa; see
-/// [`Response::services_list`] for a helper that normalises the two.
+/// [`Response::services`] for a helper that fills both from one list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {

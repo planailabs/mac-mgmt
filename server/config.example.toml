@@ -204,12 +204,12 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # provider = "ollama"
 # restrict = "healer"                            # healer sessions only
 
-# Secrets vault: encrypted key-value store for daemon secrets (requires "mgmt" feature).
+# Secrets vault: encrypted key-value store for daemon secrets (requires mode = "monolith" or "mgmt").
 # Daemons reference secrets in config via secret:NAME syntax.
 # [secrets]
 # encryption_key = "base64-encoded-32-byte-key"  # generate with: openssl rand -base64 32
 
-# Skill importer: import skills from git repos and ClawHub (requires "skill-importer" feature).
+# Skill importer: import skills from git repos and ClawHub (requires mode = "monolith" or "skill-importer").
 # [importer]
 # work_dir = "/tmp/mac-mgmt-import"               # temp dir for git clones (default)
 # clawhub_url = "https://wry-manatee-359.convex.site"  # ClawHub API URL (default)

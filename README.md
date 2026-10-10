@@ -4,9 +4,9 @@ A fleet management system for AI infrastructure. Manages service installations, 
 
 ## Features
 
-- **Service management** — OpenClaw, Ollama, LM Studio, OpenCode, Apprise, McPorter via a common `ManagedService` trait
+- **Service management** — OpenClaw, Ollama, LM Studio, OpenCode, LiteLLM, Hermes, Apprise, McPorter, Restic and more via a common `ManagedService` trait
 - **GPU support** — NVIDIA (CUDA/nvidia-smi) and AMD (ROCm/rocm-smi) GPU monitoring and driver management
-- **Self-updating daemon** with automatic version checks, rollout stages, and health-gated deployments
+- **Self-updating daemon** with automatic version checks and health-gated deploys (staged rollouts are driven by the server's rollout system)
 - **Health monitoring** — three-tier probes (liveness, functional, regression) with configurable intervals
 - **Nix-based package management** using plan-ai's custom nixpkgs with builtin file validators
 - **SSH relay** — reverse SSH tunnels through a central relay for NAT-traversed remote access
@@ -20,21 +20,28 @@ A fleet management system for AI infrastructure. Manages service installations, 
 
 ## Architecture
 
-The project is a Cargo workspace with 10 crates:
+The project is a Cargo workspace (see [`DESIGN.md`](DESIGN.md) for the system design).
+The main crates:
 
 ```
 mac-mgmt/
-  common/              # Shared types, config structs, wire formats
+  common/              # Shared types, config structs, wire formats (+ plan-ai-* sub-crates)
+  mac-mgmt-agent/      # Reusable agent control plane (assessment, services, relay, config)
   daemon/              # The daemon binary (mac-mgmt)
   server/              # Management server (Dioxus fullstack + Rocket API)
   relay/               # SSH relay and HTTP tunnel proxy (axum)
-  relay-ssh/           # SSH listener helper
+  relay-ssh/           # CLI SSH client into relay-managed machines
   mac-mgmt-ws/         # Shared WebSocket utilities
   mac-mgmt-services/   # Service supervisor (in-process or socket)
   mac-mgmt-healer/     # Self-healing AI agent (swiftide + native tools)
-  runner/              # Update runner binary
+  runner/              # Incus test-fleet orchestrator daemon
+  mmr-causality/       # mmrc CLI + mmrcd chaos orchestrator
   sim-tests/           # Simulation test framework
 ```
+
+`memvault/` and `common/` are git submodules; `design` is a symlink to the nested
+`memvault/plan-ai-design` submodule, kept for Cargo lockfile path identity. Run
+`git submodule update --init --recursive` before building.
 
 ## Quick Start
 
@@ -89,10 +96,16 @@ Probe results are reported via heartbeats (`services_extended`) and dedicated pr
 | **Ollama** | `ollama` / `ollama-rocm` / `ollama-cuda` | HTTP GET `/` | ROCm, CUDA |
 | **LM Studio** | `lmstudio` | `lms server status --json` | — |
 | **OpenCode** | `opencode` | Functional probe | — |
+| **LiteLLM** | `litellm` | HTTP health endpoint | — |
+| **Hermes** | `hermes` | Functional probe | — |
 | **Apprise** | `apprise` | Liveness check | — |
 | **McPorter** | `mcporter` | Liveness check | — |
+| **Restic** | `restic` | Liveness check | — |
 | **NVIDIA SMI** | `cudatoolkit` | GPU metrics collection | CUDA |
 | **ROCm SMI** | `rocm-smi` | GPU metrics collection | ROCm |
+
+The full set (including Memvault, the relay, the AI proxy and `[[custom-service]]`
+entries) is assembled by `connectors::build_services` in `mac-mgmt-agent`.
 
 ### File tunnel validators
 
@@ -166,7 +179,7 @@ anthropic_model = "claude-sonnet-4-6"
 token_budget = 200000  # auto-pause per cloud session
 ```
 
-### Agent tools (40)
+### Agent tools
 
 **Instance interaction**: list_files, read_file, write_file, run_command, fetch_logs, list_file_tunnels, list_shell_commands, fetch_cluster_logs, run_cluster_command
 
@@ -199,7 +212,7 @@ mac-mgmt-server dump-sessions [-o healer-sessions]
 
 ### Built-in skills
 
-Seven embedded remediation skills provide step-by-step procedures:
+Embedded remediation skills (`mac-mgmt-healer/skills/`) provide step-by-step procedures:
 
 | Skill | Purpose |
 |-------|---------|
@@ -207,9 +220,13 @@ Seven embedded remediation skills provide step-by-step procedures:
 | `service_crash_recovery` | Diagnose crashes, crash loops, port conflicts |
 | `resource_triage` | Diagnose thermal, memory, disk, and GPU issues |
 | `openclaw_config_repair` | Repair OpenClaw configuration issues |
+| `daemon_config_repair` | Repair daemon configuration issues |
 | `connectivity_diagnostics` | Diagnose network and connectivity problems |
 | `cluster_comparison` | Compare configs and logs across cluster instances |
 | `probe_verification` | Verify health probes are working correctly |
+| `context_window_fix` | Fix context-window / model sizing problems |
+| `chat_completions_endpoint` | Diagnose OpenAI-compatible endpoint issues |
+| `file_tunnel_usage` | Use file tunnels correctly |
 
 ### Staff pings
 
@@ -227,7 +244,7 @@ The relay (`mac-mgmt-relay`) provides:
 - **HTTP proxy** — subdomain-routed TCP tunnel access (`{instance}.relay.example.com`)
 - **File tunnels** — read/write config files on daemons
 - **Shell tunnels** — execute predefined commands on daemons (with per-command timeouts)
-- **Virtual commands** — `service-restart` and `restart-daemon` without spawning processes
+- **Virtual commands** — `service-restart`, `restart-daemon`, `sync-state` and `memctl` without spawning processes
 - **System commands** — built-in diagnostics: `df`, `nix-profile-list`, `nix-collect-garbage`, `daemon-status`, `daemon-journal`, `service-journal`, `systemctl-status`
 - **Log proxy** — fetch daemon logs
 - **WebSocket bridging** — SSH, file, and shell sessions over WebSocket
@@ -254,14 +271,18 @@ cargo build -p mac-mgmt
 
 # Server (requires dx CLI)
 cd server && dx build
-
-# All daemon targets
-cd daemon && bash build.sh
 ```
+
+Nix builds the daemon through `dx build --embed @client … @server …` (see
+`overlay.nix`), so a plain `cargo build --workspace` is not the release path.
 
 ## CI/CD
 
-GitLab CI on `trunk`:
+GitLab CI on `trunk` (`.gitlab-ci.yml`):
 
-1. **Build** — `nix develop -c bash daemon/build.sh`
-2. **Upload** — rsync to update server via xzar
+1. **Build** — `bash prebuild.sh` (`nix-image` runner).
+2. **Test** — `nix develop -c bash build-memvault.sh` then
+   `cargo test --workspace --locked --exclude mac-mgmt-executor`
+   (excluded: its tests need a working `incus`).
+3. **Deploy** — `nix flake check -L --max-jobs 1`, then `xzar.sh` and
+   `docker-push.sh`; `usb-release.sh` publishes the sovereign-AI USB tarballs.

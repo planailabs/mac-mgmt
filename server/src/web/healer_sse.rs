@@ -22,7 +22,8 @@ fn event_json(evt: &ChatStreamEvent) -> Event {
     Event::default().data(serde_json::to_string(evt).unwrap_or_default())
 }
 
-/// GET /web/healer/stream/:session_id — SSE stream for an existing session.
+/// SSE stream for an existing session. Mounted at `SSE_PATH`
+/// (`/_sse/healer/{session_id}` — see the const below).
 pub async fn view_session_sse(
     user: Option<Extension<WebUser>>,
     Path(session_id): Path<String>,

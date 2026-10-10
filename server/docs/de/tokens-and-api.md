@@ -51,6 +51,18 @@ Voller Zugriff auf alle API-Endpunkte. Nicht auf einen Cluster oder eine Organis
 | `POST` | `/api/admin/rollouts/<id>/complete` | Rollout abschließen |
 | `DELETE` | `/api/admin/rollouts/<id>` | Rollout löschen |
 
+### API-Tokens
+
+Für externe Automatisierung gegen die REST-API unter `/api/v1` und den MCP-Endpunkt unter `/mcp`. Ein `api`-Token ist auf eine Organisation beschränkt; sein `scopes.role` entscheidet über Lese-, Schreib- oder `org_admin`-Zugriff. Ein Token ohne Organisation darf alles lesen und nichts schreiben. Die Daemon-Token-Typen (`sync`, `setting`, `federation`, `proxy`) werden auf dieser Oberfläche abgelehnt.
+
+### Föderations-Tokens
+
+Werden zwischen Skill-Centern und Management-Servern auf den `/api/federation/`-Endpunkten verwendet (Katalog-Austausch, transitive Skill-/MCP-Auflösung, Katalog-Änderungsereignisse).
+
+### Proxy-Tokens
+
+Kurzlebige Tokens (6 Stunden TTL), die der Server ausstellt, damit ein Browser — oder der Heiler-Agent — die Datei-, Shell- und Log-Tunnel einer Instanz über die Relay erreichen kann.
+
 ## Tokens erstellen
 
 Tokens können erstellt werden über:

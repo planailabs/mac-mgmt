@@ -51,6 +51,18 @@ Full access to all API endpoints. Not scoped to any cluster or organization. Req
 | `POST` | `/api/admin/rollouts/<id>/complete` | Complete rollout |
 | `DELETE` | `/api/admin/rollouts/<id>` | Delete rollout |
 
+### API tokens
+
+For external automation against the REST API at `/api/v1` and the MCP endpoint at `/mcp`. An `api` token is organization-scoped; its `scopes.role` decides read, write or `org_admin` access. A token with no organization may read everything and write nothing. The daemon token kinds (`sync`, `setting`, `federation`, `proxy`) are rejected on this surface.
+
+### Federation tokens
+
+Used between skill centers and management servers on the `/api/federation/` endpoints (catalog exchange, transitive skill/MCP resolution, catalog-change events).
+
+### Proxy tokens
+
+Short-lived (6 hour TTL) tokens minted by the server so a browser — or the healer agent — can reach an instance's file, shell and log tunnels through the relay.
+
 ## Creating tokens
 
 Tokens can be created through:

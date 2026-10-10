@@ -88,7 +88,7 @@ The daemon applies `config_migrate::migrate()` to remote JSON configs before des
 
 ## Web-agency: regenerating OpenAPI progenitor crates
 
-When fixing spec-vs-reality mismatches or updating API clients, add the fix to `web-agency/scripts/regenerate-api-crates.py` (e.g. in `fix_cd_spec_issues`, `post_gen_fixups`, or a new trim function). Then always run the **full** script to regenerate all crates:
+`web-agency` is a **sibling project**, not part of this checkout — the scripts below live there. When writing a fix that depends on this repo's code, still add it to `web-agency/scripts/regenerate-api-crates.py` (e.g. in `fix_cd_spec_issues`, `post_gen_fixups`, or a new trim function) and run the **full** script from a web-agency checkout:
 
 ```
 nix-shell -p python3 python3Packages.requests yq-go --run "python3 web-agency/scripts/regenerate-api-crates.py"
