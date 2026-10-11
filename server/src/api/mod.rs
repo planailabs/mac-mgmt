@@ -227,7 +227,7 @@ pub fn build_rocket(
 ) -> rocket::Rocket<rocket::Build> {
     let config = Config {
         port,
-        address: std::net::Ipv4Addr::UNSPECIFIED.into(),
+        address: std::net::Ipv6Addr::UNSPECIFIED.into(),
         shutdown: Shutdown {
             ctrlc: false, // Dioxus owns signal handling; don't let Rocket intercept
             grace: 2,
