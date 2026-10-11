@@ -23,7 +23,7 @@ if [ -f "$_here/.env" ]; then
   # shellcheck disable=SC1091
   . "$_here/.env"
 else
-  echo "fleet-deploy: no .env in $_here — copy .env.example and fill it in" >&2
+  echo "fleet-deploy: no .env in $_here — copy .env.example and fill it in, or set FLEET_DEPLOY_DIR to the repo's fleet-deploy dir" >&2
   exit 1
 fi
 
