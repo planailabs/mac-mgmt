@@ -218,7 +218,7 @@
                 script = ''
                   # Wait for the server to be ready
                   for i in $(seq 1 30); do
-                    ${pkgs.curl}/bin/curl -sf http://localhost:7378/api/health && break
+                    ${pkgs.curl}/bin/curl -sf http://localhost:7378/api/server-info && break
                     sleep 1
                   done
 
