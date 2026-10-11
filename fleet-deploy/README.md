@@ -57,6 +57,17 @@ seed.sh              admin token, organization, daemon_versions row
 
 ## Things that bit us
 
+- **The daemon binary must be static (musl) for the instances.** A local
+  `cargo build` / `dx build` / `nix build .#default` produces a glibc build
+  whose ELF interpreter is a `/nix/store` path. A fleet instance is plain
+  Ubuntu with no `/nix/store`, so the installed binary dies with
+  `mac-mgmt: not found` even though the 142 MB file is right there. **CI does
+  not publish that build**: `xzar.sh` cross-builds
+  `--target x86_64-unknown-linux-musl` (with the cargo-zigbuild shim and an
+  empty `libdl.a`) and uploads that. Pull the published artifact rather than
+  rebuilding — `publish-daemon-from-ci.sh` reproduces CI's recipe and, as of
+  this writing, fails on nameless `undefined symbol:` errors out of
+  `zstd_sys` under `ld.lld`, so the local route is not yet reliable.
 - **Instance names must be unique per bridge.** Two Incus projects sharing a
   bridge cannot reuse a name: the second instance refuses to start with
   `Instance DNS name "..." already used on network`. Set `INSTANCE_PREFIX`

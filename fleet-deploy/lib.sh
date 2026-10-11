@@ -2,10 +2,23 @@
 # Shared setup for the fleet-deploy scripts: load the site config from .env
 # and derive the paths the scripts use. Source this, don't run it.
 #
-# Every script must be runnable from anywhere; it locates its own directory.
+# Locates .env relative to the repo (this file's own directory), so callers
+# work from any cwd — including a reagent service, whose $0 is not a path in
+# the repo at all.
 set -eu
 
-_here="$(cd "$(dirname "$0")" && pwd)"
+# The fleet-deploy directory: prefer the caller's hint, else locate this file
+# via $0. Reagent services run their script from outside the repo, so $0 is
+# useless there — those must pass FLEET_DEPLOY_DIR.
+if [ -n "${FLEET_DEPLOY_DIR:-}" ]; then
+  _here="$FLEET_DEPLOY_DIR"
+else
+  _here="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+fi
+if [ ! -f "$_here/lib.sh" ]; then
+  echo "fleet-deploy: cannot find the repo's fleet-deploy dir (set FLEET_DEPLOY_DIR)" >&2
+  exit 1
+fi
 if [ -f "$_here/.env" ]; then
   # shellcheck disable=SC1091
   . "$_here/.env"
