@@ -79,6 +79,17 @@ seed.sh              admin token, organization, daemon_versions row
   ports.
 - **`daemon_versions` needs a row** (or an active rollout/pin) or
   `POST /api/setting/cloud-init` returns 422 — see `seed.sh`.
+- **`XZAR_SERVER_BIN` must be the unwrapped xzar-server.** The nixpkgs one
+  (`/nix/store/*-xzar-server/bin/xzar-server`) is a wrapper that exports
+  `XZAR_CONFIG`, and `XZAR_CONFIG` **overrides `--config`** — so it silently
+  ignores the rendered `xzar/config.yaml` and serves upstream `xzar.plan.ai`
+  instead (binds `::` rather than `127.0.0.1`, db role `xzar-server` which has
+  no peer auth, storage `/var/lib/xzar-server/storage` which does not exist,
+  and the `xzar.plan.ai` signing key the server does not trust). Its log looks
+  like a clean startup — `Rocket has launched from http://[::]:17788` — while
+  the health check keeps failing, so the service flaps forever. `lib.sh`
+  rejects that path outright; the unwrapped binary is the last line of the
+  wrapper script.
 - **xzar derives its storage and database from `$HOME`** unless
   `XZAR_STORAGE` / `DATABASE_URL` are set; a service account has neither
   writable. The service definitions pass both.
