@@ -35,6 +35,18 @@ The server features are `server`, `webui`, `web`, and `server-api-only`. When ch
 
 When adding catalog mutation paths (skills, bundles, MCP servers, MCP bundles), call `crate::api::push::notify_federation_global()` so federation SSE subscribers are notified of catalog changes.
 
+## Known flaky: sim-tests `hammer_many_daemons` / `hammer_simultaneous_start`
+
+Both fail intermittently (~1 in 3) on the *recovery* assertion ("all N daemons
+should send heartbeats") and fail the `test` CI job. The cause is in the
+daemon's heartbeat path, not the tests: `send_heartbeat` spawns a task that
+takes `heartbeat_lock` to keep POSTs ordered, and the POST has a 10s timeout —
+far longer than the health interval the tests use (500ms). During fault
+injection the sends queue behind the lock and accepted heartbeats land outside
+the test's recovery window. Reaching a decision needs someone to choose between
+dropping the lock, shortening the timeout, or coalescing pending sends; the
+ordering guarantee the lock provides is what it would trade away.
+
 ## Deployment scripts: generic, config from a gitignored file
 
 Deployment/ops scripts (`fleet-deploy/**`) must be **generic**: no host name, IP, path, port, token or site-specific value hard-coded in a script or in a committed template. All of it lives in a gitignored `.env` that the scripts source (`fleet-deploy/.env`, with a committed `fleet-deploy/.env.example` documenting every key). Committed config templates use `@PLACEHOLDER@` markers that `setup.sh` renders from the `.env`. A script that only works for one site is a bug.

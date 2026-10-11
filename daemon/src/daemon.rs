@@ -171,9 +171,9 @@ impl Daemon {
 
                 if new_cfg.daemon.update_interval != self.current_cfg.daemon.update_interval {
                     if let Ok(d) = humantime::parse_duration(&new_cfg.daemon.update_interval) {
-                        *update_tick = time::interval(d);
+                        *update_tick = crate::daemon::periodic_interval(d);
                         if let Some(cpt) = config_poll_tick.as_deref_mut() {
-                            *cpt = time::interval(d);
+                            *cpt = crate::daemon::periodic_interval(d);
                         }
                         tracing::info!(
                             "update_interval changed to {}",
@@ -183,7 +183,7 @@ impl Daemon {
                 }
                 if new_cfg.daemon.health_interval != self.current_cfg.daemon.health_interval {
                     if let Ok(d) = humantime::parse_duration(&new_cfg.daemon.health_interval) {
-                        *health_tick = time::interval(d);
+                        *health_tick = crate::daemon::periodic_interval(d);
                         tracing::info!(
                             "health_interval changed to {}",
                             new_cfg.daemon.health_interval
@@ -1172,18 +1172,18 @@ pub async fn run(
         None
     };
 
-    let mut update_tick = time::interval(update_interval);
-    let mut health_tick = time::interval(health_interval);
-    let mut heartbeat_tick = time::interval(health_interval);
+    let mut update_tick = periodic_interval(update_interval);
+    let mut health_tick = periodic_interval(health_interval);
+    let mut heartbeat_tick = periodic_interval(health_interval);
     // Poll remote config on the same cadence as updates — catches server-side
     // config changes even when the SSE SyncConfig push is missed or unavailable.
-    let mut config_poll_tick = time::interval(update_interval);
-    let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
-    let mut liveness_probe_tick = time::interval(assessment::jittered(
+    let mut config_poll_tick = periodic_interval(update_interval);
+    let mut assessment_inventory_tick = periodic_interval(assessment::DEFAULT_INVENTORY_INTERVAL);
+    let mut liveness_probe_tick = periodic_interval(assessment::jittered(
         assessment::DEFAULT_LIVENESS_INTERVAL,
         10,
     ));
-    let mut functional_probe_tick = time::interval(assessment::jittered(
+    let mut functional_probe_tick = periodic_interval(assessment::jittered(
         assessment::DEFAULT_FUNCTIONAL_INTERVAL,
         120,
     ));
@@ -1194,11 +1194,11 @@ pub async fn run(
         // Effectively never — backup is disabled.
         std::time::Duration::from_secs(365 * 24 * 3600)
     };
-    let mut backup_tick = time::interval(backup_interval);
+    let mut backup_tick = periodic_interval(backup_interval);
 
     let nix_gc_interval = humantime::parse_duration(&cfg.nix_gc.interval)
         .unwrap_or(std::time::Duration::from_secs(86400));
-    let mut nix_gc_tick = time::interval(nix_gc_interval);
+    let mut nix_gc_tick = periodic_interval(nix_gc_interval);
     // Track whether a disk-pressure GC is already running to avoid piling up.
     let nix_gc_running = Arc::new(AtomicBool::new(false));
 
@@ -1852,6 +1852,21 @@ async fn fetch_nixpkgs_pin(server_url: &str, server_token: &str) {
 /// Thin wrapper over [`mac_mgmt_agent::heartbeat::do_send_heartbeat`]
 /// supplying this crate's build identity (version / environment / git sha).
 #[allow(clippy::too_many_arguments)]
+/// A repeating timer for the event loop.
+///
+/// `tokio::time::interval` defaults to `MissedTickBehavior::Burst`, which
+/// replays every tick a busy patch skipped, back to back. For this loop that
+/// is actively harmful: one slow heartbeat (its POST alone can take 10s against
+/// a dead server) makes the next `select!` iteration see a stack of ready
+/// ticks, so the daemon fires a heartbeat storm, falls further behind, and only
+/// then catches up — while the health, probe and config timers do the same.
+/// Delay instead: skip what was missed and keep a steady cadence.
+fn periodic_interval(period: std::time::Duration) -> time::Interval {
+    let mut tick = time::interval(period);
+    tick.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+    tick
+}
+
 pub(crate) async fn do_send_heartbeat(
     server_url: &str,
     server_token: &str,
@@ -1952,15 +1967,15 @@ pub async fn run_sim(
 
     let (_sync_tx, mut sync_rx) = tokio::sync::mpsc::channel::<()>(4);
 
-    let mut update_tick = time::interval(update_interval);
-    let mut health_tick = time::interval(health_interval);
-    let mut heartbeat_tick = time::interval(health_interval);
-    let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
-    let mut liveness_probe_tick = time::interval(assessment::jittered(
+    let mut update_tick = periodic_interval(update_interval);
+    let mut health_tick = periodic_interval(health_interval);
+    let mut heartbeat_tick = periodic_interval(health_interval);
+    let mut assessment_inventory_tick = periodic_interval(assessment::DEFAULT_INVENTORY_INTERVAL);
+    let mut liveness_probe_tick = periodic_interval(assessment::jittered(
         assessment::DEFAULT_LIVENESS_INTERVAL,
         10,
     ));
-    let mut functional_probe_tick = time::interval(assessment::jittered(
+    let mut functional_probe_tick = periodic_interval(assessment::jittered(
         assessment::DEFAULT_FUNCTIONAL_INTERVAL,
         120,
     ));
@@ -2220,15 +2235,15 @@ pub async fn run_sim_with_services(
 
     let (_sync_tx, mut sync_rx) = tokio::sync::mpsc::channel::<()>(4);
 
-    let mut update_tick = time::interval(update_interval);
-    let mut health_tick = time::interval(health_interval);
-    let mut heartbeat_tick = time::interval(health_interval);
-    let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
-    let mut liveness_probe_tick = time::interval(assessment::jittered(
+    let mut update_tick = periodic_interval(update_interval);
+    let mut health_tick = periodic_interval(health_interval);
+    let mut heartbeat_tick = periodic_interval(health_interval);
+    let mut assessment_inventory_tick = periodic_interval(assessment::DEFAULT_INVENTORY_INTERVAL);
+    let mut liveness_probe_tick = periodic_interval(assessment::jittered(
         assessment::DEFAULT_LIVENESS_INTERVAL,
         10,
     ));
-    let mut functional_probe_tick = time::interval(assessment::jittered(
+    let mut functional_probe_tick = periodic_interval(assessment::jittered(
         assessment::DEFAULT_FUNCTIONAL_INTERVAL,
         120,
     ));
