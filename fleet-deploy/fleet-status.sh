@@ -1,9 +1,10 @@
 #!/bin/sh
-# One-shot view of the whole fleet: the services, the runner's cells and the
-# Incus instances behind them.
-set -u
+# One-shot view of the whole fleet: services, runner cells, Incus instances.
+set -eu
+. "$(dirname "$0")/lib.sh"
+
 echo "== services =="
-/var/lib/reagent/fleet/check.sh
+"$_here/check.sh"
 echo
 echo "== runner cells =="
 if curl -fsS -m 30 http://127.0.0.1:9400/status -o /tmp/fleet-status.json 2>/dev/null; then
@@ -18,5 +19,5 @@ else
   echo "  runner did not answer"
 fi
 echo
-echo "== incus instances (reagent-fleet) =="
-/var/lib/reagent/fleet/reagent-fleet-ls.sh
+echo "== incus instances ($INCUS_PROJECT) =="
+"$_here/incus-ls.sh"

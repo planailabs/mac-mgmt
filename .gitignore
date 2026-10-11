@@ -33,6 +33,9 @@ web-agency/server/public/tailwind.css
 config.toml
 relay.toml
 
+# Site-specific fleet deployment values (hosts, addresses, paths)
+fleet-deploy/.env
+
 # Test scripts
 test-*.sh
 

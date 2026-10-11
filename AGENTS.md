@@ -35,6 +35,12 @@ The server features are `server`, `webui`, `web`, and `server-api-only`. When ch
 
 When adding catalog mutation paths (skills, bundles, MCP servers, MCP bundles), call `crate::api::push::notify_federation_global()` so federation SSE subscribers are notified of catalog changes.
 
+## Deployment scripts: generic, config from a gitignored file
+
+Deployment/ops scripts (`fleet-deploy/**`) must be **generic**: no host name, IP, path, port, token or site-specific value hard-coded in a script or in a committed template. All of it lives in a gitignored `.env` that the scripts source (`fleet-deploy/.env`, with a committed `fleet-deploy/.env.example` documenting every key). Committed config templates use `@PLACEHOLDER@` markers that `setup.sh` renders from the `.env`. A script that only works for one site is a bug.
+
+Scripts must also run from any directory (locate their own directory) and be non-interactive (`</dev/null`, `-o BatchMode=yes` for ssh) — nothing may wait for a person.
+
 ## Configuration
 
 When changing default values in config structs (`OllamaConfig`, `OpenClawConfig`, etc.), always update `config.example.toml` to reflect the new defaults.

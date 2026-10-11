@@ -1,14 +1,17 @@
 #!/bin/sh
-# Compare the HTTP path to the server over IPv6 from the Incus host and from
-# inside a fleet instance (verbose, to see where the connection stalls).
-set -u
-V6="$(/var/lib/reagent/fleet/host-ipv6.sh)"
-URL="http://[$V6]:7378/api/server-info"
-echo "url: $URL"
-echo "== from strontium host"
-ssh -o BatchMode=yes root@strontium.y.mkg20001.io \
-  "curl -sS -m 15 -g -o /dev/null -w 'host: %{http_code}\n' '$URL' 2>&1" || true
-echo "== from instance reagent-openclaw-ollama-n2-1 (verbose)"
-ssh -o BatchMode=yes root@strontium.y.mkg20001.io \
-  "incus exec reagent-openclaw-ollama-n2-1 --project reagent-fleet -- \
-     curl -sS -m 15 -g -v -o /dev/null '$URL' 2>&1 | tail -12" || true
+# Compare the HTTP path to the server from the Incus host and from inside a
+# fleet instance (verbose, to see where a connection stalls).
+# Usage: v6-http.sh [instance]
+set -eu
+. "$(dirname "$0")/lib.sh"
+
+name="${1:-}"
+echo "url: $SERVER_EXTERNAL_URL"
+echo "== from $INCUS_SSH"
+incus "curl -sS -m 15 -g -o /dev/null -w 'host: %{http_code}\n' '$SERVER_EXTERNAL_URL/api/server-info' 2>&1" || true
+
+if [ -n "$name" ]; then
+  echo "== from instance $name (verbose)"
+  incus "incus exec '$name' --project '$INCUS_PROJECT' -- \
+    curl -sS -m 15 -g -v -o /dev/null '$SERVER_EXTERNAL_URL/api/server-info' 2>&1 | tail -12" || true
+fi

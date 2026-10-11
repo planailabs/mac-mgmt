@@ -1,0 +1,38 @@
+# mac-mgmt management server. Rendered by fleet-deploy/setup.sh from
+# fleet-deploy/.env; edit the .env, not this file.
+#
+# The web UI is unused here (no OIDC provider is registered, so nobody can log
+# in), so the server only needs to satisfy the daemon API surface: sync tokens,
+# config, cloud-init, nix caches, heartbeats and probes.
+
+[database]
+# Postgres over the unix socket, peer authentication.
+url = "@MACMGMT_DSN@"
+
+[api]
+port = @SERVER_PORT@
+# The URL daemons dial. It must be reachable from the fleet's instances; on a
+# bridge where guest-to-guest IPv4 is filtered that means the bridge's IPv6.
+external_url = "@SERVER_EXTERNAL_URL@"
+
+[web]
+port = 7377
+
+[xzar]
+# The local binary cache that supplies the daemon binary to freshly booted
+# instances (/api/daemon-download resolves pins through it). Its public key is
+# handed to daemons via /api/nix-caches.
+url = "@XZAR_URL@"
+token = "@XZAR_TOKEN@"
+public_key = "@XZAR_PUBLIC_KEY@"
+
+[git]
+# Bare mirrors for the commit-count badges in the UI.
+state_dir = "@FLEET_DIR@/state"
+
+# The web UI is not reachable here, but the `webui` feature requires the
+# section to exist in a release build. It only holds the cookie secret.
+[auth]
+cookie_secret = "@COOKIE_SECRET@"
+external_url = "http://127.0.0.1:7377"
+providers = []

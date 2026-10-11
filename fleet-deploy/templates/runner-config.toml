@@ -1,0 +1,47 @@
+# mac-mgmt fleet runner. Rendered by fleet-deploy/setup.sh from
+# fleet-deploy/.env; edit the .env, not this file.
+#
+# One matrix cell = one mac-mgmt cluster of 1..N instances running the daemon.
+
+[mgmt]
+# The server's Rocket API, not the OIDC web UI.
+url = "http://127.0.0.1:@SERVER_PORT@"
+# URL baked into cloud-init so instances dial the server.
+public_url = "@SERVER_EXTERNAL_URL@"
+admin_token = "@ADMIN_TOKEN@"
+organization_id = "@ORGANIZATION_ID@"
+system = "@DAEMON_SYSTEM@"
+
+[incus]
+url = "@INCUS_URL@"
+client_cert = "@INCUS_CLIENT_CERT@"
+client_key = "@INCUS_CLIENT_KEY@"
+project = "@INCUS_PROJECT@"
+image_alias = "ubuntu/26.04/cloud"
+image_server = "https://images.linuxcontainers.org"
+instance_type = "container"
+profiles = ["default"]
+# Instances need names no other Incus project on the same bridge uses: two
+# containers sharing a bridge cannot share a DNS name, and the second one then
+# refuses to start with "Instance DNS name ... already used on network".
+name_prefix = "@INSTANCE_PREFIX@"
+
+[api]
+bind = "127.0.0.1"
+port = @RUNNER_PORT@
+
+[fleet]
+reconcile_interval = "1m"
+state_path = "@FLEET_DIR@/runner/state.json"
+startup_grace = "5m"
+heartbeat_stale_after = "5m"
+deploy_timeout = "20m"
+max_concurrent_launches = 2
+# No random start/stop or install/uninstall churn against a live fleet.
+vm_chaos_interval = "0"
+chaos_interval = "0"
+
+[matrix]
+ollama_model = "qwen2.5:0.5b"
+agents = ["openclaw", "opencode", "hermes"]
+llms = ["ollama"]

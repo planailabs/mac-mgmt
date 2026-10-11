@@ -1,0 +1,24 @@
+# Local xzar binary cache (https://github.com/mkg20001/xzar). Rendered by
+# fleet-deploy/setup.sh from fleet-deploy/.env; edit the .env, not this file.
+#
+# Its pin namespace holds daemon/<version>/<system>, which is what
+# POST /api/setting/cloud-init resolves to mint an instance's download URL.
+rocket:
+  host: '127.0.0.1'
+  port: @XZAR_PORT@
+
+cors:
+  enabled: true
+
+storage: '@FLEET_DIR@/xzar/storage'
+
+signingKey: '@XZAR_SIGNING_KEY@'
+signingPubKey: '@XZAR_SIGNING_PUB_KEY@'
+
+externalUrl: '@XZAR_URL@'
+
+# Socket auth. xzar reads DATABASE_URL from the environment too; the service
+# sets it because the role cannot be expressed portably in this URL alone.
+db:
+  client: 'pg'
+  connection: '@XZAR_DSN@'

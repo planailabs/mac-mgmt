@@ -1,5 +1,6 @@
 #!/bin/sh
-# List the instances the runner has created in the reagent-fleet project.
+# Instances in the fleet's Incus project, with status and v4 address.
 set -eu
-ssh -o BatchMode=yes root@strontium.y.mkg20001.io \
-  'incus list --project reagent-fleet --format csv -c n,s,4'
+. "$(dirname "$0")/lib.sh"
+
+incus "incus list --project '$INCUS_PROJECT' --format csv -c ns4"
