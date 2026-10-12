@@ -40,8 +40,6 @@ rustPlatform.buildRustPackage {
     # checkout has neither. Drop vendor-only copies, then repoint the two
     # vendored path deps at `design`.
     rm -rf memvault/plan-ai-design common/plan-ai-actions
-    substituteInPlace server/package.json \
-      --replace-fail '../memvault/plan-ai-design/assets/input.css' '../design/assets/input.css'
     substituteInPlace memvault/crates/memvault-web/Cargo.toml \
       --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
   '';
