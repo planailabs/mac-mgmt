@@ -7,9 +7,25 @@
 set -eu
 . "$(dirname "$0")/lib.sh"
 
+# The wrapper check for XZAR_SERVER_BIN is in lib.sh, so it covers every user
+# of that value, not only this script.
+echo "== xzar binary"
+[ -x "$XZAR_SERVER_BIN" ] || { echo "XZAR_SERVER_BIN not executable: $XZAR_SERVER_BIN" >&2; exit 1; }
+
 echo "== directories"
 mkdir -p "$server_dir" "$runner_dir" "$xzar_dir/storage" "$fleet_dir/state"
 chmod 700 "$fleet_dir"
+
+# The unwrapped store path has no referrer, so it is not a GC root: a routine
+# `nix-collect-garbage` deletes it and the cache dies with "No such file or
+# directory" until someone rebuilds it. Root it under the user running setup
+# and point $xzar_dir/server-bin at it, so the path the service command uses
+# survives GC and a rebuild only needs setup.sh re-run.
+echo "== xzar binary GC root"
+mkdir -p "$(dirname "$xzar_bin_root")"
+nix-store --add-root "$xzar_bin_root" --indirect -r "$XZAR_SERVER_BIN" >/dev/null
+ln -sfn "$(readlink -f "$XZAR_SERVER_BIN")" "$xzar_dir/server-bin"
+echo "  $xzar_dir/server-bin -> $(readlink "$xzar_dir/server-bin")"
 
 echo "== incus client certificate"
 if [ ! -s "$runner_dir/incus-client.crt" ]; then

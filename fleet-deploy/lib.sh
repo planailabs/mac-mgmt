@@ -30,9 +30,26 @@ fi
 fleet_dir="${FLEET_DIR:?FLEET_DIR must be set in .env}"
 checkout="${CHECKOUT:?CHECKOUT must be set in .env}"
 
+# The nixpkgs xzar-server is a wrapper that exports XZAR_CONFIG, and XZAR_CONFIG
+# overrides --config: it silently ignores the fleet's config.yaml and starts on
+# upstream xzar.plan.ai settings instead (binds ::, wrong db role, wrong
+# storage, wrong signing key), which makes the health check fail on a server
+# that looks like it started fine. Fail loudly, here rather than only in
+# setup.sh, so a bad path in .env cannot start anything unnoticed.
+case "${XZAR_SERVER_BIN:?XZAR_SERVER_BIN must be set in .env}" in
+  */nix/store/*-xzar-server/bin/xzar-server)
+    echo "fleet-deploy: XZAR_SERVER_BIN is the nixpkgs wrapper, which ignores --config." >&2
+    echo "              Point it at the unwrapped .../bin/xzar-server (see .env.example)." >&2
+    exit 1 ;;
+esac
+
 server_dir="$fleet_dir/server"
 runner_dir="$fleet_dir/runner"
 xzar_dir="$fleet_dir/xzar"
+# The per-user GC root for the unwrapped xzar-server binary. Nix puts an entry
+# in /nix/var/nix/gcroots/auto pointing here, which is what keeps
+# `nix-collect-garbage` from deleting the store path a running cache uses.
+xzar_bin_root="${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/xzar-server"
 admin_token_file="$fleet_dir/admin.token"
 state_file="$runner_dir/state.json"
 
