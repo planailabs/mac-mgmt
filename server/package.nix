@@ -60,6 +60,13 @@ rustPlatform.buildRustPackage {
   buildPhase = ''
     runHook preBuild
 
+    # dx's cargo-metadata watchdog (~200s) is too short under parallel load --
+    # cargo metadata waits on the shared package-cache lock while other builds
+    # run, so dx times out before Cargo reports anything (same trap already
+    # handled in overlay.nix). Resolve metadata up front so the real error, if
+    # any, is Cargo's.
+    timeout 600 cargo metadata --format-version=1 >/dev/null
+
     # Tailwind CSS
     pushd server
     npm run tailwind:build
