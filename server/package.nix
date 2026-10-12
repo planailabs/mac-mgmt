@@ -33,6 +33,13 @@ rustPlatform.buildRustPackage {
     cp -rL design design-canonical
     rm design
     mv design-canonical design
+    # cargo resolves symlinks, so the vendored memvault/plan-ai-design (excluded
+    # from memvault's workspace) canonicalises to the same directory the
+    # workspace members reach as `design` -- "package collision in the lockfile".
+    # It only exists because private/ and memvault/ are unpacked here; a plain
+    # checkout has neither. Drop vendor-only copies, then repoint the two
+    # vendored path deps at `design`.
+    rm -rf memvault/plan-ai-design common/plan-ai-actions
     substituteInPlace memvault/crates/memvault-web/Cargo.toml \
       --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
   '';
