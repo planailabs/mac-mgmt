@@ -6,8 +6,10 @@
 [mgmt]
 # The server's Rocket API, not the OIDC web UI.
 url = "http://127.0.0.1:@SERVER_PORT@"
-# URL baked into cloud-init so instances dial the server.
-public_url = "@SERVER_EXTERNAL_URL@"
+# URL baked into cloud-init so instances dial the server. Instances reach it
+# only over IPv6: incusbr0 routes guest->host over IPv6 and answers the host's
+# address there, not its own bridge endpoint (BRIDGE_GATEWAY_URL).
+public_url = "@INSTANCE_SERVER_URL@"
 admin_token = "@ADMIN_TOKEN@"
 organization_id = "@ORGANIZATION_ID@"
 system = "@DAEMON_SYSTEM@"

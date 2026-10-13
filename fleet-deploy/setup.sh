@@ -73,6 +73,7 @@ render() {
   if [ -f "$dst" ]; then echo "  keep existing $dst"; return; fi
   sed -e "s|@SERVER_PORT@|$SERVER_PORT|g" \
       -e "s|@SERVER_EXTERNAL_URL@|$SERVER_EXTERNAL_URL|g" \
+      -e "s|@INSTANCE_SERVER_URL@|${INSTANCE_SERVER_URL:-$SERVER_EXTERNAL_URL}|g" \
       -e "s|@RUNNER_PORT@|$RUNNER_PORT|g" \
       -e "s|@INSTANCE_PREFIX@|$INSTANCE_PREFIX|g" \
       -e "s|@ADMIN_TOKEN@|$admin_token|g" \
