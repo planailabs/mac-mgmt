@@ -466,12 +466,13 @@ pub async fn organization_cluster_add(
         .bind(input.cluster_id)
         .execute(pool)
         .await
-        .map_err(|e| {
-            if e.to_string().contains("duplicate key") {
+        .map_err(|e| match access::db_write(e, "organization or cluster") {
+            // Both FKs land on the same insert, so keep the endpoint's
+            // "already linked" conflict for the unique constraint.
+            ApiError::Conflict(_) => {
                 ApiError::conflict("cluster is already linked to this organization")
-            } else {
-                internal(e)
             }
+            other => other,
         })?;
     Ok(())
 }

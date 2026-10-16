@@ -656,7 +656,7 @@ pub async fn bundle_create(
     .bind(&input.description)
     .fetch_one(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "bundle"))?;
     crate::api::push::notify_federation_global();
     Ok(bundle)
 }
@@ -800,7 +800,7 @@ pub async fn bundle_item_add(
         .bind(input.skill_channel_id)
         .execute(pool)
         .await
-        .map_err(internal)?;
+        .map_err(|e| access::db_write(e, "bundle or skill channel"))?;
     crate::api::push::notify_federation_global();
     crate::api::push::notify_skill_bundle_global(input.id).await;
     Ok(())

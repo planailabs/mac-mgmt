@@ -843,7 +843,7 @@ pub async fn mcp_server_cluster_attach(
             .bind(msid)
             .execute(pool)
             .await
-            .map_err(internal)?;
+            .map_err(|e| access::db_write(e, "cluster or MCP server"))?;
     }
     crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncMcpServers).await;
     Ok(())

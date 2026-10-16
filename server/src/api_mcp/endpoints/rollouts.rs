@@ -8,6 +8,8 @@ use plan_ai_api_mcp_macros::api_mcp_dioxus_server;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "server")]
+use crate::api_mcp::access;
 use crate::web::gate_input::HealthGateInput;
 
 #[cfg(feature = "server")]
@@ -1913,7 +1915,7 @@ pub async fn group_member_add(
         .bind(input.cluster_id)
         .execute(pool)
         .await
-        .map_err(internal)?;
+        .map_err(|e| access::db_write(e, "rollout group or cluster"))?;
     Ok(())
 }
 

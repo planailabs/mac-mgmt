@@ -145,7 +145,7 @@ pub async fn token_sync_create(
     .bind(expires_at)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "cluster"))?;
 
     Ok(raw_token)
 }
@@ -256,7 +256,7 @@ pub async fn token_setting_create(
     .bind(expires_at)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "cluster"))?;
 
     Ok(raw_token)
 }
