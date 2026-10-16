@@ -312,7 +312,18 @@
           buildInputs = with pkgs; [
             toolchain
             cargo-edit
-            cargo-zigbuild
+            # nixpkgs' cargo-zigbuild wrapper hard-prefixes nixpkgs' `zig`
+            # (0.16.0) onto PATH, so the dev shell's zig cannot be selected.
+            # zig 0.16's clang (LLVM 21.1.8) emits C objects whose
+            # `.rodata.<fn>` jump-table relocations reference STT_SECTION
+            # symbols carrying SHN_UNDEF (empty name); zig's bundled LLD then
+            # rejects them with `ld.lld: error: undefined symbol: ` and every
+            # linux-musl static-PIE cross-link fails (usb-release.sh and
+            # xzar.sh) with unresolved symbols coming out of libzstd_sys /
+            # libaws_lc_sys.  zig 0.15.2 links the very same objects cleanly,
+            # so pin cargo-zigbuild's zig.  Drop this pin once a nixpkgs zig
+            # newer than 0.16.0 links those objects again.
+            (cargo-zigbuild.override { zig = zig_0_15; })
             cargo-flamegraph
             zig
             rsync
