@@ -537,6 +537,15 @@ fn encrypt_secret_value(plaintext: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+#[cfg(feature = "server")]
+fn secret_encryption_error(error: String) -> ApiError {
+    if error == "secrets not configured" {
+        ApiError::bad_request(error)
+    } else {
+        ApiError::internal(format!("encryption error: {error}"))
+    }
+}
+
 /// was: list_secrets() in web/components/cluster_config_page.rs
 #[api_mcp_dioxus_server(server = "list_secrets")]
 pub async fn cluster_secrets_list(
@@ -577,8 +586,8 @@ pub async fn cluster_secret_create(
 ) -> Result<(), ApiError> {
     access::require_cluster_write(pool, p, input.id).await?;
 
-    let encrypted = encrypt_secret_value(input.value.as_bytes())
-        .map_err(|e| ApiError::internal(format!("encryption error: {e}")))?;
+    let encrypted =
+        encrypt_secret_value(input.value.as_bytes()).map_err(secret_encryption_error)?;
 
     let name = &input.name;
     sqlx::query(
@@ -610,8 +619,8 @@ pub async fn cluster_secret_update(
 ) -> Result<(), ApiError> {
     access::require_cluster_write(pool, p, input.id).await?;
 
-    let encrypted = encrypt_secret_value(input.value.as_bytes())
-        .map_err(|e| ApiError::internal(format!("encryption error: {e}")))?;
+    let encrypted =
+        encrypt_secret_value(input.value.as_bytes()).map_err(secret_encryption_error)?;
 
     let result = sqlx::query(
         "UPDATE cluster_secrets SET encrypted_value = $1, updated_at = now() \
@@ -1213,4 +1222,18 @@ pub async fn cluster_config_diff(
         .collect();
 
     Ok(lines)
+}
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_secret_configuration_is_a_client_error() {
+        let error = secret_encryption_error("secrets not configured".to_string());
+
+        assert!(
+            matches!(error, ApiError::BadRequest(message) if message == "secrets not configured")
+        );
+    }
 }
