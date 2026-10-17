@@ -63,7 +63,8 @@ mod tests {
         assert_eq!(status(db_err("23505")), 409);
         // Anything else stays an internal error.
         assert_eq!(status(db_err("08006")), 500);
-        assert_eq!(status(sqlx::Error::RowNotFound), 500);
+        // No row returned by an `UPDATE … RETURNING`: the id is simply unknown.
+        assert_eq!(status(sqlx::Error::RowNotFound), 404);
     }
 }
 
@@ -87,6 +88,7 @@ pub fn db_write(e: sqlx::Error, what: &str) -> ApiError {
         sqlx::Error::Database(dbe) if dbe.code().as_deref() == Some("23505") => {
             ApiError::conflict(format!("{what} already exists"))
         }
+        sqlx::Error::RowNotFound => ApiError::not_found(format!("{what} not found")),
         _ => db(e),
     }
 }

@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[cfg(feature = "server")]
+use crate::api_mcp::access::db_write;
+#[cfg(feature = "server")]
 use super::internal;
 #[cfg(feature = "server")]
 use crate::server_pool;
@@ -249,8 +251,7 @@ pub async fn skill_center_update(
         .await
     };
 
-    row.map(Into::into)
-        .map_err(|e| ApiError::internal(format!("update failed: {e}")))
+    row.map(Into::into).map_err(|e| db_write(e, "skill center"))
 }
 
 /// was: delete_skill_center() in web/components/skill_center_detail.rs
