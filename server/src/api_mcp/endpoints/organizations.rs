@@ -692,7 +692,7 @@ pub async fn organization_token_create(
     .bind(expires_at)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "organization"))?;
 
     Ok(raw_token)
 }

@@ -45,6 +45,9 @@ mod tests {
         fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
             self
         }
+        fn constraint(&self) -> Option<&str> {
+            None
+        }
     }
 
     fn db_err(sqlstate: &str) -> sqlx::Error {
