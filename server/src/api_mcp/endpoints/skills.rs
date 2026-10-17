@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[cfg(feature = "server")]
-use super::internal;
+use super::{internal, xzar_sync_error};
 #[cfg(feature = "server")]
 use crate::api_mcp::access;
 #[cfg(feature = "server")]
@@ -167,7 +167,9 @@ pub async fn skill_sync_from_xzar(
     _input: SkillSyncInput,
 ) -> Result<SyncResult, ApiError> {
     p.require_admin()?;
-    let r = crate::xzar::sync_skills_db(pool).await.map_err(internal)?;
+    let r = crate::xzar::sync_skills_db(pool)
+        .await
+        .map_err(super::xzar_sync_error)?;
     Ok(SyncResult {
         created_skills: r.created_skills,
         created_channels: r.created_channels,
@@ -302,10 +304,10 @@ pub async fn skill_channel_paths(
     let xzar = cfg
         .xzar
         .as_ref()
-        .ok_or_else(|| ApiError::internal("xzar not configured"))?;
+        .ok_or_else(|| xzar_sync_error("xzar not configured".to_string()))?;
     let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
         .await
-        .map_err(|e| ApiError::internal(format!("xzar error: {e}")))?;
+        .map_err(xzar_sync_error)?;
 
     let mut result: HashMap<String, Vec<ChannelArchPath>> = HashMap::new();
     let prefix = format!("skill/{slug}/");

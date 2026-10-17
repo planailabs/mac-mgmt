@@ -24,3 +24,37 @@ pub mod users;
 pub(crate) fn internal<E: std::fmt::Display>(e: E) -> plan_ai_api_mcp::ApiError {
     plan_ai_api_mcp::ApiError::internal(e.to_string())
 }
+
+/// Map a failed xzar sync to a framework error.
+///
+/// An unconfigured xzar is an expected deployment state (no binary cache
+/// wired up), not a server fault; `fetch_pins` also reports an unreachable
+/// cache the same way. Both are 400s the caller can act on, so they must not
+/// surface through the generic 500 path.
+#[cfg(feature = "server")]
+pub(crate) fn xzar_sync_error(e: String) -> plan_ai_api_mcp::ApiError {
+    let actionable = e == "xzar not configured" || e.starts_with("xzar request failed");
+    if actionable {
+        plan_ai_api_mcp::ApiError::bad_request(e)
+    } else {
+        internal(e)
+    }
+}
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+
+    fn status(e: &str) -> u16 {
+        xzar_sync_error(e.to_string()).status().as_u16()
+    }
+
+    #[test]
+    fn xzar_unavailable_is_a_client_error() {
+        // An unconfigured / unreachable xzar is an expected deployment state.
+        assert_eq!(status("xzar not configured"), 400);
+        assert_eq!(status("xzar request failed: connection refused"), 400);
+        // Anything else (e.g. a malformed cache response) stays a 500.
+        assert_eq!(status("failed to parse xzar response: bad json"), 500);
+    }
+}

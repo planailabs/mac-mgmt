@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[cfg(feature = "server")]
-use super::internal;
+use super::{internal, xzar_sync_error};
 #[cfg(feature = "server")]
 use crate::server_pool;
 #[cfg(feature = "server")]
@@ -128,10 +128,10 @@ pub async fn daemon_version_sync_from_xzar(
     let xzar = cfg
         .xzar
         .as_ref()
-        .ok_or_else(|| internal("xzar not configured"))?;
+        .ok_or_else(|| xzar_sync_error("xzar not configured".to_string()))?;
     let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
         .await
-        .map_err(|e| internal(format!("xzar error: {e}")))?;
+        .map_err(xzar_sync_error)?;
 
     let mut created: u32 = 0;
     let mut valid: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -206,10 +206,10 @@ pub async fn daemon_version_store_paths(
     let xzar = cfg
         .xzar
         .as_ref()
-        .ok_or_else(|| internal("xzar not configured"))?;
+        .ok_or_else(|| xzar_sync_error("xzar not configured".to_string()))?;
     let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
         .await
-        .map_err(|e| internal(format!("xzar error: {e}")))?;
+        .map_err(xzar_sync_error)?;
 
     let prefix = format!("daemon/{}/", input.version);
     let mut out: Vec<DaemonStorePath> = Vec::new();
