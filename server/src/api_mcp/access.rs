@@ -66,6 +66,17 @@ mod tests {
         // No row returned by an `UPDATE … RETURNING`: the id is simply unknown.
         assert_eq!(status(sqlx::Error::RowNotFound), 404);
     }
+
+    #[test]
+    fn missing_import_source_is_not_found() {
+        // import_jobs.source_id FK on POST …/trigger_sync (t4t finding #12).
+        let err = db_write(db_err("23503"), "import source");
+        assert_eq!(err.status().as_u16(), 404, "expected 404, got {err:?}");
+        assert!(
+            matches!(err, ApiError::NotFound(m) if m == "import source not found"),
+            "message must name the missing source"
+        );
+    }
 }
 
 fn db(e: sqlx::Error) -> ApiError {

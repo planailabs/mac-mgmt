@@ -221,7 +221,8 @@ pub async fn import_source_update(
     .bind(input.id)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    // A missing source is a 404, not the FK/internal path.
+    .map_err(|e| crate::api_mcp::access::db_write(e, "import source"))?;
     Ok(())
 }
 
@@ -269,20 +270,23 @@ pub async fn import_source_trigger_sync(
 ) -> Result<(), ApiError> {
     p.require_admin()?;
 
+    // Read the source first: a caller-supplied id that does not exist must be a
+    // 404, not an FK violation on `import_jobs` surfacing as a 500.
+    let source: SourceDbRow = sqlx::query_as(&format!(
+        "SELECT {SOURCE_COLS} FROM import_sources WHERE id = $1"
+    ))
+    .bind(input.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| ApiError::not_found("import source not found"))?;
+
     let job_id: Uuid =
         sqlx::query_scalar("INSERT INTO import_jobs (source_id) VALUES ($1) RETURNING id")
             .bind(input.id)
             .fetch_one(pool)
             .await
-            .map_err(internal)?;
-
-    let source: SourceDbRow = sqlx::query_as(&format!(
-        "SELECT {SOURCE_COLS} FROM import_sources WHERE id = $1"
-    ))
-    .bind(input.id)
-    .fetch_one(pool)
-    .await
-    .map_err(internal)?;
+            .map_err(|e| crate::api_mcp::access::db_write(e, "import source"))?;
 
     let pool_clone = pool.clone();
     tokio::spawn(async move {
