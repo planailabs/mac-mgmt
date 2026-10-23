@@ -24,7 +24,19 @@ build:
     - nix-image
   script:
     - bash prebuild.sh
-  timeout: 3h
+  # 6h, not 3h. A nixpkgs bump (the nightly flake-input refresh) invalidates
+  # the whole NixOS image and every package, so the custom executor's
+  # pre-script `flake#image` build, then prebuild.sh (devshell, image, and the
+  # seven binaries), then the cold 1655-crate `dx` compile all have to fit in
+  # one budget. They do not fit in 3h: pipeline 2947 (2026-10-22, a nixpkgs
+  # refresh) spent its entire 3h inside `build_container` without running a
+  # single repo command and was killed as `server_timeout_running`, and
+  # pipelines 2924/2934/2947 all hit the cap while the app was still
+  # compiling. This is headroom, not a speed fix: per-crate throughput on the
+  # current runners is ~1.4-2.5x below the 2026-08 baseline (~99 min for a
+  # warm build, jobs 5873/5736), so cache warming and runner capacity are
+  # still the real limit. Per-step trace output still bounds a genuine hang.
+  timeout: 6h
   resource_group: build-cache
 
 test:
@@ -57,7 +69,13 @@ deploy:
     # `nix develop` resolves tools from the locked flake inputs already used by
     # the rest of the job.
     - nix develop -c bash docker-push.sh
-  timeout: 3h
+  # 6h, not 3h: the first step is a full `nix flake check -L --max-jobs 1`,
+  # which needs roughly 4h15m cold on this repo (1282 derivations after a
+  # nixpkgs bump) -- longer than the old cap, which was already sitting at
+  # ~2h50m even with a warm cache (job 5875: 10307s of a 10800s cap). xzar.sh
+  # and docker-push.sh run after the check, so the deploy itself needs the
+  # extra headroom too.
+  timeout: 6h
   environment: production
   resource_group: production
 
