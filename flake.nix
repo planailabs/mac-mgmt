@@ -347,6 +347,20 @@
 
             # Trainer fine-tuning (Python + CUDA/Vulkan). Keep this on 3.13
             # until torchao supports nixpkgs' default Python 3.14.
+            #
+            # `unsloth` (and its `unsloth-zoo` dependency) is deliberately NOT
+            # listed: nixpkgs still builds python3.13-unsloth from the PyPI
+            # sdist `unsloth-2026.8.19.tar.gz`, but upstream only publishes the
+            # wheel for that release now, so a cold dev-shell realization dies
+            # with `curl: (22) The requested URL returned error: 404 ...
+            # cannot download unsloth-2026.8.19.tar.gz from any mirror` — and
+            # `unsloth-zoo` 2026.8.13 no longer accepts nixpkgs'
+            # dont-require-unsloth.patch either. Both are upstream nixpkgs
+            # packaging breaks, not something this flake can patch. No source
+            # in this repo imports unsloth (the trainer shells out to external
+            # finetune scripts), so leaving it out keeps `nix develop` and the
+            # CI devShell prebuild working. Re-add it once nixpkgs packages a
+            # release whose sdist is actually published.
             (python313.withPackages (ps: with ps; [
               torch
               transformers
@@ -359,7 +373,6 @@
               protobuf
               accelerate
               scipy
-              unsloth
             ]))
 
             # native C/C++ build deps (aws-lc-rs and friends need cmake/clang;
