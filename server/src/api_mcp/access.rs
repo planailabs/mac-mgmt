@@ -68,6 +68,27 @@ mod tests {
     }
 
     #[test]
+    fn write_scope_checks_existence_for_admins() {
+        let cid = Uuid::new_v4();
+        // Admin: no org limit, so the cluster's existence still has to be
+        // confirmed — that is what turns a bogus id into a 404 and not a 500
+        // (t4t finding #4, POST /clusters/{id}/cloud_init).
+        assert!(matches!(
+            write_scope(&None, cid),
+            Ok(WriteScope::Everywhere)
+        ));
+        // A member of an org owning the cluster writes to it.
+        assert!(matches!(
+            write_scope(&Some(vec![cid]), cid),
+            Ok(WriteScope::ThisCluster)
+        ));
+        // A member of another org is refused, not redirected to a 404: the
+        // caller must not learn whether a cluster it cannot see exists.
+        let err = write_scope(&Some(vec![Uuid::new_v4()]), cid).unwrap_err();
+        assert_eq!(err.status().as_u16(), 403, "expected 403, got {err:?}");
+    }
+
+    #[test]
     fn missing_import_source_is_not_found() {
         // import_jobs.source_id FK on POST …/trigger_sync (t4t finding #12).
         let err = db_write(db_err("23503"), "import source");
@@ -192,17 +213,50 @@ pub async fn require_cluster_read(
 }
 
 /// Require write access to a cluster.
+///
+/// For a principal that is allowed everywhere (admin), the id comes straight
+/// from the request, so confirm the cluster exists: otherwise the write this
+/// guards fails on its foreign key and surfaces as a 500 (t4t finding #4,
+/// `POST /clusters/{id}/cloud_init`). Members are already limited to clusters
+/// that exist, so a cluster outside their orgs keeps its 403.
 pub async fn require_cluster_write(
     pool: &PgPool,
     p: &Principal,
     cluster_id: Uuid,
 ) -> Result<(), ApiError> {
-    if let Some(ids) = writable_cluster_ids(pool, p).await? {
-        if !ids.contains(&cluster_id) {
-            return Err(ApiError::forbidden("write access denied"));
-        }
+    let ids = writable_cluster_ids(pool, p).await?;
+    match write_scope(&ids, cluster_id)? {
+        WriteScope::Everywhere => require_existing_cluster(pool, cluster_id).await,
+        WriteScope::ThisCluster => Ok(()),
     }
-    Ok(())
+}
+
+/// The part of the write check that needs no database: `Everywhere` (admin —
+/// the cluster's existence still has to be confirmed), `ThisCluster` when
+/// membership allows it, `Err` when it does not.
+fn write_scope(ids: &Option<Vec<Uuid>>, cluster_id: Uuid) -> Result<WriteScope, ApiError> {
+    match ids {
+        None => Ok(WriteScope::Everywhere),
+        Some(ids) if ids.contains(&cluster_id) => Ok(WriteScope::ThisCluster),
+        Some(_) => Err(ApiError::forbidden("write access denied")),
+    }
+}
+
+#[derive(Debug)]
+enum WriteScope {
+    Everywhere,
+    ThisCluster,
+}
+
+async fn require_existing_cluster(pool: &PgPool, cluster_id: Uuid) -> Result<(), ApiError> {
+    let found: Option<Uuid> = sqlx::query_scalar("SELECT id FROM clusters WHERE id = $1")
+        .bind(cluster_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(db)?;
+    found
+        .map(|_| ())
+        .ok_or_else(|| ApiError::not_found("cluster not found"))
 }
 
 /// Whether the principal is org-admin of any org owning the cluster.

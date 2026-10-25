@@ -345,7 +345,7 @@ pub async fn organization_member_add(
         if e.to_string().contains("duplicate key") {
             ApiError::conflict("user is already a member of this organization")
         } else {
-            internal(e)
+            access::db_write(e, "user or organization")
         }
     })?;
     Ok(())

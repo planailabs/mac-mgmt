@@ -436,7 +436,7 @@ pub async fn cluster_cloud_init(
         None,
     )
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "cluster"))?;
     Ok(yaml)
 }
 

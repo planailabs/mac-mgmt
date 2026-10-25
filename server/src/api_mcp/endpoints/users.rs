@@ -368,7 +368,7 @@ pub async fn user_org_add(
     .bind(&input.role)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| crate::api_mcp::access::db_write(e, "user or organization"))?;
     Ok(())
 }
 
