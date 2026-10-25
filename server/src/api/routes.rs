@@ -3382,8 +3382,6 @@ pub async fn setting_cloud_init(
     pool: &State<PgPool>,
     body: Json<CloudInitBody>,
 ) -> Result<Json<CloudInitResponse>, Status> {
-    use rand::Rng;
-
     let body = body.into_inner();
     let system = body.system.unwrap_or_else(|| "x86_64-linux".to_string());
     let label = body.label.unwrap_or_else(|| {
@@ -3394,70 +3392,96 @@ pub async fn setting_cloud_init(
         }
     });
 
-    let version = if let Some(v) = body.daemon_version {
-        v
-    } else {
-        // Same resolution as /api/update, including delivered-rollout
-        // stickiness; no delivery is recorded here — the booted daemon
-        // records one on its first /api/update fetch.
-        let rollout_version: Option<String> =
-            active_rollout_for_cluster(pool.inner(), auth.cluster_id)
-                .await
-                .map_err(|_| Status::InternalServerError)?
-                .and_then(|r| r.target_version);
-        let pinned: Option<String> =
-            sqlx::query_scalar("SELECT pinned_version FROM clusters WHERE id = $1")
-                .bind(auth.cluster_id)
-                .fetch_optional(pool.inner())
-                .await
-                .map_err(|_| Status::InternalServerError)?
-                .flatten();
-        // Final fallback: highest semver in daemon_versions (mirrors
-        // get_update_target — channel versions like "rolling" are opt-in
-        // only). Operators sync this table from xzar via the admin UI.
-        let latest: Option<String> = sqlx::query_scalar(
-            "SELECT version FROM daemon_versions \
-             WHERE version ~ '^[0-9]+(\\.[0-9]+)*$' \
-             ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1",
-        )
-        .fetch_optional(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-        rollout_version
-            .or(pinned)
-            .or(latest)
-            .ok_or(Status::UnprocessableEntity)?
+    let version = match body.daemon_version {
+        Some(v) => v,
+        None => resolve_daemon_version(pool.inner(), auth.cluster_id)
+            .await
+            .map_err(|_| Status::InternalServerError)?
+            .ok_or(Status::UnprocessableEntity)?,
     };
 
     let server_url = body
         .server_url
         .unwrap_or_else(|| crate::config::config().api.external_url.clone());
-    let server_url = server_url.trim_end_matches('/').to_string();
 
-    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
-    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    sqlx::query(
-        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')",
-    )
-    .bind(auth.cluster_id)
-    .bind(&hash)
-    .bind(&label)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-
-    let yaml = render_cloud_init(
+    let (yaml, raw_token) = mint_cloud_init(
+        pool.inner(),
+        auth.cluster_id,
         &server_url,
-        &raw_token,
         &version,
         &system,
+        &label,
         body.host_key_pem.as_deref(),
-    );
+    )
+    .await
+    .map_err(|_| Status::InternalServerError)?;
     Ok(Json(CloudInitResponse {
         cloud_init: yaml,
         sync_token: raw_token,
         instance_id: body.instance_id,
     }))
+}
+
+/// The daemon version a new machine in this cluster should start on — the
+/// same resolution as /api/update, including delivered-rollout stickiness:
+/// an active rollout, then the cluster's pin, then the highest semver in
+/// `daemon_versions` (channel versions like "rolling" are opt-in only). No
+/// delivery is recorded here; the booted daemon records one on its first
+/// /api/update fetch.
+pub(crate) async fn resolve_daemon_version(
+    pool: &PgPool,
+    cluster_id: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
+    let rollout_version = active_rollout_for_cluster(pool, cluster_id)
+        .await?
+        .and_then(|r| r.target_version);
+    if rollout_version.is_some() {
+        return Ok(rollout_version);
+    }
+    let pinned: Option<String> =
+        sqlx::query_scalar("SELECT pinned_version FROM clusters WHERE id = $1")
+            .bind(cluster_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    if pinned.is_some() {
+        return Ok(pinned);
+    }
+    sqlx::query_scalar(
+        "SELECT version FROM daemon_versions \
+         WHERE version ~ '^[0-9]+(\\.[0-9]+)*$' \
+         ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Mint a sync token for the cluster and render the cloud-init that carries
+/// it. Returns the YAML and the raw token.
+pub(crate) async fn mint_cloud_init(
+    pool: &PgPool,
+    cluster_id: Uuid,
+    server_url: &str,
+    version: &str,
+    system: &str,
+    label: &str,
+    host_key_pem: Option<&str>,
+) -> Result<(String, String), sqlx::Error> {
+    use rand::Rng;
+
+    let server_url = server_url.trim_end_matches('/');
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')",
+    )
+    .bind(cluster_id)
+    .bind(&hash)
+    .bind(label)
+    .execute(pool)
+    .await?;
+    let yaml = render_cloud_init(server_url, &raw_token, version, system, host_key_pem);
+    Ok((yaml, raw_token))
 }
 
 pub(crate) fn render_cloud_init(

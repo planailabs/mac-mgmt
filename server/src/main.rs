@@ -26,6 +26,8 @@ mod healer_auto_trigger;
 mod mcp_healer;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod mcp_schema;
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+mod node_cli;
 #[cfg(feature = "server")]
 mod model_catalog_fetch;
 #[cfg(feature = "webui")]
@@ -457,6 +459,9 @@ enum Commands {
     },
     /// Fetch models from provider APIs and write server/ext/model-catalog.json
     GenerateModelCatalog(GenerateModelCatalogArgs),
+    #[cfg(any(feature = "server", feature = "server-api-only"))]
+    #[command(flatten)]
+    Node(node_cli::NodeCommand),
 }
 
 #[derive(clap::Args)]
@@ -554,6 +559,19 @@ fn main() {
             Commands::GenerateModelCatalog(_) => {
                 eprintln!("generate-model-catalog requires the server feature");
                 std::process::exit(1);
+            }
+            Commands::Node(node) => {
+                // DATABASE_URL first: whoever runs these may be the service's
+                // own user, which can reach the database without being able
+                // to read a config file only root may.
+                let url = std::env::var("DATABASE_URL")
+                    .unwrap_or_else(|_| config::load().database.url.clone());
+                let rt = tokio::runtime::Runtime::new().expect("failed to create runtime");
+                if let Err(e) = rt.block_on(node_cli::run(&url, node)) {
+                    eprintln!("{e:#}");
+                    std::process::exit(1);
+                }
+                return;
             }
         }
     }

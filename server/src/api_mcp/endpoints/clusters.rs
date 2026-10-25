@@ -412,66 +412,32 @@ pub async fn cluster_cloud_init(
     access::require_cluster_write(pool, p, input.id).await?;
     let cid = input.id;
 
-    // Same resolution as /api/update, including delivered-rollout stickiness.
-    let rollout_version: Option<String> =
-        crate::api::routes::active_rollout_for_cluster(pool, cid)
-            .await
-            .map_err(internal)?
-            .and_then(|r| r.target_version);
-    let pinned: Option<String> =
-        sqlx::query_scalar("SELECT pinned_version FROM clusters WHERE id = $1")
-            .bind(cid)
-            .fetch_optional(pool)
-            .await
-            .map_err(internal)?
-            .flatten();
-    // Highest semver only — channel versions ("rolling") are opt-in via
-    // pin or rollout, and the int[] cast would error on them.
-    let latest: Option<String> = sqlx::query_scalar(
-        "SELECT version FROM daemon_versions \
-         WHERE version ~ '^[0-9]+(\\.[0-9]+)*$' \
-         ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(internal)?;
-    let version = rollout_version.or(pinned).or(latest).ok_or_else(|| {
-        ApiError::not_found(
-            "no daemon version available (no rollout, no pinned_version, no daemon_versions rows)",
-        )
-    })?;
+    let version = crate::api::routes::resolve_daemon_version(pool, cid)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "no daemon version available (no rollout, no pinned_version, no daemon_versions rows)",
+            )
+        })?;
 
-    let server_url = crate::config::config()
-        .api
-        .external_url
-        .trim_end_matches('/')
-        .to_string();
-
-    use rand::Rng;
-    use sha2::{Digest, Sha256};
-    let raw_token = hex::encode(rand::rng().random::<[u8; 32]>());
-    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let server_url = crate::config::config().api.external_url.clone();
     let label = format!(
         "cloud-init-webui-{}",
         chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
     );
-    sqlx::query(
-        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')",
-    )
-    .bind(cid)
-    .bind(&hash)
-    .bind(&label)
-    .execute(pool)
-    .await
-    .map_err(internal)?;
-
-    Ok(crate::api::routes::render_cloud_init(
+    let (yaml, _token) = crate::api::routes::mint_cloud_init(
+        pool,
+        cid,
         &server_url,
-        &raw_token,
         &version,
         "x86_64-linux",
+        &label,
         None,
-    ))
+    )
+    .await
+    .map_err(internal)?;
+    Ok(yaml)
 }
 
 // ── Secrets ─────────────────────────────────────────────────────────────

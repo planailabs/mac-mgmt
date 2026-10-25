@@ -143,3 +143,15 @@ cluster. The body is:
 
 The response is `{cloud_init, sync_token, instance_id}`. Pipe
 `cloud_init` directly into any cloud provider's user-data field.
+
+On the server's own host the same bootstrap is available without a token,
+for provisioners that can run commands there (plan-ai-cloud's node
+containers do this over Incus exec). Each prints JSON; `DATABASE_URL`, if
+set, is used instead of the config file's database:
+
+```
+mac-mgmt-server cloud-init --cluster <id> --server-url <url> [--host-key-file <pem>] [--label <s>]
+mac-mgmt-server clusters
+mac-mgmt-server machines --cluster <id>
+mac-mgmt-server forget-machine --cluster <id> --instance-id <id>
+```
