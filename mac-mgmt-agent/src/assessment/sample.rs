@@ -1,4 +1,5 @@
-//! Dynamic per-heartbeat sample. Kept cheap — target <50ms.
+//! Dynamic per-heartbeat sample. Cheap in the steady state: one collection per
+//! `SAMPLE_TTL` is shared by every caller in the process (see `collect`).
 //!
 //! GDPR allowlist: counters only, no per-process info beyond the total count,
 //! no per-peer network data, no IPs, no usernames.
@@ -19,8 +20,84 @@ fn shared_system() -> &'static Mutex<System> {
     SYS.get_or_init(|| Mutex::new(System::new()))
 }
 
+/// How long a collected sample is reused before another collection runs.
+///
+/// The collectors are host-level (identical for every caller in the process),
+/// and they are not as cheap as the old <50ms assumption: refreshing the sysinfo
+/// process table plus the disk list and spawning the GPU vendor CLIs routinely
+/// takes hundreds of milliseconds, all of it serialized behind `shared_system`.
+/// A process that hosts many simulated daemons (or simply doubles up on ticks)
+/// otherwise runs one full collection per daemon per tick, and the resulting
+/// queue behind that lock starves every daemon's event loop — including the
+/// heartbeat send. One fresh sample per second is plenty for a metric that is
+/// piggybacked onto a heartbeat.
+const SAMPLE_TTL: Duration = Duration::from_secs(1);
+
+/// Wall-clock budget for one collection.
+///
+/// The collectors usually finish in tens of milliseconds, but they enumerate
+/// processes/disks and shell out to GPU vendor CLIs — a slow or wedged vendor
+/// tool must not hold a heartbeat, the health tick, or the cached sample
+/// hostage, so the caller waits at most this long and then reuses the cache.
+const COLLECT_DEADLINE: Duration = Duration::from_secs(5);
+
+fn sample_cache() -> &'static Mutex<Option<(Instant, DynamicSample)>> {
+    static CACHE: OnceLock<Mutex<Option<(Instant, DynamicSample)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Serializes collections process-wide so concurrent callers queue behind one
+/// collection instead of piling their own onto the global sysinfo lock.
+fn collect_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Cached sample from within `SAMPLE_TTL`, if there is one.
+fn cached_sample() -> Option<DynamicSample> {
+    let cache = sample_cache().lock().unwrap();
+    cache.as_ref().and_then(|(at, sample)| {
+        if at.elapsed() < SAMPLE_TTL {
+            Some(sample.clone())
+        } else {
+            None
+        }
+    })
+}
+
 pub async fn collect() -> Result<DynamicSample> {
-    tokio::task::spawn_blocking(collect_blocking).await?
+    // Fast path: a sample younger than the TTL is good enough for a heartbeat.
+    if let Some(sample) = cached_sample() {
+        return Ok(sample);
+    }
+
+    let _guard = collect_lock().lock().await;
+    // Another caller may have refreshed while we waited for the lock.
+    if let Some(sample) = cached_sample() {
+        return Ok(sample);
+    }
+
+    let sample = match tokio::time::timeout(
+        COLLECT_DEADLINE,
+        tokio::task::spawn_blocking(collect_blocking),
+    )
+    .await
+    {
+        Ok(joined) => joined??,
+        Err(_) => {
+            tracing::warn!(
+                "sample collection exceeded {COLLECT_DEADLINE:?}; reusing the last sample"
+            );
+            return match sample_cache().lock().unwrap().as_ref() {
+                Some((_, sample)) => Ok(sample.clone()),
+                None => Err(anyhow::anyhow!(
+                    "sample collection timed out and no cached sample is available"
+                )),
+            };
+        }
+    };
+    *sample_cache().lock().unwrap() = Some((Instant::now(), sample.clone()));
+    Ok(sample)
 }
 
 fn collect_blocking() -> Result<DynamicSample> {

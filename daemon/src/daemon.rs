@@ -567,6 +567,21 @@ impl Daemon {
         self.assessor.refresh_sample().await;
     }
 
+    /// Refresh the cached dynamic sample for the *next* heartbeat without
+    /// delaying this one.
+    ///
+    /// Deliberately not awaited on the heartbeat path: collecting the sample
+    /// refreshes the sysinfo process/disk tables and shells out to the GPU
+    /// vendor CLIs while holding a process-global lock, which takes hundreds of
+    /// milliseconds on a loaded host. Awaiting it here reintroduces exactly the
+    /// coupling that `heartbeat_tick` was created to remove — under load the
+    /// heartbeat POST slips past the sender's readiness window and never lands.
+    fn refresh_assessment_sample_async(&self) {
+        if !self.assessor.spawn_refresh_sample() {
+            tracing::debug!("sample refresh still in flight; heartbeating with the cached sample");
+        }
+    }
+
     /// Fire-and-forget: build and send a full inventory+security assessment.
     /// Service inventories/security are collected synchronously before spawning.
     async fn send_assessment_inventory(&self) {
@@ -1578,7 +1593,9 @@ pub async fn run(
             }
 
             _ = heartbeat_tick.tick() => {
-                daemon.refresh_assessment_sample().await;
+                // Never await the sample here: it is collected for the *next*
+                // heartbeat so a slow collection cannot delay this one.
+                daemon.refresh_assessment_sample_async();
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
 
@@ -2123,7 +2140,9 @@ pub async fn run_sim(
             }
 
             _ = heartbeat_tick.tick() => {
-                daemon.refresh_assessment_sample().await;
+                // Never await the sample here: it is collected for the *next*
+                // heartbeat so a slow collection cannot delay this one.
+                daemon.refresh_assessment_sample_async();
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
 
@@ -2377,7 +2396,9 @@ pub async fn run_sim_with_services(
             }
 
             _ = heartbeat_tick.tick() => {
-                daemon.refresh_assessment_sample().await;
+                // Never await the sample here: it is collected for the *next*
+                // heartbeat so a slow collection cannot delay this one.
+                daemon.refresh_assessment_sample_async();
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
 

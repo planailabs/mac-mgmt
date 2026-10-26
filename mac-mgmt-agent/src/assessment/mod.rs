@@ -17,6 +17,7 @@ pub mod security;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -50,6 +51,9 @@ pub struct Assessor {
     /// Per-probe last-run timestamps. Probes with a custom `interval()` are
     /// skipped if less time has elapsed since their last run.
     last_probe_runs: Arc<RwLock<HashMap<String, Instant>>>,
+    /// Set while a background sample refresh is running, so heartbeat ticks
+    /// cannot pile collections on top of each other.
+    refresh_in_flight: Arc<AtomicBool>,
 }
 
 impl Assessor {
@@ -60,6 +64,7 @@ impl Assessor {
             config: Arc::new(RwLock::new(None)),
             metrics: Arc::new(RwLock::new(None)),
             last_probe_runs: Arc::new(RwLock::new(HashMap::new())),
+            refresh_in_flight: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -88,7 +93,9 @@ impl Assessor {
             .unwrap_or_default()
     }
 
-    /// Collect a fresh dynamic sample and update the snapshot. Cheap (<50ms).
+    /// Collect a fresh dynamic sample and update the snapshot. Cheap in the
+    /// steady state: `sample::collect` reuses one collection per second across
+    /// the whole process.
     pub async fn refresh_sample(&self) {
         match sample::collect().await {
             Ok(s) => {
@@ -102,6 +109,37 @@ impl Assessor {
                 tracing::debug!("sample collection failed: {e}");
             }
         }
+    }
+
+    /// Start a sample refresh in the background, without waiting for it.
+    ///
+    /// The heartbeat path uses this instead of [`refresh_sample`]: a heartbeat
+    /// must never be delayed by sample collection (that is why the heartbeat
+    /// tick was decoupled from the health tick in the first place). The next
+    /// heartbeat simply carries the previous snapshot.
+    ///
+    /// Returns `false` when a collection was already in flight and this call
+    /// was skipped — otherwise N ticks would queue N collections behind the
+    /// process-global sysinfo lock.
+    pub fn spawn_refresh_sample(self: &Arc<Self>) -> bool {
+        if self.refresh_in_flight.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+
+        /// Clears the in-flight flag even if the collection panics.
+        struct InFlightGuard(Arc<AtomicBool>);
+        impl Drop for InFlightGuard {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+
+        let assessor = Arc::clone(self);
+        tokio::spawn(async move {
+            let _guard = InFlightGuard(Arc::clone(&assessor.refresh_in_flight));
+            assessor.refresh_sample().await;
+        });
+        true
     }
 
     /// Build and send a full inventory+security assessment. Called on startup, every
