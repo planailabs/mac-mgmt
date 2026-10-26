@@ -14,6 +14,40 @@ fn init_tracing() {
         .try_init();
 }
 
+/// Describe heartbeat readiness per daemon.
+///
+/// A bare "all daemons should send heartbeats" says nothing about *why* a
+/// readiness wait expired: a daemon whose POSTs are being rejected, a daemon
+/// that is still starting up, and a stalled sender all look identical. Record
+/// the per-instance counts plus what the mock server actually saw, so the next
+/// failure is diagnosable from the trace alone.
+fn heartbeat_readiness(
+    state: &sim_tests::mock_server::MockServerState,
+    instance_ids: &[String],
+) -> String {
+    let reports: Vec<String> = instance_ids
+        .iter()
+        .map(|iid| {
+            let count = state.heartbeats_from(iid).len();
+            let short = &iid[..iid.len().min(12)];
+            format!("{short}={count}")
+        })
+        .collect();
+    let missing = instance_ids
+        .iter()
+        .filter(|iid| state.heartbeats_from(iid).is_empty())
+        .count();
+
+    format!(
+        "{}/{} daemons reported, {missing} missing; heartbeat POSTs seen by the server: {}; \
+         per-daemon heartbeats: [{}]",
+        instance_ids.len() - missing,
+        instance_ids.len(),
+        state.request_count("/api/heartbeat"),
+        reports.join(", "),
+    )
+}
+
 /// 10 daemons against one server with 100ms health interval.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn hammer_many_daemons() {
@@ -37,7 +71,11 @@ async fn hammer_many_daemons() {
             .all(|iid| !state.heartbeats_from(iid).is_empty())
     })
     .await;
-    assert!(ok, "all 10 daemons should send heartbeats");
+    assert!(
+        ok,
+        "all 10 daemons should send heartbeats within 20s: {}",
+        heartbeat_readiness(&state, &instance_ids)
+    );
 
     // Verify all unique
     let unique: std::collections::HashSet<&str> = instance_ids.iter().map(|s| s.as_str()).collect();
@@ -72,7 +110,11 @@ async fn hammer_many_daemons() {
                 .all(|iid| !state.heartbeats_from(iid).is_empty())
         })
         .await;
-    assert!(recovered, "all 10 daemons should recover after hammering");
+    assert!(
+        recovered,
+        "all 10 daemons should recover after hammering: {}",
+        heartbeat_readiness(&state, &instance_ids)
+    );
 
     // Check invariants
     let timeline = Timeline::new();
