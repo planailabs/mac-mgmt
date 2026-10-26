@@ -7,14 +7,27 @@
 //
 // Adding a new design token: declare the CSS variable in input.css under
 // both `:root` and `.dark`, then add a key here.
+const path = require('path');
 const tokenColor = (v) => `rgb(var(--${v}) / <alpha-value>)`;
+
+// Resolve content globs from this file, not the cwd: Tailwind silently purges
+// everything a glob fails to match, so a build started from another directory
+// must not end up with a CSS file missing half the classes.
+const here = (...parts) => path.resolve(__dirname, ...parts);
 
 module.exports = {
   darkMode: 'selector',
-  // Scan both the server's own `.rs` files AND the design crate's
-  // shared component sources so Tailwind's class extractor doesn't
-  // purge any class emitted by the imported components.
-  content: ["./src/**/*.rs", "../memvault/plan-ai-design/src/**/*.rs", "../config-ui/src/**/*.rs", "../common/plan-ai-chat-ui/src/**/*.rs"],
+  // Scan the server's own `.rs` files AND every shared component crate the web
+  // UI renders, so Tailwind doesn't purge the classes they emit.
+  // `../design` (not `../memvault/plan-ai-design`) is the canonical path the
+  // crates depend on: a symlink in a checkout, a real dir after
+  // server/package.nix's postPatch drops the vendored copy.
+  content: [
+    here('src/**/*.rs'),
+    here('../design/src/**/*.rs'),
+    here('../config-ui/src/**/*.rs'),
+    here('../common/*/src/**/*.rs'),
+  ],
   // `td` and `th` collide with HTML element names; Tailwind's content
   // extractor heuristically drops them. Safelist so the @layer rules
   // for our `<Td>` / `<TdMono>` / `<TdMuted>` cells survive purge.
