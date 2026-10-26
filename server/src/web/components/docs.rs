@@ -380,7 +380,7 @@ fn GlossaryTermRow(term: String, snippet: Option<String>) -> Element {
                     {match &*entry.read() {
                         Some(Some(Ok(e))) => rsx! {
                             div {
-                                class: "prose-chat text-sm",
+                                class: "prose prose-sm dark:prose-invert max-w-none text-sm",
                                 dangerous_inner_html: crate::web::components::chat_ui::simple_md_to_html(&e.markdown),
                             }
                         },
