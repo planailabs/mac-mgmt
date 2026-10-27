@@ -2623,6 +2623,30 @@ mod tests {
     }
 
     #[test]
+    fn crash_backoff_does_not_reregister_on_suppressed_drift_loop() {
+        // Drift detection now runs for backoff services too, so the loop guard
+        // must still refuse a second reregister toward the same target.
+        let running = crate::nix::binary_store_path("ls").expect("test needs `ls` in /nix/store");
+        let target = crate::nix::binary_store_path("sh").expect("test needs `sh` in /nix/store");
+        assert_ne!(running, target);
+        let svc = Arc::new(StubService::new("hermes-webui").with_binary("sh"));
+        let mut state = state_from(svc, ServicePhase::CrashBackoff);
+        state.restart_at = Some(Instant::now() + Duration::from_secs(30));
+        state.running_store_path = Some(running);
+        state.last_drift_target = Some(target);
+
+        let step = ServiceManager::lifecycle_step(&mut state, UpgradeGate::Anytime);
+        assert!(
+            !step.reregister,
+            "loop guard still suppresses on a backoff service"
+        );
+        assert!(!state.upgrade_pending, "suppressed drift schedules nothing");
+        let signal = state.drift_signal.expect("critical drift signal raised");
+        assert!(signal.message.contains("persists after reregister"));
+        assert_eq!(state.phase, ServicePhase::CrashBackoff);
+    }
+
+    #[test]
     fn crash_backoff_still_delays_repair_and_restart() {
         let svc = Arc::new(StubService::new("hermes-webui"));
         let mut state = state_from(svc.clone(), ServicePhase::CrashBackoff);

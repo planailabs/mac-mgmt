@@ -171,9 +171,11 @@ main protocol types are re-exported from the crate root (`lib.rs:16-17`) so the 
   the expected store path (drift detection) and schedules graceful restarts when a spec changes.
 - Crash handling is split: the **supervisor** auto-restarts crashed processes after
   `RESPAWN_DELAY`, while the **daemon** deliberately does *not* re-register on crash — doing so would
-  kill the process the supervisor has already restarted (`service_mgmt.rs:986-993`). The daemon's own
-  exponential crash backoff (5s/10s/… via `crash_backoff_delay`) applies before a *repair + restart*
-  is attempted. The one exception is a pending upgrade: a `CrashBackoff` service still has it applied
+  kill the process the supervisor has already restarted (`service_mgmt.rs:1131-1138`). The daemon's
+  own exponential crash backoff (5s/10s/… via `crash_backoff_delay`) applies before a *repair +
+  restart* is attempted — though a fast crash loop re-arms that delay on every `Crashed`, so the
+  repair may never come and the pending-upgrade path below is the way out. The one exception to the
+  no-reattach rule is a pending upgrade: a `CrashBackoff` service still has it applied
   and is reregistered onto the new binary, since a stale pin may be the cause of the crash loop and
   `check_upgrades()` will not re-install while `upgrade_pending` is set (staff ping f74b6db8).
 - The daemon asks the supervisor to re-exec after a self-update so it picks up the new binary, and
