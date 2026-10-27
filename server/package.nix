@@ -67,12 +67,11 @@ rustPlatform.buildRustPackage {
   buildPhase = ''
     runHook preBuild
 
-    # dx's cargo-metadata watchdog (~200s) is too short under parallel load --
-    # cargo metadata waits on the shared package-cache lock while other builds
-    # run, so dx times out before Cargo reports anything (same trap already
-    # handled in overlay.nix). Resolve metadata up front so the real error, if
-    # any, is Cargo's.
-    timeout 600 cargo metadata --format-version=1 >/dev/null
+    # Resolve metadata before dx so a lock or manifest error is Cargo's own
+    # message, not dx's "cargo metadata took too long" (patches/dioxus-cli-all.patch
+    # raises dx's bound to 30 min for the same reason). Keep the timeout at least
+    # that high: on a loaded builder this workspace's ~1650 crates take minutes.
+    timeout 1800 cargo metadata --format-version=1 >/dev/null
 
     # Tailwind CSS
     pushd server
