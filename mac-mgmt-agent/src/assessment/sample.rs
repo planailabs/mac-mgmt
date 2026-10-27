@@ -100,18 +100,31 @@ pub async fn collect() -> Result<DynamicSample> {
     Ok(sample)
 }
 
+/// Refresh the shared process table and return how many processes are live.
+///
+/// `remove_dead_processes` must stay `true`: with `false` sysinfo only marks the
+/// map's existing entries as updated and never drops them, so the shared
+/// `System` (a process-wide `OnceLock`) would accumulate every pid the daemon
+/// has ever seen and this number would become a high-water mark. Pruning keeps
+/// the `Process` struct of every process seen in *this* refresh, so CPU usage
+/// deltas (which need the previous sample) keep working.
+fn refresh_process_count(sys: &mut System) -> u32 {
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    sys.processes().len() as u32
+}
+
 fn collect_blocking() -> Result<DynamicSample> {
     let started = Instant::now();
 
     let (mem_used, mem_total, swap_used, process_count) = {
         let mut sys = shared_system().lock().unwrap();
         sys.refresh_memory();
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
+        let process_count = refresh_process_count(&mut sys);
         (
             sys.used_memory(),
             sys.total_memory(),
             sys.used_swap(),
-            sys.processes().len() as u32,
+            process_count,
         )
     };
 
@@ -221,4 +234,35 @@ fn thermal_state() -> Option<String> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn thermal_state() -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A dead pid must stop counting: with `remove_dead_processes = false` the
+    /// count only ever grows, which is what made healers alert on "thousands of
+    /// processes" for an idle host.
+    #[test]
+    fn process_count_prunes_dead_pids() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn sleep");
+        let child_pid = sysinfo::Pid::from_u32(child.id());
+
+        // Own System, not the process-wide one, so parallel tests don't interfere.
+        let mut sys = System::new();
+        assert!(refresh_process_count(&mut sys) > 0);
+        assert!(sys.process(child_pid).is_some(), "a live child must count");
+
+        child.kill().expect("kill sleep");
+        child.wait().expect("reap sleep");
+
+        refresh_process_count(&mut sys);
+        assert!(
+            sys.process(child_pid).is_none(),
+            "a dead pid must be pruned"
+        );
+    }
 }
