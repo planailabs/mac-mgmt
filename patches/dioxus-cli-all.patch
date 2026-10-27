@@ -276,3 +276,25 @@ index ea77d89..0ababd4 100644
      /// Include all features in the build
      #[clap(long, help_heading = HELP_HEADING)]
      pub(crate) all_features: bool,
+diff --git a/src/workspace.rs b/src/workspace.rs
+--- a/src/workspace.rs
++++ b/src/workspace.rs
+@@ -62,13 +62,17 @@
+         let spin_future = async move {
+             tokio::time::sleep(Duration::from_millis(1000)).await;
+             eprintln!("{GLOW_STYLE}warning{GLOW_STYLE:#}: Waiting for cargo-metadata...");
+             tokio::time::sleep(Duration::from_millis(2000)).await;
+-            for x in 1..=100 {
++            // 900 x 2 s = 30 min instead of upstream's 100 x 2 s = ~200 s: this workspace
++            // vendors ~1650 crates and cargo metadata needs minutes on a loaded builder,
++            // where the upstream bound aborted the nix build of the server (the preflight
++            // in server/package.nix passes; dx then runs metadata again and gives up).
++            for x in 1..=900 {
+                 tokio::time::sleep(Duration::from_millis(2000)).await;
+                 eprintln!("{GLOW_STYLE}warning{GLOW_STYLE:#}: (Try {x}) Taking a while...");
+ 
+                 if x % 10 == 0 {
+                     eprintln!("{GLOW_STYLE}warning{GLOW_STYLE:#}: maybe check your network connection or build lock?");
+                 }
+             }
+         };
