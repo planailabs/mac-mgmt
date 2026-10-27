@@ -173,7 +173,9 @@ main protocol types are re-exported from the crate root (`lib.rs:16-17`) so the 
   `RESPAWN_DELAY`, while the **daemon** deliberately does *not* re-register on crash — doing so would
   kill the process the supervisor has already restarted (`service_mgmt.rs:986-993`). The daemon's own
   exponential crash backoff (5s/10s/… via `crash_backoff_delay`) applies before a *repair + restart*
-  is attempted.
+  is attempted. The one exception is a pending upgrade: a `CrashBackoff` service still has it applied
+  and is reregistered onto the new binary, since a stale pin may be the cause of the crash loop and
+  `check_upgrades()` will not re-install while `upgrade_pending` is set (staff ping f74b6db8).
 - The daemon asks the supervisor to re-exec after a self-update so it picks up the new binary, and
   tolerates `NoChange` when it is already current.
 - `mac-mgmt-agent/src/service/{systemd.rs, launchd.rs, mod.rs}` select the host's service backend

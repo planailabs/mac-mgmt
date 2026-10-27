@@ -166,9 +166,13 @@ other services' config files and collect env vars; they run on the health tick *
 `:62`, `Installing`, `InstallFailed`, `Healthy`, …); exponential crash backoff 5s/10s/… via
 `crash_backoff_delay` (`:127`); `restart_pending`/`restart_at`; `drift_signals()`; `collect_statuses`
 / `collect_tunnels` / `collect_file_tunnels` / `collect_shell_tunnels` / `collect_service_samples`;
-`check_upgrades()`; `health_tick(metrics, UpgradeGate)` (`:938`, phased: crash-backoff expiry, then
-spec-change detection, then drift detection via the supervisor's resolved store paths);
+`check_upgrades()`; `health_tick(metrics, UpgradeGate)` (`:938`, phased: crash-backoff expiry via
+`expire_crash_backoff`, then per-service `lifecycle_step` — restart pending, drift detection via the
+supervisor's resolved store paths, upgrade apply — then health checks);
 `send_update_self()`; `run_connectors_tick()`; `retry_failed_installs()`; `shutdown()`.
+A service in `CrashBackoff` skips restarts (the supervisor already respawned it) but **not** a pending
+upgrade: applying it is what can end the crash loop, and `check_upgrades()` skips services with
+`upgrade_pending` set, so skipping the apply would starve them (ping f74b6db8).
 `UpgradeGate::{Anytime, InWindow, Deferred}` is derived from the upgrade window (`daemon.rs:63-79`).
 
 Supporting subsystems: `unmanaged/` — services the daemon didn't spawn but still manages

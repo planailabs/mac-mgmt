@@ -121,6 +121,15 @@ fn drift_decision(
     }
 }
 
+/// What one service's lifecycle step decided for the current health tick.
+#[derive(Debug, Default, Clone, Copy)]
+struct LifecycleStep {
+    /// Whether the service is busy (serving requests / running jobs).
+    busy: bool,
+    /// Whether to reregister with the supervisor (restart or upgrade apply).
+    reregister: bool,
+}
+
 /// Exponential crash backoff before a repair+restart is attempted: 5s, 10s,
 /// 20s, 40s, then held at 40s (capped at 60s). `consecutive_crashes` is the
 /// post-increment count, so the first crash passes `1`.
@@ -984,32 +993,9 @@ impl ServiceManager {
         };
 
         // Phase 0: handle crash backoff expiry.
-        // The supervisor auto-restarts crashed processes, so we don't
-        // reregister here — that would kill the already-restarted process.
-        // We just run repair (if needed) and transition back to Starting so
-        // the next tick promotes to Healthy and resumes health checks.
         let now = Instant::now();
         for state in self.services.iter_mut() {
-            // Integrated services don't crash-backoff via the supervisor.
-            if state.service.service_mode() == ServiceMode::Integrated {
-                continue;
-            }
-            if state.phase == ServicePhase::CrashBackoff {
-                let ready = state.restart_at.map_or(true, |t| now >= t);
-                if !ready {
-                    continue;
-                }
-                let name = &state.name;
-                if state.consecutive_crashes >= 2 {
-                    tracing::info!("{name} crash backoff expired, attempting repair");
-                    if let Err(e) = state.service.repair() {
-                        tracing::error!("{name} repair failed: {e}");
-                    }
-                }
-                state.restart_at = None;
-                state.phase = ServicePhase::Starting;
-                state.post_start_done = false;
-            }
+            Self::expire_crash_backoff(state, now);
         }
 
         // Phase 1: lifecycle management.
@@ -1017,112 +1003,14 @@ impl ServiceManager {
         let mut pending_reregisters: Vec<usize> = Vec::new();
 
         for (i, state) in self.services.iter_mut().enumerate() {
-            let name = state.name.clone();
-            sentry_ext::set_tag("service", &name);
-
-            // Services in crash backoff skip normal lifecycle processing.
-            if state.phase == ServicePhase::CrashBackoff {
-                continue;
+            sentry_ext::set_tag("service", &state.name);
+            let step = Self::lifecycle_step(state, gate);
+            busy_flags[i] = step.busy;
+            if step.reregister {
+                pending_reregisters.push(i);
             }
-
-            let integrated = state.service.service_mode() == ServiceMode::Integrated;
-
-            let busy = state.service.is_busy().unwrap_or(false);
-            busy_flags[i] = busy;
-
-            // Supervisor-managed lifecycle (restart, upgrade, binary drift)
-            // does not apply to integrated services.
-            if !integrated {
-                if !state.restart_pending
-                    && state.phase.is_healthy()
-                    && state.service.needs_restart()
-                {
-                    tracing::info!("{name} needs restart (external change detected)");
-                    state.restart_pending = true;
-                }
-
-                if state.restart_pending && (!busy || gate.forces_busy_restarts()) {
-                    pending_reregisters.push(i);
-                    state.restart_pending = false;
-                    state.upgrade_pending = false;
-                    continue;
-                }
-
-                // Detect binary store-path drift — treated as an upgrade so
-                // the restart waits for the upgrade window.
-                if !state.upgrade_pending {
-                    let current_store = crate::nix::binary_store_path(state.service.binary_name());
-                    match drift_decision(
-                        state.running_store_path.as_deref(),
-                        current_store.as_deref(),
-                        state.last_drift_target.as_deref(),
-                    ) {
-                        DriftDecision::Schedule => {
-                            let new = current_store.unwrap_or_default();
-                            tracing::info!(
-                                "{name} binary changed ({} → {new}), scheduling upgrade",
-                                state.running_store_path.as_deref().unwrap_or("?"),
-                            );
-                            // Warning: drift detected, reregister scheduled — expected to self-heal.
-                            state.drift_signal = Some(mac_mgmt_common::FailureSignal {
-                                kind: "drift".to_string(),
-                                severity: mac_mgmt_common::SignalSeverity::Warning,
-                                subject: name.clone(),
-                                message: format!(
-                                    "{name} binary drifted to {new}; reregister scheduled"
-                                ),
-                                since: chrono::Utc::now().timestamp(),
-                            });
-                            state.last_drift_target = Some(new);
-                            state.upgrade_pending = true;
-                        }
-                        DriftDecision::SuppressedLoop => {
-                            tracing::warn!(
-                                "{name} store-path drift persists after reregister (target {}); \
-                                 resolver mismatch, not restarting again",
-                                current_store.as_deref().unwrap_or("?"),
-                            );
-                            // Critical: drift persists after a reregister — the resolver
-                            // mismatch is a restart loop the daemon can't fix itself.
-                            state.drift_signal = Some(mac_mgmt_common::FailureSignal {
-                                kind: "drift".to_string(),
-                                severity: mac_mgmt_common::SignalSeverity::Critical,
-                                subject: name.clone(),
-                                message: format!(
-                                    "{name} store-path drift persists after reregister \
-                                     (target {}); resolver mismatch / restart loop",
-                                    current_store.as_deref().unwrap_or("?"),
-                                ),
-                                since: chrono::Utc::now().timestamp(),
-                            });
-                        }
-                        DriftDecision::None => {
-                            // Binary matches again — clear any prior drift signal.
-                            state.drift_signal = None;
-                        }
-                    }
-                }
-
-                if state.upgrade_pending && gate.allows_upgrades() {
-                    // If the freshly-resolved binary is the same store path as
-                    // the running one (e.g. a flake-URL-only reinstall or a pin
-                    // move that rebuilt to an identical output), a restart
-                    // would bounce the service for nothing — skip it.
-                    let current_store = crate::nix::binary_store_path(state.service.binary_name());
-                    if current_store.is_some() && current_store == state.running_store_path {
-                        tracing::info!(
-                            "{name} upgrade produced no binary change, skipping restart"
-                        );
-                        state.upgrade_pending = false;
-                    } else {
-                        pending_reregisters.push(i);
-                        state.upgrade_pending = false;
-                        continue;
-                    }
-                }
-            }
-
-            if state.phase == ServicePhase::Starting
+            if !step.reregister
+                && state.phase == ServicePhase::Starting
                 && Self::supervisor_allows_healthy(state, &supervisor_live)
             {
                 state.phase = ServicePhase::Healthy;
@@ -1238,6 +1126,145 @@ impl ServiceManager {
                 state.phase,
             );
         }
+    }
+
+    /// Phase 0: expire a crashed service's backoff and run repair once the
+    /// delay is up. Returns `true` when the service left `CrashBackoff`.
+    ///
+    /// The supervisor auto-restarts crashed children, so this never
+    /// reregisters — that would kill the already-restarted process. It only
+    /// transitions back to `Starting` so the next tick promotes to `Healthy`
+    /// and resumes health checks.
+    fn expire_crash_backoff(state: &mut ServiceState, now: Instant) -> bool {
+        // Integrated services don't crash-backoff via the supervisor.
+        if state.service.service_mode() == ServiceMode::Integrated
+            || state.phase != ServicePhase::CrashBackoff
+        {
+            return false;
+        }
+        let ready = state.restart_at.map_or(true, |t| now >= t);
+        if !ready {
+            return false;
+        }
+        let name = state.name.clone();
+        if state.consecutive_crashes >= 2 {
+            tracing::info!("{name} crash backoff expired, attempting repair");
+            if let Err(e) = state.service.repair() {
+                tracing::error!("{name} repair failed: {e}");
+            }
+        }
+        state.restart_at = None;
+        state.phase = ServicePhase::Starting;
+        state.post_start_done = false;
+        true
+    }
+
+    /// Phase 1: decide what one service needs this tick.
+    ///
+    /// A service in crash backoff skips restarts — the supervisor already
+    /// respawns the crashed child, and re-registering would kill it — but not
+    /// a pending upgrade: replacing the binary is what can end the crash loop,
+    /// and `check_upgrades()` skips services with `upgrade_pending` set, so
+    /// skipping the apply here would starve the service forever
+    /// (staff ping f74b6db8: hermes-webui crashed for days on a stale pin).
+    fn lifecycle_step(state: &mut ServiceState, gate: UpgradeGate) -> LifecycleStep {
+        let in_backoff = state.phase == ServicePhase::CrashBackoff;
+        let mut step = LifecycleStep {
+            busy: !in_backoff && state.service.is_busy().unwrap_or(false),
+            reregister: false,
+        };
+
+        // Supervisor-managed lifecycle (restart, upgrade, binary drift)
+        // does not apply to integrated services.
+        if state.service.service_mode() == ServiceMode::Integrated {
+            return step;
+        }
+
+        if !in_backoff {
+            if !state.restart_pending && state.phase.is_healthy() && state.service.needs_restart() {
+                tracing::info!("{} needs restart (external change detected)", state.name);
+                state.restart_pending = true;
+            }
+
+            // A restart deferred by the backoff stays pending until it clears.
+            if state.restart_pending && (!step.busy || gate.forces_busy_restarts()) {
+                state.restart_pending = false;
+                state.upgrade_pending = false;
+                step.reregister = true;
+                return step;
+            }
+        }
+
+        let name = state.name.clone();
+        let current_store = crate::nix::binary_store_path(state.service.binary_name());
+
+        // Detect binary store-path drift — treated as an upgrade so the
+        // restart waits for the upgrade window.
+        if !state.upgrade_pending {
+            match drift_decision(
+                state.running_store_path.as_deref(),
+                current_store.as_deref(),
+                state.last_drift_target.as_deref(),
+            ) {
+                DriftDecision::Schedule => {
+                    let new = current_store.clone().unwrap_or_default();
+                    tracing::info!(
+                        "{name} binary changed ({} → {new}), scheduling upgrade",
+                        state.running_store_path.as_deref().unwrap_or("?"),
+                    );
+                    // Warning: drift detected, reregister scheduled — expected to self-heal.
+                    state.drift_signal = Some(mac_mgmt_common::FailureSignal {
+                        kind: "drift".to_string(),
+                        severity: mac_mgmt_common::SignalSeverity::Warning,
+                        subject: name.clone(),
+                        message: format!("{name} binary drifted to {new}; reregister scheduled"),
+                        since: chrono::Utc::now().timestamp(),
+                    });
+                    state.last_drift_target = Some(new);
+                    state.upgrade_pending = true;
+                }
+                DriftDecision::SuppressedLoop => {
+                    tracing::warn!(
+                        "{name} store-path drift persists after reregister (target {}); \
+                         resolver mismatch, not restarting again",
+                        current_store.as_deref().unwrap_or("?"),
+                    );
+                    // Critical: drift persists after a reregister — the resolver
+                    // mismatch is a restart loop the daemon can't fix itself.
+                    state.drift_signal = Some(mac_mgmt_common::FailureSignal {
+                        kind: "drift".to_string(),
+                        severity: mac_mgmt_common::SignalSeverity::Critical,
+                        subject: name.clone(),
+                        message: format!(
+                            "{name} store-path drift persists after reregister \
+                             (target {}); resolver mismatch / restart loop",
+                            current_store.as_deref().unwrap_or("?"),
+                        ),
+                        since: chrono::Utc::now().timestamp(),
+                    });
+                }
+                DriftDecision::None => {
+                    // Binary matches again — clear any prior drift signal.
+                    state.drift_signal = None;
+                }
+            }
+        }
+
+        if state.upgrade_pending && gate.allows_upgrades() {
+            // If the freshly-resolved binary is the same store path as
+            // the running one (e.g. a flake-URL-only reinstall or a pin
+            // move that rebuilt to an identical output), a restart
+            // would bounce the service for nothing — skip it.
+            if current_store.is_some() && current_store == state.running_store_path {
+                tracing::info!("{name} upgrade produced no binary change, skipping restart");
+                state.upgrade_pending = false;
+            } else {
+                state.upgrade_pending = false;
+                step.reregister = true;
+            }
+        }
+
+        step
     }
 
     pub fn run_connectors_tick(&mut self) {
@@ -2357,6 +2384,10 @@ mod tests {
             self.upgrade = u;
             self
         }
+        fn with_binary(mut self, binary: &'static str) -> Self {
+            self.binary = binary;
+            self
+        }
         fn integrated(mut self) -> Self {
             self.mode = ServiceMode::Integrated;
             self
@@ -2523,6 +2554,104 @@ mod tests {
         assert!(mgr.services[0].upgrade_pending, "available → pending");
         assert!(!mgr.services[1].upgrade_pending, "none → not pending");
         assert!(!mgr.services[2].upgrade_pending, "failure → not pending");
+    }
+
+    // ── crash backoff vs. a pending upgrade (ping f74b6db8) ──────────
+
+    #[test]
+    fn crash_backoff_with_pending_upgrade_reregisters() {
+        // The supervisor keeps respawning hermes-webui into the same crash, so
+        // its backoff never lapses on a healthy tick; the pending upgrade must
+        // still be applied or it is starved forever.
+        let svc = Arc::new(StubService::new("hermes-webui").with_binary("stub-no-such-binary"));
+        let mut state = state_from(svc, ServicePhase::CrashBackoff);
+        state.upgrade_pending = true;
+        state.restart_at = Some(Instant::now() + Duration::from_secs(30));
+
+        let step = ServiceManager::lifecycle_step(&mut state, UpgradeGate::Anytime);
+        assert!(
+            step.reregister,
+            "pending upgrade applied during crash backoff"
+        );
+        assert!(
+            !state.upgrade_pending,
+            "pending cleared before the reregister"
+        );
+        assert_eq!(
+            state.phase,
+            ServicePhase::CrashBackoff,
+            "no lifecycle reset"
+        );
+
+        // The upgrade window still gates it — outside the window it waits.
+        let svc = Arc::new(StubService::new("hermes-webui").with_binary("stub-no-such-binary"));
+        let mut state = state_from(svc, ServicePhase::CrashBackoff);
+        state.upgrade_pending = true;
+        state.restart_at = Some(Instant::now() + Duration::from_secs(30));
+        let step = ServiceManager::lifecycle_step(&mut state, UpgradeGate::Deferred);
+        assert!(!step.reregister, "outside the upgrade window it defers");
+        assert!(state.upgrade_pending, "and keeps the upgrade pending");
+    }
+
+    #[test]
+    fn crash_backoff_clears_upgrade_pending_when_binary_unchanged() {
+        // `sh` resolves into /nix/store inside the dev shell; the test needs a
+        // store path to compare against `running_store_path`.
+        let store = crate::nix::binary_store_path("sh")
+            .expect("test needs `sh` to resolve into /nix/store (run inside the nix dev shell)");
+        let svc = Arc::new(StubService::new("hermes-webui").with_binary("sh"));
+        let mut state = state_from(svc, ServicePhase::CrashBackoff);
+        state.upgrade_pending = true;
+        state.restart_at = Some(Instant::now() + Duration::from_secs(30));
+        state.running_store_path = Some(store);
+
+        let step = ServiceManager::lifecycle_step(&mut state, UpgradeGate::Anytime);
+        assert!(
+            !step.reregister,
+            "no restart when the binary did not change"
+        );
+        assert!(
+            !state.upgrade_pending,
+            "pending cleared so it does not spin"
+        );
+
+        // Next tick: nothing pending, nothing to do.
+        let step = ServiceManager::lifecycle_step(&mut state, UpgradeGate::Anytime);
+        assert!(!step.reregister);
+        assert!(!state.upgrade_pending);
+        assert_eq!(state.phase, ServicePhase::CrashBackoff);
+    }
+
+    #[test]
+    fn crash_backoff_still_delays_repair_and_restart() {
+        let svc = Arc::new(StubService::new("hermes-webui"));
+        let mut state = state_from(svc.clone(), ServicePhase::CrashBackoff);
+        state.consecutive_crashes = 3;
+        state.restart_at = Some(Instant::now() + Duration::from_secs(30));
+
+        assert!(!ServiceManager::expire_crash_backoff(
+            &mut state,
+            Instant::now()
+        ));
+        assert_eq!(
+            svc.repair_calls.load(Ordering::SeqCst),
+            0,
+            "no repair before the backoff expires"
+        );
+        assert_eq!(state.phase, ServicePhase::CrashBackoff);
+
+        // A restart deferred by the backoff stays deferred — no restart loop.
+        state.restart_pending = true;
+        let step = ServiceManager::lifecycle_step(&mut state, UpgradeGate::Anytime);
+        assert!(!step.reregister, "the supervisor's respawn is left alone");
+        assert!(state.restart_pending, "the deferred restart stays pending");
+
+        // Backoff expires → repair once, then back to Starting.
+        let later = Instant::now() + Duration::from_secs(60);
+        assert!(ServiceManager::expire_crash_backoff(&mut state, later));
+        assert_eq!(svc.repair_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.phase, ServicePhase::Starting);
+        assert!(state.restart_at.is_none());
     }
 
     // ── install state machine ────────────────────────────────────────
