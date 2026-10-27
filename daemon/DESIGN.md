@@ -154,7 +154,7 @@ Required: `name`, `ensure_installed`, `ensure_setup`, `spawn_spec`, `check_healt
   `AiProxyService`, integrated `MemvaultService`, and one `CustomService` per enabled
   `[[custom-service]]`.
 - `ServiceMode::InstallOnly` services go to a separate `install_only` list
-  (`service_mgmt.rs:323-330`).
+  (`service_mgmt.rs:332-339`).
 - Swarm/relay integrated services are registered *before* P2P init so a failed swarm reports
   unhealthy rather than missing (`daemon.rs:1242-1260`).
 
