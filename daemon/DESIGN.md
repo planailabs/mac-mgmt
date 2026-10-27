@@ -162,11 +162,11 @@ Required: `name`, `ensure_installed`, `ensure_setup`, `spawn_spec`, `check_healt
 `litellm_*`/`cloud_*`/`memvault_*` → `{hermes, openclaw, opencode}` matrix, plus `backup`. They patch
 other services' config files and collect env vars; they run on the health tick *before* it.
 
-**ServiceManager** — `service_mgmt.rs:181`. Per-service `ServiceState` with phases (`CrashBackoff`
+**ServiceManager** — `service_mgmt.rs:190`. Per-service `ServiceState` with phases (`CrashBackoff`
 `:62`, `Installing`, `InstallFailed`, `Healthy`, …); exponential crash backoff 5s/10s/… via
-`crash_backoff_delay` (`:127`); `restart_pending`/`restart_at`; `drift_signals()`; `collect_statuses`
+`crash_backoff_delay` (`:136`); `restart_pending`/`restart_at`; `drift_signals()`; `collect_statuses`
 / `collect_tunnels` / `collect_file_tunnels` / `collect_shell_tunnels` / `collect_service_samples`;
-`check_upgrades()`; `health_tick(metrics, UpgradeGate)` (`:938`, phased: crash-backoff expiry via
+`check_upgrades()`; `health_tick(metrics, UpgradeGate)` (`:947`, phased: crash-backoff expiry via
 `expire_crash_backoff`, then per-service `lifecycle_step` — restart pending, drift detection via the
 supervisor's resolved store paths, upgrade apply — then health checks);
 `send_update_self()`; `run_connectors_tick()`; `retry_failed_installs()`; `shutdown()`.
