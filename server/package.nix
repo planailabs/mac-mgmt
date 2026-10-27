@@ -67,10 +67,11 @@ rustPlatform.buildRustPackage {
   buildPhase = ''
     runHook preBuild
 
-    # Resolve metadata before dx so a lock or manifest error is Cargo's own
-    # message, not dx's "cargo metadata took too long" (patches/dioxus-cli-all.patch
-    # raises dx's bound to 30 min for the same reason). Keep the timeout at least
-    # that high: on a loaded builder this workspace's ~1650 crates take minutes.
+    # Resolve metadata before dx: it warms Cargo's cache and surfaces a manifest
+    # error as Cargo's own message instead of dx's "cargo metadata took too long"
+    # (patches/dioxus-cli-all.patch raises dx's bound to 30 min for the same
+    # reason). Keep the timeout at least that high: on a loaded builder this
+    # workspace's ~1650 crates take minutes.
     timeout 1800 cargo metadata --format-version=1 >/dev/null
 
     # Tailwind CSS
