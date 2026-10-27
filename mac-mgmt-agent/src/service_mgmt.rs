@@ -1042,7 +1042,15 @@ impl ServiceManager {
                 Pin<Box<dyn Future<Output = (usize, ServicePhase, Result<bool>)> + Send + '_>>,
             > = Vec::new();
             for (i, state) in self.services.iter().enumerate() {
-                if matches!(state.phase, ServicePhase::Healthy | ServicePhase::Unhealthy) {
+                // An integrated service has no process to start, so a health
+                // check is the only thing that can lift it out of `Stopped` —
+                // where the supervisor teardown (`send_update_self`,
+                // `ensure_client`) leaves it with nothing else to move it.
+                let checkable =
+                    matches!(state.phase, ServicePhase::Healthy | ServicePhase::Unhealthy)
+                        || (state.phase == ServicePhase::Stopped
+                            && state.service.service_mode() == ServiceMode::Integrated);
+                if checkable {
                     let prev = state.phase;
                     let fut = state.service.check_health_async();
                     futs.push(Box::pin(async move {
@@ -2708,6 +2716,30 @@ mod tests {
         assert_eq!(mgr.services[1].phase, ServicePhase::Starting);
         assert!(mgr.services[1].registered, "integrated is self-registered");
         assert_eq!(mgr.services[2].phase, ServicePhase::InstallFailed);
+    }
+
+    // ── health tick: an integrated service recovers from the teardown ──
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn integrated_service_left_stopped_is_health_checked_and_recovers() {
+        // The update-self / supervisor-disconnect teardown marks every service
+        // `Stopped`. For an integrated service (no child process to start) that
+        // used to be terminal — medvedpartner-com reported memvault/astro/swarm/
+        // relay stopped for hours. The next tick must check it like Unhealthy.
+        let relay = state_from(
+            Arc::new(StubService::new("relay").integrated()),
+            ServicePhase::Stopped,
+        );
+        let mut mgr = test_manager(vec![relay]);
+        let metrics = Arc::new(Metrics::new());
+
+        mgr.health_tick(&metrics, UpgradeGate::Anytime).await;
+
+        assert_eq!(
+            mgr.services[0].phase,
+            ServicePhase::Healthy,
+            "a passing health check lifts an integrated service out of Stopped"
+        );
     }
 
     #[tokio::test]
