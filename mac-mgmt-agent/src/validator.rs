@@ -257,6 +257,9 @@ pub fn backup_config_file(path: &Path) {
 /// place. `std::fs::write` truncates the target first, so a write that fails
 /// midway (a full filesystem: ENOSPC) would leave the config empty and — since
 /// it must parse an existing file — unrepairable by the daemon.
+///
+/// The rename replaces the target's inode: a config that is a symlink (dotfiles
+/// checkout) becomes a regular file and the link target keeps the old content.
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     let tmp = path.with_extension("tmp.validator");
     let mut opts = std::fs::OpenOptions::new();
@@ -275,7 +278,8 @@ fn write_atomic(path: &Path, contents: &str) -> Result<()> {
         .and_then(|()| std::fs::rename(&tmp, path));
     if let Err(e) = written {
         let _ = std::fs::remove_file(&tmp);
-        return Err(e).with_context(|| format!("failed to write {}", path.display()));
+        // Callers add the path; a second one here would only repeat it.
+        return Err(e.into());
     }
     Ok(())
 }
@@ -710,6 +714,20 @@ fn run_jsonschema(schema: &serde_json::Value, value: &serde_json::Value) -> Resu
     }
 }
 
+/// `backup_config_file` writes into `crate::config::config_dir()`; point that at
+/// one shared tree so no test litters the real `$HOME` and two tests cannot
+/// race each other's override.
+#[cfg(test)]
+fn shared_config_dir() -> &'static Path {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join("mac-mgmt-validator-config");
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe { std::env::set_var("MAC_MGMT_CONFIG_DIR", &dir) };
+        dir
+    })
+}
+
 #[cfg(test)]
 mod backup_tests {
     use super::*;
@@ -769,19 +787,6 @@ mod backup_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// `backup_config_file` writes into `crate::config::config_dir()`; point that
-    /// at one shared tree so no test litters the real `$HOME` and two tests
-    /// cannot race each other's override.
-    fn shared_config_dir() -> &'static Path {
-        static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-        DIR.get_or_init(|| {
-            let dir = std::env::temp_dir().join("mac-mgmt-validator-config");
-            let _ = std::fs::create_dir_all(&dir);
-            unsafe { std::env::set_var("MAC_MGMT_CONFIG_DIR", &dir) };
-            dir
-        })
-    }
-
     /// A write that cannot be completed must leave the existing config exactly
     /// as it was: `std::fs::write` truncates first, so on a full filesystem
     /// (ENOSPC) it used to leave an empty file the daemon could never parse
@@ -809,6 +814,36 @@ mod backup_tests {
             std::fs::read_to_string(&path).unwrap(),
             r#"{"a":1}"#,
             "a failed write must not touch the existing config"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// When the rename fails the temp file is cleaned up rather than left in
+    /// the config directory. The target is a directory (so `rename` fails with
+    /// EISDIR) and the temp path is a symlink to a writable file, so open and
+    /// write succeed and the rename is the step that fails.
+    #[cfg(unix)]
+    #[test]
+    fn failed_rename_removes_the_temp_file() {
+        let root = std::env::temp_dir().join("mac-mgmt-rename-failure-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let path = root.join("target.json");
+        std::fs::create_dir(&path).unwrap();
+        let scratch = root.join("scratch");
+        std::fs::write(&scratch, b"").unwrap();
+        let tmp = path.with_extension("tmp.validator");
+        std::os::unix::fs::symlink(&scratch, &tmp).unwrap();
+
+        assert!(
+            write_atomic(&path, "{}").is_err(),
+            "the rename cannot complete, so the write must fail"
+        );
+        assert!(
+            std::fs::symlink_metadata(&tmp).is_err(),
+            "the temp file is removed on a failed rename"
         );
 
         let _ = std::fs::remove_dir_all(&root);
@@ -893,6 +928,7 @@ mod env_format_tests {
 
     #[test]
     fn merge_validate_and_write_upserts_env_file() {
+        shared_config_dir();
         let dir = std::env::temp_dir().join("mac-mgmt-env-validator-test");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("upsert.env");
