@@ -7,6 +7,7 @@
 //! the relay file-tunnel write path.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -252,6 +253,33 @@ pub fn backup_config_file(path: &Path) {
 
 // ── Merge + validate + write ───────────────────────────────────────────
 
+/// Write `contents` to `path` through a sibling temp file that is renamed into
+/// place. `std::fs::write` truncates the target first, so a write that fails
+/// midway (a full filesystem: ENOSPC) would leave the config empty and — since
+/// it must parse an existing file — unrepairable by the daemon.
+fn write_atomic(path: &Path, contents: &str) -> Result<()> {
+    let tmp = path.with_extension("tmp.validator");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    // Create the temp with the target's own mode before content lands in it:
+    // these files hold credentials and are often 0600.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mode = std::fs::metadata(path).map_or(0o600, |m| m.permissions().mode() & 0o777);
+        opts.mode(mode);
+    }
+    let written = opts
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(contents.as_bytes()))
+        .and_then(|()| std::fs::rename(&tmp, path));
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e).with_context(|| format!("failed to write {}", path.display()));
+    }
+    Ok(())
+}
+
 impl Validator {
     /// Read → merge → validate → write a config file.
     ///
@@ -259,7 +287,8 @@ impl Validator {
     /// 2. Deep-merge `patch` into the existing value.
     /// 3. Validate merged value against URL/file/exec schema (pre-write).
     /// 4. Copy the current file to the timestamped config-backup folder.
-    /// 5. Serialize and write.
+    /// 5. Serialize and write through a temp file + rename, so a failed write
+    ///    leaves the existing file untouched.
     /// 6. Run command validator if configured; rollback on failure.
     pub fn merge_validate_and_write(
         &self,
@@ -306,13 +335,13 @@ impl Validator {
 
         backup_config_file(config_path);
 
-        std::fs::write(config_path, &merged)
+        write_atomic(config_path, &merged)
             .with_context(|| format!("failed to write {}", config_path.display()))?;
 
         // Post-write validation (command schemas).
         if let Err(e) = self.validate_command(config_path) {
             tracing::warn!("rolling back {}", config_path.display());
-            std::fs::write(config_path, &backup)
+            write_atomic(config_path, &backup)
                 .with_context(|| format!("failed to rollback {}", config_path.display()))?;
             anyhow::bail!("command validation failed, rolled back: {e}");
         }
@@ -703,18 +732,17 @@ mod backup_tests {
 
     #[test]
     fn write_copies_previous_contents_into_config_backup() {
+        let backup_dir = shared_config_dir().join("config-backup");
+        let _ = std::fs::remove_dir_all(&backup_dir);
         let root = std::env::temp_dir().join("mac-mgmt-backup-validator-test");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        // Only this test touches MAC_MGMT_CONFIG_DIR in this module's run.
-        unsafe { std::env::set_var("MAC_MGMT_CONFIG_DIR", &root) };
 
         let path = root.join("target.json");
         let v = Validator::json("*.json");
         v.merge_validate_and_write(&path, &serde_json::json!({ "a": 1 }))
             .unwrap();
         // First write had no original — nothing to back up yet.
-        let backup_dir = root.join("config-backup");
         assert!(
             !backed_up(&backup_dir, &path_safe_name(&path)),
             "no backup for a file that did not exist"
@@ -738,7 +766,78 @@ mod backup_tests {
             serde_json::from_str(&std::fs::read_to_string(&backups[0]).unwrap()).unwrap();
         assert_eq!(saved["a"], 1, "backup holds the pre-write contents");
 
-        unsafe { std::env::remove_var("MAC_MGMT_CONFIG_DIR") };
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `backup_config_file` writes into `crate::config::config_dir()`; point that
+    /// at one shared tree so no test litters the real `$HOME` and two tests
+    /// cannot race each other's override.
+    fn shared_config_dir() -> &'static Path {
+        static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        DIR.get_or_init(|| {
+            let dir = std::env::temp_dir().join("mac-mgmt-validator-config");
+            let _ = std::fs::create_dir_all(&dir);
+            unsafe { std::env::set_var("MAC_MGMT_CONFIG_DIR", &dir) };
+            dir
+        })
+    }
+
+    /// A write that cannot be completed must leave the existing config exactly
+    /// as it was: `std::fs::write` truncates first, so on a full filesystem
+    /// (ENOSPC) it used to leave an empty file the daemon could never parse
+    /// again. The temp path is squatted by a directory here, which makes the
+    /// write fail after serialization the same way a full disk does.
+    #[test]
+    fn failed_write_leaves_existing_config_unchanged() {
+        shared_config_dir();
+        let root = std::env::temp_dir().join("mac-mgmt-write-failure-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let path = root.join("target.json");
+        std::fs::write(&path, r#"{"a":1}"#).unwrap();
+        let tmp = path.with_extension("tmp.validator");
+        std::fs::create_dir(&tmp).unwrap();
+
+        let v = Validator::json("*.json");
+        assert!(
+            v.merge_validate_and_write(&path, &serde_json::json!({ "a": 2 }))
+                .is_err(),
+            "the write cannot complete, so the call must fail"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"{"a":1}"#,
+            "a failed write must not touch the existing config"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A config created from scratch must not be world-readable: the merged
+    /// content (often API keys) is written to the temp file before it is
+    /// renamed over the target, so the temp is created with 0600 up front
+    /// rather than fixed up after the bytes are on disk.
+    #[cfg(unix)]
+    #[test]
+    fn new_config_is_not_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        shared_config_dir();
+        let root = std::env::temp_dir().join("mac-mgmt-mode-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("secret.json");
+
+        Validator::json("*.json")
+            .merge_validate_and_write(&path, &serde_json::json!({ "token": "x" }))
+            .unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o077,
+            0,
+            "a newly written config is not readable by other users"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }
