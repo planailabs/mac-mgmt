@@ -675,6 +675,18 @@ impl Metrics {
     pub fn new() -> Self {
         let daemon_commit = env!("GIT_SHA").to_string();
 
+        // Instruments bind to the meter provider installed when they are
+        // built, and they bind exactly once. A handle built before
+        // `otel::init` would take the no-op provider, and every `mac_mgmt_*`
+        // series would then be missing from `/metrics` for the life of the
+        // process — only the instruments `otel::init` binds itself
+        // (`process_uptime_seconds`, `log_events_total`) would survive.
+        // `otel::init` is process-wide and idempotent, and `layers()` builds
+        // the providers even when a subscriber is already installed, so
+        // pinning the ordering here makes the handle safe to construct from
+        // anywhere instead of relying on each call site to init first.
+        mac_mgmt_common::otel::init(SCOPE, "info");
+
         // Instruments are process-wide: registering a second set would double
         // every series. A second handle just shares the first's — and waits
         // for it, so nothing can scrape a half-registered set.
@@ -747,7 +759,21 @@ impl Metrics {
     /// runs the observable callbacks, so a scrape reads state at scrape time.
     pub fn render(&self) -> String {
         match mac_mgmt_common::metrics::prom::encode() {
-            Ok(text) => text,
+            Ok(text) => {
+                // `mac_mgmt_build_info` is registered unconditionally and always
+                // observes 1, so its absence means this process bound its
+                // instruments to a provider that never carried the OTel
+                // pipeline. Without this the only symptom is a scrape that
+                // quietly reports process metrics and nothing else.
+                static REPORTED: OnceLock<()> = OnceLock::new();
+                if !text.contains("mac_mgmt_build_info") && REPORTED.set(()).is_ok() {
+                    tracing::warn!(
+                        "metrics exposition carries no mac_mgmt_* instruments: they were \
+                         registered before the OTel meter provider existed"
+                    );
+                }
+                text
+            }
             Err(e) => {
                 tracing::warn!("metrics encode failed: {e}");
                 String::new()
@@ -859,6 +885,24 @@ mod tests {
             out.contains(r#"mac_mgmt_thermal_state{state="critical"} 0"#),
             "{out}"
         );
+    }
+
+    /// Regression: constructing a handle before `otel::init` must not cost the
+    /// process its instruments. Instruments bind once, so whichever provider is
+    /// installed at that moment wins — a caller that builds `Metrics` first
+    /// (a unit test, a consumer crate) would otherwise pin everything to the
+    /// no-op provider and `/metrics` would stay empty for the whole process.
+    #[test]
+    fn construction_before_init_still_exports_afterwards() {
+        let early = Metrics::new();
+        mac_mgmt_common::otel::init("mac-mgmt-daemon", "info");
+
+        let out = Metrics::new().render();
+        assert!(
+            out.contains("mac_mgmt_build_info"),
+            "mac_mgmt_build_info missing from:\n{out}"
+        );
+        drop(early);
     }
 
     #[test]
