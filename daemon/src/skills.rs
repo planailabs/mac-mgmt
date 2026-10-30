@@ -101,21 +101,19 @@ fn materialize_builtin(slug: &str, dest: &Path) -> Result<bool> {
     Ok(false)
 }
 
+/// Host nix system, e.g. `x86_64-linux`.
+///
+/// `builtins.currentSystem` cannot change while the process runs, so this
+/// reuses the cached probe in `mac_mgmt_agent::nix` instead of spawning
+/// `nix-instantiate` per sync. Spawning it per sync made a push storm one
+/// subprocess per push per daemon — in sim-tests that was ~300 `nix-instantiate`
+/// runs in a few seconds, which saturated the runtime and starved the heartbeat
+/// sends. The probe itself is a blocking subprocess, so it runs off the async
+/// workers.
 async fn nix_system() -> Result<String> {
-    let output = tokio::process::Command::new("nix-instantiate")
-        .args(["--eval", "--expr", "builtins.currentSystem"])
-        .output()
+    tokio::task::spawn_blocking(|| mac_mgmt_agent::nix::current_system().map(str::to_string))
         .await
-        .context("failed to run nix-instantiate --eval")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("nix-instantiate --eval failed: {stderr}");
-    }
-
-    let raw = String::from_utf8(output.stdout).context("invalid UTF-8 from nix-instantiate")?;
-    // nix-instantiate returns a quoted string, e.g. "x86_64-linux"
-    Ok(raw.trim().trim_matches('"').to_string())
+        .context("nix system probe task panicked")?
 }
 
 #[cfg(all(test, unix))]
@@ -152,7 +150,7 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
     tracing::info!("syncing skills for architecture: {arch}");
 
     // Fetch skill→store_path mappings from server
-    let client = reqwest::Client::new();
+    let client = mac_mgmt_agent::http::shared_client();
     let resp = client
         .get(format!("{server_url}/api/skills"))
         .query(&[("arch", &arch)])

@@ -88,7 +88,7 @@ fn write_state(state: &PackageState) -> Result<()> {
 pub async fn sync_packages(server_url: &str, token: &str) -> Result<bool> {
     tracing::info!("syncing unified nix packages");
 
-    let client = reqwest::Client::new();
+    let client = mac_mgmt_agent::http::shared_client();
     let resp = client
         .get(format!("{server_url}/api/packages"))
         .bearer_auth(token)

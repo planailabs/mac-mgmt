@@ -15,6 +15,18 @@ pub struct HeartbeatIdentity {
     pub git_sha: String,
 }
 
+/// The HTTP client every heartbeat POST reuses.
+///
+/// Building a `reqwest::Client` constructs a fresh TLS configuration (parsing
+/// the process' whole CA bundle) and a new connection pool, so a client per
+/// send turns a short heartbeat interval into a certificate-parsing loop — at
+/// the sim-tests' 500ms interval with ten daemons in one process, PEM/base64
+/// decoding of the root store was the top CPU consumer, which starved the very
+/// tasks meant to send the heartbeat. See [`crate::http::shared_client`].
+fn heartbeat_client() -> &'static reqwest::Client {
+    crate::http::shared_client()
+}
+
 /// Returns `true` when the POST lands with a 2xx. Used by the caller to
 /// gate one-shot follow-up work (e.g. the initial assessment inventory
 /// send, which would otherwise race the heartbeat that creates its FK
@@ -40,7 +52,7 @@ pub async fn do_send_heartbeat(
     use russh::keys::PublicKeyBase64;
     use russh::keys::signature::Signer;
 
-    let client = reqwest::Client::new();
+    let client = heartbeat_client();
     let hostname = hostname::get()
         .map(|h| h.to_string_lossy().to_string())
         .unwrap_or_default();

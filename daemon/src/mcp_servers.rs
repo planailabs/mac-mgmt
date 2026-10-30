@@ -5,7 +5,7 @@ use std::collections::HashMap;
 pub async fn sync_mcp_servers(server_url: &str, token: &str) -> Result<()> {
     tracing::info!("syncing MCP server configs");
 
-    let client = reqwest::Client::new();
+    let client = mac_mgmt_agent::http::shared_client();
     let resp = client
         .get(format!("{server_url}/api/mcp-servers"))
         .bearer_auth(token)

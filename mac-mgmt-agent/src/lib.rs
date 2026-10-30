@@ -21,6 +21,7 @@ pub mod events;
 pub mod file_tunnels;
 pub mod heartbeat;
 pub mod host_keys;
+pub mod http;
 pub mod local_client;
 pub mod log_buffer;
 pub mod log_layer;
