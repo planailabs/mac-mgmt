@@ -112,7 +112,7 @@ async fn hammer_many_daemons() {
         .await;
     assert!(
         recovered,
-        "all 10 daemons should recover after hammering: {}",
+        "all 10 daemons should recover within 15s after hammering: {}",
         heartbeat_readiness(&state, &instance_ids)
     );
 
@@ -278,7 +278,8 @@ async fn hammer_simultaneous_start() {
     .await;
     assert!(
         ok,
-        "all 5 simultaneously-started daemons should send heartbeats"
+        "all 5 simultaneously-started daemons should send heartbeats within 15s: {}",
+        heartbeat_readiness(&state, &instance_ids)
     );
 
     // All should be unique
