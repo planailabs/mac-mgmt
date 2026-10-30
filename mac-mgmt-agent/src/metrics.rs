@@ -140,7 +140,8 @@ fn kv(key: &'static str, value: impl Into<opentelemetry::Value>) -> KeyValue {
     KeyValue::new(key, value.into())
 }
 
-/// Heartbeat attempts by result. A real counter — this one is monotonic.
+/// Heartbeat attempts by result (`success`, `failure`, `coalesced`). A real
+/// counter — this one is monotonic.
 static HEARTBEATS: LazyLock<opentelemetry::metrics::Counter<u64>> = LazyLock::new(|| {
     meter()
         .u64_counter("mac_mgmt_heartbeat")
@@ -727,6 +728,17 @@ impl Metrics {
 
     pub fn record_heartbeat_failure(&self) {
         HEARTBEATS.add(1, &[kv("result", "failure")]);
+    }
+
+    /// A heartbeat trigger was skipped because the previous POST had not
+    /// completed yet.
+    ///
+    /// Sends are coalesced, not queued, so this is the expected outcome of a
+    /// burst of triggers (SSE pushes, relay signals) while one POST is in
+    /// flight. Counted separately from `failure` so a heartbeat that never
+    /// left the daemon is not mistaken for one the server rejected.
+    pub fn record_heartbeat_coalesced(&self) {
+        HEARTBEATS.add(1, &[kv("result", "coalesced")]);
     }
 
     pub fn status(&self) -> (String, u64, Vec<(String, bool, bool, bool, &'static str)>) {

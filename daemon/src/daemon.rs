@@ -56,6 +56,10 @@ struct Daemon {
     first_update: bool,
     /// Serializes heartbeat POSTs so a faster-arriving later send can't
     /// overtake an earlier one and leave the server with a stale snapshot.
+    ///
+    /// Held with `try_lock`: a trigger that finds it taken is coalesced (the
+    /// send is dropped, the next tick resends fresher state) rather than
+    /// queued, so a slow POST can never build a growing backlog.
     heartbeat_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -517,10 +521,24 @@ impl Daemon {
             let metrics = Arc::clone(&self.metrics);
             let lock = Arc::clone(&self.heartbeat_lock);
             tokio::spawn(async move {
-                // Serialize POSTs from this daemon. Without this, two
-                // overlapping spawns can land at the server in the wrong
-                // order, leaving the row with stale data.
-                let _guard = lock.lock().await;
+                // Serialize POSTs from this daemon: two overlapping sends can
+                // land at the server out of order and leave the row with stale
+                // data.
+                //
+                // Coalesce instead of queueing. A trigger that arrives while a
+                // POST is in flight is dropped rather than parked on the lock,
+                // because every send carries a full snapshot: the next tick
+                // supersedes this one a few hundred milliseconds later. Queueing
+                // makes the lock a backlog — each tick adds a waiter, so once
+                // one POST is slow (its timeout is 10s) a daemon's heartbeat lag
+                // grows without bound and outlives whatever made it slow. That
+                // is what left daemons silent past the recovery window in
+                // sim-tests' `hammer_many_daemons`/`hammer_simultaneous_start`.
+                let Ok(_guard) = lock.try_lock() else {
+                    tracing::debug!("previous heartbeat still in flight; coalesced this send");
+                    metrics.record_heartbeat_coalesced();
+                    return;
+                };
                 let ok = do_send_heartbeat(
                     &url,
                     &token,
