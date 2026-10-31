@@ -12,7 +12,7 @@ server-api-only = ["dep:plan-ai-chat", "dep:rocket", "dep:sqlx", "dep:tokio", "d
 
 [dependencies]
 dioxus = { version = "0.8.0-alpha.0", features = ["fullstack", "router"], optional = true }
-plan-ai-design = { path = "../design", optional = true }
+plan-ai-design = { workspace = true, optional = true }
 mac-mgmt-config-ui = { path = "../config-ui", optional = true }
 wasm-bindgen = { version = "=0.2.121", optional = true }
 web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
@@ -49,7 +49,7 @@ mac-mgmt-common = { path = "../common" }
 mac-mgmt-healer = { path = "../mac-mgmt-healer", optional = true }
 tokio-stream = { version = "0.1", optional = true }
 schemars = { version = "1.2.1", features = ["derive", "uuid1", "chrono04"] }
-plan-ai-api-mcp = { path = "../common/plan-ai-api-mcp", optional = true }
+plan-ai-api-mcp = { path = "../common/plan-ai-api-mcp", features = ["zitadel"], optional = true }
 plan-ai-api-mcp-macros = { path = "../common/plan-ai-api-mcp-macros" }
 plan-ai-chat = { path = "../common/plan-ai-chat", features = ["postgres", "api-mcp"], optional = true }
 plan-ai-chat-ui = { path = "../common/plan-ai-chat-ui", optional = true }

@@ -73,6 +73,23 @@ Mindestens eines von `allow_all`, `allowed_domains` oder `allowed_emails` muss g
 5. **Kopieren Sie Client-ID und Secret** in Ihre mac-mgmt-Konfiguration.
 6. **Konfigurieren Sie vorgelagerte IdPs** in Zitadel nach Bedarf (Google, SAML, LDAP usw.) — Benutzer sehen diese Optionen auf dem Zitadel-Anmeldebildschirm.
 
+## Zitadel-Zugriffstokens an der Management-API
+
+Die Management-API (`/api/v1/*` und der MCP-Endpunkt `/mcp`) nimmt normalerweise die eigenen Tokens von mac-mgmt an (siehe [Token-Verwaltung](/docs/tokens-and-api)). Mit einem Abschnitt `[zitadel_bearer]` akzeptiert sie zusätzlich ein **Zitadel-Zugriffstoken eines angemeldeten Benutzers** und handelt mit genau dessen Berechtigungen — denselben Organisationen, Rollen und Admin-Rechten wie in seiner Web-Sitzung. Der Chat von plan.ai nutzt das: Sein Connector erhält ein solches Token per Zitadel-Token-Exchange und ruft `/mcp` im Namen des Benutzers auf.
+
+```toml
+[zitadel_bearer]
+issuer = "https://id.plan.ai"
+project_id = "397603440676569224"   # audience the token must carry
+client_id = "397603441129619592"    # API application of that project
+client_secret = "..."               # its secret (Basic auth for introspection)
+```
+
+- Ein Bearer-Token wird zuerst als mac-mgmt-Token gesucht; nur sonst wird es am Introspection-Endpunkt von Zitadel geprüft (Ergebnisse werden bis zu einer Minute zwischengespeichert). Ein Token ohne `project_id` in seiner Audience wird abgelehnt (401).
+- Der Benutzer wird über die E-Mail-Adresse des Tokens gefunden. Es muss bereits ein mac-mgmt-Benutzer mit dieser E-Mail-Adresse existieren — Bearer-Tokens legen nie Benutzer an; eine unbekannte E-Mail-Adresse wird mit 403 beantwortet.
+- Wurde das Token per Impersonation erhalten, wird das handelnde Dienstkonto (Claim `act`) festgehalten: Die Anfrage läuft als `user:<email> via <actor>` und wird im Audit-Log protokolliert.
+- Ohne den Abschnitt werden nur mac-mgmt-Tokens akzeptiert.
+
 ## Mehrere Anbieter
 
 Sie können mehrere OIDC-Anbieter gleichzeitig konfigurieren. Jeder erhält einen eigenen `[[auth.providers]]`-Eintrag mit einem eindeutigen `slug`. Die Anmeldeseite zeigt alle konfigurierten Anbieter an.

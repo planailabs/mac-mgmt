@@ -11,6 +11,11 @@ pub struct ServerConfig {
     #[serde(default)]
     pub web: WebConfig,
     pub auth: Option<AuthConfig>,
+    /// Accept Zitadel access tokens of signed-in users as Bearer tokens on
+    /// the management API (`/api/v1/*`, `/mcp`), next to mac-mgmt's own
+    /// tokens. Absent → only mac-mgmt tokens are accepted.
+    #[serde(default)]
+    pub zitadel_bearer: Option<ZitadelBearerConfig>,
     pub xzar: Option<XzarConfig>,
     pub anthropic: Option<AnthropicConfig>,
     #[serde(default)]
@@ -287,6 +292,39 @@ pub struct XzarConfig {
     /// Nix public signing key for this cache (e.g. "xzar.plan.ai:BASE64KEY=").
     /// Exposed to daemons via GET /api/nix-caches so they can trust store paths.
     pub public_key: String,
+}
+
+/// `[zitadel_bearer]` — Zitadel access tokens as management-API bearers.
+///
+/// Zitadel tokens are opaque, so each one is checked at Zitadel's
+/// introspection endpoint (`{issuer}/oauth/v2/introspect`, results cached
+/// for up to a minute), must carry `project_id` in its audience, and is
+/// mapped to the mac-mgmt user with the token's email — acting with exactly
+/// that user's permissions, as their web session would. Tokens obtained by
+/// token exchange (impersonation) record the acting service account.
+#[derive(Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ZitadelBearerConfig {
+    /// Zitadel issuer URL, e.g. `https://id.plan.ai`.
+    pub issuer: String,
+    /// Zitadel project id the token must carry in its audience (`aud`).
+    pub project_id: String,
+    /// Client id of the project's API application; used with
+    /// `client_secret` (HTTP Basic) to authenticate introspection requests.
+    pub client_id: String,
+    /// Client secret of that API application.
+    pub client_secret: String,
+}
+
+impl std::fmt::Debug for ZitadelBearerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZitadelBearerConfig")
+            .field("issuer", &self.issuer)
+            .field("project_id", &self.project_id)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

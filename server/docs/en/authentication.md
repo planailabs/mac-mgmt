@@ -73,6 +73,23 @@ At least one of `allow_all`, `allowed_domains`, or `allowed_emails` must be set,
 5. **Copy the client ID and secret** into your mac-mgmt config.
 6. **Configure upstream IdPs** in Zitadel as needed (Google, SAML, LDAP, etc.) -- users will see these options on Zitadel's login screen.
 
+## Zitadel access tokens on the management API
+
+The management API (`/api/v1/*` and the MCP endpoint `/mcp`) normally takes mac-mgmt's own tokens (see [Token Management](/docs/tokens-and-api)). With a `[zitadel_bearer]` section it also accepts a **Zitadel access token of a signed-in user** and acts with exactly that user's permissions — the same organizations, roles and admin flag as the user's web session. plan.ai's chat uses this: its connector obtains such a token by Zitadel token exchange and calls `/mcp` as the user.
+
+```toml
+[zitadel_bearer]
+issuer = "https://id.plan.ai"
+project_id = "397603440676569224"   # audience the token must carry
+client_id = "397603441129619592"    # API application of that project
+client_secret = "..."               # its secret (Basic auth for introspection)
+```
+
+- A bearer is first looked up as a mac-mgmt token; only otherwise is it checked at Zitadel's introspection endpoint (results are cached for up to a minute). A token without `project_id` in its audience is rejected (401).
+- The user is found by the token's email. There must already be a mac-mgmt user with that email — bearers never create users; an unknown email is answered with 403.
+- If the token was obtained by impersonation, the acting service account (`act` claim) is recorded: the request runs as `user:<email> via <actor>` and is written to the audit log.
+- Without the section only mac-mgmt tokens are accepted.
+
 ## Multiple providers
 
 You can configure multiple OIDC providers simultaneously. Each gets its own `[[auth.providers]]` entry with a unique `slug`. The login page shows all configured providers.

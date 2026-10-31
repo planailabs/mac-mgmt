@@ -77,25 +77,7 @@ impl plan_ai_auth::UserResolver for PgUserResolver {
             }
         }
 
-        // Load organization memberships with roles.
-        let org_memberships = sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT organization_id, role FROM organization_members WHERE user_id = $1",
-        )
-        .bind(user.0)
-        .fetch_all(&self.pool)
-        .await?
-        .into_iter()
-        .map(|(org_id, role)| OrgMembership::new(org_id, role))
-        .collect();
-
-        Ok(WebUser {
-            id: user.0,
-            email: user.1,
-            name: user.2,
-            is_admin: user.3,
-            org_memberships,
-            impersonating_from: None,
-        })
+        self.with_memberships(user).await
     }
 
     async fn load_user_by_id(&self, id: Uuid) -> Result<Option<WebUser>, anyhow::Error> {
@@ -105,41 +87,70 @@ impl plan_ai_auth::UserResolver for PgUserResolver {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
+        match user {
+            Some(user) => Ok(Some(self.with_memberships(user).await?)),
+            None => Ok(None),
+        }
+    }
+}
 
-        let Some(user) = user else {
+impl PgUserResolver {
+    /// The user a web session with this email resolves to, without creating
+    /// or changing anything: for credentials that vouch for an email but must
+    /// not enroll users (Zitadel bearers on the management API). `None` when
+    /// no such user exists. An `admin_emails` address counts as admin, as
+    /// [`resolve_user`](plan_ai_auth::UserResolver::resolve_user) would make it.
+    pub async fn find_by_email(&self, email: &str) -> Result<Option<WebUser>, anyhow::Error> {
+        let user = sqlx::query_as::<_, (Uuid, String, String, bool)>(
+            "SELECT id, email, name, is_admin FROM users WHERE email = $1",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(mut user) = user else {
             return Ok(None);
         };
+        user.3 |= self.admin_emails.iter().any(|a| a == email);
+        Ok(Some(self.with_memberships(user).await?))
+    }
 
+    /// `WebUser` for a `users` row, with its organization memberships.
+    async fn with_memberships(
+        &self,
+        (id, email, name, is_admin): (Uuid, String, String, bool),
+    ) -> Result<WebUser, anyhow::Error> {
         let org_memberships = sqlx::query_as::<_, (Uuid, String)>(
             "SELECT organization_id, role FROM organization_members WHERE user_id = $1",
         )
-        .bind(user.0)
+        .bind(id)
         .fetch_all(&self.pool)
         .await?
         .into_iter()
         .map(|(org_id, role)| OrgMembership::new(org_id, role))
         .collect();
-
-        Ok(Some(WebUser {
-            id: user.0,
-            email: user.1,
-            name: user.2,
-            is_admin: user.3,
+        Ok(WebUser {
+            id,
+            email,
+            name,
+            is_admin,
             org_memberships,
             impersonating_from: None,
-        }))
+        })
     }
+}
+
+/// The configured `[auth].admin_emails`.
+pub fn admin_emails() -> Vec<String> {
+    config::config()
+        .auth
+        .as_ref()
+        .map(|a| a.admin_emails.clone())
+        .unwrap_or_default()
 }
 
 /// Install the user resolver at startup.
 pub fn install_resolver(pool: sqlx::PgPool) {
-    let admin_emails = config::config()
-        .auth
-        .as_ref()
-        .map(|a| a.admin_emails.clone())
-        .unwrap_or_default();
-    let resolver = PgUserResolver::new(pool, admin_emails);
-    set_user_resolver(resolver);
+    set_user_resolver(PgUserResolver::new(pool, admin_emails()));
 }
 
 // ── Impersonation routes (app-specific) ─────────────────────────────────

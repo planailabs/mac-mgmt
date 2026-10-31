@@ -27,7 +27,10 @@ pub fn shared_registry(
     pool: sqlx::PgPool,
 ) -> std::sync::Arc<plan_ai_api_mcp::Registry<sqlx::PgPool>> {
     REGISTRY
-        .get_or_init(|| std::sync::Arc::new(build_registry(pool)))
+        .get_or_init(|| {
+            let auth = bearer_authenticator(pool.clone(), crate::config::config().zitadel_bearer.as_ref());
+            std::sync::Arc::new(build_registry_with(auth))
+        })
         .clone()
 }
 
@@ -41,18 +44,53 @@ pub fn registry()
         .ok_or_else(|| plan_ai_api_mcp::ApiError::internal("api-mcp registry not initialized"))
 }
 
+/// The management API's bearer authenticator: mac-mgmt tokens, plus Zitadel
+/// access tokens of signed-in users when `[zitadel_bearer]` is configured.
+#[cfg(feature = "server")]
+pub fn bearer_authenticator(
+    pool: sqlx::PgPool,
+    zitadel: Option<&crate::config::ZitadelBearerConfig>,
+) -> std::sync::Arc<auth::BearerAuthenticator> {
+    let bearer = auth::BearerAuthenticator::new(auth::TokenAuthenticator::new(pool.clone()));
+    let Some(z) = zitadel else {
+        return std::sync::Arc::new(bearer);
+    };
+    let users = std::sync::Arc::new(auth::ZitadelUsers::new(
+        crate::web::auth::PgUserResolver::new(pool, crate::web::auth::admin_emails()),
+    ));
+    let bearer = bearer
+        .with_zitadel(auth::introspection_config(z), users, None)
+        .unwrap_or_else(|e| panic!("[zitadel_bearer]: {e}"));
+    tracing::info!(
+        issuer = %z.issuer,
+        project_id = %z.project_id,
+        "management API accepts Zitadel bearer tokens"
+    );
+    std::sync::Arc::new(bearer)
+}
+
+/// Build the endpoint registry with mac-mgmt-token auth only (tests).
+#[cfg(all(test, feature = "server"))]
+pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgPool> {
+    let auth = std::sync::Arc::new(auth::BearerAuthenticator::new(auth::TokenAuthenticator::new(
+        pool.clone(),
+    )));
+    build_registry_with(auth)
+}
+
 /// Build the endpoint registry: one authenticator, every domain's endpoints.
 #[cfg(feature = "server")]
-pub fn build_registry(pool: sqlx::PgPool) -> plan_ai_api_mcp::Registry<sqlx::PgPool> {
+pub fn build_registry_with(
+    auth: std::sync::Arc<dyn plan_ai_api_mcp::Authenticator>,
+) -> plan_ai_api_mcp::Registry<sqlx::PgPool> {
     use plan_ai_api_mcp::{OnItem, Registry, Risk};
-    use std::sync::Arc;
 
-    let auth = Arc::new(auth::TokenAuthenticator::new(pool.clone()));
     let reg = Registry::new(auth)
         .info("mac-mgmt API", env!("CARGO_PKG_VERSION"))
         .instructions(
             "mac-mgmt fleet management API. Authenticate with a Bearer token \
-             (an admin token, or an org-scoped api token). Tools are named \
+             (an admin token, an org-scoped api token, or — when configured — \
+             a Zitadel access token of a mac-mgmt user). Tools are named \
              <resource>_<action>; list/get are read-only, create/update mutate, \
              delete is destructive.",
         );

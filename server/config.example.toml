@@ -41,6 +41,16 @@ allowed_domains = ["example.com"]
 # allowed_emails = ["dev@github.com"]
 # auto_join_orgs = ["github-team"]
 
+# Optional: accept Zitadel access tokens of signed-in users as Bearer tokens on
+# the management API (/api/v1/*, /mcp), e.g. from plan.ai's chat connector
+# (token exchange). The token's email must belong to an existing mac-mgmt user;
+# the request acts with that user's permissions. Absent: only mac-mgmt tokens.
+# [zitadel_bearer]
+# issuer = "https://id.plan.ai"
+# project_id = "397603440676569224"           # audience the token must carry ("mgmt.plan.ai API" project)
+# client_id = "397603441129619592"            # the project's API app; Basic auth for introspection
+# client_secret = "..."
+
 [xzar]
 url = "https://xzar.example.com"
 token = "xzar-api-token-here"

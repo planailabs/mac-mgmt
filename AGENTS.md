@@ -80,6 +80,10 @@ Mark every compat shim with a `// compat: added YYYY-MM-DD, removable after YYYY
 
 Never modify an existing migration file in `server/migrations/`. Migrations that have already been applied to a database cannot be re-run, so editing them has no effect on deployed instances and causes checksum mismatches. Always create a new migration with the next sequence number instead (e.g. if `033_*.sql` exists, create `034_*.sql`).
 
+## Management API: Zitadel bearers
+
+`/api/v1/*` and `/mcp` authenticate through `server/src/api_mcp/auth.rs` `BearerAuthenticator`: a `tokens`-table hash lookup first, then — only when `[zitadel_bearer]` (`ZitadelBearerConfig` in `server/src/config.rs`) is set and the bearer is not shaped like a mac-mgmt token — Zitadel introspection (`plan_ai_api_mcp::zitadel`, cached). `ZitadelUsers` maps the token's email to an *existing* user via `PgUserResolver::find_by_email` and `principal_from` (the web session's code path — don't duplicate membership logic there); unknown user → 403, wrong audience → 401, Zitadel unreachable → 401. Impersonated tokens (`act`) run as `user:<email> via <actor>`. This replaces per-user "customer tokens" for plan.ai's chat connector. Test: `api_mcp::auth::tests` (needs `initdb`/`pg_ctl` on PATH, otherwise skipped).
+
 ## Server docs: keep English and German in sync
 
 Server web UI documentation lives in per-language directories: `server/docs/en/*.md` (English, canonical) and `server/docs/de/*.md` (German) using **identical filenames/slugs**. Every language lives in its own subdirectory — no top-level doc files. Whenever you add or change a doc, update **both languages in the same commit** — never let them drift:
