@@ -11,6 +11,8 @@ exclude = ["common/plan-ai-actions", "memvault", "design", "mac-mgmt-overview", 
 resolver = "3"
 
 [workspace.dependencies]
+# The vendored copy memvault-web uses too: one path, one package.
+plan-ai-design = { path = "memvault/plan-ai-design" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "query"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 sentry = { version = "0.47", default-features = false, features = ["reqwest", "panic", "backtrace", "contexts", "debug-images"] }
