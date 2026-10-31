@@ -24,19 +24,26 @@ build:
     - nix-image
   script:
     - bash prebuild.sh
-  # 6h, not 3h. A nixpkgs bump (the nightly flake-input refresh) invalidates
-  # the whole NixOS image and every package, so the custom executor's
-  # pre-script `flake#image` build, then prebuild.sh (devshell, image, and the
-  # seven binaries), then the cold 1655-crate `dx` compile all have to fit in
-  # one budget. They do not fit in 3h: pipeline 2947 (2026-10-22, a nixpkgs
-  # refresh) spent its entire 3h inside `build_container` without running a
-  # single repo command and was killed as `server_timeout_running`, and
-  # pipelines 2924/2934/2947 all hit the cap while the app was still
-  # compiling. This is headroom, not a speed fix: per-crate throughput on the
-  # current runners is ~1.4-2.5x below the 2026-08 baseline (~99 min for a
-  # warm build, jobs 5873/5736), so cache warming and runner capacity are
-  # still the real limit. Per-step trace output still bounds a genuine hang.
-  timeout: 6h
+  # 8h, not 6h. A nixpkgs bump (the nightly flake-input refresh) changes the
+  # hash of every derivation, so this job is cold on every night it runs: the
+  # custom executor's pre-script `flake#image` build, then prebuild.sh
+  # (devshell, image, and the nine binaries, with the 1655-crate `dx` compile
+  # of `.#default` inside it) all have to fit in one budget. 6h stopped
+  # containing that: pipeline 3053 (job 7517, 2026-10-31) was killed by the
+  # cap at 21904s with six of the nine packages pinned and only `runner`,
+  # `relay-ssh` and `nix-driver-sync` left -- ~15 min of work at the rate of
+  # the last warm night (job 7498). The 10-30 build never started
+  # (`stuck_pending_no_matching_runners`, job 7511), so the nixpkgs closure
+  # from 282fa04c had never been warmed and 3053 then had to build 1452 cold
+  # derivations plus a 49-minute devshell rebuild of the patched dioxus-cli.
+  # Measured cold-night cost is therefore ~6h20m, against 4h46m (job 7498) and
+  # 5h51m (job 7457) for the same job on warmer trees, and single Rust
+  # segments still vary up to ~2x with runner load. This is headroom, not a
+  # speed fix: per-crate throughput on the current runners is still well below
+  # the 2026-08 baseline (~99 min for a warm build, jobs 5873/5736), so cache
+  # warming and runner capacity remain the real limit. Per-step trace output
+  # still bounds a genuine hang.
+  timeout: 8h
   resource_group: build-cache
 
 test:
