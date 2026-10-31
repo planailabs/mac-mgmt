@@ -6,9 +6,12 @@ let
   # - --skip-platform-features: prevents dx from auto-adding "web"/"desktop"/etc.
   # - --embed: embeds public assets into the server binary via rust-embed
   # - optional codesign: falls back to rcodesign for cross-compilation
+  # - build errors kept: dx reads the unread stderr of a failed cargo build
+  #   before bailing, so a failed nix build carries rustc's own error
   dioxus-cli-patched = prev.dioxus-cli.overrideAttrs (old: {
     patches = (old.patches or []) ++ [
       ./patches/dioxus-cli-all.patch
+      ./patches/dioxus-cli-build-errors.patch
     ];
   });
   # Thin wrapper that re-exports the monolith server binary with a

@@ -1,0 +1,16 @@
+--- a/src/build/request.rs
++++ b/src/build/request.rs
+@@ -1134,6 +1134,13 @@
+                 //       since that is a really bad user experience.
+                 Message::BuildFinished(finished) => {
+                     if !finished.success {
++                        // cargo prints the failing rustc command and its stderr to the
++                        // stderr pipe, and that output can still be unread when this
++                        // message arrives; bailing right away drops it and leaves only
++                        // "cargo build finished with errors" in the log.
++                        while let Ok(Some(line)) = stderr.next_line().await {
++                            ctx.status_build_error(line);
++                        }
+                         bail!(
+                             "cargo build finished with errors for target: {} [{}]",
+                             self.main_target,
