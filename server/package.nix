@@ -85,7 +85,10 @@ rustPlatform.buildRustPackage {
     npm run tailwind:build
     popd
 
-    dx build --release --fullstack --package mac-mgmt-server
+    # dx_build: `dx build`, plus the retry that keeps a dead rustc's cause in
+    # the log instead of losing the whole build (scripts/dx-build-retry.sh).
+    source ${../scripts/dx-build-retry.sh}
+    dx_build --release --fullstack --package mac-mgmt-server
 
     runHook postBuild
   '';
