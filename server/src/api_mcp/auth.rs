@@ -12,7 +12,9 @@
 //!
 //! [`BearerAuthenticator`] puts this first and, when `[zitadel_bearer]` is
 //! configured, falls back to Zitadel token introspection: a signed-in user's
-//! Zitadel access token acts as that mac-mgmt user ([`ZitadelUsers`]).
+//! Zitadel access token acts as that mac-mgmt user ([`ZitadelUsers`]),
+//! creating it on first use as a first web sign-in would
+//! ([`enrollment_for_issuer`]).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -24,6 +26,8 @@ use plan_ai_api_mcp::zitadel::{
 use plan_ai_api_mcp::{ApiError, Authenticator, OrgSet, Principal};
 use sqlx::PgPool;
 use uuid::Uuid;
+
+use plan_ai_auth::{ProviderMeta, SignIn, SignInError, WebUser, groups_in_claims};
 
 use crate::web::auth::PgUserResolver;
 use crate::web::user::principal_from;
@@ -196,17 +200,104 @@ pub fn introspection_config(cfg: &crate::config::ZitadelBearerConfig) -> Introsp
     }
 }
 
+/// The web sign-in [`ZitadelUsers`] creates a missing user through: the
+/// `[[auth.providers]]` entry whose issuer is `issuer` — its access rules
+/// (`allow_all` / `allowed_domains` / `allowed_emails` / `zitadel_org`),
+/// `auto_join_orgs`, `[auth].admin_emails` and the rest, exactly as
+/// `require_auth` applies them. Without one, a stand-in provider
+/// (`zitadel_bearer`) that admits everyone the token check admits (active,
+/// `project_id` in the audience, verified email) and joins no organization.
+pub fn enrollment_for_issuer(auth: Option<&plan_ai_auth::AuthConfig>, issuer: &str) -> ProviderMeta {
+    let web = auth.and_then(|a| {
+        a.providers
+            .iter()
+            .map(|p| ProviderMeta::from_config(p, a))
+            .find(|p| p.has_issuer(issuer))
+    });
+    if let Some(p) = web {
+        return p;
+    }
+    ProviderMeta {
+        slug: "zitadel_bearer".into(),
+        name: "Zitadel bearer".into(),
+        issuer: Some(issuer.into()),
+        allow_all: true,
+        allowed_domains: vec![],
+        allowed_emails: vec![],
+        auto_join_orgs: vec![],
+        admin_emails: auth.map(|a| a.admin_emails.clone()).unwrap_or_default(),
+        groups_claim: None,
+        liveliness_days: None,
+        zitadel_org: None,
+    }
+}
+
 /// Maps a Zitadel identity to the mac-mgmt user with its email, through the
 /// web session's user resolver ([`PgUserResolver::find_by_email`]) and the
 /// session's principal ([`principal_from`]): the bearer acts with exactly
-/// that user's permissions. Users are never created from a bearer.
+/// that user's permissions. A known user is left as it is. An unknown one is
+/// created through [`enrollment_for_issuer`]'s web sign-in (when set) if the token's email is verified,
+/// as a first web sign-in would; otherwise 403.
 pub struct ZitadelUsers {
     resolver: Arc<PgUserResolver>,
+    enroll: Option<ProviderMeta>,
 }
 
 impl ZitadelUsers {
-    pub fn new(resolver: Arc<PgUserResolver>) -> Self {
-        Self { resolver }
+    /// `enroll`: the web sign-in that creates missing users
+    /// ([`enrollment_for_issuer`]); `None` → unknown users get 403.
+    pub fn new(resolver: Arc<PgUserResolver>, enroll: Option<ProviderMeta>) -> Self {
+        Self { resolver, enroll }
+    }
+
+    /// Create the user of `identity` (email `email`) as a first web sign-in
+    /// through `enroll` would, or say why not.
+    async fn enroll(&self, identity: &Identity, email: &str) -> Result<WebUser, ApiError> {
+        let Some(provider) = &self.enroll else {
+            return Err(ApiError::forbidden(format!(
+                "no mac-mgmt user with email {email}; sign in to the mac-mgmt web UI once (or be invited) first"
+            )));
+        };
+        if identity.email_verified != Some(true) {
+            return Err(ApiError::forbidden(format!(
+                "no mac-mgmt user with email {email}, and the Zitadel token does not mark the email verified, \
+                 so none is created; verify the email in Zitadel, or sign in to the mac-mgmt web UI once"
+            )));
+        }
+        let groups = provider
+            .groups_claim
+            .as_deref()
+            .map(|c| groups_in_claims(&serde_json::Value::Object(identity.claims.clone()), c))
+            .unwrap_or_default();
+        let sign_in = SignIn {
+            email,
+            name: identity.name.as_deref(),
+            groups,
+            zitadel_org: identity.org_id.as_deref(),
+        };
+        let user = provider
+            .sign_in(self.resolver.as_ref(), &sign_in)
+            .await
+            .map_err(|e| match e {
+                SignInError::Refused(why) => ApiError::forbidden(format!(
+                    "no mac-mgmt user with email {email}, and the web sign-in would refuse it ({why}); \
+                     ask a mac-mgmt admin for an invitation"
+                )),
+                SignInError::Failed(e) => ApiError::internal(format!("creating user {email}: {e:#}")),
+            })?;
+        tracing::info!(
+            target: "mac_mgmt::audit",
+            user = %user.email,
+            user_id = %user.id,
+            zitadel_user_id = %identity.user_id,
+            actor = identity.actor.as_ref().map(|a| a.sub.as_str()).unwrap_or(""),
+            client_id = identity.client_id.as_deref().unwrap_or(""),
+            provider = %provider.slug,
+            orgs = ?provider.auto_join_orgs,
+            admin = user.is_admin,
+            "management API: user created from zitadel bearer"
+        );
+        Ok(user)
     }
 }
 
@@ -223,18 +314,16 @@ impl IdentityMapper for ZitadelUsers {
                 "the Zitadel token's email {email} is not verified"
             )));
         }
-        let user = self
+        let known = self
             .resolver
             .find_by_email(email)
             .await
-            .map_err(|e| ApiError::internal(format!("loading user {email}: {e}")))?
-            .ok_or_else(|| {
-                ApiError::forbidden(format!(
-                    "no mac-mgmt user with email {email}; sign in to the mac-mgmt web UI once (or be invited) first"
-                ))
-            })?;
-        let mut p = principal_from(&user);
-        p.subject = format!("user:{}", user.email);
+            .map_err(|e| ApiError::internal(format!("loading user {email}: {e}")))?;
+        let user = match known {
+            Some(user) => user,
+            None => self.enroll(identity, email).await?,
+        };
+        let mut p = principal_from(&user);        p.subject = format!("user:{}", user.email);
         p.scopes["zitadel_user_id"] = identity.user_id.clone().into();
         if let Some(actor) = &identity.actor {
             p.subject = format!("{} via {}", p.subject, actor.sub);
@@ -324,15 +413,24 @@ mod tests {
             .unwrap()
             .as_secs()
             + 300;
-        let user = |email: &str| {
-            json!({ "active": true, "sub": "z-1", "aud": [PROJECT, "app@mgmt"], "exp": exp,
-                    "email": email, "email_verified": true, "client_id": "chat@plan",
-                    "act": { "sub": "connector-sa" } })
+        let claims = |email: &str, verified: Value| {
+            let mut c = json!({ "active": true, "sub": "z-1", "aud": [PROJECT, "app@mgmt"], "exp": exp,
+                                "email": email, "name": "From Zitadel", "client_id": "chat@plan",
+                                "act": { "sub": "connector-sa" } });
+            if !verified.is_null() {
+                c["email_verified"] = verified;
+            }
+            c
         };
+        let user = |email: &str| claims(email, json!(true));
         Json(match token.as_str() {
             "zitadel-alice" => user("alice@example.com"),
             "zitadel-root" => user("root@example.com"),
             "zitadel-stranger" => user("stranger@example.com"),
+            "zitadel-newroot" => user("newroot@elsewhere.org"),
+            "zitadel-outsider" => user("outsider@elsewhere.org"),
+            "zitadel-unverified" => claims("unverified@example.com", json!(false)),
+            "zitadel-unsaid" => claims("unsaid@example.com", Value::Null),
             "zitadel-other-project" => json!({ "active": true, "sub": "z-1", "aud": ["999"], "exp": exp,
                                                 "email": "alice@example.com" }),
             _ => json!({ "active": false }),
@@ -364,6 +462,45 @@ mod tests {
         assert!(!looks_like_mac_mgmt_token(&raw[1..]));
         assert!(!looks_like_mac_mgmt_token("zitadel-alice"));
         assert!(!looks_like_mac_mgmt_token(&raw.to_uppercase()));
+    }
+
+    #[test]
+    fn enrollment_follows_the_issuers_web_provider() {
+        let auth: plan_ai_auth::AuthConfig = toml::from_str(
+            r#"
+            cookie_secret = "x"
+            [[providers]]
+            slug = "google"
+            name = "Google"
+            issuer = "https://accounts.google.com"
+            client_id = "g"
+            client_secret = "g"
+            allow_all = true
+            [[providers]]
+            slug = "zitadel"
+            name = "plan.ai"
+            issuer = "https://id.plan.ai/"
+            client_id = "z"
+            client_secret = "z"
+            allowed_domains = ["plan.ai"]
+            auto_join_orgs = ["plan.ai"]
+            liveliness_days = 30
+            "#,
+        )
+        .unwrap();
+        let e = enrollment_for_issuer(Some(&auth), "https://id.plan.ai");
+        assert_eq!(e.slug, "zitadel");
+        assert_eq!(e.auto_join_orgs, vec!["plan.ai".to_string()]);
+        assert_eq!(e.liveliness_days, Some(30));
+        assert!(e.admits("a@plan.ai", None).is_ok());
+        assert!(e.admits("a@gmail.com", None).is_err());
+
+        // No web provider for the issuer: everyone the token check admits.
+        for e in [enrollment_for_issuer(Some(&auth), "https://other.example"), enrollment_for_issuer(None, "https://id.plan.ai")] {
+            assert_eq!(e.slug, "zitadel_bearer");
+            assert!(e.admits("anyone@anywhere.example", None).is_ok());
+            assert!(e.auto_join_orgs.is_empty());
+        }
     }
 
     #[tokio::test]
@@ -419,11 +556,32 @@ mod tests {
             project_id: PROJECT.into(),
             client_id: "397603441129619592".into(),
             client_secret: "secret".into(),
+            auto_create: true,
         };
-        let resolver = PgUserResolver::new(pool.clone(), vec!["root@example.com".into()]);
+        let admins = vec!["root@example.com".into(), "newroot@elsewhere.org".into()];
+        let resolver = PgUserResolver::new(pool.clone(), admins.clone());
+        // As the web login's provider for this issuer would have it: example.com
+        // plus one listed address, joining "ro" (read) on creation.
+        let enroll = ProviderMeta {
+            allow_all: false,
+            allowed_domains: vec!["example.com".into()],
+            allowed_emails: vec!["newroot@elsewhere.org".into()],
+            auto_join_orgs: vec!["ro".into()],
+            ..enrollment_for_issuer(None, &cfg.issuer)
+        };
         let auth = BearerAuthenticator::new(TokenAuthenticator::new(pool.clone()))
-            .with_zitadel(introspection_config(&cfg), Arc::new(ZitadelUsers::new(resolver)), None)
+            .with_zitadel(introspection_config(&cfg), Arc::new(ZitadelUsers::new(resolver, Some(enroll))), None)
             .unwrap();
+        let count = |email: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users WHERE email = $1")
+                    .bind(email)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
 
         // Zitadel bearer → alice's principal, as her web session builds it.
         let p = auth.authenticate("zitadel-alice").await.unwrap();
@@ -443,14 +601,66 @@ mod tests {
         let p = auth.authenticate("zitadel-root").await.unwrap();
         assert!(p.admin);
 
-        // Unknown user: 403, and no user is created.
-        let e = auth.authenticate("zitadel-stranger").await.unwrap_err();
-        assert!(matches!(e, ApiError::Forbidden(ref m) if m.contains("stranger@example.com")), "{e}");
-        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE email = 'stranger@example.com'")
+        // A known user is left as it is: name and memberships unchanged, no
+        // auto-joined org.
+        let name: String = sqlx::query_scalar("SELECT name FROM users WHERE id = $1")
+            .bind(alice)
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(n, 0);
+        assert_eq!(name, "Alice");
+        let roles: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT organization_id, role FROM organization_members WHERE user_id = $1 ORDER BY role",
+        )
+        .bind(alice)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(roles, vec![(org_adm, "admin".into()), (org_ro, "read".into()), (org_rw, "write".into())]);
+
+        // Unknown user with a verified email the provider admits: created as
+        // a first web sign-in would, joining "ro".
+        let p = auth.authenticate("zitadel-stranger").await.unwrap();
+        assert_eq!(p.subject, "user:stranger@example.com via connector-sa");
+        assert!(!p.admin);
+        assert!(p.read_orgs.contains(&org_ro) && !p.read_orgs.contains(&org_rw));
+        assert!(!p.write_orgs.contains(&org_ro));
+        let (name, admin): (String, bool) =
+            sqlx::query_as("SELECT name, is_admin FROM users WHERE email = 'stranger@example.com'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((name.as_str(), admin), ("From Zitadel", false));
+        // ... and found, not created again, next time.
+        let p = auth.authenticate("zitadel-stranger").await.unwrap();
+        assert!(p.read_orgs.contains(&org_ro));
+        assert_eq!(count("stranger@example.com").await, 1);
+
+        // Admitted by allowed_emails, and an admin_emails address: admin.
+        let p = auth.authenticate("zitadel-newroot").await.unwrap();
+        assert!(p.admin);
+
+        // Email not verified (false, or not said): 403, nothing created.
+        for (token, email) in [("zitadel-unverified", "unverified@example.com"), ("zitadel-unsaid", "unsaid@example.com")] {
+            let e = auth.authenticate(token).await.unwrap_err();
+            assert!(matches!(e, ApiError::Forbidden(ref m) if m.contains("verified")), "{e}");
+            assert_eq!(count(email).await, 0, "{email}");
+        }
+
+        // The provider's rules refuse it: 403, nothing created.
+        let e = auth.authenticate("zitadel-outsider").await.unwrap_err();
+        assert!(matches!(e, ApiError::Forbidden(ref m) if m.contains("would refuse") && m.contains("outsider@elsewhere.org")), "{e}");
+        assert_eq!(count("outsider@elsewhere.org").await, 0);
+
+        // auto_create = false: unknown user → 403, nothing created.
+        let resolver = PgUserResolver::new(pool.clone(), admins);
+        let strict = BearerAuthenticator::new(TokenAuthenticator::new(pool.clone()))
+            .with_zitadel(introspection_config(&cfg), Arc::new(ZitadelUsers::new(resolver, None)), None)
+            .unwrap();
+        let e = strict.authenticate("zitadel-outsider").await.unwrap_err();
+        assert!(matches!(e, ApiError::Forbidden(ref m) if m.contains("be invited")), "{e}");
+        assert_eq!(count("outsider@elsewhere.org").await, 0);
+        assert!(strict.authenticate("zitadel-alice").await.is_ok());
 
         // Wrong audience / inactive: 401.
         let e = auth.authenticate("zitadel-other-project").await.unwrap_err();
@@ -472,7 +682,7 @@ mod tests {
         let down = crate::config::ZitadelBearerConfig { issuer: "http://127.0.0.1:9".into(), ..cfg };
         let resolver = PgUserResolver::new(pool.clone(), vec![]);
         let auth = BearerAuthenticator::new(TokenAuthenticator::new(pool.clone()))
-            .with_zitadel(introspection_config(&down), Arc::new(ZitadelUsers::new(resolver)), None)
+            .with_zitadel(introspection_config(&down), Arc::new(ZitadelUsers::new(resolver, None)), None)
             .unwrap();
         let e = auth.authenticate("zitadel-alice").await.unwrap_err();
         assert!(matches!(e, ApiError::Unauthorized(_)), "{e}");

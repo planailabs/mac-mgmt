@@ -83,10 +83,13 @@ issuer = "https://id.plan.ai"
 project_id = "397603440676569224"   # audience the token must carry
 client_id = "397603441129619592"    # API application of that project
 client_secret = "..."               # its secret (Basic auth for introspection)
+auto_create = true                  # create unknown users (default true)
 ```
 
 - A bearer is first looked up as a mac-mgmt token; only otherwise is it checked at Zitadel's introspection endpoint (results are cached for up to a minute). A token without `project_id` in its audience is rejected (401).
-- The user is found by the token's email. There must already be a mac-mgmt user with that email — bearers never create users; an unknown email is answered with 403.
+- The user is found by the token's email. An existing user is used as it is (name, organizations and roles unchanged).
+- An email without a mac-mgmt user is **created on first use**, exactly as a first web sign-in would create it — provided the token marks the email as verified (`email_verified`; otherwise 403). The web login's rules for the same issuer apply: the `[[auth.providers]]` entry whose `issuer` equals `[zitadel_bearer].issuer` decides who may be created (`allow_all`, `allowed_domains`, `allowed_emails`, `zitadel_org`) and which organizations the new user joins (`auto_join_orgs`, role "read"); `[auth].admin_emails` become admins. An email those rules would refuse at the web login is answered with 403. Without such a provider (e.g. an API-only server), every user the token check admits is created, joining no organization — the token must still carry `project_id` in its audience, so Zitadel's project grants decide who can obtain one. Each creation is written to the audit log with the acting service account.
+- `auto_create = false` turns this off: an unknown email is answered with 403, and the user has to sign in to the web UI once (or be invited) first.
 - If the token was obtained by impersonation, the acting service account (`act` claim) is recorded: the request runs as `user:<email> via <actor>` and is written to the audit log.
 - Without the section only mac-mgmt tokens are accepted.
 

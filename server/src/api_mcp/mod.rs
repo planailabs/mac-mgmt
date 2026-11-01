@@ -55,8 +55,12 @@ pub fn bearer_authenticator(
     let Some(z) = zitadel else {
         return std::sync::Arc::new(bearer);
     };
+    let enroll = z
+        .auto_create
+        .then(|| auth::enrollment_for_issuer(crate::config::config().auth.as_ref(), &z.issuer));
     let users = std::sync::Arc::new(auth::ZitadelUsers::new(
         crate::web::auth::PgUserResolver::new(pool, crate::web::auth::admin_emails()),
+        enroll.clone(),
     ));
     let bearer = bearer
         .with_zitadel(auth::introspection_config(z), users, None)
@@ -64,6 +68,7 @@ pub fn bearer_authenticator(
     tracing::info!(
         issuer = %z.issuer,
         project_id = %z.project_id,
+        auto_create = ?enroll.as_ref().map(|e| e.slug.as_str()),
         "management API accepts Zitadel bearer tokens"
     );
     std::sync::Arc::new(bearer)

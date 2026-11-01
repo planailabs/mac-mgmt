@@ -302,6 +302,9 @@ pub struct XzarConfig {
 /// mapped to the mac-mgmt user with the token's email — acting with exactly
 /// that user's permissions, as their web session would. Tokens obtained by
 /// token exchange (impersonation) record the acting service account.
+///
+/// A token of a verified email that has no mac-mgmt user yet creates that
+/// user (`auto_create`), exactly as a first web sign-in would.
 #[derive(Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ZitadelBearerConfig {
@@ -314,6 +317,15 @@ pub struct ZitadelBearerConfig {
     pub client_id: String,
     /// Client secret of that API application.
     pub client_secret: String,
+    /// Create the mac-mgmt user of a token whose (verified) email has none
+    /// yet, as a first web sign-in would: the `[[auth.providers]]` entry with
+    /// this `issuer` decides who may (`allow_all` / `allowed_domains` /
+    /// `allowed_emails` / `zitadel_org`) and which orgs they join
+    /// (`auto_join_orgs`); `[auth].admin_emails` become admins. Without such
+    /// a provider, every user the token check admits is created, joining no
+    /// org. `false` → unknown users get 403.
+    #[serde(default = "default_true")]
+    pub auto_create: bool,
 }
 
 impl std::fmt::Debug for ZitadelBearerConfig {
@@ -323,6 +335,7 @@ impl std::fmt::Debug for ZitadelBearerConfig {
             .field("project_id", &self.project_id)
             .field("client_id", &self.client_id)
             .field("client_secret", &"<redacted>")
+            .field("auto_create", &self.auto_create)
             .finish()
     }
 }

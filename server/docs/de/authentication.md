@@ -83,10 +83,13 @@ issuer = "https://id.plan.ai"
 project_id = "397603440676569224"   # audience the token must carry
 client_id = "397603441129619592"    # API application of that project
 client_secret = "..."               # its secret (Basic auth for introspection)
+auto_create = true                  # create unknown users (default true)
 ```
 
 - Ein Bearer-Token wird zuerst als mac-mgmt-Token gesucht; nur sonst wird es am Introspection-Endpunkt von Zitadel geprüft (Ergebnisse werden bis zu einer Minute zwischengespeichert). Ein Token ohne `project_id` in seiner Audience wird abgelehnt (401).
-- Der Benutzer wird über die E-Mail-Adresse des Tokens gefunden. Es muss bereits ein mac-mgmt-Benutzer mit dieser E-Mail-Adresse existieren — Bearer-Tokens legen nie Benutzer an; eine unbekannte E-Mail-Adresse wird mit 403 beantwortet.
+- Der Benutzer wird über die E-Mail-Adresse des Tokens gefunden. Ein bestehender Benutzer wird unverändert verwendet (Name, Organisationen und Rollen bleiben, wie sie sind).
+- Zu einer E-Mail-Adresse ohne mac-mgmt-Benutzer wird dieser **bei der ersten Verwendung angelegt** — genau so, wie eine erste Anmeldung an der Weboberfläche ihn anlegen würde —, sofern das Token die E-Mail-Adresse als verifiziert ausweist (`email_verified`; sonst 403). Es gelten die Regeln der Web-Anmeldung für denselben Issuer: Der `[[auth.providers]]`-Eintrag, dessen `issuer` mit `[zitadel_bearer].issuer` übereinstimmt, entscheidet, wer angelegt werden darf (`allow_all`, `allowed_domains`, `allowed_emails`, `zitadel_org`) und welchen Organisationen der neue Benutzer beitritt (`auto_join_orgs`, Rolle "read"); Adressen aus `[auth].admin_emails` werden Administratoren. Eine E-Mail-Adresse, die diese Regeln an der Web-Anmeldung ablehnen würden, wird mit 403 beantwortet. Ohne einen solchen Anbieter (z. B. auf einem reinen API-Server) wird jeder Benutzer angelegt, den die Token-Prüfung zulässt, ohne einer Organisation beizutreten — das Token muss weiterhin `project_id` in seiner Audience tragen, sodass die Projekt-Grants in Zitadel bestimmen, wer eines erhalten kann. Jede Anlage wird mit dem handelnden Dienstkonto im Audit-Log protokolliert.
+- `auto_create = false` schaltet das ab: Eine unbekannte E-Mail-Adresse wird mit 403 beantwortet, und der Benutzer muss sich zuerst einmal an der Weboberfläche anmelden (oder eingeladen werden).
 - Wurde das Token per Impersonation erhalten, wird das handelnde Dienstkonto (Claim `act`) festgehalten: Die Anfrage läuft als `user:<email> via <actor>` und wird im Audit-Log protokolliert.
 - Ohne den Abschnitt werden nur mac-mgmt-Tokens akzeptiert.
 

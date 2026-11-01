@@ -96,8 +96,9 @@ impl plan_ai_auth::UserResolver for PgUserResolver {
 
 impl PgUserResolver {
     /// The user a web session with this email resolves to, without creating
-    /// or changing anything: for credentials that vouch for an email but must
-    /// not enroll users (Zitadel bearers on the management API). `None` when
+    /// or changing anything: for credentials that vouch for an email but
+    /// should leave a known user as it is (Zitadel bearers on the management
+    /// API, which enroll unknown users through `resolve_user_ctx`). `None` when
     /// no such user exists. An `admin_emails` address counts as admin, as
     /// [`resolve_user`](plan_ai_auth::UserResolver::resolve_user) would make it.
     pub async fn find_by_email(&self, email: &str) -> Result<Option<WebUser>, anyhow::Error> {
