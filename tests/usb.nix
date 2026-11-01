@@ -38,6 +38,12 @@ let
       mv design-canonical design
       substituteInPlace memvault/crates/memvault-web/Cargo.toml \
         --replace-fail 'path = "../../plan-ai-design"' 'path = "../../../design"'
+      # The workspace (and mac-mgmt-overview) name memvault's vendored copy: point
+      # them at the canonical `design` too.
+      substituteInPlace Cargo.toml \
+        --replace-fail 'path = "memvault/plan-ai-design"' 'path = "design"'
+      substituteInPlace mac-mgmt-overview/Cargo.toml \
+        --replace-fail 'path = "../memvault/plan-ai-design"' 'path = "../design"'
     '';
     # The mac-mgmt USB binary depends on memvault-web even in headless mode, and
     # memvault-web's build script regenerates Tailwind CSS with `npm run
