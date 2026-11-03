@@ -85,11 +85,12 @@ are load-bearing, not tidiness:
 - `memvault` — an independent workspace **submodule**. Cargo cannot nest workspaces, so
   crates here depend on its crates (`memvault-*`, `memctl`, `memvault-web`) by path.
 - `common` — also a **submodule**, shared with sibling projects.
-- `design` — a symlink to the nested `memvault/plan-ai-design` submodule. It exists for
-  Cargo lockfile *path identity*: `plan-ai-design` must resolve to one textual path
-  everywhere, or Cargo sees two packages. `scripts/canonicalize-design-path.py`,
-  `build-memvault.sh`'s manifest rewrite and CI's `MEMVAULT_KEEP_CANONICAL_MANIFEST=1`
-  are all the same workaround.
+- `design` — a symlink to the nested `memvault/plan-ai-design` submodule, kept for
+  the one consumer that still names it (`common/plan-ai-actions`, web-agency-only).
+  Everything in *this* workspace (root `[workspace.dependencies]`,
+  `mac-mgmt-overview`, memvault's `memvault-web`) depends on
+  `plan-ai-design` through `memvault/plan-ai-design`, so Cargo sees a single
+  lockfile package identity; nothing rewrites manifests at build time.
 - `mac-mgmt-overview` and `config-ui` — each has its own `[workspace]` root and is
   depended on by path; `mac-mgmt-overview` behind the daemon's `usb-ui` feature so
   headless builds never pull in the wry/webkitgtk desktop stack.

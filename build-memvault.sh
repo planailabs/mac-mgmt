@@ -10,29 +10,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB_DIR="$SCRIPT_DIR/memvault/crates/memvault-web"
-MEMVAULT_MANIFEST="$WEB_DIR/Cargo.toml"
 
-# The superproject exposes memvault's design checkout through ./design. Cargo
-# keys path packages by their written path, not their resolved inode, so the
-# nested memvault path and the superproject path otherwise become two distinct
-# plan-ai-design packages in one lockfile. Rewrite the nested manifest for this
-# build. Callers that run another workspace Cargo command can keep the canonical
-# path until their lifecycle cleanup; other callers restore it on exit.
-restore_memvault_manifest() {
-  if [ -n "${MEMVAULT_MANIFEST_BACKUP:-}" ] && [ -f "$MEMVAULT_MANIFEST_BACKUP" ]; then
-    cp "$MEMVAULT_MANIFEST_BACKUP" "$MEMVAULT_MANIFEST"
-    rm -f "$MEMVAULT_MANIFEST_BACKUP"
-  fi
-}
-MEMVAULT_MANIFEST_BACKUP="$(mktemp "${TMPDIR:-/tmp}/memvault-web-Cargo.toml.XXXXXX")"
-cp "$MEMVAULT_MANIFEST" "$MEMVAULT_MANIFEST_BACKUP"
-if [ "${MEMVAULT_KEEP_CANONICAL_MANIFEST:-0}" = "1" ]; then
-  rm -f "$MEMVAULT_MANIFEST_BACKUP"
-  MEMVAULT_MANIFEST_BACKUP=""
-else
-  trap restore_memvault_manifest EXIT
-fi
-python3 "$SCRIPT_DIR/scripts/canonicalize-design-path.py" "$MEMVAULT_MANIFEST"
+# plan-ai-design must keep one lockfile identity. The nested manifest's
+# `../../plan-ai-design` already resolves to the same absolute path as the
+# workspace's `memvault/plan-ai-design` dependency, so nothing has to be
+# rewritten here (rewriting it to the ./design symlink is what used to split the
+# package into two identities and break `cargo metadata`).
 
 # Cargo and dx both need a usable Cargo home. CI normally symlinks ~/.cargo to a
 # shared cache volume; if that symlink is broken, dx's nested cargo-metadata run

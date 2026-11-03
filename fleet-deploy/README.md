@@ -37,10 +37,9 @@ seed.sh              admin token, organization, daemon_versions row
    cd server && dx build --release
    ```
 
-   Note: a bare `cargo` in this repo fails with a `plan-ai-design` lockfile
-   collision once the nested submodule exists — run
-   `python3 scripts/canonicalize-design-path.py memvault/crates/memvault-web/Cargo.toml`
-   first (and restore that manifest afterwards).
+   Note: `plan-ai-design` has exactly one lockfile identity in this tree
+   (`memvault/plan-ai-design`), so a bare `cargo` works — no manifest rewrite
+   is needed before building.
 
 2. Copy `.env.example` to `.env` and fill it in.
 

@@ -24,20 +24,14 @@ OUT="$SCRIPT_DIR/usb-release"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-# Cargo must see one path identity for plan-ai-design across the superproject
-# and memvault workspace. Preserve and restore the submodule manifest so local
-# runs and CI cleanup cannot leave submodule drift behind.
-MEMVAULT_MANIFEST="$SCRIPT_DIR/memvault/crates/memvault-web/Cargo.toml"
-MEMVAULT_MANIFEST_BACKUP="$(mktemp "${TMPDIR:-/tmp}/memvault-web-Cargo.toml.XXXXXX")"
-cp "$MEMVAULT_MANIFEST" "$MEMVAULT_MANIFEST_BACKUP"
-python3 "$SCRIPT_DIR/scripts/canonicalize-design-path.py" "$MEMVAULT_MANIFEST"
+# Cargo needs one path identity for plan-ai-design; the nested memvault manifest
+# already names `memvault/plan-ai-design`, the same path the superproject and
+# mac-mgmt-overview use, so no manifest rewrite is needed here.
 cleanup() {
   if [ -n "${CARGO_SHIM:-}" ]; then
     export PATH="${PATH#"$CARGO_SHIM:"}"
     rm -rf "$CARGO_SHIM"
   fi
-  cp "$MEMVAULT_MANIFEST_BACKUP" "$MEMVAULT_MANIFEST"
-  rm -f "$MEMVAULT_MANIFEST_BACKUP"
 }
 trap cleanup EXIT
 
