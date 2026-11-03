@@ -9,6 +9,8 @@ use crate::api_mcp::endpoints::docs::{
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText};
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DocEntry {
@@ -170,6 +172,12 @@ async fn get_doc(slug: String, lang: String) -> Result<(String, String, String),
                 .unwrap_or_default()
         })
         .unwrap_or_default();
+
+    // Admin-only docs must not even confirm that the slug exists for anyone
+    // else, so the error is the same as for an unknown slug.
+    if audience.eq_ignore_ascii_case("admin") && !current_user().await?.is_admin {
+        return Err(ServerFnError::new(format!("Document '{slug}' not found")));
+    }
 
     let (_, body) = parse_frontmatter(&markdown);
 

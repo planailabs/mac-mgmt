@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::components::ui::{Button, ButtonSize, ButtonVariant, ErrorText, HelpText};
+use crate::web::js::js_str;
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
 
@@ -160,13 +161,17 @@ fn render_logs(ctx: &LogsContext) -> Element {
                             polling.set(true);
                             let svc = selected_service.read().clone();
                             let svc_param = if svc.is_empty() { String::new() } else { format!("&service={svc}") };
+                            // Daemon-supplied values go in as JSON-encoded JS
+                            // string literals so they cannot break out of the source.
+                            let url_json = js_str(&logs_url);
+                            let svc_json = js_str(&svc_param);
                             let js = format!(
                                 r#"
                                 let after = 0;
                                 let result = "";
                                 // Fetch latest first (500 lines)
                                 try {{
-                                    const resp = await fetch("{logs_url}?n=500{svc_param}", {{
+                                    const resp = await fetch({url_json} + "?n=500" + {svc_json}, {{
                                         headers: {{ "X-Proxy-Token": "{token}" }},
                                     }});
                                     const data = await resp.json();
@@ -186,7 +191,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
                                 for (let i = 0; i < 150; i++) {{
                                     await new Promise(r => setTimeout(r, 2000));
                                     try {{
-                                        const resp = await fetch("{logs_url}?after=" + after + "{svc_param}", {{
+                                        const resp = await fetch({url_json} + "?after=" + after + {svc_json}, {{
                                             headers: {{ "X-Proxy-Token": "{token}" }},
                                         }});
                                         const data = await resp.json();
@@ -235,10 +240,11 @@ fn render_logs(ctx: &LogsContext) -> Element {
                         let svc = selected_service.read().clone();
                         async move {
                             let svc_param = if svc.is_empty() { String::new() } else { format!("&service={svc}") };
+                            let url_json = js_str(&format!("{logs_url}?n=500{svc_param}"));
                             let js = format!(
                                 r#"
                                 try {{
-                                    const resp = await fetch("{logs_url}?n=500{svc_param}", {{
+                                    const resp = await fetch({url_json}, {{
                                         headers: {{ "X-Proxy-Token": "{token}" }},
                                     }});
                                     const data = await resp.json();

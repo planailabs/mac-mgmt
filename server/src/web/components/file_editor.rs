@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::components::ui::{Alert, AlertVariant, Button, ButtonSize, ErrorText, HelpText};
+use crate::web::js::js_str;
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
 
@@ -118,9 +119,12 @@ async fn relay_file_list(
     if let Some(p) = path {
         url = format!("{url}?path={p}");
     }
+    // Daemon-supplied URLs (and a user-supplied path) go in as JSON-encoded JS
+    // string literals so they cannot break out of the eval source.
+    let url_json = js_str(&url);
     let js = format!(
         r#"
-        const resp = await fetch("{url}", {{
+        const resp = await fetch({url_json}, {{
             headers: {{ "X-Proxy-Token": "{token}" }}
         }});
         const body = await resp.text();
@@ -144,9 +148,10 @@ async fn relay_file_read(
     if let Some(p) = path {
         url = format!("{url}?path={p}");
     }
+    let url_json = js_str(&url);
     let js = format!(
         r#"
-        const resp = await fetch("{url}", {{
+        const resp = await fetch({url_json}, {{
             headers: {{ "X-Proxy-Token": "{token}" }}
         }});
         if (!resp.ok) {{
@@ -212,9 +217,10 @@ async fn relay_file_write(
         .replace('\\', "\\\\")
         .replace('`', "\\`")
         .replace('$', "\\$");
+    let url_json = js_str(&url);
     let js = format!(
         r#"
-        const resp = await fetch("{url}", {{
+        const resp = await fetch({url_json}, {{
             method: "POST",
             headers: {{
                 "X-Proxy-Token": "{token}",
