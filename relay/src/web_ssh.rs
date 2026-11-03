@@ -38,23 +38,62 @@ pub fn router(state: WebSshState) -> Router {
         .with_state(state)
 }
 
-/// Verify access via client certificate OR Bearer token.
+/// CSP for the terminal page: xterm.js from the CDN, an inline script and
+/// style, and a same-origin WebSocket to this very host.
+const SSH_PAGE_CSP: &str = "default-src 'none'; style-src 'unsafe-inline' https://cdn.jsdelivr.net; \
+     script-src 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' ws: wss:; \
+     frame-ancestors 'none'";
+
+/// Admin certificates/tokens reach any machine, including daemons that
+/// registered without a cluster.
+fn is_admin_kind(token_kind: &str) -> bool {
+    matches!(token_kind, "admin" | "cert_admin")
+}
+
+/// Whether an authenticated identity may use the terminal on `instance_id`:
+/// the instance's cluster must be covered, exactly as `/cert-login` decides.
+/// Daemons that registered without a cluster are admin-only (deny closed).
+fn cluster_authorized(
+    registry: &DaemonRegistry,
+    instance_id: &str,
+    token_kind: &str,
+    cluster_ids: &[uuid::Uuid],
+) -> bool {
+    match registry.get_cluster_id(instance_id) {
+        Some(cid) => cluster_ids.contains(&cid),
+        None => is_admin_kind(token_kind),
+    }
+}
+
+/// Verify access via client certificate OR Bearer token, scoped to the
+/// machine in the URL — a certificate for cluster A must not open a shell on
+/// a machine of cluster B.
 async fn verify_access(
     headers: &axum::http::HeaderMap,
     cert_info: &Option<axum::Extension<ClientCertInfo>>,
-    server_api_url: &str,
+    state: &WebSshState,
+    instance_id: &str,
 ) -> Result<(), Response> {
+    let mut cert_authorized = false;
+
     // Try client certificate first.
     if let Some(cert) = cert_info {
-        if crate::auth::validate_cert(
-            server_api_url,
+        if let Ok(info) = crate::auth::validate_cert(
+            &state.server_api_url,
             &cert.fingerprint_sha256,
             &cert.certificate_pem,
         )
         .await
-        .is_ok()
         {
-            return Ok(());
+            cert_authorized = true;
+            if cluster_authorized(
+                &state.registry,
+                instance_id,
+                &info.token_kind,
+                &info.cluster_ids,
+            ) {
+                return Ok(());
+            }
         }
     }
 
@@ -64,25 +103,32 @@ async fn verify_access(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
     {
-        match crate::auth::validate_token(server_api_url, token).await {
-            Ok(info)
-                if matches!(
-                    info.token_kind.as_str(),
-                    "admin" | "setting" | "cert_admin" | "cert_cluster"
-                ) =>
-            {
+        if let Ok(info) = crate::auth::validate_token(&state.server_api_url, token).await {
+            if matches!(
+                info.token_kind.as_str(),
+                "admin" | "setting" | "cert_admin" | "cert_cluster"
+            ) && cluster_authorized(
+                &state.registry,
+                instance_id,
+                &info.token_kind,
+                &info.cluster_ids,
+            ) {
                 return Ok(());
             }
-            _ => {}
         }
     }
 
     // Neither worked — return appropriate error.
     if let Some(cert) = cert_info {
+        let error = if cert_authorized {
+            "certificate is not authorized for this machine's cluster"
+        } else {
+            "certificate not authorized"
+        };
         return Err((
             axum::http::StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({
-                "error": "certificate not authorized",
+                "error": error,
                 "cert_fingerprint": cert.fingerprint_sha256,
                 "hint": "Add this fingerprint to cluster or admin certificate settings"
             })),
@@ -106,10 +152,14 @@ async fn ssh_page(
     headers: axum::http::HeaderMap,
     cert_info: Option<axum::Extension<ClientCertInfo>>,
 ) -> Response {
-    if let Err(resp) = verify_access(&headers, &cert_info, &state.server_api_url).await {
+    if let Err(resp) = verify_access(&headers, &cert_info, &state, &instance_id).await {
         return resp;
     }
-    Html(terminal_html(&instance_id)).into_response()
+    (
+        [(axum::http::header::CONTENT_SECURITY_POLICY, SSH_PAGE_CSP)],
+        Html(terminal_html(&instance_id)),
+    )
+        .into_response()
 }
 
 /// WebSocket handler: bridges to daemon SSH via the relay's SSH key.
@@ -120,7 +170,7 @@ async fn ssh_ws(
     headers: axum::http::HeaderMap,
     cert_info: Option<axum::Extension<ClientCertInfo>>,
 ) -> Response {
-    if let Err(resp) = verify_access(&headers, &cert_info, &state.server_api_url).await {
+    if let Err(resp) = verify_access(&headers, &cert_info, &state, &instance_id).await {
         return resp;
     }
     ws.on_upgrade(move |socket| handle_ssh_ws(socket, instance_id, state))
@@ -351,14 +401,27 @@ impl russh::client::Handler for SshClientHandler {
     }
 }
 
+/// A JS string literal for `s`: JSON-quoted, with `<` escaped as `\u003c` so
+/// the value can never close the surrounding inline `<script>` tag.
+fn js_string_literal(s: &str) -> String {
+    serde_json::to_string(s)
+        .unwrap_or_else(|_| "\"\"".to_string())
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+}
+
 /// Generate the HTML page for the xterm.js terminal.
 fn terminal_html(instance_id: &str) -> String {
+    // The id comes straight off the URL: escape it for the HTML title and
+    // JSON-encode it (quotes included) for the JS string literal.
+    let title_id = plan_ai_html::escape(instance_id);
+    let js_id = js_string_literal(instance_id);
     format!(
         r#"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>SSH — {instance_id}</title>
+<title>SSH — {title_id}</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css"/>
 <style>
   body {{ margin: 0; background: #1e1e1e; overflow: hidden; }}
@@ -394,7 +457,7 @@ function hideOverlay() {{ overlay.className = ''; }}
 showOverlay('Connecting...');
 
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsUrl = proto + '//' + location.host + '/ssh/{instance_id}/ws';
+const wsUrl = proto + '//' + location.host + '/ssh/' + {js_id} + '/ws';
 
 let currentWs = null;
 
@@ -471,7 +534,22 @@ function connect() {{
 connect();
 </script>
 </body>
-</html>"#,
-        instance_id = instance_id
+</html>"#
     )
+}
+
+#[cfg(test)]
+mod terminal_html_tests {
+    use super::terminal_html;
+
+    #[test]
+    fn instance_id_is_escaped_in_html_and_js() {
+        let html = terminal_html(r#"<script>alert(1)</script>"#);
+        // No raw markup from the path survives — neither in the HTML title…
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        // …nor as a way out of the inline script literal.
+        assert!(!html.contains("</script>alert"));
+        assert!(html.contains(r#"\u003cscript\u003ealert(1)\u003c/script\u003e"#));
+    }
 }

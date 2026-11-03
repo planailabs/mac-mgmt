@@ -207,6 +207,129 @@ fn decoy_ca_hint() -> Vec<u8> {
 }
 
 #[cfg(test)]
+mod client_auth_tests {
+    use std::sync::Arc;
+
+    use rcgen::{CertifiedKey, generate_simple_self_signed};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+    use rustls::sign::CertifiedKey as SigningCert;
+
+    /// Hands the client one fixed certificate/key pair, matching or not —
+    /// rustls' own builder refuses an inconsistent pair, an attacker does not.
+    #[derive(Debug)]
+    struct FixedClientCert(Arc<SigningCert>);
+
+    impl rustls::client::ResolvesClientCert for FixedClientCert {
+        fn resolve(
+            &self,
+            _root_hint_subjects: &[&[u8]],
+            _sigschemes: &[rustls::SignatureScheme],
+        ) -> Option<Arc<SigningCert>> {
+            Some(Arc::clone(&self.0))
+        }
+
+        fn has_certs(&self) -> bool {
+            true
+        }
+    }
+
+    /// A CA plus a server certificate it signed, so the client can verify the
+    /// relay like any other HTTPS server (a self-signed leaf is not usable as
+    /// its own trust anchor).
+    fn server_identity() -> (
+        Vec<CertificateDer<'static>>,
+        PrivateKeyDer<'static>,
+        CertificateDer<'static>,
+    ) {
+        let mut ca_params = rcgen::CertificateParams::new(Vec::new()).unwrap();
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let ca_key = rcgen::KeyPair::generate().unwrap();
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+        let ca_der = CertificateDer::from(ca_cert.der().to_vec());
+
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = params.signed_by(&key, &ca_cert, &ca_key).unwrap();
+
+        let chain = vec![CertificateDer::from(cert.der().to_vec()), ca_der.clone()];
+        let key = PrivateKeyDer::try_from(key.serialize_der()).unwrap();
+        (chain, key, ca_der)
+    }
+
+    /// One TLS handshake against the relay's own server config. The client
+    /// presents `client_cert` but signs the CertificateVerify with `client_key`.
+    /// Returns whether the relay accepted the client.
+    async fn relay_accepts(client_cert: &rcgen::Certificate, client_key: Vec<u8>) -> bool {
+        // `main` installs the ring provider; unit tests never run it.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let (server_chain, server_key, anchor) = server_identity();
+        let (server_cfg, _quiet) = super::build_tls_configs(server_chain, server_key).unwrap();
+
+        let signing_key = rustls::crypto::ring::sign::any_supported_type(
+            &PrivateKeyDer::try_from(client_key).unwrap(),
+        )
+        .unwrap();
+        let client_identity = SigningCert::new(
+            vec![CertificateDer::from(client_cert.der().to_vec())],
+            signing_key,
+        );
+
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(anchor).unwrap();
+        let client_cfg = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_client_cert_resolver(Arc::new(FixedClientCert(Arc::new(client_identity))));
+
+        let (server_io, client_io) = tokio::io::duplex(1 << 16);
+        let acceptor = tokio_rustls::TlsAcceptor::from(server_cfg);
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(client_cfg));
+        let handshake = async move {
+            let server = async move { acceptor.accept(server_io).await.is_ok() };
+            let client = async move {
+                match connector
+                    .connect(ServerName::try_from("localhost").unwrap(), client_io)
+                    .await
+                {
+                    // Hold the connection open until the relay drops it, so the
+                    // relay gets to finish its own side of the handshake.
+                    Ok(mut conn) => {
+                        let mut buf = [0u8; 1];
+                        let _ = tokio::io::AsyncReadExt::read(&mut conn, &mut buf).await;
+                    }
+                    Err(_) => {}
+                }
+            };
+            let (server_accepted, ()) = tokio::join!(server, client);
+            server_accepted
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(10), handshake)
+            .await
+            .expect("handshake timed out")
+    }
+
+    #[tokio::test]
+    async fn accepts_client_that_proves_possession_of_its_key() {
+        let CertifiedKey { cert, key_pair } =
+            generate_simple_self_signed(vec!["client".into()]).unwrap();
+        assert!(
+            relay_accepts(&cert, key_pair.serialize_der()).await,
+            "a client presenting its own certificate and key must be accepted"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_copied_certificate_with_another_key() {
+        let victim = generate_simple_self_signed(vec!["client".into()]).unwrap();
+        let attacker = generate_simple_self_signed(vec!["attacker".into()]).unwrap();
+        assert!(
+            !relay_accepts(&victim.cert, attacker.key_pair.serialize_der()).await,
+            "a copied certificate signed with another key must not authenticate"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn decoy_hint_is_valid_der_name() {
@@ -312,6 +435,17 @@ struct AcceptAnyClientCert {
     hints: Vec<rustls::DistinguishedName>,
 }
 
+/// Signature algorithms used to verify the client's CertificateVerify.
+/// The process default provider is installed as `ring` in `main`; ask it
+/// directly so this also works in tests, which never run `main`.
+fn signature_algorithms() -> &'static rustls::crypto::WebPkiSupportedAlgorithms {
+    static ALGS: std::sync::LazyLock<rustls::crypto::WebPkiSupportedAlgorithms> =
+        std::sync::LazyLock::new(|| {
+            rustls::crypto::ring::default_provider().signature_verification_algorithms
+        });
+    &ALGS
+}
+
 impl rustls::server::danger::ClientCertVerifier for AcceptAnyClientCert {
     fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
         &self.hints
@@ -328,36 +462,27 @@ impl rustls::server::danger::ClientCertVerifier for AcceptAnyClientCert {
 
     fn verify_tls12_signature(
         &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        rustls::crypto::verify_tls12_signature(message, cert, dss, signature_algorithms())
     }
 
     fn verify_tls13_signature(
         &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        rustls::crypto::verify_tls13_signature(message, cert, dss, signature_algorithms())
     }
 
+    /// Also sent to the client as the accepted `signature_algorithms`: offer
+    /// exactly what we can verify, so a client never proves possession with a
+    /// scheme the verifier would have to reject.
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ED448,
-        ]
+        signature_algorithms().supported_schemes()
     }
 
     fn offer_client_auth(&self) -> bool {

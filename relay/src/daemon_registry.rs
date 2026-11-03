@@ -178,11 +178,7 @@ impl DaemonRegistry {
                 Some(p)
             }
             None => {
-                tracing::error!(
-                    "no free ports in range {}-{}",
-                    self.port_min,
-                    self.port_max
-                );
+                tracing::error!("no free ports in range {}-{}", self.port_min, self.port_max);
                 None
             }
         }
@@ -367,6 +363,18 @@ impl DaemonRegistry {
         daemons.insert(id.clone(), conn);
         tracing::info!("registered daemon {id} (total: {})", daemons.len());
         true
+    }
+
+    /// Whether `instance_id` may be (re-)registered with `cluster_id`.
+    ///
+    /// A re-registration may only ever replace an entry of the same cluster:
+    /// otherwise a token for cluster B could take over a machine of cluster A
+    /// by registering its instance id.
+    pub fn can_register(&self, instance_id: &str, cluster_id: Option<Uuid>) -> bool {
+        let daemons = self.daemons.read().unwrap();
+        daemons
+            .get(instance_id)
+            .is_none_or(|d| d.cluster_id == cluster_id)
     }
 
     /// Unregister a daemon, but only if its `connected_at` matches.
@@ -572,6 +580,28 @@ mod tests {
         assert_ne!(other, port, "re-registration freed a port still in use");
         // Daemon "a" still gets its reserved port back.
         assert_eq!(registry.allocate_port("a").unwrap(), port);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reregistration_may_not_switch_cluster() {
+        let dir = std::env::temp_dir().join(format!("relay-test-cluster-{}", std::process::id()));
+        let registry = DaemonRegistry::new(100, 10000, 10010, &dir);
+        let cluster_a = Uuid::new_v4();
+        let cluster_b = Uuid::new_v4();
+
+        // Nothing registered yet: any cluster may claim the id.
+        assert!(registry.can_register("a", Some(cluster_a)));
+
+        let mut first = conn("a", None);
+        first.cluster_id = Some(cluster_a);
+        assert!(registry.register(first));
+
+        // The same cluster (and an idempotent re-register) is fine…
+        assert!(registry.can_register("a", Some(cluster_a)));
+        // …another cluster, or an unknown one, is a takeover attempt.
+        assert!(!registry.can_register("a", Some(cluster_b)));
+        assert!(!registry.can_register("a", None));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
