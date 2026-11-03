@@ -384,19 +384,21 @@ fn find_real_systemctl() -> Option<PathBuf> {
         false
     };
 
-    // Search PATH, skipping our own binary.
-    for dir in std::env::var("PATH").unwrap_or_default().split(':') {
-        let candidate = Path::new(dir).join("systemctl");
-        if candidate.exists() && !is_self(&candidate) {
-            return Some(candidate);
-        }
-    }
-
-    // Fallback well-known paths.
+    // Fixed absolute paths first: the shim is installed in place of systemctl
+    // and runs as root, so an attacker-writable PATH entry must not decide
+    // which binary gets executed.
     for path in &["/usr/bin/systemctl", "/bin/systemctl"] {
         let p = Path::new(path);
         if p.exists() && !is_self(p) {
             return Some(p.to_path_buf());
+        }
+    }
+
+    // Fallback: search PATH (non-system layouts), skipping our own binary.
+    for dir in std::env::var("PATH").unwrap_or_default().split(':') {
+        let candidate = Path::new(dir).join("systemctl");
+        if candidate.exists() && !is_self(&candidate) {
+            return Some(candidate);
         }
     }
 

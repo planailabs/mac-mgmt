@@ -253,6 +253,86 @@ pub fn backup_config_file(path: &Path) {
 
 // ── Merge + validate + write ───────────────────────────────────────────
 
+/// How many random suffixes to try when the deterministic temp name is taken
+/// by a leftover file.
+const MAX_TEMP_SUFFIX_ATTEMPTS: u32 = 8;
+
+/// The mode an atomic write of `path` should use: the file's own permissions
+/// when it exists, else `default_mode`. No-op off unix.
+pub(crate) fn file_mode(path: &Path, default_mode: u32) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return std::fs::metadata(path).map_or(default_mode, |m| m.permissions().mode() & 0o777);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, default_mode);
+        0
+    }
+}
+
+/// Open `path` for writing, refusing to follow a symlink and refusing to reuse
+/// an existing file.
+#[cfg(unix)]
+fn create_new(path: &Path, mode: u32) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        // Belt and braces: O_EXCL already fails on a symlink.
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn create_new(path: &Path, _mode: u32) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+}
+
+/// Create a fresh temp file next to `path` and return it with the path used.
+///
+/// Temp names are predictable (`foo.tmp.validator`), so a local attacker who
+/// can create files in the directory could plant a symlink and redirect a
+/// root-context write. `create_new` + `O_NOFOLLOW` rules that out; a stale
+/// regular temp file left by a crash is skipped by retrying under a random
+/// suffix. Anything else at the name (symlink, directory) is a squat: fail
+/// closed rather than write.
+pub(crate) fn create_temp(
+    path: &Path,
+    mode: u32,
+) -> std::io::Result<(std::fs::File, std::path::PathBuf)> {
+    match create_new(path, mode) {
+        Ok(f) => return Ok((f, path.to_path_buf())),
+        Err(e)
+            if e.kind() == std::io::ErrorKind::AlreadyExists
+                && std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file()) => {}
+        Err(e) => return Err(e),
+    }
+
+    let base = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    for _ in 0..MAX_TEMP_SUFFIX_ATTEMPTS {
+        let candidate = path.with_file_name(format!("{base}.{}", rand::random::<u32>()));
+        match create_new(&candidate, mode) {
+            Ok(f) => return Ok((f, candidate)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        format!("no free temp name for {}", path.display()),
+    ))
+}
+
 /// Write `contents` to `path` through a sibling temp file that is renamed into
 /// place. `std::fs::write` truncates the target first, so a write that fails
 /// midway (a full filesystem: ENOSPC) would leave the config empty and — since
@@ -261,20 +341,14 @@ pub fn backup_config_file(path: &Path) {
 /// The rename replaces the target's inode: a config that is a symlink (dotfiles
 /// checkout) becomes a regular file and the link target keeps the old content.
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {
-    let tmp = path.with_extension("tmp.validator");
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
     // Create the temp with the target's own mode before content lands in it:
     // these files hold credentials and are often 0600.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mode = std::fs::metadata(path).map_or(0o600, |m| m.permissions().mode() & 0o777);
-        opts.mode(mode);
-    }
-    let written = opts
-        .open(&tmp)
-        .and_then(|mut f| f.write_all(contents.as_bytes()))
+    let (mut file, tmp) = create_temp(
+        &path.with_extension("tmp.validator"),
+        file_mode(path, 0o600),
+    )?;
+    let written = file
+        .write_all(contents.as_bytes())
         .and_then(|()| std::fs::rename(&tmp, path));
     if let Err(e) = written {
         let _ = std::fs::remove_file(&tmp);
@@ -820,9 +894,8 @@ mod backup_tests {
     }
 
     /// When the rename fails the temp file is cleaned up rather than left in
-    /// the config directory. The target is a directory (so `rename` fails with
-    /// EISDIR) and the temp path is a symlink to a writable file, so open and
-    /// write succeed and the rename is the step that fails.
+    /// the config directory. The target is a directory, so `rename` fails with
+    /// EISDIR after the temp has been created and written.
     #[cfg(unix)]
     #[test]
     fn failed_rename_removes_the_temp_file() {
@@ -832,10 +905,7 @@ mod backup_tests {
 
         let path = root.join("target.json");
         std::fs::create_dir(&path).unwrap();
-        let scratch = root.join("scratch");
-        std::fs::write(&scratch, b"").unwrap();
         let tmp = path.with_extension("tmp.validator");
-        std::os::unix::fs::symlink(&scratch, &tmp).unwrap();
 
         assert!(
             write_atomic(&path, "{}").is_err(),
@@ -873,6 +943,58 @@ mod backup_tests {
             0,
             "a newly written config is not readable by other users"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The temp name is predictable, so a local attacker who can write the
+    /// directory could plant a symlink there and redirect the write. It must
+    /// be refused, leaving both the planted target and the config untouched.
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_temp_path_is_not_followed() {
+        let root = std::env::temp_dir().join("mac-mgmt-temp-symlink-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let path = root.join("target.json");
+        std::fs::write(&path, r#"{"a":1}"#).unwrap();
+        let victim = root.join("victim");
+        std::fs::write(&victim, "untouched").unwrap();
+        std::os::unix::fs::symlink(&victim, path.with_extension("tmp.validator")).unwrap();
+
+        assert!(
+            write_atomic(&path, r#"{"a":2}"#).is_err(),
+            "a squatted temp name must fail closed"
+        );
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"a":1}"#);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A stale temp file left behind by a crash is not a squat: the write
+    /// retries under a random name instead of failing forever.
+    #[cfg(unix)]
+    #[test]
+    fn stale_temp_file_is_skipped_via_random_suffix() {
+        let root = std::env::temp_dir().join("mac-mgmt-temp-stale-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let path = root.join("target.json");
+        std::fs::write(&path, r#"{"a":1}"#).unwrap();
+        let stale = path.with_extension("tmp.validator");
+        std::fs::write(&stale, "stale").unwrap();
+
+        write_atomic(&path, r#"{"a":2}"#).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"a":2}"#);
+        assert_eq!(
+            std::fs::read_to_string(&stale).unwrap(),
+            "stale",
+            "the write goes to a fresh file, never through the squat"
+        );
+
         let _ = std::fs::remove_dir_all(&root);
     }
 }

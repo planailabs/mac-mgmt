@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -215,8 +216,20 @@ pub(crate) fn mtime_secs(path: &Path) -> Option<i64> {
         .map(|d| d.as_secs() as i64)
 }
 
-// ── File list (control channel) ─────────────────────────────────────────
+/// Copy `src` to a fresh temp file next to `dst` (create_new + O_NOFOLLOW, so
+/// a planted symlink cannot redirect the copy) and return the path written.
+fn copy_to_temp(src: &Path, dst: &Path) -> std::io::Result<PathBuf> {
+    let mode = crate::validator::file_mode(src, 0o600);
+    let (mut out, tmp) = crate::validator::create_temp(dst, mode)?;
+    let copied = std::fs::File::open(src).and_then(|mut inp| std::io::copy(&mut inp, &mut out));
+    if let Err(e) = copied {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(tmp)
+}
 
+// ── File list (control channel) ─────────────────────────────────────────
 /// Handle a file list request. Returns `(status, body_json)`.
 #[cfg(feature = "services")]
 pub fn handle_list(tunnel: &FileTunnel, rel_path: Option<&str>) -> (u16, serde_json::Value) {
@@ -359,10 +372,17 @@ pub fn write_file(
         }
     }
 
-    // Write content to temp file
-    let tmp_path = path.with_extension("tmp.file-tunnel");
-    std::fs::write(&tmp_path, content)
-        .map_err(|e| (500u16, format!("failed to create temp file: {e}")))?;
+    // Write content to temp file (create_new + O_NOFOLLOW: the temp name is
+    // predictable, so a planted symlink must not be able to redirect the write)
+    let (mut tmp_file, tmp_path) = crate::validator::create_temp(
+        &path.with_extension("tmp.file-tunnel"),
+        crate::validator::file_mode(&path, 0o644),
+    )
+    .map_err(|e| (500u16, format!("failed to create temp file: {e}")))?;
+    tmp_file
+        .write_all(content)
+        .map_err(|e| (500u16, format!("failed to write temp file: {e}")))?;
+    drop(tmp_file);
 
     // Back up original file (if it exists). Validated files (i.e. configs) also
     // get a timestamped copy in the mac-mgmt config-backup folder for history;
@@ -371,12 +391,15 @@ pub fn write_file(
     if validator.is_some() {
         crate::validator::backup_config_file(&path);
     }
-    let backup_path = path.with_extension("bak.file-tunnel");
     let had_original = path.exists();
+    let mut backup_path = None;
     if had_original {
-        if let Err(e) = std::fs::copy(&path, &backup_path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err((500, format!("backup failed: {e}")));
+        match copy_to_temp(&path, &path.with_extension("bak.file-tunnel")) {
+            Ok(p) => backup_path = Some(p),
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err((500, format!("backup failed: {e}")));
+            }
         }
     }
 
@@ -391,17 +414,22 @@ pub fn write_file(
         if let Err(msg) = validator.validate_file(&path) {
             tracing::warn!("validation failed for {}: {msg}", path.display());
             // Rollback: restore original or remove newly created file.
-            if had_original {
-                let _ = std::fs::rename(&backup_path, &path);
-            } else {
-                let _ = std::fs::remove_file(&path);
+            match backup_path {
+                Some(ref backup) => {
+                    let _ = std::fs::rename(backup, &path);
+                }
+                None => {
+                    let _ = std::fs::remove_file(&path);
+                }
             }
             return Err((422, format!("validation failed: {msg}")));
         }
     }
 
     // Clean up backup
-    let _ = std::fs::remove_file(&backup_path);
+    if let Some(backup) = backup_path {
+        let _ = std::fs::remove_file(&backup);
+    }
 
     let new_mtime = mtime_secs(&path).unwrap_or(0);
     tracing::info!(

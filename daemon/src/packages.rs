@@ -109,6 +109,21 @@ pub async fn sync_packages(server_url: &str, token: &str) -> Result<bool> {
         .json()
         .await
         .context("failed to parse packages response")?;
+    // Server-supplied catalogue keys go into nix argv: drop the ones that are
+    // not plain package names instead of failing the whole sync.
+    let sync_resp = PackageSyncResponse {
+        packages: sync_resp
+            .packages
+            .into_iter()
+            .filter(|(name, _)| {
+                let valid = crate::nix::is_valid_package_name(name);
+                if !valid {
+                    tracing::warn!("ignoring package with invalid name from server: {name:?}");
+                }
+                valid
+            })
+            .collect(),
+    };
 
     let _guard = nix_state_lock().lock().await;
 

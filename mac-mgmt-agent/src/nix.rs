@@ -577,13 +577,26 @@ fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>>
 /// longer resolvable), the error is logged and drift detection still runs so that
 /// the package can be reinstalled from the correct flake URL.
 pub fn packages_with_upgrades(packages: &[&str]) -> Result<Vec<String>> {
+    // Names come from the server's catalogue: drop anything that would be read
+    // as a nix flag or that could inject flake-ref syntax.
+    let packages: Vec<&str> = packages
+        .iter()
+        .copied()
+        .filter(|p| {
+            let valid = is_valid_package_name(p);
+            if !valid {
+                tracing::warn!("skipping upgrade check for invalid package name: {p:?}");
+            }
+            valid
+        })
+        .collect();
     let _guard = profile_lock().lock().unwrap_or_else(|e| e.into_inner());
     let upgrade_result = if has_dry_run_support() {
         tracing::debug!("using --dry-run for upgrade check");
-        packages_with_upgrades_dry_run(packages)
+        packages_with_upgrades_dry_run(&packages)
     } else {
         tracing::debug!("using temp profile for upgrade check");
-        packages_with_upgrades_temp_profile(packages)
+        packages_with_upgrades_temp_profile(&packages)
     };
 
     let mut result: Vec<String> = match upgrade_result {
@@ -614,6 +627,10 @@ pub fn packages_with_upgrades(packages: &[&str]) -> Result<Vec<String>> {
 
 /// Remove a package from the nix profile by element name.
 pub fn profile_remove(pkg: &str) -> Result<()> {
+    if !is_valid_package_name(pkg) {
+        tracing::warn!("refusing to remove package with invalid name: {pkg:?}");
+        return Ok(());
+    }
     let _guard = profile_lock().lock().unwrap_or_else(|e| e.into_inner());
     run_profile_cmd("nix", "remove", pkg, &["remove", pkg])
 }
@@ -654,8 +671,26 @@ pub fn store_path_prefix(path: &str) -> Option<String> {
     }
 }
 
+/// Whether `name` is safe to hand to nix as a package name / flake attribute.
+///
+/// Names come from the server's package catalogue (and from the state file it
+/// was persisted into). A name starting with `-` would be parsed as a nix flag,
+/// and `#`, `:` or whitespace could inject flake-ref syntax — so only the
+/// characters real nixpkgs attribute names use are accepted.
+pub fn is_valid_package_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '_' | '-'))
+}
+
 /// Install or upgrade a package via `nix profile`.
 pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
+    if !is_valid_package_name(pkg) {
+        tracing::warn!("refusing to install package with invalid name: {pkg:?}");
+        return Ok(());
+    }
     let _guard = profile_lock().lock().unwrap_or_else(|e| e.into_inner());
     profile_install_with_nix("nix", pkg, upgrade)
 }
@@ -1177,6 +1212,22 @@ mod tests {
 
         unsafe {
             std::env::remove_var("MAC_MGMT_NIX_WRAPPER");
+        }
+    }
+
+    #[test]
+    fn package_names_that_could_be_nix_flags_are_rejected() {
+        for ok in [
+            "ollama",
+            "python3Packages.requests",
+            "gcc-unwrapped",
+            "c++",
+            "x_1",
+        ] {
+            assert!(is_valid_package_name(ok), "{ok} is a normal attribute name");
+        }
+        for bad in ["", "-i", "--impure", "nixpkgs#foo", "a b", "x;rm", "a/b"] {
+            assert!(!is_valid_package_name(bad), "{bad:?} must be refused");
         }
     }
 }
