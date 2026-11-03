@@ -311,7 +311,8 @@ pub async fn sse_events(
     let hash = hex::encode(Sha256::digest(auth.0.as_bytes()));
 
     let result = sqlx::query_as::<_, (Option<Uuid>, String)>(
-        "SELECT cluster_id, kind FROM tokens WHERE token_hash = $1 AND NOT revoked",
+        "SELECT cluster_id, kind FROM tokens WHERE token_hash = $1 AND NOT revoked \
+         AND (expires_at IS NULL OR expires_at > now())",
     )
     .bind(&hash)
     .fetch_optional(pool.inner())

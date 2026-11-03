@@ -118,6 +118,24 @@ pub struct MessageRow {
 }
 
 // ── Routes ─────────────────────────────────────────────────────────────
+/// Reject a request for a session that the caller's cluster does not own.
+///
+/// `SettingAuth` resolves a cluster from the token (or `X-Cluster-Id`), but a
+/// session id in the path is not bound to that cluster, so every per-session
+/// route must check ownership itself. Answers 404 rather than 403 so the
+/// endpoint does not confirm that a foreign session id exists.
+async fn require_session_in_cluster(
+    healer: &HealerState,
+    session_id: Uuid,
+    cluster_id: Uuid,
+) -> Result<(), Status> {
+    match healer.store().get_session(session_id).await {
+        Ok(Some(sess)) if sess.cluster_id == cluster_id => Ok(()),
+        Ok(_) => Err(Status::NotFound),
+        Err(_) => Err(Status::InternalServerError),
+    }
+}
+
 
 /// Create a new healer session for the given instance.
 #[post("/healer/sessions", data = "<body>")]
@@ -389,11 +407,12 @@ pub async fn list_failure_signals(
 /// Get a single session with its messages.
 #[get("/healer/sessions/<id>")]
 pub async fn get_session(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     healer: &State<HealerState>,
     id: &str,
 ) -> Result<Json<SessionDetail>, Status> {
     let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    require_session_in_cluster(healer, session_id, auth.cluster_id).await?;
 
     let (session, messages) = healer
         .get_session(session_id)
@@ -464,11 +483,12 @@ pub async fn cancel_session(
 /// Pause a running healer session at its next checkpoint.
 #[post("/healer/sessions/<id>/pause")]
 pub async fn pause_session(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     healer: &State<HealerState>,
     id: &str,
 ) -> Result<Status, Status> {
     let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    require_session_in_cluster(healer, session_id, auth.cluster_id).await?;
     healer.pause_session(session_id).map_err(|e| {
         tracing::error!(err = %e, "failed to pause healer session");
         Status::BadRequest
@@ -495,11 +515,12 @@ pub async fn extend_budget(
 /// Resume a paused healer session.
 #[post("/healer/sessions/<id>/resume")]
 pub async fn resume_session(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     healer: &State<HealerState>,
     id: &str,
 ) -> Result<Status, Status> {
     let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    require_session_in_cluster(healer, session_id, auth.cluster_id).await?;
     healer.resume_session(session_id).await.map_err(|e| {
         tracing::error!(err = %e, "failed to resume healer session");
         Status::BadRequest
@@ -510,11 +531,12 @@ pub async fn resume_session(
 /// Approve remediation for a session awaiting approval.
 #[post("/healer/sessions/<id>/approve")]
 pub async fn approve_session(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     healer: &State<HealerState>,
     id: &str,
 ) -> Result<Status, Status> {
     let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    require_session_in_cluster(healer, session_id, auth.cluster_id).await?;
     healer.approve_session(session_id).await.map_err(|e| {
         tracing::error!(err = %e, "failed to approve healer session");
         Status::BadRequest
@@ -599,12 +621,16 @@ pub async fn put_healer_settings(
 /// SSE stream of live events for a running session.
 #[get("/healer/sessions/<id>/stream")]
 pub async fn stream_session(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     healer: &State<HealerState>,
     id: &str,
     mut shutdown: Shutdown,
 ) -> Option<EventStream![]> {
     let session_id: Uuid = id.parse().ok()?;
+    // Reject another cluster's session before any transcript is streamed.
+    require_session_in_cluster(healer, session_id, auth.cluster_id)
+        .await
+        .ok()?;
     let store = healer.store().clone();
 
     // Load existing messages first

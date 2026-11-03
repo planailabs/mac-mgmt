@@ -14,7 +14,7 @@ pub fn register(reg: &mut plan_ai_api_mcp::Registry<sqlx::PgPool>) {
     d.get(
         "Read a documentation page as raw markdown by its slug (from doc_list). \
          Optional lang for a translated version (falls back to English).",
-        |_pool: sqlx::PgPool, _p, input: DocGetInput| async move { doc_get(input).await },
+        |_pool: sqlx::PgPool, p, input: DocGetInput| async move { doc_get(&p, input).await },
     );
 
     let mut g = reg.resource("glossary", "glossary", "Glossary");
@@ -122,13 +122,24 @@ async fn doc_list(input: DocListInput) -> Result<Vec<DocInfo>, plan_ai_api_mcp::
 }
 
 #[cfg(feature = "server")]
-async fn doc_get(input: DocGetInput) -> Result<DocPage, plan_ai_api_mcp::ApiError> {
+async fn doc_get(p: &Principal, input: DocGetInput) -> Result<DocPage, plan_ai_api_mcp::ApiError> {
     use crate::web::components::docs::{load_doc_markdown, parse_frontmatter};
 
     let lang = input.lang.unwrap_or_default();
     let text = load_doc_markdown(&input.id, &lang)
         .ok_or_else(|| plan_ai_api_mcp::ApiError::not_found("unknown documentation slug"))?;
-    let (_, body) = parse_frontmatter(&text);
+    let (frontmatter, body) = parse_frontmatter(&text);
+    // Admin-only docs answer like an unknown slug for everyone else, so the
+    // caller cannot learn that the page exists.
+    let audience = frontmatter
+        .iter()
+        .find(|(k, _)| k == "audience")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or_default();
+    if audience.eq_ignore_ascii_case("admin") {
+        p.require_admin()
+            .map_err(|_| plan_ai_api_mcp::ApiError::not_found("unknown documentation slug"))?;
+    }
     let title = body
         .lines()
         .find(|l| l.starts_with("# "))

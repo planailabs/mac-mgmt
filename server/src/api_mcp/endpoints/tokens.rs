@@ -168,17 +168,27 @@ async fn revoke_cluster_token(
     p: &Principal,
     token_id: Uuid,
 ) -> Result<(), ApiError> {
-    let owner_cid = sqlx::query_scalar::<_, Uuid>("SELECT cluster_id FROM tokens WHERE id = $1")
+    // `cluster_id` is NULL for admin/federation/api/org-setting tokens; those are
+    // not revocable through this cluster-scoped path (they need `token_revoke_any`).
+    let owner_cid = sqlx::query_scalar::<_, Option<Uuid>>("SELECT cluster_id FROM tokens WHERE id = $1")
         .bind(token_id)
         .fetch_optional(pool)
         .await
         .map_err(internal)?;
-    if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = access::writable_cluster_ids(pool, p).await? {
-            if !ids.contains(&owner_cid) {
-                return Err(ApiError::forbidden("access denied"));
+    match owner_cid {
+        Some(Some(owner_cid)) => {
+            if let Some(ids) = access::writable_cluster_ids(pool, p).await? {
+                if !ids.contains(&owner_cid) {
+                    return Err(ApiError::forbidden("access denied"));
+                }
             }
         }
+        Some(None) => {
+            return Err(ApiError::forbidden(
+                "token is not cluster-scoped; use the admin revoke path",
+            ))
+        }
+        None => return Err(ApiError::not_found("token not found")),
     }
     sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1")
         .bind(token_id)

@@ -49,9 +49,11 @@ pub struct SaveGeneratedNameDescInput {
 #[api_mcp_dioxus_server(server = "generate_name_desc")]
 pub async fn ai_generate_name_desc(
     _pool: &sqlx::PgPool,
-    _p: &Principal,
+    p: &Principal,
     input: GenerateNameDescInput,
 ) -> Result<GeneratedNameDesc, ApiError> {
+    // Spends the server's paid Anthropic key; the catalog UI is admin-only.
+    p.require_admin()?;
     crate::anthropic::generate_name_desc_impl(&input.context, &input.current_name, &input.current_desc)
         .await
         .map_err(internal)
@@ -61,9 +63,11 @@ pub async fn ai_generate_name_desc(
 #[api_mcp_dioxus_server(server = "save_generated_name_desc")]
 pub async fn ai_save_generated_name_desc(
     pool: &sqlx::PgPool,
-    _p: &Principal,
+    p: &Principal,
     input: SaveGeneratedNameDescInput,
 ) -> Result<(), ApiError> {
+    // Catalog tables are global; every other catalog mutation is admin-only.
+    p.require_admin()?;
     let query = match input.entity_kind {
         EntityKind::Skill => "UPDATE skills SET name = $1, description = $2 WHERE id = $3",
         EntityKind::Bundle => "UPDATE bundles SET name = $1, description = $2 WHERE id = $3",
