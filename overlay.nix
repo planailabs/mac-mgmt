@@ -151,7 +151,10 @@ in
       # Tailwind CSS for memvault-web
       (cd memvault/crates/memvault-web && npm run tailwind:build)
 
-      dx build --package mac-mgmt --release --embed \
+      # dx_build: `dx build`, plus the retry that keeps a dead rustc's cause in
+      # the log instead of losing the whole build (scripts/dx-build-retry.sh).
+      source ${./scripts/dx-build-retry.sh}
+      dx_build --package mac-mgmt --release --embed \
         @client --platform web --no-default-features --features web \
         @server --platform server --features embed
 
