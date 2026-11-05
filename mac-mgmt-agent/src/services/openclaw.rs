@@ -370,7 +370,9 @@ impl ManagedService for OpenClaw {
         );
 
         let output = crate::cmd::output_with_timeout(
-            openclaw_cmd().args(["doctor", "--fix"]),
+            openclaw_cmd()
+                .args(["doctor", "--fix"])
+                .env("OPENCLAW_SERVICE_REPAIR_POLICY", "external"),
             std::time::Duration::from_secs(60),
         )
         .context("failed to run openclaw doctor --fix")?;
@@ -578,8 +580,15 @@ impl ManagedService for OpenClaw {
             },
             ShellCommandDef {
                 name: "openclaw-doctor".into(),
-                command: "openclaw".into(),
-                args: vec!["doctor".into(), "--fix".into()],
+                // The supervisor owns the gateway; without this policy
+                // doctor tries to manage the service itself and aborts.
+                command: "env".into(),
+                args: vec![
+                    "OPENCLAW_SERVICE_REPAIR_POLICY=external".into(),
+                    "openclaw".into(),
+                    "doctor".into(),
+                    "--fix".into(),
+                ],
                 description: "Run diagnostics and auto-fix".into(),
                 arg_template: None,
                 timeout_secs: None,
