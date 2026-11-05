@@ -67,7 +67,7 @@ struct FleetPromptBuilder;
 impl SystemPromptBuilder for FleetPromptBuilder {
     async fn build(&self, user: &ChatUserCtx, resumed: bool, state: &ChatState) -> String {
         let fleet = fleet_summary(state.pool()).await;
-        let tool_index = tool_index(state.registry());
+        let tool_index = tool_index(state.registry(), &user.principal);
 
         let access_line = if user.is_admin {
             "They are a GLOBAL ADMIN with full access.".to_string()

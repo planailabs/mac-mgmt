@@ -124,19 +124,22 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::clusters::ClusterCreateInput| async move {
                 endpoints::clusters::cluster_create(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         c.update(
             "Rename a cluster (admin only).",
             |pool: sqlx::PgPool, p, input: endpoints::clusters::ClusterUpdateInput| async move {
                 endpoints::clusters::cluster_update(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         c.delete(
             "Delete a cluster and all its dependent rows (admin only).",
             |pool: sqlx::PgPool, p, input: endpoints::clusters::ClusterDeleteInput| async move {
                 endpoints::clusters::cluster_delete(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         c.custom(
             "can_write",
             Risk::ReadOnly,
@@ -344,7 +347,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgListInput| async move {
                 endpoints::organizations::organization_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         o.get(
             "Get an organization (name, created_at); requires org membership or admin.",
             |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgGetInput| async move {
@@ -356,7 +360,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgCreateInput| async move {
                 endpoints::organizations::organization_create(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         o.update(
             "Rename an organization (org-admin or global admin).",
             |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgUpdateInput| async move {
@@ -368,7 +373,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgDeleteInput| async move {
                 endpoints::organizations::organization_delete(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         o.custom(
             "permissions",
             Risk::ReadOnly,
@@ -431,7 +437,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgClusterAddInput| async move {
                 endpoints::organizations::organization_cluster_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         o.custom(
             "cluster_remove",
             Risk::Mutating,
@@ -440,7 +447,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgClusterRemoveInput| async move {
                 endpoints::organizations::organization_cluster_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         o.custom(
             "available_users",
             Risk::ReadOnly,
@@ -458,7 +466,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::organizations::OrgAvailableClustersInput| async move {
                 endpoints::organizations::organization_available_clusters(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         o.custom(
             "tokens_list",
             Risk::ReadOnly,
@@ -495,25 +504,29 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::users::UserListInput| async move {
                 endpoints::users::user_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         u.get(
             "Get a user (email, name, admin flag, created_at); admin only.",
             |pool: sqlx::PgPool, p, input: endpoints::users::UserGetInput| async move {
                 endpoints::users::user_get(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         u.create(
             "Create a user with email, display name and optional global-admin flag; returns the new user id (admin only).",
             |pool: sqlx::PgPool, p, input: endpoints::users::UserCreateInput| async move {
                 endpoints::users::user_create(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         u.delete(
             "Delete a user and their org memberships (admin only; you cannot delete yourself).",
             |pool: sqlx::PgPool, p, input: endpoints::users::UserDeleteInput| async move {
                 endpoints::users::user_delete(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         u.custom(
             "set_admin",
             Risk::Mutating,
@@ -522,7 +535,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::users::UserSetAdminInput| async move {
                 endpoints::users::user_set_admin(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         u.custom(
             "orgs",
             Risk::ReadOnly,
@@ -531,7 +545,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::users::UserOrgsInput| async move {
                 endpoints::users::user_orgs(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         u.custom(
             "available_orgs",
             Risk::ReadOnly,
@@ -540,7 +555,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::users::UserAvailableOrgsInput| async move {
                 endpoints::users::user_available_orgs(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         u.custom(
             "org_add",
             Risk::Mutating,
@@ -549,7 +565,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::users::UserOrgAddInput| async move {
                 endpoints::users::user_org_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         u.custom(
             "org_remove",
             Risk::Mutating,
@@ -558,7 +575,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::users::UserOrgRemoveInput| async move {
                 endpoints::users::user_org_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
     }
 
     {
@@ -625,7 +643,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::tokens::AdminTokensListInput| async move {
                 endpoints::tokens::token_admin_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         t.custom(
             "admin_create",
             Risk::Mutating,
@@ -634,7 +653,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::tokens::AdminTokenCreateInput| async move {
                 endpoints::tokens::token_admin_create(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         t.custom(
             "admin_revoke",
             Risk::Mutating,
@@ -643,7 +663,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::tokens::AdminTokenRevokeInput| async move {
                 endpoints::tokens::token_admin_revoke(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         t.custom(
             "federation_list",
             Risk::ReadOnly,
@@ -652,7 +673,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::tokens::FederationTokensListInput| async move {
                 endpoints::tokens::token_federation_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         t.custom(
             "federation_create",
             Risk::Mutating,
@@ -661,7 +683,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::tokens::FederationTokenCreateInput| async move {
                 endpoints::tokens::token_federation_create(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         t.custom(
             "federation_revoke",
             Risk::Mutating,
@@ -670,7 +693,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::tokens::FederationTokenRevokeInput| async move {
                 endpoints::tokens::token_federation_revoke(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         t.custom(
             "list_all",
             Risk::ReadOnly,
@@ -679,7 +703,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::tokens::AllTokensListInput| async move {
                 endpoints::tokens::token_list_all(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         t.custom(
             "revoke_any",
             Risk::Mutating,
@@ -688,7 +713,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::tokens::AnyTokenRevokeInput| async move {
                 endpoints::tokens::token_revoke_any(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
     }
 
     {
@@ -831,7 +857,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCertsListInput| async move {
                 endpoints::certificates::cert_admin_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         c.custom(
             "admin_cert_add",
             Risk::Mutating,
@@ -840,7 +867,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCertAddInput| async move {
                 endpoints::certificates::cert_admin_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         c.custom(
             "admin_cert_remove",
             Risk::Destructive,
@@ -849,7 +877,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCertRemoveInput| async move {
                 endpoints::certificates::cert_admin_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         c.custom(
             "admin_cas_list",
             Risk::ReadOnly,
@@ -858,7 +887,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCasListInput| async move {
                 endpoints::certificates::ca_admin_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         c.custom(
             "admin_ca_add",
             Risk::Mutating,
@@ -867,7 +897,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCaAddInput| async move {
                 endpoints::certificates::ca_admin_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         c.custom(
             "admin_ca_remove",
             Risk::Destructive,
@@ -876,7 +907,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: endpoints::certificates::AdminCaRemoveInput| async move {
                 endpoints::certificates::ca_admin_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
     }
 
     {
@@ -888,7 +920,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: DaemonVersionsListInput| async move {
             daemon_version_list(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     d.custom(
         "sync_from_xzar",
         Risk::Mutating,
@@ -897,7 +930,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: DaemonVersionsSyncInput| async move {
             daemon_version_sync_from_xzar(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     d.custom(
         "store_paths",
         Risk::ReadOnly,
@@ -906,7 +940,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: DaemonStorePathsInput| async move {
             daemon_version_store_paths(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     d.custom(
         "clusters_on",
         Risk::ReadOnly,
@@ -915,7 +950,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: ClustersOnVersionInput| async move {
             daemon_version_clusters_on(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     d.custom(
         "clusters_pinned",
         Risk::ReadOnly,
@@ -924,7 +960,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: ClustersPinnedToInput| async move {
             daemon_version_clusters_pinned(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     d.custom(
         "rollouts",
         Risk::ReadOnly,
@@ -933,7 +970,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: RolloutsForVersionInput| async move {
             daemon_version_rollouts(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     }
     {
         use endpoints::skills::*;
@@ -945,19 +983,22 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: SkillListInput| async move {
                 skill_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.get(
             "Get a local skill (slug, name, description, hidden flag, created_at); admin only.",
             |pool: sqlx::PgPool, p, input: SkillGetInput| async move {
                 skill_get(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.update(
             "Update a skill's name, description and public-catalog visibility, then push a federation sync (admin only).",
             |pool: sqlx::PgPool, p, input: SkillUpdateInput| async move {
                 skill_update(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "sync_from_xzar",
             Risk::Mutating,
@@ -966,7 +1007,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: SkillSyncInput| async move {
                 skill_sync_from_xzar(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "channels",
             Risk::ReadOnly,
@@ -975,7 +1017,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: SkillChannelsInput| async move {
                 skill_channels(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "channel_paths",
             Risk::ReadOnly,
@@ -984,7 +1027,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: ChannelPathsInput| async move {
                 skill_channel_paths(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "channel_mcp_deps",
             Risk::ReadOnly,
@@ -993,7 +1037,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: ChannelMcpDepsInput| async move {
                 skill_channel_mcp_deps(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "mcp_server_options",
             Risk::ReadOnly,
@@ -1002,7 +1047,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: McpServerOptionsInput| async move {
                 skill_mcp_server_options(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "channel_mcp_dep_add",
             Risk::Mutating,
@@ -1011,7 +1057,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: ChannelMcpDepAddInput| async move {
                 skill_channel_mcp_dep_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "channel_mcp_dep_remove",
             Risk::Mutating,
@@ -1020,7 +1067,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: ChannelMcpDepRemoveInput| async move {
                 skill_channel_mcp_dep_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "channel_nix_packages",
             Risk::ReadOnly,
@@ -1029,7 +1077,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: ChannelNixPackagesInput| async move {
                 skill_channel_nix_packages(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "channel_nix_package_add",
             Risk::Mutating,
@@ -1038,7 +1087,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: ChannelNixPackageAddInput| async move {
                 skill_channel_nix_package_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "channel_nix_package_remove",
             Risk::Mutating,
@@ -1047,7 +1097,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: ChannelNixPackageRemoveInput| async move {
                 skill_channel_nix_package_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         s.custom(
             "cluster_list",
             Risk::ReadOnly,
@@ -1111,31 +1162,36 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: BundleListInput| async move {
                 bundle_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.get(
             "Get a local bundle (slug, name, description, hidden flag, created_at); admin only.",
             |pool: sqlx::PgPool, p, input: BundleGetInput| async move {
                 bundle_get(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.create(
             "Create a bundle with slug, name and description, then push a federation sync (admin only).",
             |pool: sqlx::PgPool, p, input: BundleCreateInput| async move {
                 bundle_create(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.update(
             "Update a bundle's name, description and public-catalog visibility, then push federation + bundle syncs (admin only).",
             |pool: sqlx::PgPool, p, input: BundleUpdateInput| async move {
                 bundle_update(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.delete(
             "Delete a bundle and its items, pushing federation + bundle syncs (admin only).",
             |pool: sqlx::PgPool, p, input: BundleDeleteInput| async move {
                 bundle_delete(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.custom(
             "items",
             Risk::ReadOnly,
@@ -1144,7 +1200,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: BundleItemsInput| async move {
                 bundle_items(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.custom(
             "available_channels",
             Risk::ReadOnly,
@@ -1153,7 +1210,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: AvailableChannelsInput| async move {
                 bundle_available_channels(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.custom(
             "item_add",
             Risk::Mutating,
@@ -1162,7 +1220,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: BundleItemAddInput| async move {
                 bundle_item_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.custom(
             "item_remove",
             Risk::Mutating,
@@ -1171,7 +1230,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: BundleItemRemoveInput| async move {
                 bundle_item_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.custom(
             "cluster_list",
             Risk::ReadOnly,
@@ -1229,13 +1289,15 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: McpServersListInput| async move {
                 mcp_server_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         m.get(
             "Get a local MCP server (slug, name, description, launch config, nix packages); admin only.",
             |pool: sqlx::PgPool, p, input: McpServerGetInput| async move {
                 mcp_server_get(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         m.custom(
             "upsert",
             Risk::Mutating,
@@ -1244,13 +1306,15 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: McpServerUpsertInput| async move {
                 mcp_server_upsert(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         m.delete(
             "Delete an MCP server from the catalog and push federation + per-cluster MCP syncs; admin only.",
             |pool: sqlx::PgPool, p, input: McpServerDeleteInput| async move {
                 mcp_server_delete(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         m.custom(
             "nix_package_add",
             Risk::Mutating,
@@ -1259,7 +1323,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: NixPackageAddInput| async move {
                 mcp_server_nix_package_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         m.custom(
             "nix_package_remove",
             Risk::Mutating,
@@ -1268,7 +1333,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: NixPackageRemoveInput| async move {
                 mcp_server_nix_package_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         m.custom(
             "dependent_skills",
             Risk::ReadOnly,
@@ -1277,7 +1343,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: DependentSkillsInput| async move {
                 mcp_server_dependent_skills(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         m.custom(
             "options",
             Risk::ReadOnly,
@@ -1286,7 +1353,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: McpServerOptionsInput| async move {
                 mcp_server_options(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         m.custom(
             "options_all",
             Risk::ReadOnly,
@@ -1359,31 +1427,36 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: McpBundlesListInput| async move {
                 mcp_bundle_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.get(
             "Get a local MCP bundle (slug, name, description); admin only.",
             |pool: sqlx::PgPool, p, input: McpBundleGetInput| async move {
                 mcp_bundle_get(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.create(
             "Create an MCP bundle with slug, name and description, and push a federation sync; admin only.",
             |pool: sqlx::PgPool, p, input: McpBundleCreateInput| async move {
                 mcp_bundle_create(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.update(
             "Update an MCP bundle's name, description and catalog visibility, and push federation + per-cluster MCP syncs; admin only.",
             |pool: sqlx::PgPool, p, input: McpBundleUpdateInput| async move {
                 mcp_bundle_update(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.delete(
             "Delete an MCP bundle and push federation + per-cluster MCP syncs; admin only.",
             |pool: sqlx::PgPool, p, input: McpBundleDeleteInput| async move {
                 mcp_bundle_delete(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.custom(
             "items",
             Risk::ReadOnly,
@@ -1392,7 +1465,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: McpBundleItemsInput| async move {
                 mcp_bundle_items(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.custom(
             "item_add",
             Risk::Mutating,
@@ -1401,7 +1475,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: McpBundleItemAddInput| async move {
                 mcp_bundle_item_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.custom(
             "item_remove",
             Risk::Mutating,
@@ -1410,7 +1485,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: McpBundleItemRemoveInput| async move {
                 mcp_bundle_item_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         b.custom(
             "options_all",
             Risk::ReadOnly,
@@ -1468,25 +1544,29 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: RolloutListInput| async move {
                 rollout_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.get(
             "Get full rollout detail: target/baseline versions, ordered stages with per-stage heartbeat progress and latest gate evaluation, health rollup, and delivered clusters (admin only).",
             |pool: sqlx::PgPool, p, input: RolloutGetInput| async move {
                 rollout_get(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.create(
             "Create a staged rollout of a daemon version and/or nixpkgs commit. stage_ids is an ordered list of rollout-group UUIDs (or the \"__all__\" sentinel for all clusters); rejects version/nixpkgs downgrades. Returns the new rollout id (admin only).",
             |pool: sqlx::PgPool, p, input: RolloutCreateInput| async move {
                 rollout_create(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.delete(
             "Delete a rollout and its stages (admin only).",
             |pool: sqlx::PgPool, p, input: RolloutDeleteInput| async move {
                 rollout_delete(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.custom(
             "action",
             Risk::Destructive,
@@ -1495,7 +1575,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: RolloutActionInput| async move {
                 rollout_action_apply(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.custom(
             "available_versions",
             Risk::ReadOnly,
@@ -1504,7 +1585,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: AvailableVersionsInput| async move {
                 rollout_available_versions(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.custom(
             "stage_gate_get",
             Risk::ReadOnly,
@@ -1513,7 +1595,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: StageGateGetInput| async move {
                 rollout_stage_gate_get(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.custom(
             "stage_gate_update",
             Risk::Mutating,
@@ -1522,7 +1605,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: StageGateUpdateInput| async move {
                 rollout_stage_gate_update(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.custom(
             "stage_reevaluate",
             Risk::Mutating,
@@ -1531,7 +1615,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: StageReevaluateInput| async move {
                 rollout_stage_reevaluate(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.custom(
             "stage_request_assessment",
             Risk::Mutating,
@@ -1540,7 +1625,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: StagePushInput| async move {
                 rollout_stage_request_assessment(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.custom(
             "stage_self_update",
             Risk::Mutating,
@@ -1549,7 +1635,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: StagePushInput| async move {
                 rollout_stage_self_update(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         r.custom(
             "stage_sync_nixpkgs",
             Risk::Mutating,
@@ -1558,7 +1645,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: StagePushInput| async move {
                 rollout_stage_sync_nixpkgs(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
     }
 
     {
@@ -1568,25 +1656,29 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: GroupListInput| async move {
                 group_list(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         g.get(
             "Get a rollout group with its member clusters; admin only.",
             |pool: sqlx::PgPool, p, input: GroupGetInput| async move {
                 group_get(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         g.create(
             "Create a rollout group with a name and description (admin only).",
             |pool: sqlx::PgPool, p, input: GroupCreateInput| async move {
                 group_create(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         g.delete(
             "Delete a rollout group and its memberships (the implicit All Clusters group cannot be deleted); admin only.",
             |pool: sqlx::PgPool, p, input: GroupDeleteInput| async move {
                 group_delete(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         g.custom(
             "options",
             Risk::ReadOnly,
@@ -1595,7 +1687,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: GroupOptionsInput| async move {
                 group_options(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         g.custom(
             "available_clusters",
             Risk::ReadOnly,
@@ -1604,7 +1697,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: GroupAvailableClustersInput| async move {
                 group_available_clusters(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         g.custom(
             "member_add",
             Risk::Mutating,
@@ -1613,7 +1707,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: MemberAddInput| async move {
                 group_member_add(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         g.custom(
             "member_add_all",
             Risk::Mutating,
@@ -1622,7 +1717,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: MemberAddAllInput| async move {
                 group_member_add_all(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         g.custom(
             "member_remove",
             Risk::Mutating,
@@ -1631,7 +1727,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: MemberRemoveInput| async move {
                 group_member_remove(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
         g.custom(
             "set_description",
             Risk::Mutating,
@@ -1640,7 +1737,8 @@ pub fn build_registry_with(
             |pool: sqlx::PgPool, p, input: GroupSetDescriptionInput| async move {
                 group_set_description(&pool, &p, input).await
             },
-        );
+        )
+        .admin_only();
     }
     }
     {
@@ -1652,31 +1750,36 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: SkillCentersListInput| async move {
             skill_center_list(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.get(
         "Get a skill center by id (admin only). The federation token is never returned.",
         |pool: sqlx::PgPool, p, input: SkillCenterGetInput| async move {
             skill_center_get(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.create(
         "Add a skill center (name, url, federation token, priority, enabled); returns its id (admin only).",
         |pool: sqlx::PgPool, p, input: SkillCenterCreateInput| async move {
             skill_center_create(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.update(
         "Update a skill center; an empty federation_token keeps the stored one. The built-in center cannot be edited (admin only).",
         |pool: sqlx::PgPool, p, input: SkillCenterUpdateInput| async move {
             skill_center_update(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.delete(
         "Delete a skill center; the built-in center cannot be deleted (admin only).",
         |pool: sqlx::PgPool, p, input: SkillCenterDeleteInput| async move {
             skill_center_delete(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.custom(
         "catalog_summary",
         Risk::ReadOnly,
@@ -1685,7 +1788,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: CatalogSummaryInput| async move {
             skill_center_catalog_summary(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.custom(
         "sync_now",
         Risk::Mutating,
@@ -1694,7 +1798,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: SkillCenterSyncInput| async move {
             skill_center_sync_now(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     }
     {
         use endpoints::imports::*;
@@ -1705,31 +1810,36 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: ImportSourcesListInput| async move {
             import_source_list(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.get(
         "Get an import source by id (admin only).",
         |pool: sqlx::PgPool, p, input: ImportSourceGetInput| async move {
             import_source_get(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.create(
         "Add an import source (git repo or ClawHub package); returns its id (admin only).",
         |pool: sqlx::PgPool, p, input: ImportSourceCreateInput| async move {
             import_source_create(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.update(
         "Update an import source's name, config, channel and auto-sync flag (admin only).",
         |pool: sqlx::PgPool, p, input: ImportSourceUpdateInput| async move {
             import_source_update(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.delete(
         "Delete an import source; with remove_skills=true also delete the skills it imported (admin only).",
         |pool: sqlx::PgPool, p, input: ImportSourceDeleteInput| async move {
             import_source_delete(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.custom(
         "trigger_sync",
         Risk::Mutating,
@@ -1738,7 +1848,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: TriggerSyncInput| async move {
             import_source_trigger_sync(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.custom(
         "jobs",
         Risk::ReadOnly,
@@ -1747,7 +1858,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: ImportJobsListInput| async move {
             import_source_jobs(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     s.custom(
         "search_clawhub",
         Risk::ReadOnly,
@@ -1756,7 +1868,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: ClawHubSearchInput| async move {
             import_source_search_clawhub(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     }
     {
         use endpoints::fleet::*;
@@ -1840,7 +1953,8 @@ pub fn build_registry_with(
         |pool: sqlx::PgPool, p, input: AiSpendInput| async move {
             ai_spend(&pool, &p, input).await
         },
-    );
+    )
+    .admin_only();
     a.custom(
         "save_generated_name_desc",
         Risk::Mutating,
@@ -1882,5 +1996,26 @@ mod tests {
             .expect("lazy pool");
         let reg = super::build_registry(pool.clone());
         let _router = reg.http_router(pool);
+    }
+
+    /// Global-admin tools aren't shown to an org admin; their org's tools are.
+    #[tokio::test]
+    async fn admin_only_tools_are_hidden_from_non_admins() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .expect("lazy pool");
+        let reg = super::build_registry(pool);
+        let tool = |name: &str| reg.endpoints().iter().find(|e| e.tool_name() == name).unwrap().clone();
+        let org = uuid::Uuid::from_u128(1);
+        let mut org_admin = plan_ai_api_mcp::Principal::scoped("ada@acme.io", [org].into(), [org].into());
+        org_admin.scopes = serde_json::json!({ "org_admin": [org] });
+        let admin = plan_ai_api_mcp::Principal::admin("token:admin");
+        for name in ["cluster_create", "user_set_admin", "rollout_create", "token_federation_create"] {
+            assert!(!tool(name).visible_to(&org_admin), "{name} shown to a non-admin");
+            assert!(tool(name).visible_to(&admin), "{name} hidden from an admin");
+        }
+        for name in ["cluster_list", "cluster_get"] {
+            assert!(tool(name).visible_to(&org_admin), "{name} hidden from an org admin");
+        }
     }
 }
