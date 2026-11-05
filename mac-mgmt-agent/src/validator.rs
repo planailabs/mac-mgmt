@@ -306,19 +306,42 @@ impl Validator {
 
         backup_config_file(config_path);
 
-        std::fs::write(config_path, &merged)
+        write_atomic(config_path, merged.as_bytes())
             .with_context(|| format!("failed to write {}", config_path.display()))?;
 
         // Post-write validation (command schemas).
         if let Err(e) = self.validate_command(config_path) {
             tracing::warn!("rolling back {}", config_path.display());
-            std::fs::write(config_path, &backup)
+            write_atomic(config_path, backup.as_bytes())
                 .with_context(|| format!("failed to rollback {}", config_path.display()))?;
             anyhow::bail!("command validation failed, rolled back: {e}");
         }
 
         Ok(())
     }
+}
+
+/// Replace `path` with `contents` via a temp file + rename in the same
+/// directory, keeping the original file's permissions. A plain `fs::write`
+/// truncates first, so a crash or concurrent reader can leave the service's
+/// config empty (seen on a fleet node: openclaw.json at 0 bytes for days).
+pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
+    use std::io::Write as _;
+    // Write through symlinks like fs::write does, instead of replacing the link.
+    let resolved = std::fs::canonicalize(path).ok();
+    let path = resolved.as_deref().unwrap_or(path);
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    tmp.write_all(contents)?;
+    tmp.as_file().sync_all()?;
+    if let Ok(meta) = std::fs::metadata(path) {
+        tmp.as_file().set_permissions(meta.permissions())?;
+    }
+    tmp.persist(path)?;
+    Ok(())
 }
 
 // ── Prefetch & refresh ─────────────────────────────────────────────────
@@ -790,6 +813,27 @@ mod env_format_tests {
             v.validate_value(&serde_json::json!({ "K": "l1\nl2" }))
                 .is_err()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_keeps_permissions_and_symlinks() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.json");
+        let link = dir.path().join("link.json");
+        std::fs::write(&target, "old").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        write_atomic(&link, b"new").unwrap();
+
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+        // New file (no original) works too.
+        write_atomic(&dir.path().join("fresh.json"), b"x").unwrap();
     }
 
     #[test]
