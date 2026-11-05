@@ -64,7 +64,6 @@ rustPlatform.buildRustPackage {
     openssl
   ];
 
-  SWAGGER_UI_DOWNLOAD_URL = "file://${swagger-ui}";
   env.GIT_SHA = gitSha;
 
   doCheck = false;
@@ -72,6 +71,13 @@ rustPlatform.buildRustPackage {
   # Build with dx instead of cargo so assets and WASM are bundled
   buildPhase = ''
     runHook preBuild
+
+    # utoipa-swagger-ui's build script fs::copy's this zip into OUT_DIR, and the
+    # copy inherits the store's 0444 mode: a second run of the script (dx_build
+    # retries a dead rustc once) then fails with EACCES at build.rs:180. A
+    # writable copy makes every run of it repeatable.
+    install -m 0644 ${swagger-ui} "$NIX_BUILD_TOP/swagger-ui.zip"
+    export SWAGGER_UI_DOWNLOAD_URL="file://$NIX_BUILD_TOP/swagger-ui.zip"
 
     # Resolve metadata before dx: it warms Cargo's cache and surfaces a manifest
     # error as Cargo's own message instead of dx's "cargo metadata took too long"
