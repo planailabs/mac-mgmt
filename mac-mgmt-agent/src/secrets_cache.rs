@@ -2,6 +2,7 @@ use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::{AeadCore, Aes256Gcm, Key, Nonce};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -145,13 +146,7 @@ fn create_cache_key() -> Result<[u8; 32]> {
         key_file_path().display()
     );
     let path = key_file_path();
-    std::fs::write(&path, hex::encode(key))
-        .with_context(|| format!("failed to write cache key to {}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    }
+    write_private_file(&path, hex::encode(key).as_bytes())?;
     Ok(key)
 }
 
@@ -161,6 +156,32 @@ fn ensure_cache_key() -> Result<[u8; 32]> {
         return Ok(key);
     }
     create_cache_key()
+}
+
+// ── Private file writes ─────────────────────────────────────────────────
+
+/// Write `data` to `path`, creating the file with mode 0600 *at open time*
+/// rather than chmod'ing it afterwards (which leaves a window where the
+/// secrets cache or key is world-readable). The trailing chmod stays as a
+/// safety net for a file left behind by an older version.
+fn write_private_file(path: &std::path::Path, data: &[u8]) -> Result<()> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)
+        .and_then(|mut f| f.write_all(data))
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to chmod {}", path.display()))?;
+    }
+    Ok(())
 }
 
 // ── Public API ──────────────────────────────────────────────────────────
@@ -181,13 +202,7 @@ pub fn cache_secrets(secrets: &HashMap<String, String>) -> Result<()> {
     data.extend_from_slice(&ciphertext);
 
     let path = cache_path();
-    std::fs::write(&path, &data)
-        .with_context(|| format!("failed to write secrets cache to {}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    }
+    write_private_file(&path, &data)?;
     tracing::debug!("cached {} secrets to {}", secrets.len(), path.display());
     Ok(())
 }
@@ -211,6 +226,28 @@ pub fn load_cached_secrets() -> Option<HashMap<String, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The cache/key files hold secrets, so the mode must be set when the file
+    /// is created — not after the bytes are already on disk (umask 022 would
+    /// otherwise leave a 0644 window).
+    #[cfg(unix)]
+    #[test]
+    fn private_file_is_created_with_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join("mac-mgmt-secrets-cache-mode-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".cache-key");
+
+        write_private_file(&path, b"secret").unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn encrypt_decrypt_roundtrip() {

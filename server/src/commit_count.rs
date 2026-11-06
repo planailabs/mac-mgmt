@@ -19,6 +19,14 @@ struct RepoCache {
     fetching: Mutex<()>,
 }
 
+/// A value that may be handed to `git rev-list`. Commit ids arrive from
+/// daemons and URLs and are stored unvalidated, so anything that is not plain
+/// (optionally short) lowercase-or-uppercase hex is refused here — a value
+/// like `--all` would otherwise be parsed by git as an option.
+fn is_commit_sha(sha: &str) -> bool {
+    (7..=40).contains(&sha.len()) && sha.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 impl RepoCache {
     fn new(repo: &'static str, clone_path: PathBuf, git_url: String) -> Self {
         Self {
@@ -122,11 +130,19 @@ impl RepoCache {
         self.ensure_clone().await;
 
         // Strip "-dirty" suffixes so the lookup uses a clean SHA,
-        // then map results back to the original keys.
+        // then map results back to the original keys. Non-SHA values are
+        // dropped here — the only place that must not pass them to git.
         let mut clean_to_orig: HashMap<String, Vec<String>> = HashMap::new();
         for sha in shas {
-            let clean = sha.strip_suffix("-dirty").unwrap_or(sha).to_string();
-            clean_to_orig.entry(clean).or_default().push(sha.clone());
+            let clean = sha.strip_suffix("-dirty").unwrap_or(sha);
+            if !is_commit_sha(clean) {
+                tracing::debug!("ignoring commit count lookup for non-sha value {sha:?}");
+                continue;
+            }
+            clean_to_orig
+                .entry(clean.to_string())
+                .or_default()
+                .push(sha.clone());
         }
 
         let clean_shas: Vec<String> = clean_to_orig.keys().cloned().collect();
@@ -372,4 +388,21 @@ pub fn spawn_fetch_loop() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_commit_sha;
+
+    #[test]
+    fn only_plain_commit_ids_are_accepted() {
+        assert!(is_commit_sha("abc1234"));
+        assert!(is_commit_sha("0123456789012345678901234567890123456789"));
+        assert!(!is_commit_sha("abc123"), "too short");
+        assert!(!is_commit_sha("--all"));
+        assert!(!is_commit_sha("-dirty"));
+        assert!(!is_commit_sha("deadbeef-main"));
+        assert!(!is_commit_sha("01234567890123456789012345678901234567890"));
+        assert!(!is_commit_sha(""));
+    }
 }

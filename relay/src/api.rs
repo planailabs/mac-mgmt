@@ -71,7 +71,12 @@ pub fn router(
         .with_state(state)
 }
 
-async fn security_headers(request: axum::extract::Request, next: Next) -> axum::response::Response {
+/// Security headers for every relay HTTP response. Shared with the `/ssh`
+/// router, which `main` merges in after this router's own layer.
+pub(crate) async fn security_headers(
+    request: axum::extract::Request,
+    next: Next,
+) -> axum::response::Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     // Keep a handler-set CSP (e.g. /cert-login HTML pages need inline styles).
@@ -96,6 +101,14 @@ async fn health() -> &'static str {
     "ok"
 }
 
+/// Compare the batch token without leaking its prefix through timing: hash
+/// both sides first, so the comparison is over fixed-length, secret-derived
+/// values.
+fn tokens_match(candidate: &str, expected: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(candidate.as_bytes()) == Sha256::digest(expected.as_bytes())
+}
+
 /// Batch endpoint: returns all connected daemons with tunnel definitions.
 /// Authenticated with the relay's in-memory batch token.
 async fn batch_instances(
@@ -107,7 +120,7 @@ async fn batch_instances(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
     match token {
-        Some(t) if t == state.batch_token => {}
+        Some(t) if tokens_match(t, &state.batch_token) => {}
         _ => return StatusCode::UNAUTHORIZED.into_response(),
     }
     let instances = state.registry.list_instances();
@@ -728,5 +741,19 @@ fn merge_family(
             }
             families.insert(name, fam);
         }
+    }
+}
+
+#[cfg(test)]
+mod token_compare_tests {
+    use super::tokens_match;
+
+    #[test]
+    fn compares_by_value() {
+        assert!(tokens_match("abc123", "abc123"));
+        assert!(!tokens_match("abc124", "abc123"));
+        // A missing/short token must never match, including the empty string.
+        assert!(!tokens_match("", "abc123"));
+        assert!(!tokens_match("abc", "abc123"));
     }
 }

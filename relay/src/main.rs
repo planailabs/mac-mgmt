@@ -115,7 +115,16 @@ async fn main() -> Result<()> {
         let bytes: [u8; 32] = rand::rng().random();
         hex::encode(bytes)
     };
-    tracing::info!("batch endpoint token: {batch_token}");
+    // Fingerprint only: the token is a shared secret and INFO logs get shipped
+    // off-box. An operator verifies a candidate by hashing it the same way.
+    {
+        use sha2::{Digest, Sha256};
+        let fingerprint = hex::encode(Sha256::digest(batch_token.as_bytes()));
+        tracing::info!(
+            "batch endpoint token fingerprint: sha256:{}",
+            &fingerprint[..12]
+        );
+    }
 
     let api_router = api::router(
         Arc::clone(&registry),
@@ -126,12 +135,15 @@ async fn main() -> Result<()> {
     );
 
     // Web SSH terminal routes (/ssh/{instance_id} and /ssh/{instance_id}/ws).
+    // Merged after `api::router`'s own security-headers layer, so apply it
+    // here too — the terminal page must not answer without CSP/X-Frame-Options.
     let web_ssh_router = web_ssh::router(web_ssh::WebSshState {
         registry: Arc::clone(&registry),
         relay_swarm: Arc::clone(&relay_swarm),
         ssh_identity: Arc::clone(&ssh_identity),
         server_api_url: cfg.server_api_url.clone(),
-    });
+    })
+    .layer(axum::middleware::from_fn(api::security_headers));
     let api_router = api_router.merge(web_ssh_router);
 
     // Try to fetch the server's external web URL eagerly. If it fails, the
@@ -160,7 +172,11 @@ async fn main() -> Result<()> {
             server_web_url: Arc::clone(&server_web_url),
             relay_url: cfg.proxy_url.clone(),
         };
-        (proxy_hostname.clone(), proxy_handler::router(proxy_state))
+        (
+            proxy_hostname.clone(),
+            proxy_state.clone(),
+            proxy_handler::router(proxy_state),
+        )
     });
 
     let p2p_port = cfg.p2p_port;
@@ -192,7 +208,7 @@ async fn main() -> Result<()> {
             // the per-SNI client-cert behavior could be bypassed.
             let host_is_proxy = proxy
                 .as_ref()
-                .is_some_and(|(ph, _)| host_no_port.ends_with(&format!(".{ph}")));
+                .is_some_and(|(ph, _, _)| host_no_port.ends_with(&format!(".{ph}")));
             if let Some(class) = req.extensions().get::<mtls::TlsSniClass>() {
                 if class.is_proxy_subdomain != host_is_proxy {
                     return axum::http::StatusCode::MISDIRECTED_REQUEST.into_response();
@@ -200,7 +216,7 @@ async fn main() -> Result<()> {
             }
 
             // Proxy subdomain.
-            if let Some((ref proxy_hostname, ref proxy_router)) = proxy {
+            if let Some((ref proxy_hostname, ref proxy_state, ref proxy_router)) = proxy {
                 if host_no_port.ends_with(&format!(".{proxy_hostname}")) {
                     let is_proxy_ws = req
                         .headers()
@@ -210,21 +226,35 @@ async fn main() -> Result<()> {
 
                     if is_proxy_ws {
                         use axum::extract::FromRequestParts;
+                        // A WS upgrade must clear the same token auth and tunnel
+                        // scope the HTTP catch-all does — otherwise it would be a
+                        // way around the proxy token.
+                        let Some((instance_prefix, tunnel_name)) =
+                            proxy_handler::parse_subdomain(req.headers(), proxy_hostname)
+                        else {
+                            return axum::http::StatusCode::BAD_REQUEST.into_response();
+                        };
+                        let required_scope = format!("tcp:{tunnel_name}");
+                        if let Err(resp) = proxy_handler::authenticate_proxy_scoped(
+                            req.headers(),
+                            proxy_state,
+                            &instance_prefix,
+                            &required_scope,
+                        )
+                        .await
+                        {
+                            return resp;
+                        }
+
                         let (mut parts, _body) = req.into_parts();
                         if let Ok(ws) =
                             axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &())
                                 .await
                         {
-                            let prefix = host_no_port
-                                .strip_suffix(&format!(".{proxy_hostname}"))
-                                .unwrap_or("")
-                                .to_string();
                             let relay_swarm_clone = relay_swarm.clone();
                             return ws.on_upgrade(move |socket| async move {
-                                let (instance_prefix, tunnel_name) =
-                                    prefix.rsplit_once('-').unwrap_or((&prefix, ""));
                                 if let Some(peer_id) =
-                                    relay_swarm_clone.registry_resolve_peer_id(instance_prefix)
+                                    relay_swarm_clone.registry_resolve_peer_id(&instance_prefix)
                                 {
                                     if let Ok(tunnel) =
                                         relay_swarm_clone.open_tunnel_stream(peer_id).await

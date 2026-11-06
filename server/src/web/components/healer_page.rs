@@ -370,14 +370,35 @@ pub async fn start_healer_session(
     Ok(session_id.to_string())
 }
 
-#[server]
-pub async fn cancel_healer_session(session_id: String) -> Result<(), ServerFnError> {
-    let _user = current_user().await?;
-    let healer = crate::server_state::healer_state()
-        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
+/// Authorize control of a healer session: it must exist and the caller must
+/// have write access to its cluster. A missing session and one the caller may
+/// not touch give the same error, so this is not an existence oracle.
+#[cfg(feature = "server")]
+async fn require_session_write(session_id: &str) -> Result<uuid::Uuid, ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = session_id
         .parse()
         .map_err(|_| ServerFnError::new("invalid id"))?;
+    let healer = crate::server_state::healer_state()
+        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
+    let session = healer
+        .get_session(uuid)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .map(|(s, _)| s)
+        .ok_or_else(|| ServerFnError::new("session not found"))?;
+    user.require_cluster_write(&pool, session.cluster_id)
+        .await
+        .map_err(|_| ServerFnError::new("session not found"))?;
+    Ok(uuid)
+}
+
+#[server]
+pub async fn cancel_healer_session(session_id: String) -> Result<(), ServerFnError> {
+    let uuid = require_session_write(&session_id).await?;
+    let healer = crate::server_state::healer_state()
+        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
     healer
         .cancel_session(uuid)
         .await
@@ -386,12 +407,9 @@ pub async fn cancel_healer_session(session_id: String) -> Result<(), ServerFnErr
 
 #[server]
 pub async fn pause_healer_session(session_id: String) -> Result<(), ServerFnError> {
-    let _user = current_user().await?;
+    let uuid = require_session_write(&session_id).await?;
     let healer = crate::server_state::healer_state()
         .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
-    let uuid: uuid::Uuid = session_id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid id"))?;
     healer
         .pause_session(uuid)
         .map_err(|e| ServerFnError::new(e.to_string()))
@@ -416,12 +434,9 @@ pub async fn extend_healer_budget(session_id: String) -> Result<(), ServerFnErro
 
 #[server]
 pub async fn resume_healer_session(session_id: String) -> Result<(), ServerFnError> {
-    let _user = current_user().await?;
+    let uuid = require_session_write(&session_id).await?;
     let healer = crate::server_state::healer_state()
         .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
-    let uuid: uuid::Uuid = session_id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid id"))?;
     healer
         .resume_session(uuid)
         .await
@@ -431,11 +446,24 @@ pub async fn resume_healer_session(session_id: String) -> Result<(), ServerFnErr
 #[server]
 pub async fn resolve_staff_ping(ping_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
+    let pool = crate::server_pool()?;
     let healer = crate::server_state::healer_state()
         .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
     let uuid: uuid::Uuid = ping_id
         .parse()
         .map_err(|_| ServerFnError::new("invalid id"))?;
+    // Resolving a ping is a write on its cluster; unknown and forbidden pings
+    // answer the same so the call is not an existence oracle.
+    let cluster_id: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT cluster_id FROM healer_staff_pings WHERE id = $1")
+            .bind(uuid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let cluster_id = cluster_id.ok_or_else(|| ServerFnError::new("ping not found"))?;
+    user.require_cluster_write(&pool, cluster_id)
+        .await
+        .map_err(|_| ServerFnError::new("ping not found"))?;
     healer
         .store()
         .resolve_staff_ping(uuid, &user.email)
@@ -455,26 +483,32 @@ pub struct SessionMeta {
 /// Get metadata for a session (provider, model, label, created_by).
 #[server]
 pub async fn get_session_meta(session_id: String) -> Result<SessionMeta, ServerFnError> {
-    let _user = current_user().await?;
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = session_id
         .parse()
         .map_err(|_| ServerFnError::new("invalid id"))?;
     #[derive(sqlx::FromRow)]
     struct Row {
+        scope_id: uuid::Uuid,
         provider: Option<String>,
         model: Option<String>,
         label: Option<String>,
         created_by: String,
     }
+    // scope_id is the owning cluster; require read access before returning
+    // anything. Missing and forbidden sessions answer the same.
     let row = sqlx::query_as::<_, Row>(
-        "SELECT provider, model, label, created_by FROM chat_sessions WHERE id = $1",
+        "SELECT scope_id, provider, model, label, created_by FROM chat_sessions WHERE id = $1",
     )
     .bind(uuid)
     .fetch_optional(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("session not found"))?;
+    user.require_cluster_read(&pool, row.scope_id)
+        .await
+        .map_err(|_| ServerFnError::new("session not found"))?;
     Ok(SessionMeta {
         provider: row.provider,
         model: row.model,

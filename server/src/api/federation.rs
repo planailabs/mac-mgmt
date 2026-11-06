@@ -155,15 +155,23 @@ async fn fetch_bundles(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    let items: Vec<BundleItemDbRow> = sqlx::query_as(
+    // Hidden skills stay out of public output even when a public bundle lists them.
+    let item_filter = if include_hidden {
+        "TRUE"
+    } else {
+        "NOT s.hide_from_public_catalog"
+    };
+    let item_query = format!(
         "SELECT bi.bundle_id, bi.skill_channel_id, s.slug AS skill_slug, sc.channel \
          FROM bundle_items bi \
          JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
-         JOIN skills s ON s.id = sc.skill_id",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE {item_filter}"
+    );
+    let items: Vec<BundleItemDbRow> = sqlx::query_as(&item_query)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     let mut items_by_bundle: HashMap<Uuid, Vec<FederationBundleSkill>> = HashMap::new();
     for item in items {
@@ -228,10 +236,53 @@ async fn fetch_mcp_servers(
             name: r.name,
             description: r.description,
             hidden: r.hidden,
-            config: r.config_json,
+            // Anonymous readers get the shape of the server without the
+            // credential-bearing fields (`env`, `headers`), which hold API keys.
+            config: if include_hidden {
+                r.config_json
+            } else {
+                redact_mcp_config(&r.config_json)
+            },
             nix_packages: r.nix_packages,
         })
         .collect())
+}
+
+/// Strip the credential-bearing keys from an MCP server config for public output.
+fn redact_mcp_config(config: &serde_json::Value) -> serde_json::Value {
+    let mut out = config.clone();
+    if let Some(obj) = out.as_object_mut() {
+        obj.remove("env");
+        obj.remove("headers");
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_mcp_config_drops_credentials() {
+        let cfg = serde_json::json!({
+            "command": "mcp-server-github",
+            "args": ["--stdio"],
+            "env": {"GITHUB_TOKEN": "ghp_secret"},
+            "headers": {"Authorization": "Bearer x"},
+        });
+        let public = redact_mcp_config(&cfg);
+        assert_eq!(public["command"], "mcp-server-github");
+        assert_eq!(public["args"][0], "--stdio");
+        assert!(public.get("env").is_none());
+        assert!(public.get("headers").is_none());
+        // The stored config is untouched.
+        assert_eq!(cfg["env"]["GITHUB_TOKEN"], "ghp_secret");
+        // Non-object configs pass through unchanged.
+        assert_eq!(
+            redact_mcp_config(&serde_json::json!("x")),
+            serde_json::json!("x")
+        );
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -260,14 +311,22 @@ async fn fetch_mcp_bundles(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    let items: Vec<McpBundleItemDbRow> = sqlx::query_as(
+    // Hidden MCP servers stay out of public output even when a public bundle lists them.
+    let item_filter = if include_hidden {
+        "TRUE"
+    } else {
+        "NOT ms.hide_from_public_catalog"
+    };
+    let item_query = format!(
         "SELECT msbi.bundle_id, msbi.mcp_server_id, ms.slug \
          FROM mcp_server_bundle_items msbi \
-         JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+         JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
+         WHERE {item_filter}"
+    );
+    let items: Vec<McpBundleItemDbRow> = sqlx::query_as(&item_query)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     let mut items_by_bundle: HashMap<Uuid, Vec<FederationMcpBundleServer>> = HashMap::new();
     for item in items {

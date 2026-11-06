@@ -102,16 +102,26 @@ pub fn validate_args(tunnel: &ShellTunnel, user_arg: Option<&str>) -> Result<(),
     if let Some(ref tmpl) = tunnel.def.arg_template {
         if let Some(arg) = user_arg {
             if let Some(ref pattern) = tmpl.validation {
-                match regex::Regex::new(pattern) {
-                    Ok(re) if !re.is_match(arg) => {
+                // Anchored: a bare `is_match` is an unanchored substring
+                // search, so "ok; rm -rf /" would satisfy `ok`.
+                let anchored = format!("^(?:{pattern})$");
+                match regex::Regex::new(&anchored) {
+                    Ok(re) if re.is_match(arg) => {}
+                    Ok(_) => {
                         return Err(format!(
                             "argument does not match required pattern: {pattern}"
                         ));
                     }
+                    // Fail closed: a malformed config regex must not turn the
+                    // only check on a user-supplied argument into "accept
+                    // anything".
                     Err(e) => {
                         tracing::warn!("invalid validation regex for {}: {e}", tunnel.def.name);
+                        return Err(format!(
+                            "invalid validation pattern configured for {}: {e}",
+                            tunnel.def.name
+                        ));
                     }
-                    _ => {}
                 }
             }
         }
@@ -302,4 +312,50 @@ pub async fn handle_exec_session<S>(
         tunnel.def.name,
         exit_code
     );
+}
+
+#[cfg(all(test, feature = "services"))]
+mod tests {
+    use super::*;
+
+    fn tunnel(validation: Option<&str>) -> ShellTunnel {
+        ShellTunnel {
+            def: crate::managed_service::ShellCommandDef {
+                name: "ollama-pull".into(),
+                command: "ollama".into(),
+                arg_template: Some(crate::managed_service::ShellArgTemplate {
+                    label: "Model".into(),
+                    placeholder: "llama3".into(),
+                    validation: validation.map(str::to_string),
+                }),
+                ..Default::default()
+            },
+            service: "ollama".into(),
+        }
+    }
+
+    #[test]
+    fn accepts_an_argument_matching_the_whole_pattern() {
+        assert!(validate_args(&tunnel(Some("[a-z0-9.]+")), Some("llama3.1")).is_ok());
+    }
+
+    #[test]
+    fn rejects_an_argument_that_only_matches_a_substring() {
+        // Unanchored `is_match` used to accept this.
+        assert!(validate_args(&tunnel(Some("ok")), Some("ok; rm -rf /")).is_err());
+        assert!(validate_args(&tunnel(Some("ok")), Some("not-ok")).is_err());
+    }
+
+    #[test]
+    fn malformed_validation_regex_rejects_instead_of_accepting_anything() {
+        assert!(validate_args(&tunnel(Some("(")), Some("anything")).is_err());
+    }
+
+    #[test]
+    fn rejects_an_argument_for_a_command_without_an_arg_template() {
+        let mut t = tunnel(None);
+        t.def.arg_template = None;
+        assert!(validate_args(&t, Some("x")).is_err());
+        assert!(validate_args(&t, None).is_ok());
+    }
 }

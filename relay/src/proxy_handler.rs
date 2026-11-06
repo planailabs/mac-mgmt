@@ -241,7 +241,10 @@ async fn proxy_security_headers(
 /// ≥12 hex characters. Since the prefix is hex-only (no dashes), the first
 /// dash is always the separator — tunnel names with dashes (e.g. `ai-proxy`)
 /// parse correctly.
-fn parse_subdomain(headers: &HeaderMap, proxy_hostname: &str) -> Option<(String, String)> {
+pub(crate) fn parse_subdomain(
+    headers: &HeaderMap,
+    proxy_hostname: &str,
+) -> Option<(String, String)> {
     let host = headers.get("host").and_then(|v| v.to_str().ok())?;
     let host_no_port = host.split(':').next().unwrap_or(host);
     let subdomain = host_no_port.strip_suffix(&format!(".{proxy_hostname}"))?;
@@ -358,6 +361,38 @@ fn local_self_info(token: &str, state: &ProxyState, instance_id: &str) -> Option
     })
 }
 
+/// Whether the token holder may reach a machine: cluster membership, or an
+/// admin token when the daemon registered without a cluster. Deny closed —
+/// an unknown cluster is admin-only, like `/cert-login`.
+fn cluster_authorized(state: &ProxyState, self_info: &SelfInfo, instance_id: &str) -> bool {
+    match state.registry.get_cluster_id(instance_id) {
+        Some(cid) => self_info.cluster_ids.contains(&cid),
+        None => self_info.token_kind == "admin",
+    }
+}
+
+/// Authenticate a server-issued token (proxy or admin) and check its cluster
+/// scope. Relay-local tokens never get here — they are instance-bound.
+async fn authorize_server_token(
+    token: &str,
+    state: &ProxyState,
+    instance_id: &str,
+) -> Result<SelfInfo, axum::response::Response> {
+    let self_info = validate_token_cached(&state.server_api_url, token)
+        .await
+        .map_err(|s| s.into_response())?;
+
+    if self_info.token_kind != "proxy" && self_info.token_kind != "admin" {
+        return Err(StatusCode::FORBIDDEN.into_response());
+    }
+
+    if !cluster_authorized(state, &self_info, instance_id) {
+        return Err(StatusCode::FORBIDDEN.into_response());
+    }
+
+    Ok(self_info)
+}
+
 /// Validate the proxy token and check cluster scoping.
 async fn authenticate_proxy(
     headers: &HeaderMap,
@@ -375,27 +410,11 @@ async fn authenticate_proxy(
         return Ok(info);
     }
 
-    let self_info = validate_token_cached(&state.server_api_url, &token)
-        .await
-        .map_err(|s| s.into_response())?;
-
-    if self_info.token_kind != "proxy" && self_info.token_kind != "admin" {
-        return Err(StatusCode::FORBIDDEN.into_response());
-    }
-
-    if let Some(cid) = state.registry.get_cluster_id(instance_id) {
-        if !self_info.cluster_ids.contains(&cid) {
-            return Err(StatusCode::FORBIDDEN.into_response());
-        }
-    }
-    // If cluster_id is not known (daemon didn't send it during registration),
-    // allow access — the server already validated the token's cluster scope.
-
-    Ok(self_info)
+    authorize_server_token(&token, state, instance_id).await
 }
 
 /// Authenticate and require a specific scope. Returns 403 if the scope is missing.
-async fn authenticate_proxy_scoped(
+pub(crate) async fn authenticate_proxy_scoped(
     headers: &HeaderMap,
     state: &ProxyState,
     instance_id: &str,
@@ -432,6 +451,15 @@ struct ProxyBootstrapQuery {
     proxy_token: String,
 }
 
+/// Proxy tokens are hex (server-minted) — anything else could smuggle cookie
+/// attributes via `;` or break the response header with CR/LF.
+fn is_valid_proxy_token(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 /// Store the proxy_token as an HttpOnly, SameSite=Strict cookie scoped to
 /// this subdomain. Serves a small HTML page that navigates to / client-side
 /// so the browser treats it as a same-site navigation (required for Strict).
@@ -443,6 +471,10 @@ async fn proxy_bootstrap(
     let Some((instance_id, tunnel_name)) = parse_subdomain(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
+
+    if !is_valid_proxy_token(&query.proxy_token) {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy_token").into_response();
+    }
 
     if !state.registry.has_tunnel(&instance_id, &tunnel_name) {
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
@@ -459,13 +491,19 @@ async fn proxy_bootstrap(
     // Serve an HTML page instead of a 302 redirect. A redirect after cross-site
     // navigation doesn't send SameSite=Strict cookies. Client-side navigation
     // from within the page is same-site and works correctly.
-    axum::response::Response::builder()
+    let mut response = axum::response::Response::builder()
         .status(StatusCode::OK)
-        .header("set-cookie", cookie)
         .header("content-type", "text/html; charset=utf-8")
         .body(Body::from(bootstrap_html()))
-        .unwrap()
-        .into_response()
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    match HeaderValue::from_str(&cookie) {
+        Ok(value) => {
+            response.headers_mut().insert("set-cookie", value);
+            response
+        }
+        // Unreachable with the charset check above — never panic a live server.
+        Err(_) => (StatusCode::BAD_REQUEST, "Invalid proxy_token").into_response(),
+    }
 }
 
 /// Shared CSS for the dark-themed tunnel pages (loading spinner, auth error).
@@ -945,21 +983,11 @@ async fn proxy_request(
 
     let self_info = match local_self_info(&body.proxy_token, &state, &instance_id) {
         Some(info) => info,
-        None => match validate_token(&state.server_api_url, &body.proxy_token).await {
+        None => match authorize_server_token(&body.proxy_token, &state, &instance_id).await {
             Ok(info) => info,
-            Err(status) => return status.into_response(),
+            Err(resp) => return resp,
         },
     };
-
-    if self_info.token_kind != "proxy" && self_info.token_kind != "admin" {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-
-    if let Some(cid) = state.registry.get_cluster_id(&instance_id) {
-        if !self_info.cluster_ids.contains(&cid) {
-            return StatusCode::FORBIDDEN.into_response();
-        }
-    }
 
     let required_scope = format!("tcp:{tunnel_name}");
     if !has_scope(&self_info.scopes, &required_scope) {
@@ -1365,5 +1393,101 @@ async fn log_proxy(
             StatusCode::BAD_GATEWAY.into_response()
         }
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod cluster_scope_tests {
+    use super::*;
+
+    fn state_with_daemon(cluster_id: Option<Uuid>) -> ProxyState {
+        let dir = std::env::temp_dir().join(format!("relay-proxy-test-{}", std::process::id()));
+        let registry = Arc::new(DaemonRegistry::new(10, 10000, 10010, &dir));
+        if let Some(cid) = cluster_id {
+            registry.register(crate::daemon_registry::DaemonConn {
+                instance_id: "abcdef0123456789".to_string(),
+                cluster_id: Some(cid),
+                cluster_name: None,
+                agent_name: None,
+                hostname: None,
+                connected_at: chrono::Utc::now(),
+                tunnels: Vec::new(),
+                file_tunnels: serde_json::Value::Array(vec![]),
+                shell_tunnels: serde_json::Value::Array(vec![]),
+                peer_id: None,
+                ssh_enabled: false,
+                ssh_port: None,
+            });
+        }
+        ProxyState {
+            registry,
+            server_api_url: String::new(),
+            proxy_hostname: "relay.test".to_string(),
+            cors_origins: Vec::new(),
+            relay_swarm: None,
+            server_web_url: Arc::new(tokio::sync::OnceCell::new()),
+            relay_url: None,
+        }
+    }
+
+    fn self_info(kind: &str, clusters: Vec<Uuid>) -> SelfInfo {
+        SelfInfo {
+            cluster_id: None,
+            cluster_name: None,
+            organization_id: None,
+            token_kind: kind.to_string(),
+            cluster_ids: clusters,
+            scopes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn cluster_token_reaches_only_its_own_cluster() {
+        let cid = Uuid::new_v4();
+        let state = state_with_daemon(Some(cid));
+        let iid = "abcdef0123456789";
+        assert!(cluster_authorized(
+            &state,
+            &self_info("proxy", vec![cid]),
+            iid
+        ));
+        assert!(!cluster_authorized(
+            &state,
+            &self_info("proxy", vec![Uuid::new_v4()]),
+            iid
+        ));
+    }
+
+    #[test]
+    fn unknown_cluster_is_admin_only() {
+        let state = state_with_daemon(None);
+        // No daemon registered at all — still deny closed.
+        assert!(cluster_authorized(
+            &state,
+            &self_info("admin", vec![]),
+            "abcdef0123456789"
+        ));
+        assert!(!cluster_authorized(
+            &state,
+            &self_info("proxy", vec![]),
+            "abcdef0123456789"
+        ));
+    }
+}
+
+#[cfg(test)]
+mod proxy_token_tests {
+    use super::is_valid_proxy_token;
+
+    #[test]
+    fn proxy_tokens_must_be_cookie_safe() {
+        // Hex tokens from the server and relay-minted ones still pass.
+        assert!(is_valid_proxy_token("0123456789abcdefABCDEF"));
+        assert!(is_valid_proxy_token("a-b_c"));
+        // Cookie attributes and header splitting are rejected.
+        assert!(!is_valid_proxy_token("abc; Domain=evil.example"));
+        assert!(!is_valid_proxy_token("abc\r\nSet-Cookie: x=y"));
+        assert!(!is_valid_proxy_token("abc def"));
+        assert!(!is_valid_proxy_token(""));
     }
 }

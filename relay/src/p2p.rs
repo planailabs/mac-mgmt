@@ -502,7 +502,36 @@ async fn handle_daemon_rpc(
                     serde_json::json!({ "type": "error", "error": "token required", "id": req_id })
                 } else {
                     match crate::auth::validate_token(&server_api_url, token).await {
-                        Ok(info) if !iid.is_empty() => {
+                        // Only daemon-facing tokens register. A proxy token (handed
+                        // to browsers), api or federation token must never claim a
+                        // machine's instance id.
+                        Ok(info) if info.token_kind != "sync" => {
+                            tracing::warn!(
+                                %peer_id, %iid, kind = %info.token_kind,
+                                "daemon registration rejected: not a daemon token"
+                            );
+                            serde_json::json!({
+                                "type": "error",
+                                "error": "daemon (sync) token required",
+                                "id": req_id,
+                            })
+                        }
+                        Ok(_) if iid.is_empty() => {
+                            serde_json::json!({ "type": "error", "error": "empty instance_id", "id": req_id })
+                        }
+                        // Never replace a registration made under another cluster.
+                        Ok(info) if !registry.can_register(&iid, info.cluster_id) => {
+                            tracing::warn!(
+                                %peer_id, %iid,
+                                "daemon registration rejected: instance id registered under another cluster"
+                            );
+                            serde_json::json!({
+                                "type": "error",
+                                "error": "instance id registered under another cluster",
+                                "id": req_id,
+                            })
+                        }
+                        Ok(info) => {
                             let cid = info.cluster_id;
                             let cname = info.cluster_name;
                             let ssh_enabled = frame["ssh_enabled"].as_bool().unwrap_or(false);
@@ -553,9 +582,6 @@ async fn handle_daemon_rpc(
                                     "relay_ssh_pubkey": ssh_identity.public_key_openssh,
                                 })
                             }
-                        }
-                        Ok(_) => {
-                            serde_json::json!({ "type": "error", "error": "empty instance_id", "id": req_id })
                         }
                         Err(status) => {
                             tracing::warn!(%peer_id, %iid, ?status, "daemon registration rejected: token validation failed");

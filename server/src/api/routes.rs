@@ -1448,10 +1448,11 @@ pub async fn setting_set_config(
     // Validate by deserializing into ClusterConfig
     let _: mac_mgmt_common::ClusterConfig =
         serde_json::from_value(config.clone()).map_err(|e| {
+            // Never log the body: it carries Secret-typed fields (API keys,
+            // tokens) whose values are valid literal input.
             tracing::error!(
-                "setting_set_config: rejecting cluster={} config: {e}; body={}",
-                auth.cluster_id,
-                serde_json::to_string(&config).unwrap_or_default()
+                "setting_set_config: rejecting cluster={} config: {e}",
+                auth.cluster_id
             );
             Status::UnprocessableEntity
         })?;
@@ -3629,7 +3630,8 @@ pub async fn create_proxy_token(
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = chrono::Utc::now() + chrono::Duration::hours(24);
+    // 6h, matching every other proxy-token mint path and the documented contract.
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
     let scopes_json: Option<serde_json::Value> = if body.scopes.is_empty() {
         None
     } else {
@@ -4976,6 +4978,17 @@ async fn cert_auth_lookup(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
+    // A presented certificate must be currently valid; expiry is the only
+    // lifecycle control a CA-issued client cert has (there is no CRL/OCSP).
+    if let Some(pem) = certificate_pem {
+        let der = self::pem_to_der(pem).map_err(|_| Status::BadRequest)?;
+        let (_, cert) =
+            x509_parser::parse_x509_certificate(&der).map_err(|_| Status::BadRequest)?;
+        if !cert.validity().is_valid() {
+            return Err(Status::NotFound);
+        }
+    }
+
     // Backfill PEM if we matched and PEM was provided.
     if !matches.is_empty() {
         if let Some(pem) = certificate_pem {
@@ -5076,6 +5089,12 @@ async fn validate_against_cas(pool: &PgPool, client_pem: &str) -> Result<Vec<Cer
     let (_, client_cert) =
         x509_parser::parse_x509_certificate(&client_der).map_err(|_| Status::BadRequest)?;
 
+    // An expired (or not-yet-valid) certificate authorizes nothing, even if it
+    // chains to a stored CA — the relay caches successful results for a while.
+    if !client_cert.validity().is_valid() {
+        return Ok(Vec::new());
+    }
+
     // Load all CA certificates.
     #[derive(sqlx::FromRow)]
     struct CaRow {
@@ -5098,6 +5117,10 @@ async fn validate_against_cas(pool: &PgPool, client_pem: &str) -> Result<Vec<Cer
         let Ok((_, ca_cert)) = x509_parser::parse_x509_certificate(&ca_der) else {
             continue;
         };
+        // A stored CA whose own validity window has passed must not authorize.
+        if !ca_cert.validity().is_valid() {
+            continue;
+        }
         // Check issuer matches CA subject, then verify signature.
         if client_cert.issuer() == ca_cert.subject() {
             if client_cert
@@ -6654,6 +6677,15 @@ pub async fn get_nixpkgs_archive(commit: &str) -> Result<BinaryDownload, Status>
     if commit.len() != 40 || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(Status::BadRequest);
     }
+
+    // Unauthenticated endpoint that shells out to git archive|xz over a multi-GB
+    // tree, so bound how many distinct generations run at once; the per-commit
+    // lock below only coalesces requests for the same commit.
+    static GENERATION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+    let _slot = GENERATION_SLOTS
+        .acquire()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     let cache_path = format!("/tmp/mac-mgmt-nixpkgs-{commit}.tar.xz");
     let lock_path = format!("{cache_path}.lock");

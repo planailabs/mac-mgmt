@@ -417,13 +417,20 @@ async fn run_git_sync(
         .await
         .map_err(|e| format!("failed to create work dir: {e}"))?;
 
-    // Clone repo
+    // Clone repo. Reject values that git would parse as an option, and pass
+    // `--` so a repo URL can never be read as one (e.g. `--upload-pack=<cmd>`).
+    if repo_url.starts_with('-') {
+        return Err("repo_url must not start with '-'".to_string());
+    }
     append_log(pool, job_id, &format!("Cloning {repo_url}...")).await;
     let mut args = vec!["clone", "--depth", "1"];
     if let Some(b) = branch {
+        if b.starts_with('-') {
+            return Err("branch must not start with '-'".to_string());
+        }
         args.extend(["--branch", b]);
     }
-    args.extend([repo_url, &clone_dir]);
+    args.extend(["--", repo_url, &clone_dir]);
 
     let output = tokio::process::Command::new("git")
         .args(&args)

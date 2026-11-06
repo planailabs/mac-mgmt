@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::components::ui::{ErrorText, HelpText};
+use crate::web::js::js_str;
 #[cfg(feature = "server")]
 use crate::web::user::{WebUserExt, current_user};
 
@@ -204,18 +205,22 @@ fn ShellCommandCard(
                             async move {
                                 let user_arg = if arg.is_empty() { "null".to_string() } else { format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\"")) };
                                 let body = format!("{{\"user_arg\":{user_arg}}}");
+                                // Daemon-supplied URLs go in as JSON-encoded JS
+                                // string literals so they cannot break out of the source.
+                                let url_json = js_str(&exec_url);
+                                let body_json = js_str(&body);
                                 // Use SSE EventSource for real-time streaming.
                                 // POST isn't supported by EventSource, so we use fetch + ReadableStream.
                                 let js = format!(
                                     r#"
                                     try {{
-                                        const resp = await fetch("{exec_url}", {{
+                                        const resp = await fetch({url_json}, {{
                                             method: "POST",
                                             headers: {{
                                                 "X-Proxy-Token": "{token}",
                                                 "Content-Type": "application/json",
                                             }},
-                                            body: '{body}',
+                                            body: {body_json},
                                         }});
                                         const reader = resp.body.getReader();
                                         const decoder = new TextDecoder();
