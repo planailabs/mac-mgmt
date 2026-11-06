@@ -37,6 +37,10 @@ const MAX_PROXY_BODY: usize = 16 * 1024 * 1024;
 /// handshake only ever carries request metadata.
 const MAX_HANDSHAKE_SIZE: u32 = 1024 * 1024;
 
+/// Bound on relay RPC calls awaited inline in the swarm loop. The relay
+/// validates the token against the server before answering a register.
+const RELAY_RPC_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// Commands the daemon event loop can send to the P2pManager.
 #[derive(Debug)]
 pub enum P2pCommand {
@@ -776,18 +780,8 @@ async fn swarm_loop(
                     }
                     Err(e) => {
                         tracing::warn!("RPC stream error: {e}, relay will reconnect");
-                        // Actually disconnect the libp2p connection so the stale
-                        // transport is cleaned up before we redial. Without this,
-                        // the old connection stays alive and the new connection's
-                        // noise handshake times out as a duplicate.
-                        if let Some(peer_id) = relay.peer_id() {
-                            let _ = swarm.disconnect_peer_id(peer_id);
-                        }
-                        let actions = relay.handle_event(RelayEvent::ConnectionClosed {
-                            peer_id: relay.peer_id().unwrap_or(PeerId::random()),
-                        });
-                        execute_relay_actions(
-                            actions, &mut swarm, &relay_proxy_url, &relay_peer_id,
+                        drop_relay_connection(
+                            &mut relay, &mut swarm, &relay_proxy_url, &relay_peer_id,
                             &mut authorized_cluster_peers, &event_tx, &relay_registered,
                         ).await;
                     }
@@ -900,7 +894,12 @@ async fn swarm_loop(
                             "token": config.server_token,
                             "ssh_enabled": ssh_enabled,
                         });
-                        match rpc.call(reg).await {
+                        // Awaited inline in the swarm loop: bound it, or a relay
+                        // that never answers wedges every p2p arm for good.
+                        let resp = tokio::time::timeout(RELAY_RPC_TIMEOUT, rpc.call(reg))
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("timed out after {RELAY_RPC_TIMEOUT:?}")));
+                        match resp {
                             Ok(resp) => {
                                 if resp["type"].as_str() == Some("error") {
                                     tracing::warn!("relay rejected registration: {}", resp["error"]);
@@ -939,13 +938,25 @@ async fn swarm_loop(
                                             }
                                         }
                                     }
-                                    send_tunnel_advertisement_rpc(rpc, &config.handler_state).await;
-                                    relay.mark_registered();
-                                    relay_registered.store(true, Ordering::Relaxed);
+                                    if send_tunnel_advertisement_rpc(rpc, &config.handler_state).await {
+                                        relay.mark_registered();
+                                        relay_registered.store(true, Ordering::Relaxed);
+                                    } else {
+                                        drop_relay_connection(
+                                            &mut relay, &mut swarm, &relay_proxy_url, &relay_peer_id,
+                                            &mut authorized_cluster_peers, &event_tx, &relay_registered,
+                                        ).await;
+                                    }
                                 }
                             }
                             Err(e) => {
-                                tracing::warn!("register RPC failed: {e}");
+                                // The stream is unusable (I/O error, or a timeout
+                                // that may have cut a frame in half): reconnect.
+                                tracing::warn!("register RPC failed: {e}, relay will reconnect");
+                                drop_relay_connection(
+                                    &mut relay, &mut swarm, &relay_proxy_url, &relay_peer_id,
+                                    &mut authorized_cluster_peers, &event_tx, &relay_registered,
+                                ).await;
                             }
                         }
                     }
@@ -1099,8 +1110,8 @@ async fn handle_command(
 async fn send_tunnel_advertisement_rpc(
     rpc: &mut rpc::RpcStream,
     handler_state: &Option<Arc<handler::HandlerState>>,
-) {
-    let Some(hs) = handler_state else { return };
+) -> bool {
+    let Some(hs) = handler_state else { return true };
 
     let tunnel_defs = hs.tunnel_defs.read().await;
     let tunnels: Vec<serde_json::Value> = tunnel_defs
@@ -1134,9 +1145,40 @@ async fn send_tunnel_advertisement_rpc(
         "shell_tunnels": shell_tunnels,
         "ssh_enabled": ssh_enabled,
     });
-    if let Err(e) = rpc.send(req).await {
-        tracing::warn!("failed to send tunnel advertisement via RPC: {e}");
+    match tokio::time::timeout(RELAY_RPC_TIMEOUT, rpc.send(req)).await {
+        Ok(Ok(())) => true,
+        Ok(Err(e)) => {
+            tracing::warn!("failed to send tunnel advertisement via RPC: {e}, relay will reconnect");
+            false
+        }
+        Err(_) => {
+            tracing::warn!("tunnel advertisement send timed out, relay will reconnect");
+            false
+        }
     }
+}
+
+/// Close the relay connection and reset the state machine to `Disconnected`
+/// so the next tick redials. Used when the RPC stream is broken or stuck.
+async fn drop_relay_connection(
+    relay: &mut RelayState,
+    swarm: &mut Swarm<ClusterBehaviour>,
+    relay_proxy_url: &Arc<RwLock<Option<String>>>,
+    relay_peer_id: &Arc<RwLock<Option<PeerId>>>,
+    authorized_cluster_peers: &mut std::collections::HashSet<PeerId>,
+    event_tx: &mpsc::Sender<P2pEvent>,
+    relay_registered: &Arc<AtomicBool>,
+) {
+    let Some(peer_id) = relay.peer_id() else { return };
+    // Actually disconnect so the stale transport is cleaned up before we
+    // redial; otherwise the new connection's noise handshake times out as a
+    // duplicate.
+    let _ = swarm.disconnect_peer_id(peer_id);
+    let actions = relay.handle_event(RelayEvent::ConnectionClosed { peer_id });
+    execute_relay_actions(
+        actions, swarm, relay_proxy_url, relay_peer_id,
+        authorized_cluster_peers, event_tx, relay_registered,
+    ).await;
 }
 
 /// Handle an incoming tunnel data substream from the relay.

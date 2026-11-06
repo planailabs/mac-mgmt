@@ -216,11 +216,41 @@ pub(crate) fn mtime_secs(path: &Path) -> Option<i64> {
         .map(|d| d.as_secs() as i64)
 }
 
-/// Copy `src` to a fresh temp file next to `dst` (create_new + O_NOFOLLOW, so
-/// a planted symlink cannot redirect the copy) and return the path written.
+/// Create a temp file next to `dst` with a random name (`tempfile`, not a
+/// predictable `*.tmp` name a local attacker could squat with a symlink) and
+/// the given mode.
+fn temp_beside(dst: &Path, mode: u32) -> std::io::Result<(std::fs::File, PathBuf)> {
+    let dir = dst
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let tmp = tempfile::NamedTempFile::new_in(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tmp.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(mode))?;
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    tmp.keep().map_err(|e| e.error)
+}
+
+/// Copy `src` to a fresh temp file next to `dst` and return the path written.
 fn copy_to_temp(src: &Path, dst: &Path) -> std::io::Result<PathBuf> {
-    let mode = crate::validator::file_mode(src, 0o600);
-    let (mut out, tmp) = crate::validator::create_temp(dst, mode)?;
+    let mode = std::fs::metadata(src).map_or(0o600, |m| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            m.permissions().mode() & 0o777
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = &m;
+            0o600
+        }
+    });
+    let (mut out, tmp) = temp_beside(dst, mode)?;
     let copied = std::fs::File::open(src).and_then(|mut inp| std::io::copy(&mut inp, &mut out));
     if let Err(e) = copied {
         let _ = std::fs::remove_file(&tmp);
@@ -372,13 +402,22 @@ pub fn write_file(
         }
     }
 
-    // Write content to temp file (create_new + O_NOFOLLOW: the temp name is
-    // predictable, so a planted symlink must not be able to redirect the write)
-    let (mut tmp_file, tmp_path) = crate::validator::create_temp(
-        &path.with_extension("tmp.file-tunnel"),
-        crate::validator::file_mode(&path, 0o644),
-    )
-    .map_err(|e| (500u16, format!("failed to create temp file: {e}")))?;
+    // Write content to a randomly named temp file: the old predictable
+    // `*.tmp.file-tunnel` name could be squatted by a symlink.
+    let target_mode = std::fs::metadata(&path).map_or(0o644, |m| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            m.permissions().mode() & 0o777
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = &m;
+            0o644
+        }
+    });
+    let (mut tmp_file, tmp_path) = temp_beside(&path, target_mode)
+        .map_err(|e| (500u16, format!("failed to create temp file: {e}")))?;
     tmp_file
         .write_all(content)
         .map_err(|e| (500u16, format!("failed to write temp file: {e}")))?;

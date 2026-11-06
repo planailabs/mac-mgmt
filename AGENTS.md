@@ -15,6 +15,13 @@ This builds both the server-side (native) and the client-side (WASM) targets. Th
 
 **Feature gate rule:** Dependencies that don't compile to WASM (sentry, hostname, uname, etc.) must be behind the `server` or `server-api-only` feature flags so they're excluded from the WASM client build.
 
+## Daemon: bump the version with every finished change
+
+Every finished change that ships in the daemon binary (`daemon/`, `mac-mgmt-agent`, `mac-mgmt-services`, `common/`, or any other crate `mac-mgmt` links) bumps `version` in `daemon/Cargo.toml` in the same commit (`Cargo.lock` follows). Rollouts target these semver versions, so an unbumped change can't be rolled out on its own.
+
+- Patch (`0.1.5` → `0.1.6`) by default.
+- Minor (`0.1.5` → `0.2.0`) for bigger changes: wire-protocol changes (daemon↔server, daemon↔supervisor, p2p), config format changes, or behaviour operators would notice. While pre-1.0, minor is the "major" bump.
+
 ## Daemon: verify builds across feature combinations
 
 When changing daemon code, ensure it compiles not only with default features but also with these additional feature combinations:

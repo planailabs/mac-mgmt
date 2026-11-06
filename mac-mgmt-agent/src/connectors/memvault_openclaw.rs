@@ -246,7 +246,7 @@ impl Connector for MemvaultOpenClawCleanup {
                 &[("connector", "memvault→openclaw (cleanup)")],
             );
             let json = serde_json::to_string_pretty(&config)?;
-            std::fs::write(&path, json)
+            crate::validator::write_atomic(&path, json.as_bytes())
                 .with_context(|| format!("failed to write {}", path.display()))?;
         }
 
