@@ -90,7 +90,7 @@ build_arch() {
     @client --platform web --no-default-features --features web \
     @server --platform server --target "$rust_target" --features usb
 
-  local bin_src="$SCRIPT_DIR/target/dx/mac-mgmt/release/web/server"
+  local bin_src="${CARGO_TARGET_DIR:-$SCRIPT_DIR/target}/dx/mac-mgmt/release/web/server"
   [ -f "$bin_src" ] || { echo "missing built binary: $bin_src" >&2; exit 1; }
 
   local stage

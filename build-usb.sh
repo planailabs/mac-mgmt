@@ -8,7 +8,7 @@
 #
 # Must run inside `nix develop` (the devShell provides webkitgtk/xdotool/etc.
 # needed to link the wry overview). The result is one binary at
-# target/dx/mac-mgmt/<profile>/web/server.
+# ${CARGO_TARGET_DIR:-target}/dx/mac-mgmt/<profile>/web/server.
 
 set -euo pipefail
 
@@ -84,6 +84,7 @@ if [ "$status" -ne 0 ]; then
 fi
 rm -f "$DX_LOG"
 
-if [ "$RELEASE" = "1" ]; then BIN="target/dx/mac-mgmt/release/web/server"; else BIN="target/dx/mac-mgmt/debug/web/server"; fi
-echo "✓ USB daemon built: $SCRIPT_DIR/$BIN"
+TARGET_DIR="${CARGO_TARGET_DIR:-$SCRIPT_DIR/target}"
+if [ "$RELEASE" = "1" ]; then BIN="$TARGET_DIR/dx/mac-mgmt/release/web/server"; else BIN="$TARGET_DIR/dx/mac-mgmt/debug/web/server"; fi
+echo "✓ USB daemon built: $BIN"
 echo "  (memvault web UI embedded + native overview app linked)"

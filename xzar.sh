@@ -63,7 +63,7 @@ upload_daemon_binary() {
   local rust_target="$1"
   local nix_system
   nix_system="$(nix_system_for "$rust_target")"
-  local bin_src="$SCRIPT_DIR/target/dx/mac-mgmt/release/web/server"
+  local bin_src="${CARGO_TARGET_DIR:-$SCRIPT_DIR/target}/dx/mac-mgmt/release/web/server"
 
   if [ ! -f "$bin_src" ]; then
     echo "missing daemon binary: $bin_src" >&2
