@@ -18,11 +18,14 @@
     nixos2docker.inputs.nixpkgs.follows = "nixpkgs";
     gitlab-incus-image.url = "git+https://git.mkg20001.io/mkg20001/gitlab-incus-image.git";
     gitlab-incus-image.inputs.nixpkgs.follows = "nixpkgs";
+    gitlab-nix-ci.url = "git+https://git.mkg20001.io/mkg20001/gitlab-nix-ci.git";
+    gitlab-nix-ci.inputs.nixpkgs.follows = "nixpkgs";
+    gitlab-nix-ci.inputs.gitlab-incus-image.follows = "gitlab-incus-image";
     xzar.url = "github:mkg20001/xzar";
     xzar.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, nixos2docker, gitlab-incus-image, xzar, ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, nixos2docker, gitlab-incus-image, gitlab-nix-ci, xzar, ... }:
     {
       overlays.default = import ./overlay.nix { gitSha = self.rev or self.dirtyRev or "unknown"; };
       nixosModules.default = import ./server/module.nix;
@@ -444,7 +447,11 @@
               modules = [
                 "${nixpkgs}/nixos/modules/virtualisation/lxc-container.nix"
                 gitlab-incus-image.nixosModules.gitlab-incus-image
+                # Every Rust build in a job reuses the crates earlier jobs
+                # compiled, from the job's /cache volume.
+                gitlab-nix-ci.nixosModules.cargo-target-cache
                 ({ pkgs, lib, ... }: {
+                  gitlab-nix-ci.cargoTargetCache.enable = true;
                   environment.systemPackages = with pkgs; [
                     openssh
                     rsync
