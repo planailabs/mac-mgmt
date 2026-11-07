@@ -40,7 +40,7 @@ let
     wasmRustPlatform.buildRustPackage {
       pname = "${crate}-wasm";
       version = "0.1.0";
-      src = ./.;
+      src = import ./src.nix { inherit (prev) lib; };
       cargoRoot = "memvault";
       buildAndTestSubdir = "memvault";
       cargoLock = {
@@ -103,7 +103,7 @@ in
   mac-mgmt = prev.rustPlatform.buildRustPackage {
     pname = "mac-mgmt";
     version = "0.1.0";
-    src = ./.;
+    src = import ./src.nix { inherit (prev) lib; };
     cargoLock.lockFile = ./Cargo.lock;
     cargoLock.outputHashes = import ./extra-hashes.nix;
     cargoTestFlags = [ "-p" "mac-mgmt" ];
