@@ -11,9 +11,16 @@
   tailwindcss_3,
   lld,
   gitSha ? "unknown",
+  # `debug` builds the server and web UI without `--release`: overflow checks
+  # and debug_assert! stay on and DEV_ONLY_NO_AUTH exists, which the t4t test VM
+  # needs. A caller sets it with `pkgs.mac-mgmt-server.override { dxProfile =
+  # "debug"; }` rather than patching the dx call below.
+  dxProfile ? "release",
 }:
 
 let
+  dxReleaseFlag = lib.optionalString (dxProfile == "release") "--release";
+
   swagger-ui = fetchurl {
     url = "https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.17.14.zip";
     hash = "sha256-SBJE0IEgl7Efuu73n3HZQrFxYX+cn5UU5jrL4T5xzNw=";
@@ -101,7 +108,7 @@ rustPlatform.buildRustPackage {
     # dx_build: `dx build`, plus the retry that keeps a dead rustc's cause in
     # the log instead of losing the whole build (scripts/dx-build-retry.sh).
     source ${../scripts/dx-build-retry.sh}
-    dx_build --release --fullstack --package mac-mgmt-server
+    dx_build ${dxReleaseFlag} --fullstack --package mac-mgmt-server
 
     runHook postBuild
   '';
@@ -110,7 +117,7 @@ rustPlatform.buildRustPackage {
     runHook preInstall
 
     mkdir -p $out/bin $out/share
-    cp -r target/dx/mac-mgmt-server/release/web $out/share/mac-mgmt-server
+    cp -r target/dx/mac-mgmt-server/${dxProfile}/web $out/share/mac-mgmt-server
     if [ -e $out/share/mac-mgmt-server/mac-mgmt-server ]; then
       ln -s $out/share/mac-mgmt-server/mac-mgmt-server $out/bin/mac-mgmt-server
     else
