@@ -302,12 +302,23 @@
 
         # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy
         # `-framework CoreFoundation` etc when cross-compiling Apple targets
-        # from Linux. We pull the .src out of nixpkgs' darwin.apple_sdk_25
+        # from Linux. We pull the .src out of nixpkgs' darwin.apple-sdk_15
         # (a plain fetchurl FOD) and extract it with a Linux runCommand —
         # this avoids needing to build any darwin stdenv on the host.
+        #
+        # Stay on the 15.x SDK: the 26.x SDKs nixpkgs ships list only
+        # `x86_64-macos`, `x86_64-maccatalyst` and `arm64e-*` in their .tbd
+        # stub targets — no plain `arm64-macos`.  Every arm64 cross-link
+        # against those stubs therefore resolves no framework/system symbols
+        # at all and dies with a wall of `error: undefined symbol:
+        # _kSCNetworkInterfaceType…` / `_CFArrayCreate` from CoreFoundation
+        # and SystemConfiguration (the `xzar.sh` macOS daemon build and
+        # anything else linking Apple frameworks).  15.5's stubs carry
+        # `arm64-macos`, and its deployment-target floor (10.13) still covers
+        # the 11.0 we link with.
         macosx-sdk = let
           darwinPkgs = import nixpkgs { system = "aarch64-darwin"; };
-          sdkSrc = darwinPkgs.apple-sdk_26.src;
+          sdkSrc = darwinPkgs.apple-sdk_15.src;
         in sdkSrc;
       in
       {
