@@ -45,7 +45,13 @@ let
       substituteInPlace mac-mgmt-overview/Cargo.toml \
         --replace-fail 'path = "../memvault/plan-ai-design"' 'path = "../design"'
     '';
-    nativeBuildInputs = [ pkgs.lld ];
+    # nixpkgs' cargo setup hook runs `cargoUseSystemLibs` for every
+    # buildRustPackage (unless `dontCargoUseSystemLibs` is set), which exports
+    # `ZSTD_SYS_USE_PKG_CONFIG=1`.  zstd-sys (via wasmtime/tantivy in the
+    # memvault graph) then probes pkg-config instead of vendoring its C sources,
+    # so the derivation must supply both pkg-config and the zstd it links.
+    nativeBuildInputs = [ pkgs.lld pkgs.pkg-config ];
+    buildInputs = [ pkgs.zstd ];
     env.MEMVAULT_EXTRACT_GUEST_TEXT_WASM = "${pkgs.memvault-extract-guest-text-wasm}/memvault_extract_guest_text.wasm";
     env.MEMVAULT_EXTRACT_GUEST_PDFRENDER_WASM = "${pkgs.memvault-extract-guest-pdfrender-wasm}/memvault_extract_guest_pdfrender.wasm";
     env.MEMVAULT_EXTRACT_GUEST_OCR_WASM = "${pkgs.memvault-extract-guest-ocr-wasm}/memvault_extract_guest_ocr.wasm";

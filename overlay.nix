@@ -128,8 +128,13 @@ in
       prev.binaryen
       prev.lld
       prev.rcodesign
+      # nixpkgs' cargo setup hook runs `cargoUseSystemLibs` for every
+      # buildRustPackage (unless `dontCargoUseSystemLibs` is set), which exports
+      # `ZSTD_SYS_USE_PKG_CONFIG=1`; zstd-sys (wasmtime/tantivy via the default
+      # `memvault` feature) then needs pkg-config and the libzstd it links.
+      prev.pkg-config
     ];
-    buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
+    buildInputs = [ prev.zstd ] ++ prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
     env.MEMVAULT_EXTRACT_GUEST_TEXT_WASM = "${memvaultExtractGuestTextWasm}/memvault_extract_guest_text.wasm";
     env.MEMVAULT_EXTRACT_GUEST_PDFRENDER_WASM = "${memvaultExtractGuestPdfRenderWasm}/memvault_extract_guest_pdfrender.wasm";
