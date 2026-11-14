@@ -8,8 +8,14 @@ if [ -z "${XZAR_TOKEN:-}" ]; then
   exit 0
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/xzar-cache.sh
+. "$SCRIPT_DIR/scripts/xzar-cache.sh"
+
 # ── Configure xzar plan.ai cache ────────────────────────────────────
-xzar config add-server planai https://xzar.plan.ai "$XZAR_TOKEN"
+# Retries: the token check is an outbound call to xzar.plan.ai and a single
+# transient 5xx there used to kill the job before the first build (job 8671).
+xzar_add_server planai https://xzar.plan.ai "$XZAR_TOKEN"
 
 upload() {
   while ! xzar --server planai upload --pin "$1" --desc "$(readlink -f "$2")" --leave-after-abandon 1m "$2"; do true; done

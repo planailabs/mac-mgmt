@@ -20,7 +20,11 @@ cleanup() {
 trap cleanup EXIT
 
 # ── Configure xzar plan.ai cache ────────────────────────────────────
-xzar config add-server planai https://xzar.plan.ai "$XZAR_TOKEN"
+# shellcheck source=scripts/xzar-cache.sh
+. "$SCRIPT_DIR/scripts/xzar-cache.sh"
+# Same retry as prebuild.sh: one transient 5xx on the token check must not fail
+# the deploy before the daemon build starts.
+xzar_add_server planai https://xzar.plan.ai "$XZAR_TOKEN"
 
 # ── Daemon binary build & upload ─────────────────────────────────────
 # Build the daemon for each supported target via dx, drop the binary
