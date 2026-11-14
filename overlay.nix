@@ -93,6 +93,44 @@ in
   };
 
   inherit dioxus-cli-patched;
+
+  # cargo-zigbuild 0.23.4 rewrites every `-Wl,<value>` whose value is an
+  # existing file into a bare positional argument (rust-cross/cargo-zigbuild
+  # #477). rustc passes a Mach-O export list as the pair
+  # `-Wl,-exported_symbols_list -Wl,<list>`, so the rewrite detaches the operand
+  # and the flag ends up bound to the next token:
+  #   error: unable to read exported symbols list "-dead_strip": FileNotFound
+  # That kills every Apple CDYLIB cross-link (`redb`, `if-watch` in xzar.sh) as
+  # soon as the cross-linker's zig is newer than 0.16. The upstream fix (#480)
+  # is unreleased, so build the last release without the rewrite instead of
+  # pinning zig back to 0.15.2 -- 0.15.2's bundled LLD segfaults (silently, with
+  # an empty rustc linker note) on the full daemon binary for
+  # aarch64-apple-darwin.
+  cargo-zigbuild = prev.rustPlatform.buildRustPackage {
+    pname = "cargo-zigbuild";
+    version = "0.23.3";
+    src = prev.fetchFromGitHub {
+      owner = "rust-cross";
+      repo = "cargo-zigbuild";
+      tag = "v0.23.3";
+      hash = "sha256-woxvGA+Pa224PSRzSVWg6cCFzd5XwcuSTR9J9GGFD+s=";
+    };
+    cargoHash = "sha256-SSMS3WVZiae+NOiOn2mrcsKfVW6rwzjZIbl+vXStm2k=";
+    nativeBuildInputs = [ prev.makeWrapper ];
+    postInstall = ''
+      wrapProgram $out/bin/cargo-zigbuild \
+        --prefix PATH : ${prev.zig}/bin
+    '';
+    doInstallCheck = true;
+    nativeInstallCheckInputs = [ prev.versionCheckHook ];
+    versionCheckProgramArg = "--version";
+    meta = {
+      description = "Tool to compile Cargo projects with zig as the linker";
+      mainProgram = "cargo-zigbuild";
+      homepage = "https://github.com/rust-cross/cargo-zigbuild";
+      license = prev.lib.licenses.mit;
+    };
+  };
   memvault-extract-guest-text-wasm = memvaultExtractGuestTextWasm;
   memvault-extract-guest-pdfrender-wasm = memvaultExtractGuestPdfRenderWasm;
   memvault-extract-guest-ocr-wasm = memvaultExtractGuestOcrWasm;

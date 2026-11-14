@@ -326,18 +326,16 @@
           buildInputs = with pkgs; [
             toolchain
             cargo-edit
-            # nixpkgs' cargo-zigbuild wrapper hard-prefixes nixpkgs' `zig`
-            # (0.16.0) onto PATH, so the dev shell's zig cannot be selected.
-            # zig 0.16's clang (LLVM 21.1.8) emits C objects whose
-            # `.rodata.<fn>` jump-table relocations reference STT_SECTION
-            # symbols carrying SHN_UNDEF (empty name); zig's bundled LLD then
-            # rejects them with `ld.lld: error: undefined symbol: ` and every
-            # linux-musl static-PIE cross-link fails (usb-release.sh and
-            # xzar.sh) with unresolved symbols coming out of libzstd_sys /
-            # libaws_lc_sys.  zig 0.15.2 links the very same objects cleanly,
-            # so pin cargo-zigbuild's zig.  Drop this pin once a nixpkgs zig
-            # newer than 0.16.0 links those objects again.
-            (cargo-zigbuild.override { zig = zig_0_15; })
+            # cargo-zigbuild is pinned to 0.23.3 by the overlay (see the
+            # `-Wl,`-rewrite note there) and wraps the same zig this shell
+            # ships. zig 0.17.1 links both cross legs that CI runs:
+            #   * aarch64-apple-darwin / x86_64-apple-darwin (xzar.sh) --
+            #     0.15.2's bundled LLD segfaults on the full daemon binary,
+            #     surfacing as an empty `note:` after `linking with ... failed`,
+            #   * x86_64/aarch64-unknown-linux-musl (usb-release.sh, xzar.sh)
+            #     -- the STT_SECTION/SHN_UNDEF object bug that forced the old
+            #     zig 0.15.2 pin is gone.
+            cargo-zigbuild
             cargo-flamegraph
             zig
             rsync
@@ -436,6 +434,7 @@
           macosx-sdk = macosx-sdk;
           nix-driver-sync = nix-driver-sync;
           dioxus-cli-patched = pkgs.dioxus-cli-patched;
+          cargo-zigbuild = pkgs.cargo-zigbuild;
           memvault-extract-guest-text-wasm = pkgs.memvault-extract-guest-text-wasm;
           memvault-extract-guest-pdfrender-wasm = pkgs.memvault-extract-guest-pdfrender-wasm;
           memvault-extract-guest-ocr-wasm = pkgs.memvault-extract-guest-ocr-wasm;

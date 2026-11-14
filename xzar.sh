@@ -116,6 +116,18 @@ fi
 SHIM
 chmod +x "$CARGO_SHIM/cargo"
 export PATH="$CARGO_SHIM:$PATH"
+
+# A cross-link that dies with a bare `note:` after `linking with ... failed`
+# has no compiler diagnostic behind it: that is the linker itself crashing
+# (zig's bundled LLD segfaults on the full Apple daemon binary under some zig
+# releases). Print the toolchain and disk state on failure so the next such
+# incident is diagnosable from the job trace alone.
+report_link_failure() {
+  echo "── cross-link failed: zig $(zig version 2>/dev/null || echo missing)," \
+    "cargo-zigbuild $(cargo-zigbuild --version 2>/dev/null || echo missing)" >&2
+  df -h /cache "$PWD" 2>/dev/null >&2 || true
+}
+
 # ── Linux (musl) ────────────────────────────────────────────────────────
 # libloading (via dioxus→subsecond) emits #[link(name = "dl")] on Linux,
 # but musl libc has dlopen/dlsym built-in — no separate libdl exists.
@@ -127,7 +139,7 @@ export RUSTFLAGS="${RUSTFLAGS:-} -L $DL_STUB"
 dx build --package mac-mgmt --release --embed \
   @client --platform web --no-default-features --features web \
   @server --platform server --target x86_64-unknown-linux-musl \
-    --features self-update,services,relay,memvault
+    --features self-update,services,relay,memvault || { report_link_failure; exit 1; }
 
 rm -rf "$DL_STUB"
 unset RUSTFLAGS
@@ -141,6 +153,6 @@ export SDKROOT
 dx build --package mac-mgmt --release --embed \
   @client --platform web --no-default-features --features web \
   @server --platform server --target aarch64-apple-darwin \
-    --features self-update,services,relay,memvault
+    --features self-update,services,relay,memvault || { report_link_failure; exit 1; }
 
 upload_daemon_binary aarch64-apple-darwin
