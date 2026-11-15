@@ -1603,7 +1603,7 @@ pub async fn setting_add_skill(
         .bind(body.skill_channel_id)
         .execute(pool.inner())
         .await
-        .map_err(|_| Status::InternalServerError)?;
+        .map_err(|e| crate::db::write_status(&e).unwrap_or(Status::InternalServerError))?;
     push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
     Ok(Status::Created)
 }
@@ -1858,7 +1858,7 @@ pub async fn setting_batch_bundles(
             .bind(bid)
             .execute(&mut *tx)
             .await
-            .map_err(|_| Status::InternalServerError)?;
+            .map_err(|e| crate::db::write_status(&e).unwrap_or(Status::InternalServerError))?;
     }
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
