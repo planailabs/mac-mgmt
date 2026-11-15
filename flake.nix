@@ -26,6 +26,30 @@
   };
 
   outputs = { self, nixpkgs, rust-overlay, flake-utils, nixos2docker, gitlab-incus-image, gitlab-nix-ci, xzar, ... }:
+    let
+      # `dx` (dioxus-cli) runs its cargo build with itself as the
+      # RUSTC_WORKSPACE_WRAPPER so it can capture each crate's rustc
+      # invocation (hot-patch replay). sccache cannot sit in front of a
+      # workspace wrapper: cargo calls it as `<wrapper> <workspace-wrapper>
+      # rustc ...`, sccache takes the workspace wrapper for the compiler,
+      # fails its C-compiler probe (`testfile.c`) and aborts the whole build
+      # with "ERROR dx build: Cargo build failed - no output location".
+      #
+      # The CI image (gitlab-nix-ci's cargo-target-cache module) injects an
+      # sccache rustc-wrapper into every Rust build sandbox, but skips
+      # derivations that already carry RUSTC_WRAPPER in their env. xzar-server
+      # is the one dx-driven derivation in our closures, and it has no other
+      # way to opt out, so mark it: the env value is empty (cargo treats an
+      # empty RUSTC_WRAPPER as unset) and exists only for that skip.
+      #
+      # Re-check when xzar's build stops shelling out to `dx`, or when
+      # gitlab-nix-ci learns to skip RUSTC_WORKSPACE_WRAPPER builds itself.
+      xzarServerCacheOptOut = final: prev: {
+        xzar-server = prev.xzar-server.overrideAttrs (old: {
+          env = (old.env or { }) // { RUSTC_WRAPPER = ""; };
+        });
+      };
+    in
     {
       overlays.default = import ./overlay.nix { gitSha = self.rev or self.dirtyRev or "unknown"; };
       nixosModules.default = import ./server/module.nix;
@@ -47,7 +71,7 @@
         dockerImageNixpkgs = nixpkgs;
         x86Pkgs = import nixpkgs {
           system = "x86_64-linux";
-          overlays = [ (import rust-overlay) self.overlays.default xzar.overlays.default ];
+          overlays = [ (import rust-overlay) self.overlays.default xzar.overlays.default xzarServerCacheOptOut ];
         };
         dockerImageLib = dockerImageNixpkgs.lib;
 
@@ -176,7 +200,7 @@
             ({ ... }: let
               pkgs = nixpkgs.legacyPackages.x86_64-linux;
             in {
-              nixpkgs.overlays = [ (import rust-overlay) self.overlays.default xzar.overlays.default ];
+              nixpkgs.overlays = [ (import rust-overlay) self.overlays.default xzar.overlays.default xzarServerCacheOptOut ];
               networking.hostName = "mac-mgmt-server";
 
               services.mac-mgmt-server = {
@@ -277,6 +301,7 @@
           (import rust-overlay)
           (import ./overlay.nix { inherit gitSha; })
           xzar.overlays.default
+          xzarServerCacheOptOut
         ];
         pkgs = import nixpkgs { inherit system overlays; };
         toolchain = pkgs.rust-bin.stable.latest.default.override {
@@ -471,6 +496,7 @@
 
                   nixpkgs.overlays = [
                     xzar.overlays.default
+                    xzarServerCacheOptOut
                   ];
 
                   programs.git.config.advice.detachedHead = false;
