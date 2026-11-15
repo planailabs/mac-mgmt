@@ -5,6 +5,7 @@
 //! `organization_clusters` join; org-admin rides in `Principal.scopes`.
 
 use plan_ai_api_mcp::{ApiError, Principal};
+use rocket::http::Status;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -111,16 +112,12 @@ fn db(e: sqlx::Error) -> ApiError {
 /// any endpoint that binds a caller-supplied id leaked a server error for a
 /// plain 404/409 case. Use this on the insert/update paths that bind ids from
 /// the request body; don't use it for queries where the only FK risk is an
-/// internal one.
+/// internal one. The SQLSTATE mapping itself is `crate::db::write_status`, which
+/// the Rocket `/api` surface uses directly.
 pub fn db_write(e: sqlx::Error, what: &str) -> ApiError {
-    match &e {
-        sqlx::Error::Database(dbe) if dbe.code().as_deref() == Some("23503") => {
-            ApiError::not_found(format!("{what} not found"))
-        }
-        sqlx::Error::Database(dbe) if dbe.code().as_deref() == Some("23505") => {
-            ApiError::conflict(format!("{what} already exists"))
-        }
-        sqlx::Error::RowNotFound => ApiError::not_found(format!("{what} not found")),
+    match crate::db::write_status(&e) {
+        Some(s) if s == Status::NotFound => ApiError::not_found(format!("{what} not found")),
+        Some(s) if s == Status::Conflict => ApiError::conflict(format!("{what} already exists")),
         _ => db(e),
     }
 }

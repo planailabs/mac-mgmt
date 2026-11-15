@@ -1585,6 +1585,8 @@ pub struct AddSkillBody {
     request_body = AddSkillBody,
     responses(
         (status = 201, description = "Skill added"),
+        (status = 404, description = "Unknown skill channel"),
+        (status = 409, description = "Skill already assigned"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -1660,6 +1662,7 @@ pub struct BatchSkillsBody {
         (status = 200, description = "Skills updated"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
+        (status = 404, description = "Unknown skill channel"),
     ),
 )]
 #[rocket::patch("/setting/skills/batch", data = "<body>")]
@@ -1688,7 +1691,7 @@ pub async fn setting_batch_skills(
             .bind(scid)
             .execute(&mut *tx)
             .await
-            .map_err(|_| Status::InternalServerError)?;
+            .map_err(|e| crate::db::write_status(&e).unwrap_or(Status::InternalServerError))?;
     }
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
@@ -1750,6 +1753,8 @@ pub struct AddBundleBody {
     request_body = AddBundleBody,
     responses(
         (status = 201, description = "Bundle added"),
+        (status = 404, description = "Unknown bundle"),
+        (status = 409, description = "Bundle already assigned"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -1766,7 +1771,7 @@ pub async fn setting_add_bundle(
         .bind(body.bundle_id)
         .execute(pool.inner())
         .await
-        .map_err(|_| Status::InternalServerError)?;
+        .map_err(|e| crate::db::write_status(&e).unwrap_or(Status::InternalServerError))?;
     push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
     Ok(Status::Created)
 }
@@ -1902,6 +1907,8 @@ pub struct AddMcpServerBody {
     request_body = AddMcpServerBody,
     responses(
         (status = 201, description = "MCP server added"),
+        (status = 404, description = "Unknown MCP server"),
+        (status = 409, description = "MCP server already assigned"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -1918,7 +1925,7 @@ pub async fn setting_add_mcp_server(
         .bind(body.mcp_server_id)
         .execute(pool.inner())
         .await
-        .map_err(|_| Status::InternalServerError)?;
+        .map_err(|e| crate::db::write_status(&e).unwrap_or(Status::InternalServerError))?;
     push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
     Ok(Status::Created)
 }
@@ -1977,6 +1984,7 @@ pub struct BatchMcpServersBody {
         (status = 200, description = "MCP servers updated"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
+        (status = 404, description = "Unknown MCP server"),
     ),
 )]
 #[rocket::patch("/setting/mcp-servers/batch", data = "<body>")]
@@ -2005,7 +2013,7 @@ pub async fn setting_batch_mcp_servers(
             .bind(msid)
             .execute(&mut *tx)
             .await
-            .map_err(|_| Status::InternalServerError)?;
+            .map_err(|e| crate::db::write_status(&e).unwrap_or(Status::InternalServerError))?;
     }
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
@@ -2083,7 +2091,7 @@ pub async fn setting_add_mcp_bundle(
         .bind(body.bundle_id)
         .execute(pool.inner())
         .await
-        .map_err(|_| Status::InternalServerError)?;
+        .map_err(|e| crate::db::write_status(&e).unwrap_or(Status::InternalServerError))?;
     push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
     Ok(Status::Created)
 }
@@ -2142,6 +2150,7 @@ pub struct BatchMcpBundlesBody {
         (status = 200, description = "MCP bundles updated"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
+        (status = 404, description = "Unknown bundle"),
     ),
 )]
 #[rocket::patch("/setting/mcp-bundles/batch", data = "<body>")]
@@ -2170,7 +2179,7 @@ pub async fn setting_batch_mcp_bundles(
             .bind(bid)
             .execute(&mut *tx)
             .await
-            .map_err(|_| Status::InternalServerError)?;
+            .map_err(|e| crate::db::write_status(&e).unwrap_or(Status::InternalServerError))?;
     }
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
@@ -5616,6 +5625,7 @@ pub(crate) struct AddGroupMemberBody {
     security(("bearer" = [])),
     responses(
         (status = 201, description = "Member added"),
+        (status = 404, description = "Unknown rollout group or cluster"),
         (status = 409, description = "Already a member"),
     ),
 )]
@@ -5638,13 +5648,7 @@ pub async fn admin_add_group_member(
         .bind(body.cluster_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| {
-            if e.to_string().contains("duplicate") || e.to_string().contains("unique") {
-                Status::Conflict
-            } else {
-                Status::InternalServerError
-            }
-        })?;
+        .map_err(|e| crate::db::write_status(&e).unwrap_or(Status::InternalServerError))?;
     Ok(Status::Created)
 }
 
