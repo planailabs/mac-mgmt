@@ -268,7 +268,7 @@ pub async fn cert_cluster_add(
     .bind(&lbl)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "certificate"))?;
     Ok(())
 }
 
@@ -364,7 +364,7 @@ pub async fn ca_cluster_add(
     .bind(&lbl)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "certificate"))?;
     Ok(())
 }
 
@@ -462,7 +462,7 @@ pub async fn cert_org_add(
     .bind(&lbl)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "certificate"))?;
     Ok(())
 }
 
@@ -552,7 +552,7 @@ pub async fn ca_org_add(
     .bind(&lbl)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "certificate"))?;
     Ok(())
 }
 
@@ -637,7 +637,7 @@ pub async fn cert_admin_add(
     .bind(&lbl)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "certificate"))?;
     Ok(())
 }
 
@@ -719,7 +719,7 @@ pub async fn ca_admin_add(
     .bind(&lbl)
     .execute(pool)
     .await
-    .map_err(internal)?;
+    .map_err(|e| access::db_write(e, "certificate"))?;
     Ok(())
 }
 
